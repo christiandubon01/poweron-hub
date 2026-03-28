@@ -16,10 +16,384 @@
  * - AI Suggest button per category
  */
 
-import { useMemo, useState, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink } from 'lucide-react'
-import { getBackupData, saveBackupData, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
+import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check } from 'lucide-react'
+import { getBackupData, saveBackupData, syncToSupabase, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+
+// ── CDN LOADERS ──────────────────────────────────────────────────────────────
+
+/** Load PDF.js from CDN for text extraction */
+function loadPdfJs(): Promise<any> {
+  if ((window as any).pdfjsLib) return Promise.resolve((window as any).pdfjsLib)
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs'
+    s.type = 'module'
+    s.onload = () => {
+      // pdf.min.mjs sets pdfjsLib on globalThis in module builds — fallback to dynamic import
+      setTimeout(() => resolve((window as any).pdfjsLib), 100)
+    }
+    s.onerror = () => reject(new Error('Failed to load PDF.js'))
+    document.head.appendChild(s)
+  })
+}
+
+/** Load Papa Parse from CDN for CSV parsing */
+function loadPapaParse(): Promise<any> {
+  if ((window as any).Papa) return Promise.resolve((window as any).Papa)
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js'
+    s.onload = () => resolve((window as any).Papa)
+    s.onerror = () => reject(new Error('Failed to load Papa Parse'))
+    document.head.appendChild(s)
+  })
+}
+
+/** Load SheetJS from CDN for Excel parsing */
+function loadSheetJS(): Promise<any> {
+  if ((window as any).XLSX) return Promise.resolve((window as any).XLSX)
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+    s.onload = () => resolve((window as any).XLSX)
+    s.onerror = () => reject(new Error('Failed to load SheetJS'))
+    document.head.appendChild(s)
+  })
+}
+
+// ── IMPORT TYPES ─────────────────────────────────────────────────────────────
+
+interface ImportRow {
+  name: string
+  cost: number
+  unit: string
+  cat: string
+  src: string
+  selected: boolean
+}
+
+// ── PDF TEXT PARSER ──────────────────────────────────────────────────────────
+
+async function parsePriceBookPDF(file: File): Promise<ImportRow[]> {
+  // Use a UMD build that actually sets window.pdfjsLib
+  if (!(window as any).pdfjsLib) {
+    await new Promise<void>((resolve, reject) => {
+      const s = document.createElement('script')
+      s.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'
+      s.onload = () => {
+        const lib = (window as any).pdfjsLib
+        if (lib) lib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+        resolve()
+      }
+      s.onerror = () => reject(new Error('Failed to load PDF.js'))
+      document.head.appendChild(s)
+    })
+  }
+  const pdfjsLib = (window as any).pdfjsLib
+  if (!pdfjsLib) throw new Error('PDF.js not available')
+
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const allLines: string[] = []
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const textContent = await page.getTextContent()
+    const items = textContent.items as any[]
+    // Group items by y-position to reconstruct lines
+    const lineMap: Record<number, string[]> = {}
+    items.forEach((item: any) => {
+      const y = Math.round(item.transform[5])
+      if (!lineMap[y]) lineMap[y] = []
+      lineMap[y].push(item.str)
+    })
+    const sortedYs = Object.keys(lineMap).map(Number).sort((a, b) => b - a)
+    sortedYs.forEach(y => {
+      const line = lineMap[y].join(' ').trim()
+      if (line) allLines.push(line)
+    })
+  }
+
+  // Heuristic: try to parse table-like lines
+  // Look for lines containing a price pattern ($X.XX or just X.XX)
+  const pricePattern = /\$?\d+\.\d{2}/
+  const rows: ImportRow[] = []
+
+  allLines.forEach((line, idx) => {
+    const priceMatch = line.match(pricePattern)
+    if (!priceMatch) return
+
+    const cost = parseFloat(priceMatch[0].replace('$', ''))
+    if (cost <= 0 || cost > 100000) return
+
+    // Extract name: everything before the price
+    const priceIdx = line.indexOf(priceMatch[0])
+    let name = line.substring(0, priceIdx).trim()
+    // Extract unit from after the price (common patterns: EA, FT, RL, LF, BOX, etc.)
+    const afterPrice = line.substring(priceIdx + priceMatch[0].length).trim()
+    const unitMatch = afterPrice.match(/^(EA|FT|RL|LF|BOX|PKG|ROLL|SET|PC|PR|BG|CS|CT|CY|DZ|GL|LB|OZ|PL|SF|SY|EACH|FOOT|FEET|PAIR)/i)
+    const unit = unitMatch ? unitMatch[1].toUpperCase() : 'EA'
+
+    // Clean up name
+    name = name.replace(/[\t|]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
+    if (name.length < 2 || name.length > 200) return
+
+    rows.push({
+      name,
+      cost,
+      unit,
+      cat: 'PDF Imported',
+      src: file.name.replace(/\.pdf$/i, ''),
+      selected: true,
+    })
+  })
+
+  return rows
+}
+
+// ── CSV / EXCEL PARSER ──────────────────────────────────────────────────────
+
+interface ColumnMapping {
+  name: number | null
+  cost: number | null
+  unit: number | null
+  cat: number | null
+  src: number | null
+}
+
+const HEADER_ALIASES: Record<keyof ColumnMapping, string[]> = {
+  name: ['name', 'item', 'description', 'product', 'material', 'item name', 'product name', 'desc'],
+  cost: ['price', 'cost', 'rate', 'unit price', 'unit cost', 'amount', 'each'],
+  unit: ['unit', 'uom', 'unit of measure', 'measure', 'units'],
+  cat: ['category', 'cat', 'group', 'type', 'section'],
+  src: ['supplier', 'src', 'vendor', 'source', 'store', 'brand'],
+}
+
+function autoDetectColumns(headers: string[]): { mapping: ColumnMapping, confident: boolean } {
+  const mapping: ColumnMapping = { name: null, cost: null, unit: null, cat: null, src: null }
+  const lowerHeaders = headers.map(h => (h || '').toLowerCase().trim())
+
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
+    const idx = lowerHeaders.findIndex(h => aliases.includes(h))
+    if (idx >= 0) mapping[field as keyof ColumnMapping] = idx
+  }
+
+  // Confident if we at least found name and cost
+  const confident = mapping.name !== null && mapping.cost !== null
+  return { mapping, confident }
+}
+
+async function parseCSV(file: File): Promise<{ headers: string[], rows: string[][] }> {
+  const Papa = await loadPapaParse()
+  return new Promise((resolve, reject) => {
+    Papa.parse(file, {
+      complete: (result: any) => {
+        const data = result.data as string[][]
+        if (data.length < 2) return reject(new Error('CSV has no data rows'))
+        resolve({ headers: data[0], rows: data.slice(1).filter((r: string[]) => r.some(c => c && c.trim())) })
+      },
+      error: (err: any) => reject(err),
+    })
+  })
+}
+
+async function parseExcel(file: File): Promise<{ headers: string[], rows: string[][] }> {
+  const XLSX = await loadSheetJS()
+  const arrayBuffer = await file.arrayBuffer()
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+  const data: string[][] = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' })
+  if (data.length < 2) throw new Error('Spreadsheet has no data rows')
+  return { headers: data[0].map(String), rows: data.slice(1).filter((r: string[]) => r.some(c => c && String(c).trim())) }
+}
+
+function applyMapping(rows: string[][], mapping: ColumnMapping): ImportRow[] {
+  return rows.map(row => {
+    const name = mapping.name !== null ? (row[mapping.name] || '').trim() : ''
+    const costRaw = mapping.cost !== null ? row[mapping.cost] : '0'
+    const cost = parseFloat(String(costRaw).replace(/[$,]/g, '')) || 0
+    const unit = mapping.unit !== null ? (row[mapping.unit] || 'EA').trim() : 'EA'
+    const cat = mapping.cat !== null ? (row[mapping.cat] || 'Imported').trim() : 'Imported'
+    const src = mapping.src !== null ? (row[mapping.src] || '').trim() : ''
+    return { name, cost, unit, cat: cat || 'Imported', src, selected: true }
+  }).filter(r => r.name.length >= 2 && r.cost > 0)
+}
+
+// ── IMPORT PREVIEW MODAL ────────────────────────────────────────────────────
+
+function ImportPreviewModal({
+  items,
+  onConfirm,
+  onCancel,
+  onToggle,
+  onToggleAll,
+}: {
+  items: ImportRow[]
+  onConfirm: () => void
+  onCancel: () => void
+  onToggle: (idx: number) => void
+  onToggleAll: (val: boolean) => void
+}) {
+  const selectedCount = items.filter(i => i.selected).length
+  const allSelected = selectedCount === items.length
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-[#1a1d27] border border-gray-700 rounded-xl max-w-3xl w-full max-h-[80vh] flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+          <div>
+            <h3 className="text-lg font-bold text-gray-100">Import Preview</h3>
+            <p className="text-xs text-gray-400 mt-0.5">{selectedCount} of {items.length} items selected</p>
+          </div>
+          <button onClick={onCancel} className="p-1.5 hover:bg-gray-700 rounded-lg transition text-gray-400 hover:text-gray-200">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="flex-1 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-[#232738]">
+              <tr className="text-xs text-gray-400 uppercase">
+                <th className="px-4 py-2 text-left w-10">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={(e) => onToggleAll(e.target.checked)}
+                    className="w-4 h-4 rounded accent-emerald-500"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left">Item Name</th>
+                <th className="px-2 py-2 text-left">Category</th>
+                <th className="px-2 py-2 text-right">Cost</th>
+                <th className="px-2 py-2 text-left">Unit</th>
+                <th className="px-2 py-2 text-left">Supplier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr
+                  key={idx}
+                  className={`border-t border-gray-700/50 ${item.selected ? '' : 'opacity-40'} hover:bg-gray-800/30 transition`}
+                >
+                  <td className="px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={item.selected}
+                      onChange={() => onToggle(idx)}
+                      className="w-4 h-4 rounded accent-emerald-500"
+                    />
+                  </td>
+                  <td className="px-2 py-2 text-gray-200">{item.name}</td>
+                  <td className="px-2 py-2 text-gray-400">{item.cat}</td>
+                  <td className="px-2 py-2 text-right text-emerald-400 font-mono">${item.cost.toFixed(2)}</td>
+                  <td className="px-2 py-2 text-gray-400">{item.unit}</td>
+                  <td className="px-2 py-2 text-gray-400">{item.src}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-700">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-sm font-medium transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={selectedCount === 0}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+          >
+            <Check className="w-4 h-4" />
+            Import {selectedCount} Items
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── COLUMN MAPPING MODAL ────────────────────────────────────────────────────
+
+function ColumnMappingModal({
+  headers,
+  mapping,
+  onConfirm,
+  onCancel,
+  onChangeMapping,
+}: {
+  headers: string[]
+  mapping: ColumnMapping
+  onConfirm: () => void
+  onCancel: () => void
+  onChangeMapping: (field: keyof ColumnMapping, colIdx: number | null) => void
+}) {
+  const fields: { key: keyof ColumnMapping, label: string, required: boolean }[] = [
+    { key: 'name', label: 'Item Name', required: true },
+    { key: 'cost', label: 'Cost / Price', required: true },
+    { key: 'unit', label: 'Unit (UOM)', required: false },
+    { key: 'cat', label: 'Category', required: false },
+    { key: 'src', label: 'Supplier / Source', required: false },
+  ]
+
+  const canConfirm = mapping.name !== null && mapping.cost !== null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-[#1a1d27] border border-gray-700 rounded-xl max-w-lg w-full shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+          <div>
+            <h3 className="text-lg font-bold text-gray-100">Map Columns</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Assign spreadsheet columns to price book fields</p>
+          </div>
+          <button onClick={onCancel} className="p-1.5 hover:bg-gray-700 rounded-lg transition text-gray-400 hover:text-gray-200">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          {fields.map(f => (
+            <div key={f.key} className="flex items-center justify-between gap-4">
+              <label className="text-sm text-gray-300 w-36 flex-shrink-0">
+                {f.label} {f.required && <span className="text-red-400">*</span>}
+              </label>
+              <select
+                value={mapping[f.key] ?? ''}
+                onChange={(e) => onChangeMapping(f.key, e.target.value === '' ? null : Number(e.target.value))}
+                className="flex-1 px-3 py-2 bg-[#232738] border border-gray-600 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-emerald-500"
+              >
+                <option value="">— Skip —</option>
+                {headers.map((h, i) => (
+                  <option key={i} value={i}>{h || `Column ${i + 1}`}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-700">
+          <button onClick={onCancel} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-sm font-medium transition">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!canConfirm}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition"
+          >
+            Apply Mapping
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 /**
  * getPriceBookSource — Reads price book data from localStorage.
@@ -84,6 +458,167 @@ export default function V15rPriceBookPanel() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editNotes, setEditNotes] = useState('')
+
+  // ── Import state ──────────────────────────────────────────────────────────
+  const pdfInputRef = useRef<HTMLInputElement>(null)
+  const csvInputRef = useRef<HTMLInputElement>(null)
+  const [importItems, setImportItems] = useState<ImportRow[] | null>(null)
+  const [importLoading, setImportLoading] = useState(false)
+  const [importToast, setImportToast] = useState<string | null>(null)
+  // Column mapping state for CSV/Excel
+  const [mappingHeaders, setMappingHeaders] = useState<string[] | null>(null)
+  const [mappingRows, setMappingRows] = useState<string[][] | null>(null)
+  const [columnMapping, setColumnMapping] = useState<ColumnMapping>({ name: null, cost: null, unit: null, cat: null, src: null })
+
+  // ── PDF import handler ────────────────────────────────────────────────────
+  const handlePdfImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (pdfInputRef.current) pdfInputRef.current.value = ''
+    setImportLoading(true)
+    try {
+      const rows = await parsePriceBookPDF(file)
+      if (rows.length === 0) {
+        setImportToast('No items could be extracted from this PDF')
+        setTimeout(() => setImportToast(null), 4000)
+      } else {
+        setImportItems(rows)
+      }
+    } catch (err: any) {
+      console.error('[PriceBook] PDF parse error:', err)
+      setImportToast('Failed to parse PDF: ' + (err.message || 'Unknown error'))
+      setTimeout(() => setImportToast(null), 4000)
+    }
+    setImportLoading(false)
+  }
+
+  // ── CSV/Excel import handler ──────────────────────────────────────────────
+  const handleCsvExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (csvInputRef.current) csvInputRef.current.value = ''
+    setImportLoading(true)
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase()
+      let headers: string[]
+      let rows: string[][]
+
+      if (ext === 'csv' || ext === 'tsv') {
+        const result = await parseCSV(file)
+        headers = result.headers
+        rows = result.rows
+      } else {
+        const result = await parseExcel(file)
+        headers = result.headers
+        rows = result.rows
+      }
+
+      // Auto-detect columns
+      const { mapping, confident } = autoDetectColumns(headers)
+
+      if (confident) {
+        // Directly show preview
+        const parsed = applyMapping(rows, mapping)
+        if (parsed.length === 0) {
+          setImportToast('No valid items found in file')
+          setTimeout(() => setImportToast(null), 4000)
+        } else {
+          setImportItems(parsed)
+        }
+      } else {
+        // Show column mapping modal
+        setMappingHeaders(headers)
+        setMappingRows(rows)
+        setColumnMapping(mapping)
+      }
+    } catch (err: any) {
+      console.error('[PriceBook] CSV/Excel parse error:', err)
+      setImportToast('Failed to parse file: ' + (err.message || 'Unknown error'))
+      setTimeout(() => setImportToast(null), 4000)
+    }
+    setImportLoading(false)
+  }
+
+  // ── Column mapping confirm ────────────────────────────────────────────────
+  const handleMappingConfirm = () => {
+    if (!mappingRows) return
+    const parsed = applyMapping(mappingRows, columnMapping)
+    setMappingHeaders(null)
+    setMappingRows(null)
+    if (parsed.length === 0) {
+      setImportToast('No valid items found with this mapping')
+      setTimeout(() => setImportToast(null), 4000)
+    } else {
+      setImportItems(parsed)
+    }
+  }
+
+  // ── Import confirm: merge into priceBook ──────────────────────────────────
+  const handleImportConfirm = () => {
+    if (!importItems || !backup) return
+    const selected = importItems.filter(i => i.selected)
+    if (selected.length === 0) return
+
+    pushState()
+
+    // Build existing name+src set for dedup
+    const existing = new Set(
+      priceBookItems.map(i => `${(i.name || '').toLowerCase()}|${(i.src || '').toLowerCase()}`)
+    )
+
+    const newItems: BackupPriceBookItem[] = []
+    selected.forEach((item, idx) => {
+      const key = `${item.name.toLowerCase()}|${item.src.toLowerCase()}`
+      if (existing.has(key)) return // skip duplicate
+      existing.add(key)
+      newItems.push({
+        id: `pdf_${Date.now()}_${idx}`,
+        cat: item.cat,
+        name: item.name,
+        cost: item.cost,
+        src: item.src,
+        unit: item.unit,
+        pack: 1,
+        waste: 0,
+        link: '',
+        pidBand: '',
+        pidBlock: '',
+        legacyId: `pdf_${Date.now()}_${idx}`,
+        notes: '',
+      })
+    })
+
+    // Merge into backup.priceBook
+    if (Array.isArray(backup.priceBook)) {
+      backup.priceBook = [...backup.priceBook, ...newItems]
+    } else {
+      backup.priceBook = [...priceBookItems, ...newItems]
+    }
+
+    // Save to poweron_v2 + poweron_backup_data
+    persistPriceBook()
+    // Trigger Supabase sync
+    syncToSupabase().catch(err => console.warn('[PriceBook] Sync failed:', err))
+
+    setImportItems(null)
+    refreshBackup()
+
+    setImportToast(`${newItems.length} items added to Price Book — synced`)
+    setTimeout(() => setImportToast(null), 5000)
+  }
+
+  // ── Import preview toggle handlers ────────────────────────────────────────
+  const handleToggleImportItem = (idx: number) => {
+    if (!importItems) return
+    const updated = [...importItems]
+    updated[idx] = { ...updated[idx], selected: !updated[idx].selected }
+    setImportItems(updated)
+  }
+
+  const handleToggleAllImport = (val: boolean) => {
+    if (!importItems) return
+    setImportItems(importItems.map(i => ({ ...i, selected: val })))
+  }
 
   // Filter items by search query
   const filteredItems = useMemo(() => {
@@ -224,10 +759,14 @@ export default function V15rPriceBookPanel() {
         </button>
       </div>
 
+      {/* HIDDEN FILE INPUTS */}
+      <input ref={pdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handlePdfImport} />
+      <input ref={csvInputRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden" onChange={handleCsvExcelImport} />
+
       {/* SEARCH + CONTROLS */}
       <div className="bg-[var(--bg-card)] rounded-lg p-4 space-y-3">
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex-1 relative min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
               type="text"
@@ -244,9 +783,58 @@ export default function V15rPriceBookPanel() {
             {expandedCategories.size === categories.length ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             {expandedCategories.size === categories.length ? 'Collapse' : 'Expand'} All
           </button>
+          <button
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={importLoading}
+            className="px-3 py-2 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 rounded-lg text-sm text-blue-300 transition flex items-center gap-1.5 disabled:opacity-40"
+          >
+            <FileText className="w-4 h-4" />
+            Import PDF
+          </button>
+          <button
+            onClick={() => csvInputRef.current?.click()}
+            disabled={importLoading}
+            className="px-3 py-2 bg-purple-600/20 border border-purple-500/30 hover:bg-purple-600/30 rounded-lg text-sm text-purple-300 transition flex items-center gap-1.5 disabled:opacity-40"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Import CSV / Excel
+          </button>
         </div>
-        <p className="text-xs text-gray-400">Showing {filteredItems.length} of {priceBookItems.length} items</p>
+        <p className="text-xs text-gray-400">
+          Showing {filteredItems.length} of {priceBookItems.length} items
+          {importLoading && <span className="ml-2 text-yellow-400 animate-pulse">Parsing file...</span>}
+        </p>
       </div>
+
+      {/* IMPORT TOAST */}
+      {importToast && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-600/90 text-white px-4 py-3 rounded-lg text-sm font-medium shadow-lg flex items-center gap-2 animate-fade-in">
+          <Check className="w-4 h-4" />
+          {importToast}
+        </div>
+      )}
+
+      {/* IMPORT PREVIEW MODAL */}
+      {importItems && (
+        <ImportPreviewModal
+          items={importItems}
+          onConfirm={handleImportConfirm}
+          onCancel={() => setImportItems(null)}
+          onToggle={handleToggleImportItem}
+          onToggleAll={handleToggleAllImport}
+        />
+      )}
+
+      {/* COLUMN MAPPING MODAL */}
+      {mappingHeaders && (
+        <ColumnMappingModal
+          headers={mappingHeaders}
+          mapping={columnMapping}
+          onConfirm={handleMappingConfirm}
+          onCancel={() => { setMappingHeaders(null); setMappingRows(null) }}
+          onChangeMapping={(field, colIdx) => setColumnMapping(prev => ({ ...prev, [field]: colIdx }))}
+        />
+      )}
 
       {/* CATEGORIES */}
       <div className="space-y-3">
