@@ -582,10 +582,10 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     const { error } = await supabase
       .from('app_state')
       .upsert({
-        id: SUPABASE_STATE_KEY,
-        state: data,
+        state_key: SUPABASE_STATE_KEY,
+        data: data,
         updated_at: data._lastSavedAt,
-      }, { onConflict: 'id' })
+      }, { onConflict: 'state_key' })
 
     if (error) {
       console.error('[sync] Supabase write failed:', error.message)
@@ -609,8 +609,8 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
 
     const { data: row, error } = await supabase
       .from('app_state')
-      .select('state, updated_at')
-      .eq('id', SUPABASE_STATE_KEY)
+      .select('data, updated_at')
+      .eq('state_key', SUPABASE_STATE_KEY)
       .single()
 
     if (error) {
@@ -618,12 +618,12 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
       return { success: false, merged: false, error: error.message }
     }
 
-    if (!row || !row.state) {
+    if (!row || !row.data) {
       console.log('[sync] No remote data found')
       return { success: true, merged: false }
     }
 
-    const remote = row.state as BackupData
+    const remote = row.data as BackupData
     const local = getBackupData()
 
     // If no local data, just use remote
