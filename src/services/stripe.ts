@@ -44,18 +44,23 @@ export interface OrgSubscription {
   isActive: boolean
 }
 
-const EMPTY_SUBSCRIPTION: OrgSubscription = {
-  id: '',
-  orgId: '',
-  stripeCustomerId: null,
-  stripeSubscriptionId: null,
-  status: 'none',
-  tierSlug: 'free',
-  tier: null,
-  features: getFreeTierFeatures(),
-  currentPeriodEnd: null,
-  cancelAtPeriodEnd: false,
-  isActive: false,
+// ── Lazy default — avoids calling getFreeTierFeatures() at module scope ──────
+// Rollup may evaluate this module before subscriptionTiers.ts in production,
+// causing a TDZ crash. Using a function defers the call until runtime.
+function getEmptySubscription(orgId = ''): OrgSubscription {
+  return {
+    id: '',
+    orgId,
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    status: 'none',
+    tierSlug: 'free',
+    tier: null,
+    features: getFreeTierFeatures(),
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    isActive: false,
+  }
 }
 
 // ── Core API ──────────────────────────────────────────────────────────────────
@@ -65,7 +70,7 @@ const EMPTY_SUBSCRIPTION: OrgSubscription = {
  * Returns free-tier defaults when no active subscription exists.
  */
 export async function getOrgSubscription(orgId: string): Promise<OrgSubscription> {
-  if (!orgId) return { ...EMPTY_SUBSCRIPTION }
+  if (!orgId) return getEmptySubscription()
 
   try {
     const { data, error } = await supabase
@@ -78,7 +83,7 @@ export async function getOrgSubscription(orgId: string): Promise<OrgSubscription
       .single()
 
     if (error || !data) {
-      return { ...EMPTY_SUBSCRIPTION, orgId }
+      return getEmptySubscription(orgId)
     }
 
     const row = data as Record<string, unknown>
@@ -101,7 +106,7 @@ export async function getOrgSubscription(orgId: string): Promise<OrgSubscription
     }
   } catch (err) {
     console.error('[stripe] Failed to fetch subscription:', err)
-    return { ...EMPTY_SUBSCRIPTION, orgId }
+    return getEmptySubscription(orgId)
   }
 }
 

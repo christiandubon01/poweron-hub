@@ -15,7 +15,9 @@
  */
 
 import { rSet, rGet, rDel, rExpire, redisKeys, TTL } from '@/lib/redis'
-import { getOrgSubscription } from '@/services/stripe'
+// NOTE: getOrgSubscription is imported dynamically inside createAppSession()
+// to avoid pulling the entire stripe→subscriptionTiers chain into the auth
+// initialization chunk, which causes TDZ crashes in Vite production builds.
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,9 +57,12 @@ export async function createAppSession(params: {
 }): Promise<string> {
   const sessionId = crypto.randomUUID()
 
-  // Load subscription tier on login so it's available throughout the session
+  // Load subscription tier on login so it's available throughout the session.
+  // Dynamic import to avoid pulling stripe→subscriptionTiers into the auth chunk
+  // (prevents Vite production TDZ crash).
   let tier = 'free'
   try {
+    const { getOrgSubscription } = await import('@/services/stripe')
     const sub = await getOrgSubscription(params.orgId)
     tier = sub.isActive ? sub.tierSlug : 'free'
   } catch {
