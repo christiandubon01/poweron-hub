@@ -17,7 +17,7 @@
 
 import { useCallback, useMemo, useState, useRef } from 'react'
 import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image } from 'lucide-react'
-import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, num, fmt, fmtK, pct, getProjectFinancials, type BackupSettings, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, type BackupSettings, type BackupData } from '@/services/backupDataService'
 import { pushState, clear as clearHistory, setMaxHistoryDepth } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 
@@ -912,6 +912,26 @@ export default function V15rSettingsPanel() {
                 <p className="font-semibold text-gray-300 mb-1">Last Sync</p>
                 <p>{lastSync}</p>
               </div>
+              {/* Save to Cloud button — forces immediate full sync */}
+              <button
+                onClick={async () => {
+                  const btn = document.activeElement as HTMLButtonElement
+                  if (btn) btn.disabled = true
+                  const result = await forceSyncToCloud()
+                  if (result.success) {
+                    alert('Synced to cloud successfully!')
+                  } else {
+                    alert('Sync failed: ' + (result.error || 'Unknown error'))
+                  }
+                  if (btn) btn.disabled = false
+                }}
+                disabled={!supabaseUp}
+                className="w-full px-3 py-2 bg-green-600/30 hover:bg-green-600/40 text-green-300 rounded text-xs font-medium border border-green-500/30 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Save size={14} />
+                Save to Cloud Now
+              </button>
+              <p className="text-xs text-gray-500">Forces an immediate full sync of all local data to Supabase. Use after making important changes like marking payments or updating project status.</p>
             </div>
           </SettingCard>
 

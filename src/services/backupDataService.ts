@@ -657,11 +657,22 @@ export function getProjectHealth(p: BackupProject, d?: BackupData): { score: num
 
 // ── Export backup ────────────────────────────────────────────────────────────
 
-export function exportBackup(d: BackupData): void {
+/**
+ * Export backup — ISSUE 2 Fix 6: Always reads fresh from getBackupData()
+ * at export time, not from a potentially stale reference.
+ */
+export function exportBackup(d?: BackupData): void {
+  // Always read fresh current state, not stale reference
+  const freshData = getBackupData() || d
+  if (!freshData) {
+    console.warn('[export] No data available to export')
+    return
+  }
+
   const now = new Date()
   const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const filename = `PowerOn_Backup_${ts}.json`
-  const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })
+  const blob = new Blob([JSON.stringify(freshData, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -735,42 +746,43 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
     const remote = row.data as BackupData
     const local = getBackupData()
 
+    // ── ISSUE 2 Fix 5: Diagnostic logging on every load ───────────────
+    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
+    const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
+    const remoteSL = (remote.serviceLogs || []).length
+    const localSL = local ? (local.serviceLogs || []).length : 0
+    const remoteP = (remote.projects || []).length
+    const localP = local ? (local.projects || []).length : 0
+    const remoteL = (remote.logs || []).length
+    const localL = local ? (local.logs || []).length : 0
+
+    console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime}), Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime})`)
+    console.log(`[Sync] Local counts — SL:${localSL} P:${localP} L:${localL} | Remote counts — SL:${remoteSL} P:${remoteP} L:${remoteL}`)
+
     // If no local data, just use remote
     if (!local) {
       saveBackupData(remote)
-      console.log('[sync] No local data — loaded from Supabase')
+      console.log('[Sync] No local data — Loading: remote')
       return { success: true, merged: true }
     }
 
-    // Richness guard: never overwrite richer local with thinner remote
-    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
-    const localTime = new Date(local._lastSavedAt || 0).getTime()
+    // ── ISSUE 2 Fix 4: If local is newer, push to Supabase FIRST ─────
+    if (localTime > remoteTime) {
+      console.log('[Sync] Local is newer — pushing local to Supabase FIRST, Loading: local')
+      await syncToSupabase() // AWAIT, not fire-and-forget, to ensure cloud is updated
+      return { success: true, merged: false }
+    }
 
-    if (remoteTime > localTime) {
-      const remoteServiceLogs = (remote.serviceLogs || []).length
-      const localServiceLogs = (local.serviceLogs || []).length
-      const remoteProjects = (remote.projects || []).length
-      const localProjects = (local.projects || []).length
-      const remoteLogs = (remote.logs || []).length
-      const localLogs = (local.logs || []).length
-
-      if (remoteServiceLogs >= localServiceLogs &&
-          remoteProjects >= localProjects &&
-          remoteLogs >= localLogs) {
-        // Remote is newer AND richer — use remote
-        saveBackupData(remote)
-        console.log('[sync] Remote is newer + richer — loaded from Supabase')
-        return { success: true, merged: true }
-      } else {
-        // Remote is newer but THINNER — keep local, push local to remote
-        console.warn('[sync] Remote is newer but thinner — keeping local')
-        syncToSupabase() // fire and forget — push local back
-        return { success: true, merged: false }
-      }
+    // Remote is newer — apply richness guard
+    if (remoteSL >= localSL && remoteP >= localP && remoteL >= localL) {
+      // Remote is newer AND richer — use remote
+      saveBackupData(remote)
+      console.log('[Sync] Remote is newer + richer — Loading: remote')
+      return { success: true, merged: true }
     } else {
-      // Local is newer — push to remote
-      console.log('[sync] Local is newer — pushing to Supabase')
-      syncToSupabase() // fire and forget
+      // Remote is newer but THINNER — keep local, push local to remote
+      console.warn(`[Sync] Remote is newer but thinner — Loading: local (pushing back to cloud)`)
+      await syncToSupabase() // AWAIT to ensure cloud gets the richer data
       return { success: true, merged: false }
     }
   } catch (err: any) {
@@ -787,6 +799,49 @@ export function saveBackupDataAndSync(data: BackupData, changedKey?: string): vo
   saveBackupData(data)
   // Fire and forget — sync to Supabase in background
   syncToSupabase().catch(err => console.warn('[sync] Background sync failed:', err))
+}
+
+// ── ISSUE 2 Fix: Critical change keys that bypass debounce ──────────────────
+const CRITICAL_KEYS = new Set(['serviceLogs', 'projects', 'logs', 'weeklyData'])
+
+/**
+ * Save and immediately sync to Supabase for critical data changes
+ * (payment status, project updates, service logs) — bypasses the 30s debounce.
+ */
+export function saveAndImmediateSync(data: BackupData, changedKey?: string): void {
+  data._lastSavedAt = new Date().toISOString()
+  if (changedKey) markChanged(changedKey)
+  _dataChanged = true
+  saveBackupData(data)
+  // Immediate sync — no debounce for critical data
+  console.log(`[sync] Immediate sync triggered for key: ${changedKey || 'unknown'}`)
+  syncToSupabase().catch(err => console.warn('[sync] Immediate sync failed:', err))
+}
+
+/**
+ * Force full sync to cloud NOW. Bypasses all debounce/timers.
+ * Use for the "Save to Cloud" button in Settings.
+ * Returns result so UI can show success/failure.
+ */
+export async function forceSyncToCloud(): Promise<{ success: boolean; error?: string }> {
+  const data = getBackupData()
+  if (!data) return { success: false, error: 'No local data to sync' }
+
+  // Always update timestamp before force sync
+  data._lastSavedAt = new Date().toISOString()
+  saveBackupData(data)
+
+  console.log('[sync] Force sync to cloud initiated')
+  const result = await syncToSupabase()
+
+  if (result.success) {
+    _dataChanged = false
+    _lastSyncedAt = Date.now()
+    _changedKeys.clear()
+    console.log('[sync] Force sync successful at', data._lastSavedAt)
+  }
+
+  return result
 }
 
 // Legacy mappers (kept for backward compat)

@@ -21,8 +21,11 @@ import {
   Menu,
   X,
 } from 'lucide-react'
-import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, type BackupData } from '@/services/backupDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
+import { initEventBus } from '@/services/agentEventBus'
+import { subscribeNexusToEvents } from '@/agents/nexus'
+import { subscribeLedgerToEvents } from '@/agents/ledger'
 
 interface V15rLayoutProps {
   activeView: string
@@ -126,6 +129,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }, 30000) // every 30 seconds (aligned with new sync interval)
 
     return () => { stopSync(); clearInterval(interval) }
+  }, [])
+
+  // Initialize Phase B event bus + agent subscriptions
+  useEffect(() => {
+    initEventBus()
+    const unsubNexus = subscribeNexusToEvents()
+    const unsubLedger = subscribeLedgerToEvents()
+    console.log('[Layout] Event bus initialized, NEXUS + LEDGER subscribed')
+    return () => { unsubNexus(); unsubLedger() }
   }, [])
 
   // Track window width for responsive breakpoints
@@ -635,21 +647,40 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
             {/* RIGHT: Status + Buttons */}
             <div className="flex items-center gap-4">
-              {/* Saved + Sync indicator */}
-              <div className="flex items-center gap-2">
+              {/* Saved + Sync indicator — tap to retry on failure */}
+              <button
+                className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                title={syncStatus === 'failed' ? 'Tap to retry sync' : syncStatus === 'synced' ? 'Synced to cloud' : 'Sync pending...'}
+                onClick={async () => {
+                  if (syncStatus === 'failed' || syncStatus === 'idle') {
+                    setSyncStatus('syncing')
+                    const result = await forceSyncToCloud()
+                    if (result.success) {
+                      setSyncStatus('synced')
+                      setLastSyncTime(new Date().toLocaleTimeString())
+                      setToastMessage('Synced to cloud')
+                      setTimeout(() => setToastMessage(null), 3000)
+                    } else {
+                      setSyncStatus('failed')
+                      setToastMessage('Sync failed — ' + (result.error || 'check connection'))
+                      setTimeout(() => setToastMessage(null), 4000)
+                    }
+                  }
+                }}
+              >
                 <div className={`w-2 h-2 rounded-full ${
                   syncStatus === 'synced' ? 'bg-green-500' :
-                  syncStatus === 'syncing' ? 'bg-blue-500 animate-pulse' :
-                  syncStatus === 'failed' ? 'bg-yellow-500' :
+                  syncStatus === 'syncing' ? 'bg-yellow-500 animate-pulse' :
+                  syncStatus === 'failed' ? 'bg-red-500' :
                   'bg-gray-500'
                 }`} />
-                <span className="text-xs text-gray-400">
+                <span className={`text-xs ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
                   {syncStatus === 'synced' && lastSyncTime ? `Synced ${lastSyncTime}` :
-                   syncStatus === 'syncing' ? 'Syncing...' :
-                   syncStatus === 'failed' ? 'Offline' :
+                   syncStatus === 'syncing' ? 'Pending sync...' :
+                   syncStatus === 'failed' ? 'Sync failed — tap to retry' :
                    `Saved ${getRelativeTime(lastSaved)}`}
                 </span>
-              </div>
+              </button>
 
               {/* Daily Target */}
               {!isMobile && (
