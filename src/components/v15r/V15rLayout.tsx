@@ -48,6 +48,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
 
+  // ── Responsive breakpoints ────────────────────────────────────────────────
+  // CRITICAL: These MUST be declared before any useEffect that references them.
+  // Declaring them after useEffect causes a TDZ (Temporal Dead Zone) crash in
+  // Vite production builds: "Cannot access 'I' before initialization" where 'I'
+  // is the minified name for isMobile.
+  const isMobile = windowWidth < 768
+  const isTablet = windowWidth >= 768 && windowWidth < 1024
+  const isDesktop = windowWidth >= 1024
+
   // Initialize and refresh data
   useEffect(() => {
     const refresh = () => {
@@ -275,10 +284,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const isCompact = windowWidth < 1200
   const showTargetBar = windowWidth >= 1400
 
-  // Responsive sidebar modes
-  const isMobile = windowWidth < 768
-  const isTablet = windowWidth >= 768 && windowWidth < 1024
-  const isDesktop = windowWidth >= 1024
+  // Responsive sidebar modes (declared above, near useState for windowWidth)
 
   // Sidebar width
   const sidebarWidth = isMobile ? 280 : isDesktop ? 224 : (sidebarOpen ? 224 : 64)
