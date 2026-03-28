@@ -16,17 +16,46 @@
  * - AI Suggest button per category
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink } from 'lucide-react'
 import { getBackupData, saveBackupData, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 
 export default function V15rPriceBookPanel() {
-  const backup = getBackupData()
+  // ── Reactive backup data ────────────────────────────────────────────────
+  // Read from localStorage on mount AND re-read whenever backup data changes.
+  // This ensures the panel picks up data loaded asynchronously from Supabase.
+  const [backup, setBackup] = useState<BackupData | null>(() => getBackupData())
+
+  const refreshBackup = useCallback(() => {
+    const data = getBackupData()
+    setBackup(data)
+  }, [])
+
+  useEffect(() => {
+    // Re-read when another tab / component writes to localStorage
+    const onStorage = () => refreshBackup()
+    window.addEventListener('storage', onStorage)
+
+    // Re-read periodically in case Supabase sync completed after initial render
+    // (covers the case where the panel mounted before loadFromSupabase finished)
+    const timer = setInterval(refreshBackup, 2000)
+
+    // Also do one deferred read after a short delay for initial Supabase sync
+    const deferred = setTimeout(refreshBackup, 1500)
+
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      clearInterval(timer)
+      clearTimeout(deferred)
+    }
+  }, [refreshBackup])
+
   if (!backup) return <NoData />
 
   // Handle both formats: array (from HTML app backup) or Record (from React app)
-  const rawPB = backup.priceBook || {}
+  // Also check 'catalog' key — legacy HTML builds sometimes use that instead of 'priceBook'
+  const rawPB = backup.priceBook || (backup as any).catalog || {}
   const priceBookItems: BackupPriceBookItem[] = Array.isArray(rawPB) ? rawPB : Object.values(rawPB)
   const settings = backup.settings || {}
   const markup = settings.markup ?? 150 // 150% = 2.5x markup (cost × 1.5 = client price)
@@ -35,7 +64,6 @@ export default function V15rPriceBookPanel() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editNotes, setEditNotes] = useState('')
-  const [, forceUpdate] = useState({})
 
   // Filter items by search query
   const filteredItems = useMemo(() => {
@@ -134,7 +162,7 @@ export default function V15rPriceBookPanel() {
     }
     saveBackupData(backup)
     setEditingId(null)
-    forceUpdate({})
+    refreshBackup()
   }
 
   const deleteItem = (id: string) => {
@@ -146,7 +174,7 @@ export default function V15rPriceBookPanel() {
       delete backup.priceBook[id]
     }
     saveBackupData(backup)
-    forceUpdate({})
+    refreshBackup()
   }
 
   return (

@@ -275,7 +275,7 @@ export default function V15rIncomeCalc() {
             </div>
           </div>
 
-          {/* Job Mix Doughnut Chart */}
+          {/* Job Mix Doughnut Chart — Double-ring: outer=revenue by job type, inner=cost ratio */}
           {chartReady && (
             <ErrorBoundary>
               <JobMixChart
@@ -283,6 +283,9 @@ export default function V15rIncomeCalc() {
                 panel={panelOnlyNorm}
                 batteryPanel={batteryPanelNorm}
                 batteryOnly={batteryOnlyNorm}
+                rmoFeeTotal={rmoPerSys * totalProjectsPerMonth}
+                installLaborTotal={installLabor}
+                netMarginTotal={totalNetMonthly}
               />
             </ErrorBoundary>
           )}
@@ -394,97 +397,29 @@ export default function V15rIncomeCalc() {
 
 // ── CHART COMPONENTS ──
 
-// Job Mix Doughnut Chart — Solar Income Job Mix Distribution
-function JobMixChart({ solar, panel, batteryPanel, batteryOnly }) {
+// Job Mix Double-Ring Doughnut — matches Business Health Overview in V15rMoneyPanel.tsx
+// Outer ring: Revenue breakdown by job type (Solar Only, Battery Only, Panel Upgrade, Battery+Panel)
+// Inner ring: Cost ratio (RMO Fee, Installation Labor, Net Margin)
+function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, installLaborTotal, netMarginTotal }) {
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
-  const backup = getBackupData()
 
-  // Monthly revenue per segment (calculated from calcRefs)
-  const totalMonthly = backup?.calcRefs ? (() => {
-    const refs = backup.calcRefs
-    const panelWatts = num(refs.panelWatts)
-    const panelsPerSystem = num(refs.panelsPerSystem)
-    const custPerWatt = num(refs.custPerWatt)
-    const sysW = panelWatts * panelsPerSystem
-    const baseSolarContractVal = sysW * custPerWatt
-    const rmoFee = num(refs.rmoFee)
-    const monthlyBaseFee = num(refs.monthlyBaseFee)
-    const batteryFeePerSystem = num(refs.batteryFeePerSystem)
-    const panelUpgradeFeePerSystem = num(refs.panelUpgradeFeePerSystem)
-    const totalProjectsPerMonth = num(refs.totalProjectsPerMonth)
+  // Outer ring — revenue by job type
+  const outerColors = { solar: '#3b82f6', battery: '#8b5cf6', panel: '#14b8a6', batteryPanel: '#f59e0b' }
+  // Inner ring — cost ratio
+  const innerColors = { rmo: '#22c55e', labor: '#ef4444', margin: '#10b981' }
 
-    const mixRaw = { solarOnly: num(refs.solarOnlyPct), batteryOnly: num(refs.batteryOnlyPct), panelOnly: num(refs.panelOnlyPct), both: num(refs.batteryPanelPct) }
-    const mixTotal = mixRaw.solarOnly + mixRaw.batteryOnly + mixRaw.panelOnly + mixRaw.both
-    const mixScale = mixTotal > 100 ? 100 / mixTotal : 1
-    const batteryAttachPct = (mixRaw.batteryOnly + mixRaw.both) * mixScale
-    const panelUpgradeAttachPct = (mixRaw.panelOnly + mixRaw.both) * mixScale
+  const outerSegments = [
+    { name: 'Solar Only', pct: solar, color: outerColors.solar, ring: 'outer' },
+    { name: 'Battery Only', pct: batteryOnly, color: outerColors.battery, ring: 'outer' },
+    { name: 'Panel Upgrade', pct: panel, color: outerColors.panel, ring: 'outer' },
+    { name: 'Battery+Panel', pct: batteryPanel, color: outerColors.batteryPanel, ring: 'outer' },
+  ]
 
-    const batteryAdderAvg = batteryFeePerSystem * (batteryAttachPct / 100)
-    const panelUpgradeAdderAvg = panelUpgradeFeePerSystem * (panelUpgradeAttachPct / 100)
-    const contractVal = baseSolarContractVal + batteryAdderAvg + panelUpgradeAdderAvg
-
-    const baseRmoPerSys = baseSolarContractVal * (rmoFee / 100)
-    const batteryRmoPerSys = batteryAdderAvg * (num(refs.batteryRmoFeePct) / 100)
-    const panelUpgradeRmoPerSys = panelUpgradeAdderAvg * (num(refs.panelUpgradeRmoFeePct) / 100)
-    const rmoPerSys = baseRmoPerSys + batteryRmoPerSys + panelUpgradeRmoPerSys
-    const monthlyBasePerSys = monthlyBaseFee / Math.max(1, panelsPerSystem)
-
-    const installPerWatt = num(refs.installPerWatt)
-    const baseInstallRevenuePerSys = sysW * installPerWatt
-    const avgBatteryInstallRevenuePerSys = num(refs.batteryInstallFeePerSystem) * (batteryAttachPct / 100)
-    const avgPanelUpgradeInstallRevenuePerSys = num(refs.panelUpgradeInstallFeePerSystem) * (panelUpgradeAttachPct / 100)
-    const installPerSys = baseInstallRevenuePerSys + avgBatteryInstallRevenuePerSys + avgPanelUpgradeInstallRevenuePerSys
-
-    const rmoRevenuePerSystemTotal = rmoPerSys + monthlyBasePerSys + (batteryFeePerSystem * (batteryAttachPct / 100)) + (panelUpgradeFeePerSystem * (panelUpgradeAttachPct / 100))
-
-    const selfInstallProjectsPerMonth = num(refs.selfInstallProjectsPerMonth)
-    const installEnabled = !!refs.installEnabled
-    const installMonthly = installEnabled ? installPerSys * selfInstallProjectsPerMonth : 0
-    const crewSize = num(refs.crewSize)
-    const installDays = num(refs.installDays)
-    const laborCostPerHr = num(refs.laborCostPerHr)
-    const payrollLoadMult = Math.max(1, num(refs.payrollLoadMult) || 1.2)
-    const burdenedEmployeeRate = laborCostPerHr * payrollLoadMult
-    const baseInstallHrsPerSys = installDays * 8
-    const batteryInstallHoursPerSystem = num(refs.batteryInstallHoursPerSystem)
-    const panelUpgradeInstallHoursPerSystem = num(refs.panelUpgradeInstallHoursPerSystem)
-    const avgBatteryInstallHoursPerSys = batteryInstallHoursPerSystem * (batteryAttachPct / 100)
-    const avgPanelUpgradeInstallHoursPerSys = panelUpgradeInstallHoursPerSystem * (panelUpgradeAttachPct / 100)
-    const installHrsPerSys = baseInstallHrsPerSys + avgBatteryInstallHoursPerSys + avgPanelUpgradeInstallHoursPerSys
-    const crewBurdenCostPerSys = crewSize * installHrsPerSys * burdenedEmployeeRate
-    const installLabor = installEnabled ? crewBurdenCostPerSys * selfInstallProjectsPerMonth : 0
-
-    const rmoVisitHours = num(refs.rmoVisitHours) || 2.5
-    const rmoVisitMilesRT = num(refs.rmoVisitMilesRT)
-    const rmoVisitCostPerMile = num(refs.rmoVisitCostPerMile)
-    const rmoVisitFlatCost = num(refs.rmoVisitFlatCost)
-    const visitsPerMonth = num(refs.visitsPerMonth)
-    const rmoVisitCost = rmoVisitHours * burdenedEmployeeRate + rmoVisitMilesRT * rmoVisitCostPerMile + rmoVisitFlatCost
-    const rmoMonthly = rmoPerSys * totalProjectsPerMonth + monthlyBaseFee + (rmoVisitCost * visitsPerMonth)
-
-    return rmoMonthly + installMonthly
-  })() : 0
-
-  const segmentValues = {
-    solar: (totalMonthly * solar) / 100,
-    battery: (totalMonthly * batteryOnly) / 100,
-    panel: (totalMonthly * panel) / 100,
-    batteryPanel: (totalMonthly * batteryPanel) / 100
-  }
-
-  const colorMap = {
-    solar: '#3b82f6',
-    battery: '#8b5cf6',
-    panel: '#14b8a6',
-    batteryPanel: '#f59e0b'
-  }
-
-  const segmentLabels = [
-    { name: 'Solar Only', value: segmentValues.solar, pct: solar, color: colorMap.solar },
-    { name: 'Battery Only', value: segmentValues.battery, pct: batteryOnly, color: colorMap.battery },
-    { name: 'Panel Upgrade', value: segmentValues.panel, pct: panel, color: colorMap.panel },
-    { name: 'Battery+Panel', value: segmentValues.batteryPanel, pct: batteryPanel, color: colorMap.batteryPanel }
+  const innerSegments = [
+    { name: 'RMO Fee', value: Math.max(0, rmoFeeTotal), color: innerColors.rmo, ring: 'inner' },
+    { name: 'Install Labor', value: Math.max(0, installLaborTotal), color: innerColors.labor, ring: 'inner' },
+    { name: 'Net Margin', value: Math.max(0, netMarginTotal), color: innerColors.margin, ring: 'inner' },
   ]
 
   useEffect(() => {
@@ -504,42 +439,66 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly }) {
     chartRef.current = new Chart(ctx, {
       type: 'doughnut',
       data: {
-        labels: ['Solar Only', 'Battery Only', 'Panel Upgrade Only', 'Battery + Panel'],
+        labels: [
+          'Solar Only', 'Battery Only', 'Panel Upgrade', 'Battery+Panel',
+          'RMO Fee', 'Install Labor', 'Net Margin'
+        ],
         datasets: [
           {
-            label: 'Job Mix %',
+            label: 'Revenue Breakdown',
             data: [solar, batteryOnly, panel, batteryPanel],
-            backgroundColor: ['#3b82f6', '#8b5cf6', '#14b8a6', '#f59e0b'],
+            backgroundColor: [outerColors.solar, outerColors.battery, outerColors.panel, outerColors.batteryPanel],
             borderColor: '#1a1d27',
             borderWidth: 2,
-            offset: [8, 8, 8, 8],
-            spacing: 2
-          }
-        ]
+            borderRadius: 2,
+            offset: [0, 0, 0, 0],
+          },
+          {
+            label: 'Cost Ratio',
+            data: [Math.max(0, rmoFeeTotal), Math.max(0, installLaborTotal), Math.max(0, netMarginTotal)],
+            backgroundColor: [innerColors.rmo, innerColors.labor, innerColors.margin],
+            borderColor: '#1a1d27',
+            borderWidth: 2,
+            borderRadius: 2,
+          },
+        ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: true,
-        cutout: '55%',
+        cutout: '35%',
         plugins: {
           legend: {
             position: 'bottom',
             labels: {
-              color: '#9ca3af',
+              color: '#d1d5db',
+              font: { size: 12 },
               padding: 15,
-              font: { size: 12 }
-            }
+              usePointStyle: true,
+            },
           },
           tooltip: {
+            backgroundColor: '#374151',
+            titleColor: '#f0f0ff',
+            bodyColor: '#e5e7eb',
+            borderColor: '#4b5563',
+            borderWidth: 1,
+            padding: 10,
+            titleFont: { weight: 'bold' },
             callbacks: {
               label: (context) => {
+                const datasetIdx = context.datasetIndex
                 const value = context.parsed
-                return `${context.label}: ${value.toFixed(1)}%`
-              }
-            }
-          }
-        }
-      }
+                if (datasetIdx === 0) {
+                  return `${context.label}: ${value.toFixed(1)}%`
+                } else {
+                  return `${context.label}: ${fmtK(value)}`
+                }
+              },
+            },
+          },
+        },
+      },
     })
 
     return () => {
@@ -548,28 +507,49 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly }) {
         chartRef.current = null
       }
     }
-  }, [solar, panel, batteryPanel, batteryOnly])
+  }, [solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, installLaborTotal, netMarginTotal])
 
   return (
     <div className="bg-[#232738] rounded-lg p-4">
-      <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Job Mix Distribution</h3>
-      <div style={{ height: '280px' }}>
+      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Job Mix Distribution</h3>
+
+      <div className="h-80 flex items-center justify-center">
         <canvas ref={canvasRef} />
       </div>
-      {/* Segment Breakdown Legend */}
-      <div className="mt-6 space-y-2 border-t border-gray-600 pt-4">
-        {segmentLabels.map((seg) => (
-          <div key={seg.name} className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
-              <span className="text-gray-300">{seg.name}</span>
-            </div>
-            <div className="flex items-center gap-3 text-gray-300">
-              <span>{fmt(seg.value)}/mo</span>
-              <span className="text-gray-500">({seg.pct.toFixed(1)}%)</span>
-            </div>
+
+      {/* Segment Breakdown Legend — matches Business Health Overview format */}
+      <div className="space-y-4 border-t border-gray-600 pt-4">
+        {/* Outer Ring */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 mb-2 uppercase">Revenue by Job Type (Outer Ring)</p>
+          <div className="space-y-1">
+            {outerSegments.map((seg) => (
+              <div key={seg.name} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
+                  <span className="text-gray-300">{seg.name}</span>
+                </div>
+                <span className="text-gray-300">{seg.pct.toFixed(1)}%</span>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
+
+        {/* Inner Ring */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 mb-2 uppercase">Cost Ratio (Inner Ring)</p>
+          <div className="space-y-1">
+            {innerSegments.map((seg) => (
+              <div key={seg.name} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
+                  <span className="text-gray-300">{seg.name}</span>
+                </div>
+                <span className="text-gray-300">{fmtK(seg.value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
