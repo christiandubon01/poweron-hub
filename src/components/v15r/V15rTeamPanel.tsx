@@ -27,6 +27,7 @@ import {
   type BackupData,
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -309,29 +310,13 @@ Personal Income Goal: ${fmt((fullBackup.settings?.personalIncomeGoal || 0))}
 Pipeline Total: ${fmt(pipelineTotal)}
 Monthly Service Pace (Avg): ${fmt(monthlyServicePace)}`
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userMessage }],
-        }),
+      const data = await callClaude({
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error?.message || 'API request failed')
-      }
-
-      const data = await response.json()
-      setAiResponse(data.content[0].text)
+      setAiResponse(extractText(data))
     } catch (error) {
       setAiResponse(`Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`)
     } finally {

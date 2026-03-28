@@ -15,6 +15,8 @@ import { clsx } from 'clsx'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { getBackupData, mapBackupProjects, isSupabaseConfigured } from '@/services/backupDataService'
+import { useProactiveAI } from '@/hooks/useProactiveAI'
+import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +65,15 @@ export function ProjectPanel({
   const [error, setError] = useState<string | null>(null)
 
   const orgId = profile?.org_id
+
+  // ── Proactive AI data context ──────────────────────────────────────────────
+  const backup = getBackupData()
+  const activeProjects = (backup?.projects || []).filter(p => p.status !== 'completed')
+  const stagnant = activeProjects.filter(p => p.lastMove && new Date(p.lastMove) < new Date(Date.now() - 14 * 86400000))
+  const openRFIs = activeProjects.reduce((s, p) => s + (p.rfis || []).filter(r => r.status !== 'closed').length, 0)
+  const bpContext = `Active projects: ${activeProjects.length}. Stagnant (14+ days no activity): ${stagnant.length} — ${stagnant.map(p => p.name).join(', ')}. Open RFIs: ${openRFIs}. Analyze project status and flag issues.`
+  const bpSystem = 'You are BLUEPRINT, the project management agent for Power On Solutions LLC. Analyze project status, flag stagnant work, overdue phases, and open RFIs. Give specific recommendations per project.'
+  const blueprint = useProactiveAI('blueprint', bpSystem, bpContext, activeProjects.length > 0)
 
   // ── Fetch projects ─────────────────────────────────────────────────────────
   const fetchProjects = useCallback(async () => {
@@ -150,6 +161,18 @@ export function ProjectPanel({
 
   return (
     <div className="space-y-4">
+      {/* Proactive AI Insight Card */}
+      <ProactiveInsightCard
+        agentName="BLUEPRINT"
+        agentColor="#06b6d4"
+        response={blueprint.response}
+        loading={blueprint.loading}
+        error={blueprint.error}
+        onRefresh={blueprint.refresh}
+        emptyMessage="No active projects. Create your first project and I'll help you build a phase schedule."
+        systemPrompt={bpSystem}
+      />
+
       {/* Header with create button */}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-gray-100">Projects</h2>

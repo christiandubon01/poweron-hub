@@ -27,9 +27,35 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const [initialized, setInitialized] = useState(false)
   const [errorFlash, setErrorFlash] = useState(false)
   const [permissionError, setPermissionError] = useState('')
+  const [audioUnlocked, setAudioUnlocked] = useState(false)
 
   // Detect iOS Safari for platform-specific guidance
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+  // iOS Safari: Unlock AudioContext on first user gesture
+  useEffect(() => {
+    if (audioUnlocked) return
+    const unlock = () => {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const buf = ctx.createBuffer(1, 1, 22050)
+        const src = ctx.createBufferSource()
+        src.buffer = buf
+        src.connect(ctx.destination)
+        src.start(0)
+        ctx.resume().then(() => {
+          setAudioUnlocked(true)
+          console.log('[Voice] AudioContext unlocked for iOS')
+        })
+      } catch { /* ignore */ }
+    }
+    document.addEventListener('touchstart', unlock, { once: true })
+    document.addEventListener('click', unlock, { once: true })
+    return () => {
+      document.removeEventListener('touchstart', unlock)
+      document.removeEventListener('click', unlock)
+    }
+  }, [audioUnlocked])
 
   // Initialize voice subsystem
   useEffect(() => {
@@ -178,6 +204,15 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
           }
         `}</style>
       </button>
+
+      {/* Status label below button */}
+      {!isIdle && !errorFlash && !permissionError && (
+        <div className="fixed bottom-[88px] right-4 z-50 bg-gray-900/90 border border-gray-700/50 rounded-lg px-3 py-1.5 shadow-xl text-center">
+          <p className="text-[11px] font-semibold m-0" style={{ color: isRecording ? '#ef4444' : isProcessing ? '#eab308' : isSpeaking ? '#06b6d4' : '#10b981' }}>
+            {isListening ? 'Listening...' : isRecording ? 'Recording...' : status === 'transcribing' ? 'Transcribing...' : status === 'processing' ? 'Thinking...' : isSpeaking ? 'Speaking...' : ''}
+          </p>
+        </div>
+      )}
 
       {/* Permission error tooltip below button */}
       {permissionError && (

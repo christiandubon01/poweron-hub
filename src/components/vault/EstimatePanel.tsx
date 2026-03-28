@@ -15,6 +15,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Plus, TrendingUp, AlertCircle, Clock } from 'lucide-react'
 import { clsx } from 'clsx'
+import { useProactiveAI } from '@/hooks/useProactiveAI'
+import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
+import { getBackupData, num, fmt } from '@/services/backupDataService'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -90,6 +93,18 @@ export function EstimatePanel({
   const [estimates, setEstimates] = useState<Estimate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Proactive AI context
+  const backup = getBackupData()
+  const activeProjects = (backup?.projects || []).filter(p => p.status !== 'completed')
+  const lowMarginProjects = activeProjects.filter(p => {
+    const contract = num(p.contract)
+    const totalCost = (p.laborRows || []).reduce((s,r) => s + num(r.hrs)*num(r.rate), 0) + (p.matRows || []).reduce((s,r) => s + num(r.total), 0)
+    return contract > 0 && totalCost > 0 && ((contract - totalCost) / contract * 100) < 20
+  })
+  const vaultContext = `Active estimates: ${activeProjects.length}. Low margin (<20%) projects: ${lowMarginProjects.length}. ${lowMarginProjects.map(p => p.name).join(', ')}. Analyze margin risk and recommend adjustments.`
+  const vaultSystem = 'You are VAULT, the estimating agent for Power On Solutions LLC, a C-10 electrical contractor. Analyze active estimates and flag margin risks. Be concise with specific project names and numbers.'
+  const vault = useProactiveAI('vault', vaultSystem, vaultContext, activeProjects.length > 0)
 
   // Fetch estimates on mount and setup realtime subscription
   useEffect(() => {
@@ -183,6 +198,17 @@ export function EstimatePanel({
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg border border-gray-800">
+      <ProactiveInsightCard
+        agentName="VAULT"
+        agentColor="#f59e0b"
+        response={vault.response}
+        loading={vault.loading}
+        error={vault.error}
+        onRefresh={vault.refresh}
+        emptyMessage="No active estimates. Want me to help you build one from your price book?"
+        systemPrompt={vaultSystem}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-800">
         <h2 className="text-lg font-bold text-gray-100">Estimates</h2>

@@ -14,6 +14,8 @@ import {
   getOverallCompletion,
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { useProactiveAI } from '@/hooks/useProactiveAI'
+import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 
 interface BenchmarkRow {
   name: string
@@ -49,6 +51,32 @@ export default function V15rPricingIntelligencePanel() {
 
   const backup = getBackupData()
   if (!backup) return <div className="p-4 text-center text-gray-400">No data loaded</div>
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCOUT Pricing Intelligence Context
+  // ─────────────────────────────────────────────────────────────────────────
+  const scoutBackup = getBackupData()
+  const allProjects = scoutBackup?.projects || []
+  const completedProjects = allProjects.filter(p => p.status === 'completed')
+  const activeProjects = allProjects.filter(p => p.status !== 'completed')
+  const jobTypes = [...new Set(allProjects.map(p => p.type).filter(Boolean))]
+
+  // Calculate margin by job type
+  const marginByType = jobTypes.map(type => {
+    const projs = allProjects.filter(p => p.type === type && num(p.contract) > 0)
+    const totalContract = projs.reduce((s, p) => s + num(p.contract), 0)
+    const totalCost = projs.reduce((s, p) => {
+      const lab = (p.laborRows || []).reduce((sum, r) => sum + num(r.hrs) * num(r.rate), 0)
+      const mat = (p.matRows || []).reduce((sum, r) => sum + num(r.total), 0)
+      return s + lab + mat
+    }, 0)
+    const margin = totalContract > 0 ? ((totalContract - totalCost) / totalContract * 100) : 0
+    return { type, count: projs.length, margin: margin.toFixed(1) }
+  })
+
+  const scoutContext = `Pricing analysis: ${allProjects.length} total projects (${completedProjects.length} completed). Job types: ${marginByType.map(m => `${m.type}: ${m.count} jobs, ${m.margin}% margin`).join('; ')}. Analyze margin benchmarks by job type, identify underpriced jobs, and recommend rate adjustments.`
+  const scoutSystem = 'You are SCOUT, the pricing intelligence and market research agent for Power On Solutions LLC, a C-10 electrical contractor in the Coachella Valley. Analyze margin benchmarks by job type, identify pricing patterns, flag underpriced work, and recommend adjustments. Reference typical contractor margins for comparison.'
+  const scout = useProactiveAI('scout', scoutSystem, scoutContext, allProjects.length > 0)
 
   // ─────────────────────────────────────────────────────────────────────────
   // Pricing Stats (ported from pricingStats())
@@ -222,6 +250,17 @@ export default function V15rPricingIntelligencePanel() {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="bg-[#1a1d27] text-white p-6">
+      <ProactiveInsightCard
+        agentName="SCOUT"
+        agentColor="#06b6d4"
+        response={scout.response}
+        loading={scout.loading}
+        error={scout.error}
+        onRefresh={scout.refresh}
+        emptyMessage="Add completed jobs to analyze your pricing patterns and market positioning."
+        systemPrompt={scoutSystem}
+      />
+
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-start justify-between mb-4">

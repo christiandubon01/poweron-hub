@@ -6,6 +6,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Zap, X, Sparkles, Loader2, RefreshCw } from 'lucide-react'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 export interface Insight {
   icon: string
@@ -104,12 +105,6 @@ export function AskAIPanel({ panelName, insights, dataContext, isOpen, onClose }
       }
     }
 
-    const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
-    if (!apiKey) {
-      setError('API key not configured (VITE_ANTHROPIC_API_KEY)')
-      return
-    }
-
     // Abort previous in-flight request
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
@@ -121,30 +116,14 @@ export function AskAIPanel({ panelName, insights, dataContext, isOpen, onClose }
     try {
       const userMessage = `Panel: ${panelName}\n\nCurrent operational data:\n${JSON.stringify(dataContext, null, 2)}\n\nAnalyze this data and provide actionable insights.`
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          system: NEXUS_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userMessage }],
-        }),
+      const result = await callClaude({
+        messages: [{ role: 'user', content: userMessage }],
+        system: NEXUS_SYSTEM_PROMPT,
+        max_tokens: 1024,
         signal: controller.signal,
       })
 
-      if (!response.ok) {
-        const errText = await response.text()
-        throw new Error(`API error (${response.status}): ${errText.slice(0, 200)}`)
-      }
-
-      const result = await response.json()
-      const text = result.content?.[0]?.text || ''
+      const text = extractText(result)
       const parsed = parseClaudeInsights(text)
 
       if (parsed.length === 0) {

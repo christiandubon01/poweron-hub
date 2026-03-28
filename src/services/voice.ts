@@ -15,6 +15,7 @@ import { classifyVoiceIntent } from '@/api/voice/routing'
 import { getAudioPreprocessor } from './audioPreprocessing'
 import { getWakeWordDetector, type WakeWordConfig } from './wakeWordDetector'
 import { getVoiceCommandExecutor } from './voiceCommandExecutor'
+import { callClaude, extractText } from './claudeProxy'
 import { supabase } from '@/lib/supabase'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -435,39 +436,65 @@ export class VoiceSubsystem {
 
   /**
    * Execute the voice pipeline from transcribed text to spoken response.
+   * Tries full agent routing first; falls back to direct Claude call.
    */
   private async executeVoicePipeline(transcript: string): Promise<VoiceSession> {
-    // Step 3: Classify intent
+    console.log('[Voice] Transcribed:', transcript)
+    let responseText = ''
+
+    // Step 3: Try full agent routing, fall back to direct Claude
     this.setStatus('processing')
-    const classification = await classifyVoiceIntent(transcript)
+    try {
+      const classification = await classifyVoiceIntent(transcript)
 
-    if (this.currentSession) {
-      this.currentSession.detectedIntent = classification.intent
-      this.currentSession.targetAgent = classification.agent
-    }
-
-    // Step 4: Execute command
-    const executor = getVoiceCommandExecutor()
-    const result = await executor.execute(
-      classification.agent,
-      classification.intent,
-      classification.parameters,
-      {
-        orgId: this.orgId,
-        userId: this.userId,
-        mode: this.currentSession?.mode || 'normal',
+      if (this.currentSession) {
+        this.currentSession.detectedIntent = classification.intent
+        this.currentSession.targetAgent = classification.agent
       }
-    )
 
-    if (this.currentSession) {
-      this.currentSession.agentResponse = result.responseText
+      // Step 4: Execute command via agent
+      const executor = getVoiceCommandExecutor()
+      const result = await executor.execute(
+        classification.agent,
+        classification.intent,
+        classification.parameters,
+        {
+          orgId: this.orgId,
+          userId: this.userId,
+          mode: this.currentSession?.mode || 'normal',
+        }
+      )
+      responseText = result.responseText
+      console.log('[Voice] Agent response received via', classification.agent)
+    } catch (routeErr) {
+      console.warn('[Voice] Agent routing failed, falling back to Claude:', routeErr)
+
+      // Fallback: send transcript directly to Claude via proxy
+      try {
+        const NEXUS_SYSTEM = 'You are NEXUS, a helpful AI assistant for Power On Solutions LLC, a C-10 electrical contractor in the Coachella Valley, CA. You respond to voice commands. Be concise and conversational — your response will be spoken aloud. Keep answers under 3 sentences when possible.'
+        const claudeResult = await callClaude({
+          system: NEXUS_SYSTEM,
+          messages: [{ role: 'user', content: transcript }],
+          max_tokens: 512,
+        })
+        responseText = extractText(claudeResult)
+        console.log('[Voice] Claude response received (fallback)')
+      } catch (claudeErr) {
+        console.error('[Voice] Claude fallback also failed:', claudeErr)
+        responseText = 'Sorry, I couldn\'t process that request. Please try again.'
+      }
     }
 
-    // Step 5: Synthesize speech
+    if (this.currentSession) {
+      this.currentSession.agentResponse = responseText
+    }
+
+    // Step 5: Synthesize speech via ElevenLabs, fall back to speechSynthesis
     this.setStatus('responding')
+    let ttsPlayed = false
     try {
       const ttsResult = await synthesizeWithElevenLabs({
-        text: result.responseText,
+        text: responseText,
         voice_id: this.preferences.ttsVoiceId,
         voice_settings: {
           stability: 0.75,
@@ -482,13 +509,22 @@ export class VoiceSubsystem {
       }
 
       // Step 6: Play response
+      console.log('[Voice] Playing TTS audio')
       await this.playAudio(ttsResult.audioUrl)
-
-      // Revoke object URL after playback
       revokeAudioUrl(ttsResult.audioUrl)
+      ttsPlayed = true
     } catch (ttsErr) {
-      console.warn('[Voice] TTS failed, response text only:', ttsErr)
-      // TTS failure is not fatal — the text response is still available
+      console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
+    }
+
+    // Fallback: browser speechSynthesis
+    if (!ttsPlayed && typeof window !== 'undefined' && window.speechSynthesis) {
+      try {
+        console.log('[Voice] Using speechSynthesis fallback')
+        await this.speakWithSynthesis(responseText)
+      } catch (synthErr) {
+        console.warn('[Voice] speechSynthesis also failed:', synthErr)
+      }
     }
 
     // Step 7: Complete session
@@ -511,6 +547,20 @@ export class VoiceSubsystem {
     }
 
     return this.currentSession!
+  }
+
+  /**
+   * Fallback TTS using browser's built-in speechSynthesis API.
+   */
+  private speakWithSynthesis(text: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!window.speechSynthesis) { reject(new Error('speechSynthesis not available')); return }
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = this.preferences.ttsSpeed
+      utterance.onend = () => resolve()
+      utterance.onerror = (e) => reject(e)
+      window.speechSynthesis.speak(utterance)
+    })
   }
 
   // ── Private: Audio Playback ───────────────────────────────────────────────

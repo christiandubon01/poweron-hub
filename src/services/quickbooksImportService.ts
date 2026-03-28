@@ -16,6 +16,7 @@
  */
 
 import { getBackupData, saveBackupData, num, type BackupData, type BackupServiceLog } from './backupDataService'
+import { callClaude, extractText } from './claudeProxy'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -92,53 +93,33 @@ export function fileToBase64(file: File): Promise<string> {
 
 export async function extractFromPDF(file: File): Promise<QBExtractedData> {
   const base64 = await fileToBase64(file)
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
 
-  if (!apiKey) {
-    throw new Error('VITE_ANTHROPIC_API_KEY not set. Add it to your .env file.')
-  }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      system: EXTRACTION_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: {
-                type: 'base64',
-                media_type: 'application/pdf',
-                data: base64,
-              },
+  const result = await callClaude({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 2048,
+    system: EXTRACTION_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: base64,
             },
-            {
-              type: 'text',
-              text: 'Extract the invoice/estimate data from this QuickBooks PDF document. Return only the JSON object.',
-            },
-          ],
-        },
-      ],
-    }),
+          },
+          {
+            type: 'text',
+            text: 'Extract the invoice/estimate data from this QuickBooks PDF document. Return only the JSON object.',
+          },
+        ],
+      },
+    ],
   })
 
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Claude API error (${response.status}): ${errText}`)
-  }
-
-  const result = await response.json()
-  const text = result.content?.[0]?.text || ''
+  const text = extractText(result)
 
   // Parse JSON — handle potential markdown code blocks
   const jsonStr = text.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim()

@@ -10,6 +10,9 @@ import { useAuth } from '@/hooks/useAuth'
 import {
   initiateGoogleAuth, isConnected, disconnect, fullSync
 } from '@/services/googleCalendar'
+import { useProactiveAI } from '@/hooks/useProactiveAI'
+import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
+import { getBackupData, num } from '@/services/backupDataService'
 
 type TabType = 'calendar' | 'crew' | 'agenda'
 
@@ -25,6 +28,15 @@ export function SchedulePanel() {
   const userId = user?.id
   const [gcalConnected, setGcalConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
+
+  // ── Proactive AI data context ──────────────────────────────────────────────
+  const backup = getBackupData()
+  const employees = backup?.employees || []
+  const logs = backup?.logs || []
+  const recentLogs = logs.filter(l => l.date && new Date(l.date) > new Date(Date.now() - 30 * 86400000))
+  const chronoContext = `Crew: ${employees.length} employees. ${recentLogs.length} field logs in past 30 days. Analyze scheduling patterns and recommend optimizations.`
+  const chronoSystem = 'You are CHRONO, the scheduling optimization agent for Power On Solutions LLC. Analyze crew utilization, scheduling gaps, and workload balance. Be concise with specific recommendations.'
+  const chrono = useProactiveAI('chrono', chronoSystem, chronoContext, employees.length > 0 || logs.length > 0)
 
   useEffect(() => {
     if (userId) {
@@ -57,6 +69,18 @@ export function SchedulePanel() {
 
   return (
     <div className="space-y-4">
+      {/* Proactive AI Insight Card */}
+      <ProactiveInsightCard
+        agentName="CHRONO"
+        agentColor="#f97316"
+        response={chrono.response}
+        loading={chrono.loading}
+        error={chrono.error}
+        onRefresh={chrono.refresh}
+        emptyMessage="No schedule data yet. Add crew members and I'll help optimize your job scheduling."
+        systemPrompt={chronoSystem}
+      />
+
       {/* Header with CHRONO Badge + Google Calendar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 border border-orange-500/30 rounded-full">

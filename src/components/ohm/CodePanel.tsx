@@ -15,6 +15,9 @@ import { Search, Send, Loader2, BookOpen, AlertCircle, ChevronRight } from 'luci
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import * as codeSearch from '@/agents/ohm/codeSearch'
+import { useProactiveAI } from '@/hooks/useProactiveAI'
+import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
+import { getBackupData } from '@/services/backupDataService'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +48,15 @@ export function CodePanel({ jurisdiction = 'California', onSelectArticle }: Code
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
   const resultsRef = useRef<HTMLDivElement>(null)
+
+  // Proactive AI context
+  const backup = getBackupData()
+  const activeJobTypes = [...new Set((backup?.projects || []).filter(p => p.status !== 'completed').map(p => p.type).filter(Boolean))]
+  const ohmContext = activeJobTypes.length > 0
+    ? `Active project types: ${activeJobTypes.join(', ')}. List the most relevant NEC 2023 code articles for these job types. Include article numbers and brief summaries.`
+    : 'No active projects. Provide a quick NEC 2023 reference overview for common residential and commercial electrical work.'
+  const ohmSystem = 'You are OHM, the electrical code compliance coach for Power On Solutions LLC, a California C-10 contractor. Reference NEC 2023 articles specifically. Be concise with article numbers and practical guidance.'
+  const ohm = useProactiveAI('ohm', ohmSystem, ohmContext)
 
   // ── Search Handler ──────────────────────────────────────────────────────
 
@@ -191,6 +203,17 @@ Provide:
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-gray-100">
+      <ProactiveInsightCard
+        agentName="OHM"
+        agentColor="#10b981"
+        response={ohm.response}
+        loading={ohm.loading}
+        error={ohm.error}
+        onRefresh={ohm.refresh}
+        emptyMessage="Search for electrical code articles to get started."
+        systemPrompt={ohmSystem}
+      />
+
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-emerald-400 mb-4">

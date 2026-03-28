@@ -13,7 +13,9 @@ import { FileText, Plus, Filter, Loader2, Search } from 'lucide-react'
 import { clsx } from 'clsx'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
-import { getBackupData, mapBackupInvoices } from '@/services/backupDataService'
+import { getBackupData, mapBackupInvoices, num, fmt } from '@/services/backupDataService'
+import { useProactiveAI } from '@/hooks/useProactiveAI'
+import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,6 +62,17 @@ export function InvoicePanel({ onSelectInvoice, selectedInvoiceId }: InvoicePane
   const [error, setError] = useState<string | null>(null)
 
   const orgId = profile?.org_id
+
+  // ── Proactive AI Context ────────────────────────────────────────────────────
+  const backup = getBackupData()
+  const serviceLogs = backup?.serviceLogs || []
+  const overdue30 = serviceLogs.filter(s => num(s.quoted) > 0 && num(s.collected) === 0 && s.date && new Date(s.date) < new Date(Date.now() - 30 * 86400000))
+  const overdue60 = serviceLogs.filter(s => num(s.quoted) > 0 && num(s.collected) === 0 && s.date && new Date(s.date) < new Date(Date.now() - 60 * 86400000))
+  const overdue90 = serviceLogs.filter(s => num(s.quoted) > 0 && num(s.collected) === 0 && s.date && new Date(s.date) < new Date(Date.now() - 90 * 86400000))
+  const totalOutstanding = serviceLogs.reduce((sum, s) => sum + Math.max(0, num(s.quoted) - num(s.collected)), 0)
+  const ledgerContext = `AR Aging: $${totalOutstanding.toFixed(0)} total outstanding. 30+ days: ${overdue30.length} invoices. 60+ days: ${overdue60.length}. 90+ days: ${overdue90.length}. Total service logs: ${serviceLogs.length}. Analyze AR aging and recommend collection actions.`
+  const ledgerSystem = 'You are LEDGER, the financial tracking agent for Power On Solutions LLC. Analyze accounts receivable aging, flag overdue invoices, and recommend collection priorities. Be specific with dollar amounts and customer names when possible.'
+  const ledger = useProactiveAI('ledger', ledgerSystem, ledgerContext, serviceLogs.length > 0)
 
   // ── Fetch invoices ─────────────────────────────────────────────────────────
   const fetchInvoices = useCallback(async () => {
@@ -148,6 +161,17 @@ export function InvoicePanel({ onSelectInvoice, selectedInvoiceId }: InvoicePane
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-bg-1">
+      <ProactiveInsightCard
+        agentName="LEDGER"
+        agentColor="#f97316"
+        response={ledger.response}
+        loading={ledger.loading}
+        error={ledger.error}
+        onRefresh={ledger.refresh}
+        emptyMessage="No invoices yet. Once you log service calls I'll track your AR aging."
+        systemPrompt={ledgerSystem}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-bg-4 bg-bg-1 backdrop-blur-sm">
         <div className="flex items-center gap-3">

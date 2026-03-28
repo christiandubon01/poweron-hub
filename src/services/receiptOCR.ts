@@ -10,6 +10,7 @@
 
 import type { ParsedLineItem, ParsedReceipt } from './receiptParser'
 import { detectSource } from './receiptParser'
+import { callClaude, extractText } from './claudeProxy'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,42 +27,24 @@ export async function scanReceiptImage(
   base64Image: string,
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp' = 'image/jpeg'
 ): Promise<OCRResult> {
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
-
-  if (!apiKey || apiKey === 'sk-ant-api03-...') {
-    return {
-      success: false,
-      receipt: null,
-      error: 'Anthropic API key not configured. Set VITE_ANTHROPIC_API_KEY in .env.local',
-    }
-  }
-
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mimeType,
-                data: base64Image,
-              },
+    const result = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mimeType,
+              data: base64Image,
             },
-            {
-              type: 'text',
-              text: `Extract all line items from this receipt. Return ONLY a JSON object (no markdown, no explanation) with this structure:
+          },
+          {
+            type: 'text',
+            text: `Extract all line items from this receipt. Return ONLY a JSON object (no markdown, no explanation) with this structure:
 
 {
   "store_name": "Store Name",
@@ -83,23 +66,12 @@ Rules:
 - If you can't read a value, use null
 - receipt_date should be in YYYY-MM-DD format
 - Return ONLY the JSON object, nothing else`,
-            },
-          ],
-        }],
-      }),
+          },
+        ],
+      }],
     })
 
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        receipt: null,
-        error: `Claude API error (${response.status}): ${errText.slice(0, 200)}`,
-      }
-    }
-
-    const data = await response.json()
-    const text = data.content?.[0]?.text || ''
+    const text = extractText(result)
 
     // Parse the JSON response
     const parsed = parseClaudeResponse(text)
