@@ -2156,6 +2156,21 @@ export default function V15rFieldLogPanel() {
       <AskAIPanel
         panelName="Field Log"
         insights={generateFieldLogInsights()}
+        dataContext={{
+          projectCount: projects.length,
+          totalFieldLogs: logs.length,
+          totalServiceLogs: serviceLogs.length,
+          recentLogs: logs.slice(-10).map(l => ({
+            date: l.date, projectId: l.projectId, hrs: l.hrs, miles: l.miles, mat: l.mat, notes: l.notes,
+          })),
+          recentServiceLogs: serviceLogs.slice(-10).map(s => ({
+            date: s.date, customer: s.customer, jtype: s.jtype, quoted: s.quoted,
+            collected: s.collected, payStatus: s.payStatus, balanceDue: s.balanceDue,
+          })),
+          triggerRuleCount: triggerRules.length,
+          dayTarget,
+          employeeCount: employees.length,
+        }}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
       />

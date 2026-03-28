@@ -705,6 +705,19 @@ export default function V15rLeadsPanel() {
       <AskAIPanel
         panelName="Leads"
         insights={generateLeadsInsights()}
+        dataContext={{
+          gcContactCount: gcContacts.length,
+          gcContacts: gcContacts.slice(0, 20).map(c => ({
+            company: c.company, contact: c.contact, status: c.status,
+            lastContact: c.lastContact, nextFollowUp: c.nextFollowUp,
+          })),
+          serviceLeadCount: serviceLeads.length,
+          serviceLeads: serviceLeads.slice(0, 20).map(l => ({
+            name: l.name, source: l.source, status: l.status,
+            lastContact: l.lastContact, value: l.value,
+          })),
+          weeklyReviewCount: weeklyReviews.length,
+        }}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
       />

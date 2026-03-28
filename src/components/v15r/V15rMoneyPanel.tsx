@@ -784,6 +784,22 @@ export default function V15rMoneyPanel() {
       <AskAIPanel
         panelName="Money"
         insights={generateMoneyInsights()}
+        dataContext={{
+          totalPipeline,
+          totalCollected,
+          grossMarginPct,
+          balanceLeft,
+          totalMatCost,
+          totalLaborCost,
+          totalMileageCost,
+          combinedTotalCost,
+          activeProjects: projectMoney.length,
+          highExposureProjects: projectMoney.filter(m => {
+            const exposure = m.p.contract ? (m.unbilled / m.p.contract) * 100 : 0
+            return exposure > 50
+          }).map(m => ({ name: m.p.name, unbilled: m.unbilled, contract: m.p.contract })),
+          serviceTotals: { quoted: svcQuoted, collected: svcCollected, outstanding: svcOutstanding },
+        }}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
       />

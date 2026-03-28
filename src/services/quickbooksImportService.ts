@@ -289,3 +289,208 @@ export async function processBatch(
 
   return items
 }
+
+// ── QBO CSV/Excel Export Parsing ─────────────────────────────────────────
+
+/**
+ * Parsed row from QBO Invoice List or Payments export.
+ */
+export interface QBOParsedRow {
+  customer: string
+  invoiceNumber: string
+  invoiceDate: string
+  dueDate: string
+  amount: number
+  balance: number
+  status: 'Paid' | 'Partial' | 'Open' | 'Voided'
+  transactionType: string
+  memo: string
+}
+
+/**
+ * Parse a QBO CSV text (Invoice List or Payments format).
+ * Returns an array of parsed rows, skipping voided and zero-amount rows.
+ *
+ * Invoice List headers: Date, Transaction type, Num, Name, Memo/Description, Due date, Amount, Open balance
+ * Payments format: customer name is a grouped header row, then Date, Transaction type, Memo/Description, Transaction number, Amount
+ */
+export function parseQBOCSV(csvText: string): QBOParsedRow[] {
+  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  if (lines.length < 2) return []
+
+  const results: QBOParsedRow[] = []
+
+  // Detect format by checking header row
+  const headerLine = lines[0].toLowerCase()
+  const isInvoiceList = headerLine.includes('num') && headerLine.includes('name') && headerLine.includes('open balance')
+
+  if (isInvoiceList) {
+    // ── Invoice List format ──────────────────────────────────────────
+    const headers = parseCSVLine(lines[0])
+    const colMap = mapQBOHeaders(headers)
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i])
+      if (cols.length < 3) continue
+
+      const memo = getCol(cols, colMap, 'memo') || ''
+      const amount = parseFloat(getCol(cols, colMap, 'amount') || '0') || 0
+      const balance = parseFloat(getCol(cols, colMap, 'balance') || '0') || 0
+
+      // Skip voided rows
+      if (memo.toLowerCase().includes('voided')) continue
+      // Skip zero-amount rows
+      if (amount === 0) continue
+
+      const status = balance === 0 ? 'Paid' : (balance < amount ? 'Partial' : 'Open')
+
+      results.push({
+        customer: getCol(cols, colMap, 'name') || 'Unknown',
+        invoiceNumber: getCol(cols, colMap, 'num') || '',
+        invoiceDate: getCol(cols, colMap, 'date') || '',
+        dueDate: getCol(cols, colMap, 'dueDate') || '',
+        amount,
+        balance,
+        status,
+        transactionType: getCol(cols, colMap, 'transactionType') || 'Invoice',
+        memo,
+      })
+    }
+  } else {
+    // ── Payments format ──────────────────────────────────────────────
+    // Customer name as grouped header row, then data rows
+    let currentCustomer = ''
+
+    for (let i = 0; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i])
+
+      // Skip header rows (contain "Date" and "Transaction type")
+      if (cols[0]?.toLowerCase() === 'date' && cols.length >= 3) continue
+
+      // If the line has only 1 populated column and doesn't look like a date, it's a customer group header
+      const populatedCols = cols.filter(c => c.trim() !== '')
+      if (populatedCols.length === 1 && !looksLikeDate(cols[0])) {
+        currentCustomer = cols[0].trim()
+        continue
+      }
+
+      // Data row: Date, Transaction type, Memo/Description, Transaction number, Amount
+      if (cols.length >= 5 && looksLikeDate(cols[0])) {
+        const memo = cols[2] || ''
+        const amount = parseFloat(cols[4] || '0') || 0
+
+        if (memo.toLowerCase().includes('voided')) continue
+        if (amount === 0) continue
+
+        results.push({
+          customer: currentCustomer || 'Unknown',
+          invoiceNumber: cols[3] || '',
+          invoiceDate: cols[0] || '',
+          dueDate: '',
+          amount,
+          balance: 0,
+          status: 'Paid',
+          transactionType: cols[1] || 'Payment',
+          memo,
+        })
+      }
+    }
+  }
+
+  return results
+}
+
+// ── CSV line parser (handles quoted fields) ──────────────────────────────
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"'
+        i++
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current.trim())
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  result.push(current.trim())
+  return result
+}
+
+function looksLikeDate(val: string): boolean {
+  if (!val) return false
+  return /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(val.trim()) || /^\d{4}-\d{2}-\d{2}$/.test(val.trim())
+}
+
+interface QBOColMap {
+  date: number
+  transactionType: number
+  num: number
+  name: number
+  memo: number
+  dueDate: number
+  amount: number
+  balance: number
+}
+
+function mapQBOHeaders(headers: string[]): QBOColMap {
+  const map: QBOColMap = { date: -1, transactionType: -1, num: -1, name: -1, memo: -1, dueDate: -1, amount: -1, balance: -1 }
+  headers.forEach((h, i) => {
+    const lh = h.toLowerCase().trim()
+    if (lh === 'date') map.date = i
+    else if (lh === 'transaction type' || lh === 'type') map.transactionType = i
+    else if (lh === 'num' || lh === 'number') map.num = i
+    else if (lh === 'name' || lh === 'customer') map.name = i
+    else if (lh.includes('memo') || lh.includes('description')) map.memo = i
+    else if (lh === 'due date' || lh === 'due') map.dueDate = i
+    else if (lh === 'amount' || lh === 'total') map.amount = i
+    else if (lh.includes('open balance') || lh === 'balance') map.balance = i
+  })
+  return map
+}
+
+function getCol(cols: string[], map: QBOColMap, field: keyof QBOColMap): string {
+  const idx = map[field]
+  return idx >= 0 && idx < cols.length ? cols[idx] : ''
+}
+
+/**
+ * Map parsed QBO rows to app_state service log entries.
+ */
+export function mapQBORowsToServiceLogs(rows: QBOParsedRow[]): Partial<BackupServiceLog>[] {
+  return rows.map(row => {
+    const collected = row.amount - row.balance
+    let payStatus = 'N'
+    if (row.status === 'Paid') payStatus = 'Y'
+    else if (row.status === 'Partial') payStatus = 'P'
+
+    return {
+      id: 'svc' + Date.now() + Math.random().toString(36).slice(2, 6),
+      date: row.invoiceDate || new Date().toISOString().slice(0, 10),
+      customer: row.customer,
+      address: '',
+      jtype: 'Other',
+      hrs: 0,
+      miles: 0,
+      quoted: row.amount,
+      mat: 0,
+      collected,
+      payStatus,
+      balanceDue: row.balance,
+      store: '',
+      notes: row.memo || `Invoice #${row.invoiceNumber}`,
+      adjustments: [],
+      source: 'quickbooks_csv_import',
+    }
+  })
+}

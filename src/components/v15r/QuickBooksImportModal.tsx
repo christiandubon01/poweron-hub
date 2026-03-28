@@ -17,7 +17,10 @@ import {
   mapToServiceLog,
   mapToProject,
   logImport,
+  parseQBOCSV,
+  mapQBORowsToServiceLogs,
   type QBExtractedData,
+  type QBOParsedRow,
 } from '@/services/quickbooksImportService'
 import { getBackupData, saveBackupData, num, fmt } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
@@ -33,12 +36,17 @@ interface QuickBooksImportModalProps {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function QuickBooksImportModal({ mode, onClose, onImported }: QuickBooksImportModalProps) {
-  const [step, setStep] = useState<'upload' | 'extracting' | 'review' | 'error'>('upload')
+  const [step, setStep] = useState<'upload' | 'extracting' | 'review' | 'csvPreview' | 'error'>('upload')
   const [extracted, setExtracted] = useState<QBExtractedData | null>(null)
   const [error, setError] = useState('')
   const [showRawJson, setShowRawJson] = useState(false)
   const [filename, setFilename] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const csvInputRef = useRef<HTMLInputElement>(null)
+
+  // CSV import state
+  const [csvRows, setCsvRows] = useState<QBOParsedRow[]>([])
+  const [csvSelected, setCsvSelected] = useState<Set<number>>(new Set())
 
   // Editable pre-filled fields (service mode)
   const [sCustomer, setSCustomer] = useState('')
@@ -62,7 +70,56 @@ export default function QuickBooksImportModal({ mode, onClose, onImported }: Qui
     'Warranty', 'Other'
   ]
 
-  // ── Handle file selection ──────────────────────────────────────────────────
+  // ── Handle CSV/Excel file selection ──────────────────────────────────────
+
+  async function handleCSVSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setFilename(file.name)
+    setError('')
+
+    try {
+      const text = await file.text()
+      const rows = parseQBOCSV(text)
+      if (rows.length === 0) {
+        setError('No valid invoice/payment rows found in this file. Expected QBO export format.')
+        setStep('error')
+        return
+      }
+      setCsvRows(rows)
+      // Select all rows by default
+      setCsvSelected(new Set(rows.map((_, i) => i)))
+      setStep('csvPreview')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setStep('error')
+    }
+  }
+
+  // ── Save CSV rows to app ──────────────────────────────────────────────────
+
+  function handleSaveCSVToApp() {
+    const backup = getBackupData()
+    if (!backup) return
+
+    pushState()
+
+    const selectedRows = csvRows.filter((_, i) => csvSelected.has(i))
+    const entries = mapQBORowsToServiceLogs(selectedRows)
+
+    if (!backup.serviceLogs) backup.serviceLogs = []
+    entries.forEach(entry => backup.serviceLogs.push(entry))
+
+    logImport(backup, 'pdf', filename, entries.length, 'invoice', `${entries.length} rows`, entries.reduce((s, e) => s + num(e.quoted), 0))
+
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    onImported()
+    onClose()
+  }
+
+  // ── Handle PDF file selection ──────────────────────────────────────────────
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -234,31 +291,64 @@ export default function QuickBooksImportModal({ mode, onClose, onImported }: Qui
             </button>
           </div>
 
-          <div
-            style={{
-              border: '2px dashed rgba(99,102,241,0.4)',
-              borderRadius: '8px',
-              padding: '40px 20px',
-              textAlign: 'center',
-              cursor: 'pointer',
-              transition: 'border-color 0.2s',
-            }}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Upload size={32} style={{ color: '#6366f1', margin: '0 auto 12px' }} />
-            <p style={{ color: '#e5e7eb', fontWeight: '600', margin: '0 0 6px 0' }}>
-              Click to select a QuickBooks PDF
-            </p>
-            <p style={{ color: '#6b7280', fontSize: '12px', margin: 0 }}>
-              {mode === 'service' ? 'Invoice PDF → pre-fill Service Log entry' : 'Estimate PDF → pre-fill New Project'}
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf"
-              onChange={handleFileSelect}
-              style={{ display: 'none' }}
-            />
+          <div style={{ display: 'flex', gap: '12px' }}>
+            {/* PDF upload */}
+            <div
+              style={{
+                flex: 1,
+                border: '2px dashed rgba(99,102,241,0.4)',
+                borderRadius: '8px',
+                padding: '30px 16px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'border-color 0.2s',
+              }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <FileText size={28} style={{ color: '#6366f1', margin: '0 auto 10px' }} />
+              <p style={{ color: '#e5e7eb', fontWeight: '600', margin: '0 0 6px 0', fontSize: '14px' }}>
+                Import PDF
+              </p>
+              <p style={{ color: '#6b7280', fontSize: '11px', margin: 0 }}>
+                QuickBooks PDF invoice or estimate
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+            </div>
+
+            {/* CSV/Excel upload */}
+            <div
+              style={{
+                flex: 1,
+                border: '2px dashed rgba(16,185,129,0.4)',
+                borderRadius: '8px',
+                padding: '30px 16px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'border-color 0.2s',
+              }}
+              onClick={() => csvInputRef.current?.click()}
+            >
+              <Upload size={28} style={{ color: '#10b981', margin: '0 auto 10px' }} />
+              <p style={{ color: '#e5e7eb', fontWeight: '600', margin: '0 0 6px 0', fontSize: '14px' }}>
+                Import CSV / Excel
+              </p>
+              <p style={{ color: '#6b7280', fontSize: '11px', margin: 0 }}>
+                QBO export: Invoice List or Payments
+              </p>
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,.tsv,.txt"
+                onChange={handleCSVSelect}
+                style={{ display: 'none' }}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -587,6 +677,140 @@ export default function QuickBooksImportModal({ mode, onClose, onImported }: Qui
             >
               <Check size={14} />
               Save to App
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                padding: '10px 16px',
+                backgroundColor: '#232738',
+                color: '#9ca3af',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '6px',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── CSV PREVIEW STEP ──────────────────────────────────────────────────────
+
+  if (step === 'csvPreview') {
+    const selectedCount = csvSelected.size
+    const selectedTotal = csvRows.filter((_, i) => csvSelected.has(i)).reduce((s, r) => s + r.amount, 0)
+
+    return (
+      <div style={modalBg}>
+        <div style={{ ...modalBox, maxWidth: '800px' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div>
+              <h3 style={{ color: '#e5e7eb', fontWeight: '700', fontSize: '16px', margin: 0 }}>
+                Review QBO Import ({csvRows.length} rows)
+              </h3>
+              <p style={{ color: '#6b7280', fontSize: '11px', margin: '4px 0 0 0' }}>
+                <FileText size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> {filename} — {selectedCount} selected — ${selectedTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </p>
+            </div>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Preview table */}
+          <div style={{ overflowX: 'auto', maxHeight: '50vh', overflowY: 'auto', marginBottom: '16px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', position: 'sticky', top: 0, backgroundColor: '#1a1d27' }}>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>
+                    <input
+                      type="checkbox"
+                      checked={csvSelected.size === csvRows.length}
+                      onChange={() => {
+                        if (csvSelected.size === csvRows.length) setCsvSelected(new Set())
+                        else setCsvSelected(new Set(csvRows.map((_, i) => i)))
+                      }}
+                    />
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>Customer</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>Invoice #</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>Date</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'right', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>Amount</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'right', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>Balance</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'center', color: '#9ca3af', fontWeight: '600', fontSize: '10px', textTransform: 'uppercase' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {csvRows.map((row, i) => (
+                  <tr
+                    key={i}
+                    style={{
+                      borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      opacity: csvSelected.has(i) ? 1 : 0.4,
+                    }}
+                  >
+                    <td style={{ padding: '6px' }}>
+                      <input
+                        type="checkbox"
+                        checked={csvSelected.has(i)}
+                        onChange={() => {
+                          const next = new Set(csvSelected)
+                          if (next.has(i)) next.delete(i)
+                          else next.add(i)
+                          setCsvSelected(next)
+                        }}
+                      />
+                    </td>
+                    <td style={{ padding: '6px', color: '#e5e7eb' }}>{row.customer}</td>
+                    <td style={{ padding: '6px', color: '#9ca3af' }}>{row.invoiceNumber}</td>
+                    <td style={{ padding: '6px', color: '#9ca3af' }}>{row.invoiceDate}</td>
+                    <td style={{ padding: '6px', color: '#e5e7eb', textAlign: 'right', fontFamily: 'monospace' }}>${row.amount.toFixed(2)}</td>
+                    <td style={{ padding: '6px', color: row.balance > 0 ? '#fbbf24' : '#9ca3af', textAlign: 'right', fontFamily: 'monospace' }}>${row.balance.toFixed(2)}</td>
+                    <td style={{ padding: '6px', textAlign: 'center' }}>
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: '600',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        color: row.status === 'Paid' ? '#10b981' : row.status === 'Partial' ? '#fbbf24' : '#ef4444',
+                        backgroundColor: row.status === 'Paid' ? 'rgba(16,185,129,0.1)' : row.status === 'Partial' ? 'rgba(251,191,36,0.1)' : 'rgba(239,68,68,0.1)',
+                      }}>
+                        {row.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleSaveCSVToApp}
+              disabled={selectedCount === 0}
+              style={{
+                flex: 1,
+                padding: '10px 16px',
+                backgroundColor: selectedCount > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(107,114,128,0.2)',
+                color: selectedCount > 0 ? '#10b981' : '#6b7280',
+                border: `1px solid ${selectedCount > 0 ? 'rgba(16,185,129,0.3)' : 'rgba(107,114,128,0.3)'}`,
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: '700',
+                cursor: selectedCount > 0 ? 'pointer' : 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+              }}
+            >
+              <Check size={14} />
+              Import {selectedCount} Record{selectedCount !== 1 ? 's' : ''}
             </button>
             <button
               onClick={onClose}

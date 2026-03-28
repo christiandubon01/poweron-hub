@@ -194,6 +194,24 @@ export class VoiceSubsystem {
   async startRecording(mode: VoiceMode = 'normal'): Promise<void> {
     if (this.status === 'recording') return
 
+    // Guard: require HTTPS (or localhost for dev)
+    const proto = window.location.protocol
+    const host = window.location.hostname
+    if (proto !== 'https:' && host !== 'localhost' && host !== '127.0.0.1') {
+      console.error('[Voice] Microphone requires HTTPS')
+      this.setStatus('error')
+      this.emit('error', { error: 'Microphone requires a secure connection (HTTPS). Please access the app via HTTPS.' })
+      return
+    }
+
+    // Guard: navigator.mediaDevices must exist
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error('[Voice] navigator.mediaDevices not available')
+      this.setStatus('error')
+      this.emit('error', { error: 'Microphone not available — please use HTTPS or grant microphone permission in your browser settings.' })
+      return
+    }
+
     try {
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -241,9 +259,14 @@ export class VoiceSubsystem {
 
       console.log(`[Voice] Recording started (mode: ${mode})`)
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      const isPermissionDenied = errMsg.includes('Permission') || errMsg.includes('NotAllowedError') || errMsg.includes('permission')
+      const userMessage = isPermissionDenied
+        ? 'Microphone access blocked. Tap the lock icon in your browser and allow microphone.'
+        : `Microphone error: ${errMsg}`
       console.error('[Voice] Failed to start recording:', err)
       this.setStatus('error')
-      this.emit('error', { error: 'Microphone access denied' })
+      this.emit('error', { error: userMessage, permissionDenied: isPermissionDenied })
     }
   }
 

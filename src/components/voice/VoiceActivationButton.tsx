@@ -26,6 +26,10 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const [status, setStatus] = useState<VoiceSessionStatus>('inactive')
   const [initialized, setInitialized] = useState(false)
   const [errorFlash, setErrorFlash] = useState(false)
+  const [permissionError, setPermissionError] = useState('')
+
+  // Detect iOS Safari for platform-specific guidance
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
   // Initialize voice subsystem
   useEffect(() => {
@@ -49,13 +53,22 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       if (event.type === 'error') {
         setErrorFlash(true)
         setTimeout(() => setErrorFlash(false), 2000)
+
+        const errData = event.data as { error?: string; permissionDenied?: boolean } | undefined
+        if (errData?.permissionDenied || errData?.error?.includes('blocked') || errData?.error?.includes('Microphone')) {
+          const msg = isIOS
+            ? 'On iPhone/iPad: Settings \u2192 Safari \u2192 Microphone \u2192 Allow for this site'
+            : (errData?.error || 'Microphone access blocked. Tap the lock icon in your browser and allow microphone.')
+          setPermissionError(msg)
+          setTimeout(() => setPermissionError(''), 8000)
+        }
       }
     })
 
     return () => {
       unsub()
     }
-  }, [user?.id, profile?.org_id])
+  }, [user?.id, profile?.org_id, isIOS])
 
   const handlePress = useCallback(async () => {
     const voice = getVoiceSubsystem()
@@ -91,78 +104,88 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const isIdle = status === 'inactive' || status === 'complete'
 
   return (
-    <button
-      onClick={handlePress}
-      disabled={isProcessing}
-      className={clsx(
-        'fixed bottom-6 right-6 z-50',
-        'w-14 h-14 rounded-full shadow-lg',
-        'flex items-center justify-center',
-        'transition-all duration-300 ease-out',
-        'focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900',
+    <>
+      <button
+        onClick={handlePress}
+        disabled={isProcessing}
+        className={clsx(
+          'fixed bottom-6 right-6 z-50',
+          'w-14 h-14 rounded-full shadow-lg',
+          'flex items-center justify-center',
+          'transition-all duration-300 ease-out',
+          'focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900',
 
-        // State-based styles
-        isIdle && !errorFlash && 'bg-emerald-600 hover:bg-emerald-500 focus:ring-emerald-500 text-white',
-        isListening && 'bg-emerald-600 text-white',
-        isRecording && 'bg-red-600 hover:bg-red-500 focus:ring-red-500 text-white scale-110',
-        isProcessing && 'bg-gray-700 text-gray-300 cursor-wait',
-        isSpeaking && 'bg-cyan-600 hover:bg-cyan-500 focus:ring-cyan-500 text-white',
-        errorFlash && 'bg-red-700 text-white animate-pulse',
+          // State-based styles
+          isIdle && !errorFlash && !permissionError && 'bg-emerald-600 hover:bg-emerald-500 focus:ring-emerald-500 text-white',
+          isListening && 'bg-emerald-600 text-white',
+          isRecording && 'bg-red-600 hover:bg-red-500 focus:ring-red-500 text-white scale-110',
+          isProcessing && 'bg-gray-700 text-gray-300 cursor-wait',
+          isSpeaking && 'bg-cyan-600 hover:bg-cyan-500 focus:ring-cyan-500 text-white',
+          errorFlash && 'bg-red-700 text-white animate-pulse',
+          permissionError && 'ring-2 ring-red-500 bg-red-700 text-white',
 
-        className,
-      )}
-      aria-label={getAriaLabel(status)}
-      title={getTooltip(status)}
-    >
-      {/* Pulse ring for listening/recording */}
-      {(isListening || isRecording) && (
-        <span
-          className={clsx(
-            'absolute inset-0 rounded-full animate-ping',
-            isRecording ? 'bg-red-500/40' : 'bg-emerald-500/30',
-          )}
-        />
-      )}
-
-      {/* Waveform bars for speaking */}
-      {isSpeaking && (
-        <span className="absolute inset-0 flex items-center justify-center gap-[2px]">
-          {[0, 1, 2, 3, 4].map((i) => (
-            <span
-              key={i}
-              className="w-[3px] bg-white/40 rounded-full"
-              style={{
-                height: '40%',
-                animation: `voiceWave 0.6s ease-in-out ${i * 0.1}s infinite alternate`,
-              }}
-            />
-          ))}
-        </span>
-      )}
-
-      {/* Icon */}
-      <span className="relative z-10">
-        {isProcessing ? (
-          <Loader2 className="w-6 h-6 animate-spin" />
-        ) : isSpeaking ? (
-          <Volume2 className="w-6 h-6" />
-        ) : errorFlash ? (
-          <AlertCircle className="w-6 h-6" />
-        ) : isRecording ? (
-          <MicOff className="w-6 h-6" />
-        ) : (
-          <Mic className="w-6 h-6" />
+          className,
         )}
-      </span>
+        aria-label={getAriaLabel(status)}
+        title={getTooltip(status)}
+      >
+        {/* Pulse ring for listening/recording */}
+        {(isListening || isRecording) && (
+          <span
+            className={clsx(
+              'absolute inset-0 rounded-full animate-ping',
+              isRecording ? 'bg-red-500/40' : 'bg-emerald-500/30',
+            )}
+          />
+        )}
 
-      {/* Inline keyframe styles for waveform animation */}
-      <style>{`
-        @keyframes voiceWave {
-          0% { height: 20%; }
-          100% { height: 80%; }
-        }
-      `}</style>
-    </button>
+        {/* Waveform bars for speaking */}
+        {isSpeaking && (
+          <span className="absolute inset-0 flex items-center justify-center gap-[2px]">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <span
+                key={i}
+                className="w-[3px] bg-white/40 rounded-full"
+                style={{
+                  height: '40%',
+                  animation: `voiceWave 0.6s ease-in-out ${i * 0.1}s infinite alternate`,
+                }}
+              />
+            ))}
+          </span>
+        )}
+
+        {/* Icon */}
+        <span className="relative z-10">
+          {isProcessing ? (
+            <Loader2 className="w-6 h-6 animate-spin" />
+          ) : isSpeaking ? (
+            <Volume2 className="w-6 h-6" />
+          ) : errorFlash ? (
+            <AlertCircle className="w-6 h-6" />
+          ) : isRecording ? (
+            <MicOff className="w-6 h-6" />
+          ) : (
+            <Mic className="w-6 h-6" />
+          )}
+        </span>
+
+        {/* Inline keyframe styles for waveform animation */}
+        <style>{`
+          @keyframes voiceWave {
+            0% { height: 20%; }
+            100% { height: 80%; }
+          }
+        `}</style>
+      </button>
+
+      {/* Permission error tooltip below button */}
+      {permissionError && (
+        <div className="fixed bottom-[88px] right-4 z-50 max-w-[260px] bg-red-900/95 border border-red-500/50 rounded-lg px-3 py-2 shadow-xl">
+          <p className="text-[11px] text-red-200 leading-snug m-0">{permissionError}</p>
+        </div>
+      )}
+    </>
   )
 }
 

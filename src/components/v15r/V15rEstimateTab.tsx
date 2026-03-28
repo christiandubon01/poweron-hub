@@ -1051,6 +1051,22 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       <AskAIPanel
         panelName="Estimate"
         insights={generateEstimateInsights()}
+        dataContext={(() => {
+          const t = estTotals()
+          return {
+            projectName: p?.name || '',
+            contract: num(p?.contract || 0),
+            laborCost: t.lab,
+            materialCost: t.matC,
+            overheadCost: t.oh,
+            mileageCost: t.mi,
+            totalCost: t.total,
+            profit: t.profit,
+            marginPct: t.marginPct,
+            laborHours: (p?.laborRows || []).reduce((s, r) => s + num(r.hrs), 0),
+            materialLineItems: (p?.mtoRows || []).length,
+          }
+        })()}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
       />
