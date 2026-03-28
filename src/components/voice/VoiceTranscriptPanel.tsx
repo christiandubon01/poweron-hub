@@ -178,7 +178,7 @@ function generateSessionSummary(entries: TranscriptEntry[]): string {
 }
 
 // Component
-const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
+export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
   isOpen,
   onClose,
   onMinimize,
