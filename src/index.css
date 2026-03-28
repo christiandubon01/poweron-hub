@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base resets ─────────────────────────────────────────────────────────── */
+@layer base {
+  :root {
+    --bg-primary: #0f1117;
+    --bg-secondary: #1a1d27;
+    --bg-card: #232738;
+    --bg-input: #1e2130;
+    --text-primary: #ffffff;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --border-primary: #374151;
+    --border-secondary: #2d3748;
+    --accent-green: #10b981;
+  }
+
+  [data-theme="light"] {
+    --bg-primary: #f8fafc;
+    --bg-secondary: #ffffff;
+    --bg-card: #f1f5f9;
+    --bg-input: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --border-primary: #e2e8f0;
+    --border-secondary: #cbd5e1;
+    --accent-green: #059669;
+  }
+
+  html, body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-secondary);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-primary);
+  }
+
+  /* Selection */
+  ::selection {
+    background: rgba(46, 232, 154, 0.2);
+    color: #F0F0FF;
+  }
+}
+
+/* ── Utility classes matching the blueprint design system ─────────────────── */
+@layer utilities {
+  /* Gradient text — used for hero headings */
+  .text-gradient {
+    background: linear-gradient(135deg, #F0F0FF 0%, #A8A8C0 55%, #2EE89A 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Glow borders */
+  .border-glow-green {
+    box-shadow: 0 0 0 1px rgba(46, 232, 154, 0.25),
+                0 0 20px rgba(46, 232, 154, 0.1);
+  }
+
+  /* Glass panels */
+  .glass {
+    background: rgba(17, 17, 22, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* Monospace numbers */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+/* ── Agent color utilities (not in Tailwind default) ──────────────────────── */
+@layer components {
+  .agent-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest;
+  }
+  .agent-badge-green  { @apply bg-green-subtle  border border-green-border  text-green;   }
+  .agent-badge-gold   { @apply bg-gold-subtle   border border-gold/20      text-gold;    }
+  .agent-badge-blue   { @apply bg-blue-subtle   border border-blue/20      text-blue;    }
+  .agent-badge-purple { @apply bg-purple-subtle border border-purple/20    text-purple;  }
+  .agent-badge-teal   { @apply bg-teal-subtle   border border-teal/20      text-teal;    }
+
+  /* Card */
+  .card {
+    @apply bg-bg-2 border border-bg-4 rounded-2xl;
+  }
+  .card-hover {
+    @apply transition-all duration-200 hover:border-bg-5 hover:-translate-y-0.5 hover:shadow-card-hover;
+  }
+
+  /* Input with theme support */
+  .theme-input {
+    background-color: var(--bg-input);
+    border-color: var(--border-secondary);
+    color: var(--text-primary);
+  }
+  .theme-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  /* Card with theme support */
+  .theme-card {
+    background-color: var(--bg-card);
+    border-color: var(--border-secondary);
+  }
+}

@@ -1,0 +1,4436 @@
+{
+  "projects": [
+    {
+      "id": "p1",
+      "name": "Palm Springs ADU + Panel Upgrade",
+      "type": "residential_new",
+      "status": "coming",
+      "contract": 12900,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 12900,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-001",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "ADU New Construction",
+      "lastMove": "2026-02-09",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p2",
+      "name": "Surgery Center",
+      "type": "commercial_ti",
+      "status": "active",
+      "contract": 20000,
+      "finance": {
+        "billedOverride": 0,
+        "lastCollectedAt": "2026-03-26",
+        "matCostOverride": 0,
+        "contractOverride": 20000,
+        "lastCollectedAmount": 5988,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-002",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "Commercial TI",
+      "lastMove": "2026-03-26",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p3",
+      "name": "Beauty Salon",
+      "type": "commercial_ti",
+      "status": "active",
+      "contract": 18000,
+      "finance": {
+        "billedOverride": 5000,
+        "matCostOverride": 0,
+        "contractOverride": 18000,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-003",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "Beauty Salon TI",
+      "lastMove": "2026-03-26",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p4",
+      "name": "Meter Bank Replacement",
+      "type": "residential_service",
+      "status": "coming",
+      "contract": 12000,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 12000,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-004",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "Service Upgrade",
+      "lastMove": "2026-03-26",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p5",
+      "name": "Silvia's Clinic",
+      "type": "residential_service",
+      "status": "completed",
+      "contract": 1100,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 1100,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-005",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "completed",
+          "checklist": [
+            {
+              "item": {
+                "status": "pending",
+                "id": "mn2w2cl7c6rw",
+                "hrs": 1,
+                "pct": 100,
+                "desc": ""
+              },
+              "completed": true
+            }
+          ]
+        },
+        {
+          "name": "Planning",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "completed",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "completed",
+          "checklist": []
+        }
+      ],
+      "templateName": "Service Upgrade",
+      "lastMove": "2026-03-26",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p6",
+      "name": "Solar Installation",
+      "type": "solar",
+      "status": "coming",
+      "contract": 2300,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 2300,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-006",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "Commercial TI",
+      "lastMove": "2026-02-01",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p7",
+      "name": "Sliding Gate Operator",
+      "type": "commercial_ti",
+      "status": "coming",
+      "contract": 3500,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 3500,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-007",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "Commercial TI",
+      "lastMove": "2026-01-22",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p8",
+      "name": "Trailer Remodel + New Service Drop",
+      "type": "residential_new",
+      "status": "coming",
+      "contract": 6500,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 6500,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-008",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "ADU New Construction",
+      "lastMove": "2026-02-24",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    },
+    {
+      "id": "p9",
+      "name": "Samer's Pool Equipment",
+      "type": "residential_new",
+      "status": "coming",
+      "contract": 1500,
+      "finance": {
+        "billedOverride": 0,
+        "contractOverride": 1500,
+        "manualPaidAdjustment": 0
+      },
+      "projectCode": "POS-009",
+      "phases": [
+        {
+          "name": "Estimating",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Planning",
+          "status": "in_progress",
+          "checklist": []
+        },
+        {
+          "name": "Site Prep",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Rough-in",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Trim",
+          "status": "pending",
+          "checklist": []
+        },
+        {
+          "name": "Finish",
+          "status": "pending",
+          "checklist": []
+        }
+      ],
+      "templateName": "ADU New Construction",
+      "lastMove": "2026-03-15",
+      "address": null,
+      "description": null,
+      "priority": "normal",
+      "tags": []
+    }
+  ],
+  "priceBook": [
+    {
+      "id": "5401",
+      "name": "Romex 14-2 250ft",
+      "cat": "Wire — Romex",
+      "cost": 109,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%2014-2%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5402",
+      "name": "Romex 14-3 250ft",
+      "cat": "Wire — Romex",
+      "cost": 132,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%2014-3%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5403",
+      "name": "Romex 12-2 250ft",
+      "cat": "Wire — Romex",
+      "cost": 158,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%2012-2%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5404",
+      "name": "Romex 12-3 250ft",
+      "cat": "Wire — Romex",
+      "cost": 215,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%2012-3%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5405",
+      "name": "Romex 10-2 100ft",
+      "cat": "Wire — Romex",
+      "cost": 88,
+      "unit": "RL",
+      "pack": 100,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%2010-2%20100ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5406",
+      "name": "Romex 10-3 100ft",
+      "cat": "Wire — Romex",
+      "cost": 112,
+      "unit": "RL",
+      "pack": 100,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%2010-3%20100ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5407",
+      "name": "Romex 8-2 125ft",
+      "cat": "Wire — Romex",
+      "cost": 195,
+      "unit": "RL",
+      "pack": 125,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%208-2%20125ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5408",
+      "name": "Romex 8-3 125ft",
+      "cat": "Wire — Romex",
+      "cost": 265,
+      "unit": "RL",
+      "pack": 125,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%208-3%20125ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5409",
+      "name": "Romex 6-2 125ft",
+      "cat": "Wire — Romex",
+      "cost": 298,
+      "unit": "RL",
+      "pack": 125,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%206-2%20125ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5410",
+      "name": "Romex 6-3 125ft",
+      "cat": "Wire — Romex",
+      "cost": 398,
+      "unit": "RL",
+      "pack": 125,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Romex%206-3%20125ft",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "1",
+      "name": "UF Cable 14-2 250ft",
+      "cat": "Wire — Romex",
+      "cost": 126,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/UF%20Cable%2014-2%20250ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "2",
+      "name": "UF Cable 12-2 250ft",
+      "cat": "Wire — Romex",
+      "cost": 197,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/UF%20Cable%2012-2%20250ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5001",
+      "name": "12 AWG THHN Black 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 132,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/12%20AWG%20THHN%20Black%20500ft",
+      "pidBand": 5000,
+      "pidBlock": 5000
+    },
+    {
+      "id": "5002",
+      "name": "12 AWG THHN White 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 132,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/12%20AWG%20THHN%20White%20500ft",
+      "pidBand": 5000,
+      "pidBlock": 5000
+    },
+    {
+      "id": "5003",
+      "name": "12 AWG THHN Green 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 132,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/12%20AWG%20THHN%20Green%20500ft",
+      "pidBand": 5000,
+      "pidBlock": 5000
+    },
+    {
+      "id": "5004",
+      "name": "10 AWG THHN Black 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 208,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/10%20AWG%20THHN%20Black%20500ft",
+      "pidBand": 5000,
+      "pidBlock": 5000
+    },
+    {
+      "id": "5005",
+      "name": "10 AWG THHN Red 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 208,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/10%20AWG%20THHN%20Red%20500ft",
+      "pidBand": 5000,
+      "pidBlock": 5000
+    },
+    {
+      "id": "3",
+      "name": "8 AWG Stranded 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 415,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/8%20AWG%20Stranded%20500ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "4",
+      "name": "6 AWG Stranded 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 635,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/6%20AWG%20Stranded%20500ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5",
+      "name": "4 AWG Stranded /ft",
+      "cat": "Wire — Stranded",
+      "cost": 2.75,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%204%20AWG%20Stranded%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "6",
+      "name": "2 AWG Stranded /ft",
+      "cat": "Wire — Stranded",
+      "cost": 4.55,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Crawford Electric",
+      "link": "https://www.google.com/search?q=Crawford%20Electric%202%20AWG%20Stranded%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "7",
+      "name": "1/0 AWG Stranded /ft",
+      "cat": "Wire — Stranded",
+      "cost": 6.6,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Crawford Electric",
+      "link": "https://www.google.com/search?q=Crawford%20Electric%201%2F0%20AWG%20Stranded%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "8",
+      "name": "2/0 AWG Stranded /ft",
+      "cat": "Wire — Stranded",
+      "cost": 7.2,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Crawford Electric",
+      "link": "https://www.google.com/search?q=Crawford%20Electric%202%2F0%20AWG%20Stranded%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5201",
+      "name": "14-2 MC Cable 250ft",
+      "cat": "Wire — MC Cable",
+      "cost": 212,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/14-2%20MC%20Cable%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "5202",
+      "name": "14-3 MC Cable 250ft",
+      "cat": "Wire — MC Cable",
+      "cost": 298,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/14-3%20MC%20Cable%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "5203",
+      "name": "12-2 MC Cable 200ft",
+      "cat": "Wire — MC Cable",
+      "cost": 168,
+      "unit": "RL",
+      "pack": 200,
+      "waste": 0.1,
+      "src": "Lowes",
+      "link": "https://www.lowes.com/search?searchTerm=12-2%20MC%20Cable%20200ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "5204",
+      "name": "12-3 MC Cable 250ft",
+      "cat": "Wire — MC Cable",
+      "cost": 278,
+      "unit": "RL",
+      "pack": 250,
+      "waste": 0.1,
+      "src": "Lowes",
+      "link": "https://www.lowes.com/search?searchTerm=12-3%20MC%20Cable%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "8701",
+      "name": "Anti-Short Bushing 3/16 ea",
+      "cat": "Wire — MC Cable",
+      "cost": 0.08,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Anti-Short%20Bushing%203%2F16%20ea",
+      "pidBand": 8000,
+      "pidBlock": 8700
+    },
+    {
+      "id": "5205",
+      "name": "MC Connector 3/8 Single",
+      "cat": "Wire — MC Cable",
+      "cost": 0.9,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20MC%20Connector%203%2F8%20Single",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "5206",
+      "name": "MC Connector 3/8 Double",
+      "cat": "Wire — MC Cable",
+      "cost": 1.3,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20MC%20Connector%203%2F8%20Double",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "4001",
+      "name": "PVC 1/2 10ft",
+      "cat": "Conduit — PVC",
+      "cost": 2.95,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%201%2F2%2010ft",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4002",
+      "name": "PVC 3/4 10ft",
+      "cat": "Conduit — PVC",
+      "cost": 3.65,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%203%2F4%2010ft",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4003",
+      "name": "PVC 1in 10ft",
+      "cat": "Conduit — PVC",
+      "cost": 5.4,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%201in%2010ft",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4004",
+      "name": "PVC 1-1/4 10ft",
+      "cat": "Conduit — PVC",
+      "cost": 7.6,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%201-1%2F4%2010ft",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4005",
+      "name": "PVC 1-1/2 10ft",
+      "cat": "Conduit — PVC",
+      "cost": 15.9,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%201-1%2F2%2010ft",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4006",
+      "name": "PVC 2in 10ft",
+      "cat": "Conduit — PVC",
+      "cost": 12.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%202in%2010ft",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "3001",
+      "name": "EMT 1/2 10ft",
+      "cat": "Conduit — EMT",
+      "cost": 4.2,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/EMT%201%2F2%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3002",
+      "name": "EMT 3/4 10ft",
+      "cat": "Conduit — EMT",
+      "cost": 6.8,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/EMT%203%2F4%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3003",
+      "name": "EMT 1in 10ft",
+      "cat": "Conduit — EMT",
+      "cost": 10.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/EMT%201in%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3004",
+      "name": "EMT 1-1/4 10ft",
+      "cat": "Conduit — EMT",
+      "cost": 16.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/EMT%201-1%2F4%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3005",
+      "name": "EMT 1-1/2 10ft",
+      "cat": "Conduit — EMT",
+      "cost": 22,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/EMT%201-1%2F2%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3006",
+      "name": "EMT 2in 10ft",
+      "cat": "Conduit — EMT",
+      "cost": 34,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.08,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%202in%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3701",
+      "name": "EMT 1/2 Connector Indoor",
+      "cat": "Conduit Fittings",
+      "cost": 0.72,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%201%2F2%20Connector%20Indoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3702",
+      "name": "EMT 3/4 Connector Indoor",
+      "cat": "Conduit Fittings",
+      "cost": 0.98,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%203%2F4%20Connector%20Indoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3703",
+      "name": "EMT 1in Connector Indoor",
+      "cat": "Conduit Fittings",
+      "cost": 1.55,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%201in%20Connector%20Indoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3704",
+      "name": "EMT 1/2 Connector Outdoor",
+      "cat": "Conduit Fittings",
+      "cost": 1.2,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%201%2F2%20Connector%20Outdoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3705",
+      "name": "EMT 3/4 Connector Outdoor",
+      "cat": "Conduit Fittings",
+      "cost": 1.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%203%2F4%20Connector%20Outdoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3706",
+      "name": "EMT 1/2 Coupling",
+      "cat": "Conduit Fittings",
+      "cost": 0.62,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%201%2F2%20Coupling",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3707",
+      "name": "EMT 3/4 Coupling",
+      "cat": "Conduit Fittings",
+      "cost": 0.88,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%203%2F4%20Coupling",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3801",
+      "name": "EMT 1/2 1-Hole Strap",
+      "cat": "Conduit Fittings",
+      "cost": 0.32,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%201%2F2%201-Hole%20Strap",
+      "pidBand": 3000,
+      "pidBlock": 3800
+    },
+    {
+      "id": "3802",
+      "name": "EMT 3/4 1-Hole Strap",
+      "cat": "Conduit Fittings",
+      "cost": 0.48,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20EMT%203%2F4%201-Hole%20Strap",
+      "pidBand": 3000,
+      "pidBlock": 3800
+    },
+    {
+      "id": "4601",
+      "name": "PVC 1/2 Connector",
+      "cat": "Conduit Fittings",
+      "cost": 0.78,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%201%2F2%20Connector",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "4602",
+      "name": "PVC 3/4 Connector",
+      "cat": "Conduit Fittings",
+      "cost": 0.98,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%203%2F4%20Connector",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "4603",
+      "name": "PVC 1/2 Coupling",
+      "cat": "Conduit Fittings",
+      "cost": 0.68,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/PVC%201%2F2%20Coupling",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "9",
+      "name": "Flex 1/2 Connector",
+      "cat": "Conduit Fittings",
+      "cost": 1.15,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Flex%201%2F2%20Connector",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "10",
+      "name": "Flex 3/4 Connector",
+      "cat": "Conduit Fittings",
+      "cost": 1.7,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Flex%203%2F4%20Connector",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "11",
+      "name": "Lock Ring 1/2",
+      "cat": "Conduit Fittings",
+      "cost": 0.68,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Lock%20Ring%201%2F2",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "12",
+      "name": "Lock Ring 3/4",
+      "cat": "Conduit Fittings",
+      "cost": 0.88,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Lock%20Ring%203%2F4",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "3501",
+      "name": "Unistrut 12Ga 10ft",
+      "cat": "Conduit Fittings",
+      "cost": 14.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Unistrut%2012Ga%2010ft",
+      "pidBand": 3000,
+      "pidBlock": 3500
+    },
+    {
+      "id": "3502",
+      "name": "3/4 Pipe Hanger Unistrut",
+      "cat": "Conduit Fittings",
+      "cost": 1.9,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%203%2F4%20Pipe%20Hanger%20Unistrut",
+      "pidBand": 3000,
+      "pidBlock": 3500
+    },
+    {
+      "id": "13",
+      "name": "Flex 1/2 /ft",
+      "cat": "Conduit — Flex",
+      "cost": 0.58,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Flex%201%2F2%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "14",
+      "name": "Flex 3/4 /ft",
+      "cat": "Conduit — Flex",
+      "cost": 0.9,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Flex%203%2F4%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "15",
+      "name": "Sealtight Metal 1/2 /ft",
+      "cat": "Conduit — Flex",
+      "cost": 1.1,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Sealtight%20Metal%201%2F2%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "16",
+      "name": "Sealtight Metal 3/4 /ft",
+      "cat": "Conduit — Flex",
+      "cost": 1.65,
+      "unit": "FT",
+      "pack": 1,
+      "waste": 0.1,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Sealtight%20Metal%203%2F4%20%2Fft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "17",
+      "name": "SG New Const 20cu Carlon B120A",
+      "cat": "Boxes — Plastic",
+      "cost": 0.95,
+      "unit": "EA",
+      "pack": 80,
+      "waste": 0.05,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/SG%20New%20Const%2020cu%20Carlon%20B120A",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "18",
+      "name": "SG Smart Remodel 22.5cu",
+      "cat": "Boxes — Plastic",
+      "cost": 2.85,
+      "unit": "EA",
+      "pack": 100,
+      "waste": 0.05,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/SG%20Smart%20Remodel%2022.5cu",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "19",
+      "name": "SG Side Flange 24.5cu B125AB",
+      "cat": "Boxes — Plastic",
+      "cost": 1.9,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20SG%20Side%20Flange%2024.5cu%20B125AB",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "20",
+      "name": "2G New Const Carlon B232ACP",
+      "cat": "Boxes — Plastic",
+      "cost": 2.05,
+      "unit": "EA",
+      "pack": 50,
+      "waste": 0.05,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/2G%20New%20Const%20Carlon%20B232ACP",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "21",
+      "name": "Circular Nail-On 20cu B520P",
+      "cat": "Boxes — Plastic",
+      "cost": 2.1,
+      "unit": "EA",
+      "pack": 68,
+      "waste": 0.05,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Circular%20Nail-On%2020cu%20B520P",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "2001",
+      "name": "SG Metal Box New Const",
+      "cat": "Boxes — Metal",
+      "cost": 3.9,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20SG%20Metal%20Box%20New%20Const",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "2002",
+      "name": "SG Metal Box Remodel",
+      "cat": "Boxes — Metal",
+      "cost": 2.05,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20SG%20Metal%20Box%20Remodel",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "2601",
+      "name": "2G Deep Metal Box",
+      "cat": "Boxes — Metal",
+      "cost": 3.9,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%202G%20Deep%20Metal%20Box",
+      "pidBand": 2000,
+      "pidBlock": 2600
+    },
+    {
+      "id": "2003",
+      "name": "2G Metal Box Remodel Garvin",
+      "cat": "Boxes — Metal",
+      "cost": 9.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%202G%20Metal%20Box%20Remodel%20Garvin",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "2004",
+      "name": "Circular Metal Box w/Bracket",
+      "cat": "Boxes — Metal",
+      "cost": 3.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Circular%20Metal%20Box%20w%2FBracket",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "2005",
+      "name": "Pancake Box Metal",
+      "cat": "Boxes — Metal",
+      "cost": 4.1,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0.05,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Pancake%20Box%20Metal",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "6501",
+      "name": "5/8 Metal Cover Ring",
+      "cat": "Boxes — Metal",
+      "cost": 1.25,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%205%2F8%20Metal%20Cover%20Ring",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "22",
+      "name": "Telescopic Arm Extension",
+      "cat": "Boxes — Metal",
+      "cost": 2.6,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Telescopic%20Arm%20Extension",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "23",
+      "name": "8x8x4 Metal Pull Can",
+      "cat": "Boxes — Metal",
+      "cost": 28.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%208x8x4%20Metal%20Pull%20Can",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "24",
+      "name": "Circular Weatherproof Box",
+      "cat": "Boxes — Weatherproof",
+      "cost": 6.15,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Circular%20Weatherproof%20Box",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5701",
+      "name": "GFCI Weatherproof Cover In-Use",
+      "cat": "Boxes — Weatherproof",
+      "cost": 8.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/GFCI%20Weatherproof%20Cover%20In-Use",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "25",
+      "name": "Ground Vault 10in",
+      "cat": "Boxes — Specialty",
+      "cost": 48.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Ground%20Vault%2010in",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "2801",
+      "name": "Pool Junction Box 5-Hole Octagon",
+      "cat": "Boxes — Specialty",
+      "cost": 58,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Pool%20Junction%20Box%205-Hole%20Octagon",
+      "pidBand": 2000,
+      "pidBlock": 2800
+    },
+    {
+      "id": "6502",
+      "name": "SG Decora Cover Screwless",
+      "cat": "Covers",
+      "cost": 1.05,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20SG%20Decora%20Cover%20Screwless",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6503",
+      "name": "SG Plain Cover",
+      "cat": "Covers",
+      "cost": 0.82,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20SG%20Plain%20Cover",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6504",
+      "name": "SG Duplex Cover",
+      "cat": "Covers",
+      "cost": 0.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20SG%20Duplex%20Cover",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6505",
+      "name": "2G Plain Cover",
+      "cat": "Covers",
+      "cost": 1.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%202G%20Plain%20Cover",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6506",
+      "name": "Nema 14-50 Cover 2.45in",
+      "cat": "Covers",
+      "cost": 4.1,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Nema%2014-50%20Cover%202.45in",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6507",
+      "name": "Nema 14-30 Cover 2.15in",
+      "cat": "Covers",
+      "cost": 4.05,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Nema%2014-30%20Cover%202.15in",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6001",
+      "name": "TR Receptacle 20A",
+      "cat": "Devices — Receptacles",
+      "cost": 5.65,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/TR%20Receptacle%2020A",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "6002",
+      "name": "TR Receptacle 15A",
+      "cat": "Devices — Receptacles",
+      "cost": 4.25,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/TR%20Receptacle%2015A",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "26",
+      "name": "GFCI TR 20A",
+      "cat": "Devices — Receptacles",
+      "cost": 15,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/GFCI%20TR%2020A",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "27",
+      "name": "GFCI TR 15A",
+      "cat": "Devices — Receptacles",
+      "cost": 13.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/GFCI%20TR%2015A",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "28",
+      "name": "GFCI Outdoor Rated 20A",
+      "cat": "Devices — Receptacles",
+      "cost": 16.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/GFCI%20Outdoor%20Rated%2020A",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "29",
+      "name": "Spec-Grade 20A Commercial",
+      "cat": "Devices — Receptacles",
+      "cost": 8.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Spec-Grade%2020A%20Commercial",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "6003",
+      "name": "Nema 14-50 Receptacle",
+      "cat": "Devices — Receptacles",
+      "cost": 14.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Nema%2014-50%20Receptacle",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "6004",
+      "name": "Nema 14-30 Receptacle",
+      "cat": "Devices — Receptacles",
+      "cost": 12.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Nema%2014-30%20Receptacle",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "6005",
+      "name": "USB-A/C Combo Receptacle 20A",
+      "cat": "Devices — Receptacles",
+      "cost": 22.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/USB-A%2FC%20Combo%20Receptacle%2020A",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "6201",
+      "name": "Standard Decora Switch 20A",
+      "cat": "Devices — Switches",
+      "cost": 4.35,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Standard%20Decora%20Switch%2020A",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6202",
+      "name": "Standard Switch 15A",
+      "cat": "Devices — Switches",
+      "cost": 3.6,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Standard%20Switch%2015A",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6203",
+      "name": "3-Way Switch 20A",
+      "cat": "Devices — Switches",
+      "cost": 6.65,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/3-Way%20Switch%2020A",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6204",
+      "name": "4-Way Switch 20A",
+      "cat": "Devices — Switches",
+      "cost": 9.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/4-Way%20Switch%2020A",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6205",
+      "name": "Dimmer 600W Single-Pole",
+      "cat": "Devices — Switches",
+      "cost": 18.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Dimmer%20600W%20Single-Pole",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6206",
+      "name": "Dimmer 1000W 3-Way",
+      "cat": "Devices — Switches",
+      "cost": 28.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Dimmer%201000W%203-Way",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6207",
+      "name": "LV Dimmer Override",
+      "cat": "Devices — Switches",
+      "cost": 33,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20LV%20Dimmer%20Override",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6208",
+      "name": "Occupancy Sensor Switch",
+      "cat": "Devices — Switches",
+      "cost": 28,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Occupancy%20Sensor%20Switch",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6209",
+      "name": "Exterior Building Sign Switch",
+      "cat": "Devices — Switches",
+      "cost": 19,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Exterior%20Building%20Sign%20Switch",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "30",
+      "name": "Intermatic Astro Time Clock",
+      "cat": "Devices — Controls",
+      "cost": 88,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Intermatic%20Astro%20Time%20Clock",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "6701",
+      "name": "Pool Timer Intermatic P1353ME",
+      "cat": "Devices — Controls",
+      "cost": 125,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Pool%20Timer%20Intermatic%20P1353ME",
+      "pidBand": 6000,
+      "pidBlock": 6700
+    },
+    {
+      "id": "31",
+      "name": "Photoelectric Cell 150W",
+      "cat": "Devices — Controls",
+      "cost": 12.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Photoelectric%20Cell%20150W",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5702",
+      "name": "Surge Protector Whole-House",
+      "cat": "Devices — Controls",
+      "cost": 95,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Surge%20Protector%20Whole-House",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "32",
+      "name": "15A Single-Pole Sq D HOM115",
+      "cat": "Breakers",
+      "cost": 8.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/15A%20Single-Pole%20Sq%20D%20HOM115",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "33",
+      "name": "20A Single-Pole Sq D HOM120",
+      "cat": "Breakers",
+      "cost": 9.95,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/20A%20Single-Pole%20Sq%20D%20HOM120",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "34",
+      "name": "30A 2-Pole 240V",
+      "cat": "Breakers",
+      "cost": 19,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/30A%202-Pole%20240V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "35",
+      "name": "40A 2-Pole 240V",
+      "cat": "Breakers",
+      "cost": 24,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/40A%202-Pole%20240V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "36",
+      "name": "50A 2-Pole 240V",
+      "cat": "Breakers",
+      "cost": 25.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/50A%202-Pole%20240V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "37",
+      "name": "60A 2-Pole 240V",
+      "cat": "Breakers",
+      "cost": 30,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/60A%202-Pole%20240V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "38",
+      "name": "100A 2-Pole 240V",
+      "cat": "Breakers",
+      "cost": 52,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/100A%202-Pole%20240V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "39",
+      "name": "20A AFCI Sq D",
+      "cat": "Breakers",
+      "cost": 43.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/20A%20AFCI%20Sq%20D",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "8001",
+      "name": "20A GFCI Breaker",
+      "cat": "Breakers",
+      "cost": 49.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/20A%20GFCI%20Breaker",
+      "pidBand": 8000,
+      "pidBlock": 8000
+    },
+    {
+      "id": "40",
+      "name": "20A Combo AFCI/GFCI",
+      "cat": "Breakers",
+      "cost": 58,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/20A%20Combo%20AFCI%2FGFCI",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "8101",
+      "name": "200A MLO Sub Panel 42-Sp",
+      "cat": "Panels & Disconnects",
+      "cost": 292,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20200A%20MLO%20Sub%20Panel%2042-Sp",
+      "pidBand": 8000,
+      "pidBlock": 8100
+    },
+    {
+      "id": "8102",
+      "name": "100A Load Center 20-Sp",
+      "cat": "Panels & Disconnects",
+      "cost": 115,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/100A%20Load%20Center%2020-Sp",
+      "pidBand": 8000,
+      "pidBlock": 8100
+    },
+    {
+      "id": "8002",
+      "name": "200A Main Breaker Panel 40-Sp",
+      "cat": "Panels & Disconnects",
+      "cost": 385,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20200A%20Main%20Breaker%20Panel%2040-Sp",
+      "pidBand": 8000,
+      "pidBlock": 8000
+    },
+    {
+      "id": "8103",
+      "name": "Ground Bar for Sub Panel",
+      "cat": "Panels & Disconnects",
+      "cost": 13,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Ground%20Bar%20for%20Sub%20Panel",
+      "pidBand": 8000,
+      "pidBlock": 8100
+    },
+    {
+      "id": "5703",
+      "name": "Nema 1 30A Non-Fused Disconnect",
+      "cat": "Panels & Disconnects",
+      "cost": 44,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Nema%201%2030A%20Non-Fused%20Disconnect",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "5704",
+      "name": "Nema 3R 30A Non-Fused Disconnect",
+      "cat": "Panels & Disconnects",
+      "cost": 58,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Nema%203R%2030A%20Non-Fused%20Disconnect",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "5705",
+      "name": "Nema 3R 50A Fused Disconnect",
+      "cat": "Panels & Disconnects",
+      "cost": 98,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Nema%203R%2050A%20Fused%20Disconnect",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "5706",
+      "name": "50A Fuses pair",
+      "cat": "Panels & Disconnects",
+      "cost": 13,
+      "unit": "PR",
+      "pack": 2,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%2050A%20Fuses%20pair",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "41",
+      "name": "Weatherhead 2in",
+      "cat": "Service Entrance",
+      "cost": 28,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Weatherhead%202in",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5707",
+      "name": "Service Entrance 2in Mast Kit",
+      "cat": "Service Entrance",
+      "cost": 45,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Service%20Entrance%202in%20Mast%20Kit",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "9801",
+      "name": "Ground Rod Copper 8ft x 5/8in",
+      "cat": "Service Entrance",
+      "cost": 18.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Ground%20Rod%20Copper%208ft%20x%205%2F8in",
+      "pidBand": 9000,
+      "pidBlock": 9800
+    },
+    {
+      "id": "7801",
+      "name": "Ground Rod Clamp Acorn",
+      "cat": "Service Entrance",
+      "cost": 4.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Ground%20Rod%20Clamp%20Acorn",
+      "pidBand": 7000,
+      "pidBlock": 7800
+    },
+    {
+      "id": "7001",
+      "name": "6in Recessed Housing New Const T-Bar",
+      "cat": "Lighting — Housings",
+      "cost": 22.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%206in%20Recessed%20Housing%20New%20Const%20T-Bar",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "7002",
+      "name": "4in Recessed Housing New Const",
+      "cat": "Lighting — Housings",
+      "cost": 18.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%204in%20Recessed%20Housing%20New%20Const",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "7003",
+      "name": "6in LED Integrated Recessed",
+      "cat": "Lighting — Housings",
+      "cost": 24.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/6in%20LED%20Integrated%20Recessed",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "7004",
+      "name": "4in LED Integrated Recessed",
+      "cat": "Lighting — Housings",
+      "cost": 19.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/4in%20LED%20Integrated%20Recessed",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "7301",
+      "name": "T-Bar Bracket Pendant Light",
+      "cat": "Lighting — Housings",
+      "cost": 4.65,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20T-Bar%20Bracket%20Pendant%20Light",
+      "pidBand": 7000,
+      "pidBlock": 7300
+    },
+    {
+      "id": "42",
+      "name": "Ceiling Fan Brace Kit",
+      "cat": "Lighting — Housings",
+      "cost": 18,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Ceiling%20Fan%20Brace%20Kit",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "7005",
+      "name": "6in LED Recessed Trim 3000K",
+      "cat": "Lighting — Fixtures",
+      "cost": 18.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/6in%20LED%20Recessed%20Trim%203000K",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "7006",
+      "name": "4in LED Recessed Trim 3000K",
+      "cat": "Lighting — Fixtures",
+      "cost": 14.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/4in%20LED%20Recessed%20Trim%203000K",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "43",
+      "name": "LED Vapor Tight 4ft",
+      "cat": "Lighting — Fixtures",
+      "cost": 42,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20LED%20Vapor%20Tight%204ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5207",
+      "name": "MC Wire Holder for T-Bar",
+      "cat": "Lighting — Fixtures",
+      "cost": 0.68,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20MC%20Wire%20Holder%20for%20T-Bar",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "44",
+      "name": "Smoke Detector 120V",
+      "cat": "Life Safety",
+      "cost": 28.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Smoke%20Detector%20120V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "45",
+      "name": "Combination Smoke/CO 120V",
+      "cat": "Life Safety",
+      "cost": 52,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Combination%20Smoke%2FCO%20120V",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "7501",
+      "name": "Exit Sign LED Battery Backup",
+      "cat": "Life Safety",
+      "cost": 95,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Exit%20Sign%20LED%20Battery%20Backup",
+      "pidBand": 7000,
+      "pidBlock": 7500
+    },
+    {
+      "id": "7502",
+      "name": "Emergency LED Pack",
+      "cat": "Life Safety",
+      "cost": 115,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Emergency%20LED%20Pack",
+      "pidBand": 7000,
+      "pidBlock": 7500
+    },
+    {
+      "id": "6006",
+      "name": "NEMA 14-50 EV Outlet",
+      "cat": "EV Charging",
+      "cost": 14.75,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/NEMA%2014-50%20EV%20Outlet",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "46",
+      "name": "Level 2 EVSE Hardwire 48A",
+      "cat": "EV Charging",
+      "cost": 285,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Level%202%20EVSE%20Hardwire%2048A",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "6007",
+      "name": "EV Outlet Weatherproof Cover",
+      "cat": "EV Charging",
+      "cost": 16.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/EV%20Outlet%20Weatherproof%20Cover",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "6210",
+      "name": "Manual Transfer Switch 30A 10-Ckt",
+      "cat": "Generator & Transfer",
+      "cost": 185,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Manual%20Transfer%20Switch%2030A%2010-Ckt",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "47",
+      "name": "Inlet Box 30A L14-30",
+      "cat": "Generator & Transfer",
+      "cost": 35,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Inlet%20Box%2030A%20L14-30",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "8104",
+      "name": "Interlock Kit Sq D 200A Panel",
+      "cat": "Generator & Transfer",
+      "cost": 65,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Interlock%20Kit%20Sq%20D%20200A%20Panel",
+      "pidBand": 8000,
+      "pidBlock": 8100
+    },
+    {
+      "id": "9802",
+      "name": "Box Self-Tappers 1in 100-pk",
+      "cat": "Hardware",
+      "cost": 6.75,
+      "unit": "BX",
+      "pack": 100,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Box%20Self-Tappers%201in%20100-pk",
+      "pidBand": 9000,
+      "pidBlock": 9800
+    },
+    {
+      "id": "9001",
+      "name": "Box Wood Screws 1in 100-pk",
+      "cat": "Hardware",
+      "cost": 5.75,
+      "unit": "BX",
+      "pack": 100,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Box%20Wood%20Screws%201in%20100-pk",
+      "pidBand": 9000,
+      "pidBlock": 9000
+    },
+    {
+      "id": "9002",
+      "name": "2in 3/8 Wood Screws 25-pk",
+      "cat": "Hardware",
+      "cost": 4.65,
+      "unit": "BX",
+      "pack": 25,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/2in%203%2F8%20Wood%20Screws%2025-pk",
+      "pidBand": 9000,
+      "pidBlock": 9000
+    },
+    {
+      "id": "9003",
+      "name": "Toggle Bolt 50-pk",
+      "cat": "Hardware",
+      "cost": 14.5,
+      "unit": "PK",
+      "pack": 50,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Toggle%20Bolt%2050-pk",
+      "pidBand": 9000,
+      "pidBlock": 9000
+    },
+    {
+      "id": "7802",
+      "name": "Ground Clamp 1/2",
+      "cat": "Hardware",
+      "cost": 2.6,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Ground%20Clamp%201%2F2",
+      "pidBand": 7000,
+      "pidBlock": 7800
+    },
+    {
+      "id": "7803",
+      "name": "Ground Clamp 3/4",
+      "cat": "Hardware",
+      "cost": 3.6,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Ground%20Clamp%203%2F4",
+      "pidBand": 7000,
+      "pidBlock": 7800
+    },
+    {
+      "id": "9401",
+      "name": "Wire Nuts Assorted 100-pk",
+      "cat": "Consumables",
+      "cost": 14.75,
+      "unit": "PK",
+      "pack": 100,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Wire%20Nuts%20Assorted%20100-pk",
+      "pidBand": 9000,
+      "pidBlock": 9400
+    },
+    {
+      "id": "9301",
+      "name": "Electrical Tape 3/4in 10-pk",
+      "cat": "Consumables",
+      "cost": 12.5,
+      "unit": "PK",
+      "pack": 10,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Electrical%20Tape%203%2F4in%2010-pk",
+      "pidBand": 9000,
+      "pidBlock": 9300
+    },
+    {
+      "id": "5411",
+      "name": "Cable Staples NM 250-pk",
+      "cat": "Consumables",
+      "cost": 9.5,
+      "unit": "BX",
+      "pack": 250,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Cable%20Staples%20NM%20250-pk",
+      "pidBand": 5000,
+      "pidBlock": 5400
+    },
+    {
+      "id": "5208",
+      "name": "MC Cable Staples 50-pk",
+      "cat": "Consumables",
+      "cost": 6.5,
+      "unit": "BX",
+      "pack": 50,
+      "waste": 0,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/MC%20Cable%20Staples%2050-pk",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "9701",
+      "name": "Wire Pulling Lube 1 gal",
+      "cat": "Consumables",
+      "cost": 18.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Wire%20Pulling%20Lube%201%20gal",
+      "pidBand": 9000,
+      "pidBlock": 9700
+    },
+    {
+      "id": "7601",
+      "name": "LED LV 200W 24V DC Transformer",
+      "cat": "Lighting — Controls",
+      "cost": 148,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20LED%20LV%20200W%2024V%20DC%20Transformer",
+      "pidBand": 7000,
+      "pidBlock": 7600
+    },
+    {
+      "id": "5501",
+      "name": "Cat6 Cable 1000ft",
+      "cat": "Low Voltage",
+      "cost": 185,
+      "unit": "RL",
+      "pack": 1000,
+      "waste": 0.1,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Cat6%20Cable%201000ft",
+      "pidBand": 5000,
+      "pidBlock": 5500
+    },
+    {
+      "id": "48",
+      "name": "Low Voltage 18/2 AWG 500ft",
+      "cat": "Low Voltage",
+      "cost": 64,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.1,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Low%20Voltage%2018%2F2%20AWG%20500ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "49",
+      "name": "Wiremold 700 Raceway 5ft",
+      "cat": "Raceway — Surface",
+      "cost": 14.5,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "Elec Supplier",
+      "link": "https://www.google.com/search?q=Elec%20Supplier%20Wiremold%20700%20Raceway%205ft",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "9803",
+      "name": "Bare Copper 8 AWG Solid 500ft",
+      "cat": "Wire — Stranded",
+      "cost": 299,
+      "unit": "SP",
+      "pack": 500,
+      "waste": 0.05,
+      "src": "Home Depot",
+      "link": "https://www.homedepot.com/s/Bare%20Copper%208%20AWG%20Solid%20500ft",
+      "pidBand": 9000,
+      "pidBlock": 9800
+    },
+    {
+      "id": "4007",
+      "name": "PVC 1-1/2\" Scheduel 40",
+      "cat": "PDF Imported",
+      "cost": 20,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=PVC%201-1%2F2%22%20Scheduel%2040",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4501",
+      "name": "PVC 1-1/2\" Long Sweep 90 bend",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=PVC%201-1%2F2%22%20Long%20Sweep%2090%20bend",
+      "pidBand": 4000,
+      "pidBlock": 4500
+    },
+    {
+      "id": "4604",
+      "name": "PVC 1-1/2\" Expansion Coupling",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=PVC%201-1%2F2%22%20Expansion%20Coupling",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "4605",
+      "name": "PVC 1-1/2\" Connector",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=PVC%201-1%2F2%22%20Connector",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "50",
+      "name": "1-1/2\" Lock-ring",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=1-1%2F2%22%20Lock-ring",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "4008",
+      "name": "1/2\" PVC Schedule 40",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=1%2F2%22%20PVC%20Schedule%2040",
+      "pidBand": 4000,
+      "pidBlock": 4000
+    },
+    {
+      "id": "4502",
+      "name": "1/2\" PVC 90 Degree bend",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=1%2F2%22%20PVC%2090%20Degree%20bend",
+      "pidBand": 4000,
+      "pidBlock": 4500
+    },
+    {
+      "id": "4606",
+      "name": "1/2\" PVC Coupling",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=1%2F2%22%20PVC%20Coupling",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "4607",
+      "name": "1/2\" PVC Connector",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=1%2F2%22%20PVC%20Connector",
+      "pidBand": 4000,
+      "pidBlock": 4600
+    },
+    {
+      "id": "7007",
+      "name": "200A MLO Sub Panel - 42 Spaces - 120/240v - KAIC 22 - Recessed",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=200A%20MLO%20Sub%20Panel%20-%2042%20Spaces%20-%20120%2F240v%20-%20KAIC%2022%20-%20Recessed",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "8801",
+      "name": "Ground Bar",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Ground%20Bar",
+      "pidBand": 8000,
+      "pidBlock": 8800
+    },
+    {
+      "id": "2602",
+      "name": "2s Deep Metal Box",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=2s%20Deep%20Metal%20Box",
+      "pidBand": 2000,
+      "pidBlock": 2600
+    },
+    {
+      "id": "2006",
+      "name": "2s Metal Box with Bracket",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=2s%20Metal%20Box%20with%20Bracket",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "6008",
+      "name": "Receptacle Boxes Telescopic Arm",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Receptacle%20Boxes%20Telescopic%20Arm",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "9804",
+      "name": "Box Self-Tappers 1\"",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Box%20Self-Tappers%201%22",
+      "pidBand": 9000,
+      "pidBlock": 9800
+    },
+    {
+      "id": "9004",
+      "name": "Box Wood-Screws 1\"",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Box%20Wood-Screws%201%22",
+      "pidBand": 9000,
+      "pidBlock": 9000
+    },
+    {
+      "id": "6508",
+      "name": "5/8\" Metal Cover Ring",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=5%2F8%22%20Metal%20Cover%20Ring",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "3007",
+      "name": "3/4\" EMT - 10'",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%22%20EMT%20-%2010'",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "3708",
+      "name": "3/4\" EMT Connectors - Indoor",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%22%20EMT%20Connectors%20-%20Indoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3709",
+      "name": "3/4\" EMT Couplings - Indoor",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%22%20EMT%20Couplings%20-%20Indoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3803",
+      "name": "3/4\" EMT - 1 Hole Straps",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%22%20EMT%20-%201%20Hole%20Straps",
+      "pidBand": 3000,
+      "pidBlock": 3800
+    },
+    {
+      "id": "6509",
+      "name": "Circuits Raceway Layout 2s Plain Cover",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Circuits%20Raceway%20Layout%202s%20Plain%20Cover",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "51",
+      "name": "12 Gauge Unistut",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%20Gauge%20Unistut",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "3503",
+      "name": "3/4 Pipe Hanger for UnitStrut",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%20Pipe%20Hanger%20for%20UnitStrut",
+      "pidBand": 3000,
+      "pidBlock": 3500
+    },
+    {
+      "id": "9005",
+      "name": "2\" - 3/8\" Wood Screws",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=2%22%20-%203%2F8%22%20Wood%20Screws",
+      "pidBand": 9000,
+      "pidBlock": 9000
+    },
+    {
+      "id": "52",
+      "name": "Box of mechanical washers",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Box%20of%20mechanical%20washers",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "3710",
+      "name": "3/4\" EMT Connectors - Outdoor",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%22%20EMT%20Connectors%20-%20Outdoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3711",
+      "name": "3/4\" EMT Couplings - Outdoor",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F4%22%20EMT%20Couplings%20-%20Outdoor",
+      "pidBand": 3000,
+      "pidBlock": 3700
+    },
+    {
+      "id": "3301",
+      "name": "Flex Conduit",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Flex%20Conduit",
+      "pidBand": 3000,
+      "pidBlock": 3300
+    },
+    {
+      "id": "53",
+      "name": "Flex Connectors",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Flex%20Connectors",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "3008",
+      "name": "EMT - 10'",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=EMT%20-%2010'",
+      "pidBand": 3000,
+      "pidBlock": 3000
+    },
+    {
+      "id": "54",
+      "name": "Box",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Box",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "2007",
+      "name": "2s Metal Box",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=2s%20Metal%20Box",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "2008",
+      "name": "Box Rings 5/8\" Metal Cover Ring",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Box%20Rings%205%2F8%22%20Metal%20Cover%20Ring",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "2009",
+      "name": "Box 2s Metal Box",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Box%202s%20Metal%20Box",
+      "pidBand": 2000,
+      "pidBlock": 2000
+    },
+    {
+      "id": "7008",
+      "name": "6\" Fixture Housing New Construction - T Bar Type",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=6%22%20Fixture%20Housing%20New%20Construction%20-%20T%20Bar%20Type",
+      "pidBand": 7000,
+      "pidBlock": 7000
+    },
+    {
+      "id": "7302",
+      "name": "pendant light",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=pendant%20light",
+      "pidBand": 7000,
+      "pidBlock": 7300
+    },
+    {
+      "id": "5708",
+      "name": "Nema 3R 50A - Fused Disconnect",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Nema%203R%2050A%20-%20Fused%20Disconnect",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "5709",
+      "name": "50A Fuses",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=50A%20Fuses",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "5710",
+      "name": "Nema 1 - 30A Non Fused Disconnect",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Nema%201%20-%2030A%20Non%20Fused%20Disconnect",
+      "pidBand": 5000,
+      "pidBlock": 5700
+    },
+    {
+      "id": "55",
+      "name": "12 AWG Solid Wire - Black",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%20AWG%20Solid%20Wire%20-%20Black",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "56",
+      "name": "Wire 12 AWG Solid Wire - White",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Wire%2012%20AWG%20Solid%20Wire%20-%20White",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "57",
+      "name": "12 AWG Solid Wire - Green",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%20AWG%20Solid%20Wire%20-%20Green",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5209",
+      "name": "12/2 MC - 250ft",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%2F2%20MC%20-%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "5210",
+      "name": "12/3 MC - 250ft",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%2F3%20MC%20-%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "5211",
+      "name": "MC Cable Branches 3/16\" Anti Short Bushing",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=MC%20Cable%20Branches%203%2F16%22%20Anti%20Short%20Bushing",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "9006",
+      "name": "Connector Screw Type",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Connector%20Screw%20Type",
+      "pidBand": 9000,
+      "pidBlock": 9000
+    },
+    {
+      "id": "58",
+      "name": "12 AWG Solid Wire - White",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%20AWG%20Solid%20Wire%20-%20White",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "7201",
+      "name": "12 AWG Solid Wire - Green with yellow stripe(s)",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=12%20AWG%20Solid%20Wire%20-%20Green%20with%20yellow%20stripe(s)",
+      "pidBand": 7000,
+      "pidBlock": 7200
+    },
+    {
+      "id": "59",
+      "name": "6 AWG Stranded - Black",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=6%20AWG%20Stranded%20-%20Black",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "60",
+      "name": "6 AWG Stranded - Red",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=6%20AWG%20Stranded%20-%20Red",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "61",
+      "name": "10 AWG Stranded - Green",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=10%20AWG%20Stranded%20-%20Green",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "62",
+      "name": "10AWG Stranded - Black",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=10AWG%20Stranded%20-%20Black",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "63",
+      "name": "10AWG Stranded - Red",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=10AWG%20Stranded%20-%20Red",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "5212",
+      "name": "Lighting Circuits 12/2 MC - 250ft",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Lighting%20Circuits%2012%2F2%20MC%20-%20250ft",
+      "pidBand": 5000,
+      "pidBlock": 5200
+    },
+    {
+      "id": "8702",
+      "name": "3/16\" Anti Short Bushing",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=3%2F16%22%20Anti%20Short%20Bushing",
+      "pidBand": 8000,
+      "pidBlock": 8700
+    },
+    {
+      "id": "64",
+      "name": "Flex Coupling",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Flex%20Coupling",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "9101",
+      "name": "One Hole Straps",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=One%20Hole%20Straps",
+      "pidBand": 9000,
+      "pidBlock": 9100
+    },
+    {
+      "id": "65",
+      "name": "Wire Holder for T-Bar Wire",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Wire%20Holder%20for%20T-Bar%20Wire",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "7602",
+      "name": "Low Voltage 200W - 24v - DC Transformer - 120v Input",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Low%20Voltage%20200W%20-%2024v%20-%20DC%20Transformer%20-%20120v%20Input",
+      "pidBand": 7000,
+      "pidBlock": 7600
+    },
+    {
+      "id": "6009",
+      "name": "Tamper Resistant Receptacles",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Tamper%20Resistant%20Receptacles",
+      "pidBand": 6000,
+      "pidBlock": 6000
+    },
+    {
+      "id": "6510",
+      "name": "Single Gang Decora Cover Plate - Plastic - White - Screwless",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Single%20Gang%20Decora%20Cover%20Plate%20-%20Plastic%20-%20White%20-%20Screwless",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "66",
+      "name": "GFCI Tamper Resistant",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=GFCI%20Tamper%20Resistant",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "67",
+      "name": "GFCI Weatherproof",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=GFCI%20Weatherproof",
+      "pidBand": null,
+      "pidBlock": null
+    },
+    {
+      "id": "6511",
+      "name": "Single Gang Weatherproof Cover",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Single%20Gang%20Weatherproof%20Cover",
+      "pidBand": 6000,
+      "pidBlock": 6500
+    },
+    {
+      "id": "6211",
+      "name": "Low Voltage Dimmer Override",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Low%20Voltage%20Dimmer%20Override",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "6212",
+      "name": "Standard Decora Switch",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Standard%20Decora%20Switch",
+      "pidBand": 6000,
+      "pidBlock": 6200
+    },
+    {
+      "id": "8003",
+      "name": "15A Homeline Breaker",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=15A%20Homeline%20Breaker",
+      "pidBand": 8000,
+      "pidBlock": 8000
+    },
+    {
+      "id": "8004",
+      "name": "20A Homeline Breaker",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=20A%20Homeline%20Breaker",
+      "pidBand": 8000,
+      "pidBlock": 8000
+    },
+    {
+      "id": "8005",
+      "name": "30A Breaker - 240v - 2 Pole",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=30A%20Breaker%20-%20240v%20-%202%20Pole",
+      "pidBand": 8000,
+      "pidBlock": 8000
+    },
+    {
+      "id": "8006",
+      "name": "50A Breaker - 240v - 2 Pole",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=50A%20Breaker%20-%20240v%20-%202%20Pole",
+      "pidBand": 8000,
+      "pidBlock": 8000
+    },
+    {
+      "id": "68",
+      "name": "Intermatic Astronomical Time Clock",
+      "cat": "PDF Imported",
+      "cost": 0,
+      "unit": "EA",
+      "pack": 1,
+      "waste": 0,
+      "src": "PDF Import",
+      "link": "https://www.google.com/search?q=Intermatic%20Astronomical%20Time%20Clock",
+      "pidBand": null,
+      "pidBlock": null
+    }
+  ],
+  "serviceLogs": [
+    {
+      "id": "sl1774583103085",
+      "date": "2026-03-27",
+      "customer": "Stephanie Turrentine",
+      "hrs": 1.5,
+      "mat": 50,
+      "miles": 30,
+      "notes": "⚠ Labor over estimate: quoted 1.00 hrs, actual 1.50 hrs (+0.50 hrs)\nReplace 2 receptacles for GFCI’s",
+      "quoted": 160,
+      "collected": 0,
+      "payStatus": "unpaid",
+      "profit": 25.882850000000005,
+      "store": "Home Depot",
+      "compareWarnings": [
+        "Labor over estimate: quoted 1.00 hrs, actual 1.50 hrs (+0.50 hrs)"
+      ],
+      "triggersAtSave": [
+        "Bad Day Containment"
+      ]
+    },
+    {
+      "id": "sl001",
+      "date": "2025-12-27",
+      "customer": "Heather / Brett (WestCoast Plumbing)",
+      "hrs": 2,
+      "mat": 135,
+      "miles": 40,
+      "notes": "Replace 2 GFCIs garage, 2 duplex receptacles, 2 exterior GFCIs, fix polarity half-hot switch living room.",
+      "quoted": 350,
+      "collected": 350,
+      "payStatus": "paid",
+      "profit": 103.69999999999999,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl002",
+      "date": "2026-01-05",
+      "customer": "Claudio",
+      "hrs": 2,
+      "mat": 32.95,
+      "miles": 42,
+      "notes": "Install receptacle box at stove, remove fluorescent fixture, lay out 2 new 6\" recessed lights + 1 for sink.",
+      "quoted": 195,
+      "collected": 195,
+      "payStatus": "paid",
+      "profit": 49.43000000000001,
+      "store": "Home Depot",
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl003",
+      "date": "2026-01-05",
+      "customer": "Andrjez",
+      "hrs": 1.25,
+      "mat": 29,
+      "miles": 12,
+      "notes": "Troubleshot laundry circuit overload. Convert Nema 10-30 for 2 standard receptacles. Independent dryer and washer circuits.",
+      "quoted": 225,
+      "collected": 225,
+      "payStatus": "paid",
+      "profit": 135.0175,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl004",
+      "date": "2026-01-07",
+      "customer": "Richard",
+      "hrs": 1.75,
+      "mat": 10,
+      "miles": 25,
+      "notes": "Remove 3 receptacles for cabinet removal. Troubleshoot garage circuit, low voltage light, barbecue receptacle. Remove under-cabinet lighting.",
+      "quoted": 280.5,
+      "collected": 280.5,
+      "payStatus": "paid",
+      "profit": 179.71249999999998,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl005",
+      "date": "2026-01-12",
+      "customer": "Richard",
+      "hrs": 7,
+      "mat": 65.88,
+      "miles": 40,
+      "notes": "Install 4 LV lights w/transformer and box. Trench and hide wire. Install clips for barbecue receptacle. Replace 13 landscape lights.",
+      "quoted": 771,
+      "collected": 771,
+      "payStatus": "paid",
+      "profit": 381.57,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl006",
+      "date": "2026-01-22",
+      "customer": "Eric Hanson",
+      "hrs": 7,
+      "mat": 15,
+      "miles": 30,
+      "notes": "Replace 18 receptacles, 1 GFCI and 20 switches/dimmers.",
+      "quoted": 640,
+      "collected": 640,
+      "payStatus": "paid",
+      "profit": 308.05,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl007",
+      "date": "2026-01-27",
+      "customer": "Eric Hanson",
+      "hrs": 6,
+      "mat": 0,
+      "miles": 30,
+      "notes": "Replace 16 receptacles/GFCIs and 10 dimmers.",
+      "quoted": 470.01,
+      "collected": 470.01,
+      "payStatus": "paid",
+      "profit": 195.50999999999996,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl008",
+      "date": "2026-02-05",
+      "customer": "Carlos",
+      "hrs": 8,
+      "mat": 10,
+      "miles": 50,
+      "notes": "Install 6 new 4\" recessed lights and replace 6 x 6\" recessed can lights for clip recessed lights.",
+      "quoted": 500,
+      "collected": 500,
+      "payStatus": "paid",
+      "profit": 117.39999999999998,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl009",
+      "date": "2026-02-06",
+      "customer": "Luis / Claudio",
+      "hrs": 2.5,
+      "mat": 25,
+      "miles": 44,
+      "notes": "Remove 2 receptacles and reroute circuit for new ceiling hood range receptacle and new receptacle above new counter.",
+      "quoted": 369.35,
+      "collected": 369.35,
+      "payStatus": "paid",
+      "profit": 209.185,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "sl010",
+      "date": "2026-02-10",
+      "customer": "Eric Hanson",
+      "hrs": 2,
+      "mat": 7.95,
+      "miles": 30,
+      "notes": "Replace 1 dimmer and 1 standard switch, troubleshoot lights flickering.",
+      "quoted": 174.95,
+      "collected": 174.95,
+      "payStatus": "paid",
+      "profit": 62.29999999999998,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": []
+    },
+    {
+      "id": "mn46tzv1yiur",
+      "date": "2026-03-19",
+      "customer": "Beauty Salon",
+      "hrs": 5,
+      "mat": 0,
+      "miles": 44,
+      "notes": "[Demo] 1st Phase of Demo - 60% Done",
+      "quoted": 18000,
+      "collected": 0,
+      "payStatus": "unpaid",
+      "profit": 17756.569499999998,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": null
+    },
+    {
+      "id": "log1774333845362",
+      "date": "2026-03-20",
+      "customer": "Beauty Salon",
+      "hrs": 6,
+      "mat": 0,
+      "miles": 44,
+      "notes": "[Demo] 2nd Ohase of Demo. 90% Completed. Started Drywall Cut Channels for new Box Layout and Wiring",
+      "quoted": 18000,
+      "collected": 5000,
+      "payStatus": "unpaid",
+      "profit": 17713.6914,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": null
+    },
+    {
+      "id": "log1774333894216",
+      "date": "2026-03-21",
+      "customer": "Beauty Salon",
+      "hrs": 4.5,
+      "mat": 0,
+      "miles": 44,
+      "notes": "[Planning] Started marking some of the hair station receptacle boxing layout",
+      "quoted": 18000,
+      "collected": 0,
+      "payStatus": "unpaid",
+      "profit": 17778.00855,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": null
+    },
+    {
+      "id": "log1774334041278",
+      "date": "2026-03-23",
+      "customer": "Beauty Salon",
+      "hrs": 5,
+      "mat": 277.55,
+      "miles": 50,
+      "notes": "[Rough-in] Started installing receptacle boxing layout and attic emt raceway box layout",
+      "quoted": 18000,
+      "collected": 0,
+      "payStatus": "unpaid",
+      "profit": 17475.0595,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": null
+    },
+    {
+      "id": "log1774497251305",
+      "date": "2026-03-26",
+      "customer": "Beauty Salon",
+      "hrs": 1.25,
+      "mat": 561.14,
+      "miles": 35,
+      "notes": "[Material Run] Picking Up Material",
+      "quoted": 18000,
+      "collected": 0,
+      "payStatus": "unpaid",
+      "profit": 17362.162375000004,
+      "store": "Home Depot",
+      "compareWarnings": null,
+      "triggersAtSave": null
+    },
+    {
+      "id": "log1774520069223",
+      "date": "2026-03-26",
+      "customer": "Surgery Center",
+      "hrs": 54,
+      "mat": 20,
+      "miles": 966,
+      "notes": "[Rough-in] This log is the summary of all previous work logs. Active logging will start from here.",
+      "quoted": 20000,
+      "collected": 5988,
+      "payStatus": "unpaid",
+      "profit": 17027.022599999997,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": null
+    },
+    {
+      "id": "log1774583818627",
+      "date": "2026-03-26",
+      "customer": "Beauty Salon",
+      "hrs": 5,
+      "mat": 0,
+      "miles": 44,
+      "notes": "[Rough-in] Started main EMT raceway layout, installed 100 feet of conduit and finish 2 out of 5 junction boxes",
+      "quoted": 18000,
+      "collected": 0,
+      "payStatus": "unpaid",
+      "profit": 17756.569499999998,
+      "store": null,
+      "compareWarnings": null,
+      "triggersAtSave": null
+    }
+  ],
+  "templates": [
+    {
+      "id": "tpl-commercial-ti",
+      "name": "Commercial TI",
+      "type": "Commercial TI",
+      "phases": [
+        {
+          "name": "Estimating",
+          "order_index": 0,
+          "checklist": [
+            "Review plans and reflected ceiling plan",
+            "Confirm panel / feeder scope",
+            "Build labor and material takeoff"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Planning",
+          "order_index": 1,
+          "checklist": [
+            "Confirm AHJ / permit path",
+            "Release long-lead materials",
+            "Coordinate schedule with GC"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Site Prep",
+          "order_index": 2,
+          "checklist": [
+            "Demo verification",
+            "Layout devices and dedicated equipment",
+            "Field-mark homeruns / circuit IDs"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Rough-in",
+          "order_index": 3,
+          "checklist": [
+            "Branch circuits and homeruns",
+            "Lighting rough",
+            "Low-voltage / equipment coordination"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Trim",
+          "order_index": 4,
+          "checklist": [
+            "Punch list",
+            "Final inspection",
+            "As-builts / closeout photos"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Finish",
+          "order_index": 5,
+          "checklist": [
+            "Set gear, receptacles, switches, trims",
+            "Terminate dedicated equipment"
+          ],
+          "estimated_days": 3
+        }
+      ],
+      "defaultTasks": {
+        "status": "active",
+        "mileRT": 34,
+        "miDays": 10,
+        "laborHrs": 120,
+        "contract": 0
+      },
+      "complianceReqs": [
+        "Verify utility / service constraints",
+        "Confirm low-voltage responsibility",
+        "Watch wall finish sequencing"
+      ]
+    },
+    {
+      "id": "tpl-beauty-salon-ti",
+      "name": "Beauty Salon TI",
+      "type": "Commercial TI",
+      "phases": [
+        {
+          "name": "Estimating",
+          "order_index": 0,
+          "checklist": [
+            "Verify mirror station count",
+            "Confirm lighting package and switching intent",
+            "Check panel capacity / feeder requirements"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Planning",
+          "order_index": 1,
+          "checklist": [
+            "Approve reflected ceiling layout",
+            "Coordinate mirror / cabinetry elevations",
+            "Stage trim-sensitive materials"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Site Prep",
+          "order_index": 2,
+          "checklist": [
+            "Demo existing devices and fixtures",
+            "Protect finished surfaces",
+            "Layout hair station drops"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Rough-in",
+          "order_index": 3,
+          "checklist": [
+            "Hair station circuits",
+            "Mirror receptacles",
+            "Lighting circuits and switching"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Trim",
+          "order_index": 4,
+          "checklist": [
+            "Commission lights / controls",
+            "Punch with owner / GC",
+            "Photo documentation"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Finish",
+          "order_index": 5,
+          "checklist": [
+            "Install trims, lighting, and labeled devices",
+            "Set panel schedule and dedicated loads"
+          ],
+          "estimated_days": 3
+        }
+      ],
+      "defaultTasks": {
+        "status": "active",
+        "mileRT": 30,
+        "miDays": 12,
+        "laborHrs": 95,
+        "contract": 0
+      },
+      "complianceReqs": [
+        "Mirror and cabinetry dimensions can shift outlet layout",
+        "Finish trades can compress trim window",
+        "Final owner revisions are common"
+      ]
+    },
+    {
+      "id": "tpl-adu-new-build",
+      "name": "ADU New Construction",
+      "type": "New Construction",
+      "phases": [
+        {
+          "name": "Estimating",
+          "order_index": 0,
+          "checklist": [
+            "Review load calcs and panel schedule",
+            "Confirm Title 24 / EV readiness scope",
+            "Build rough + finish labor"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Planning",
+          "order_index": 1,
+          "checklist": [
+            "Utility / service coordination",
+            "Material release",
+            "Inspection sequencing"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Site Prep",
+          "order_index": 2,
+          "checklist": [
+            "Underground / sleeves / service path",
+            "Layout boxes and homeruns"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Rough-in",
+          "order_index": 3,
+          "checklist": [
+            "Branch circuit rough",
+            "Lighting / switching rough",
+            "Low-voltage / detector rough"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Trim",
+          "order_index": 4,
+          "checklist": [
+            "Final devices",
+            "Testing / labeling",
+            "Final inspection"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Finish",
+          "order_index": 5,
+          "checklist": [
+            "Panel terminations",
+            "Receptacles / switches / fixtures",
+            "Equipment hookups"
+          ],
+          "estimated_days": 3
+        }
+      ],
+      "defaultTasks": {
+        "status": "active",
+        "mileRT": 26,
+        "miDays": 14,
+        "laborHrs": 140,
+        "contract": 0
+      },
+      "complianceReqs": [
+        "Service / utility timing can stall schedule",
+        "Framing changes can move homeruns",
+        "Final fixture package often changes late"
+      ]
+    },
+    {
+      "id": "tpl-service-upgrade",
+      "name": "Service Upgrade",
+      "type": "Service",
+      "phases": [
+        {
+          "name": "Estimating",
+          "order_index": 0,
+          "checklist": [
+            "Verify existing conditions and service size",
+            "Confirm grounding / bonding scope",
+            "Build permit + utility coordination plan"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Planning",
+          "order_index": 1,
+          "checklist": [
+            "Utility release / disconnect-reconnect",
+            "Permit package",
+            "Material staging"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Site Prep",
+          "order_index": 2,
+          "checklist": [
+            "Existing gear removal prep",
+            "Wall / mounting layout",
+            "Grounding electrode prep"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Rough-in",
+          "order_index": 3,
+          "checklist": [
+            "Service conductors / raceways",
+            "Grounding / bonding",
+            "Meter-main / panel install"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Trim",
+          "order_index": 4,
+          "checklist": [
+            "Utility final coordination",
+            "Final inspection",
+            "Customer orientation"
+          ],
+          "estimated_days": 3
+        },
+        {
+          "name": "Finish",
+          "order_index": 5,
+          "checklist": [
+            "Terminate branch circuits",
+            "Label panel schedule",
+            "Testing and energization"
+          ],
+          "estimated_days": 3
+        }
+      ],
+      "defaultTasks": {
+        "status": "active",
+        "mileRT": 24,
+        "miDays": 6,
+        "laborHrs": 40,
+        "contract": 0
+      },
+      "complianceReqs": [
+        "Utility window controls outage duration",
+        "Existing conductors may require field changes",
+        "Finish repair scope must be clearly excluded"
+      ]
+    }
+  ],
+  "employees": [
+    {
+      "id": "me",
+      "name": "Owner / Me",
+      "email": null,
+      "role": "Master Electrician",
+      "phone": null
+    }
+  ],
+  "triggerRules": [
+    {
+      "id": "tr1",
+      "name": "Bad Day Containment",
+      "conditions": {
+        "type": "bad_day",
+        "expression": "profit < target * 0.5",
+        "threshold": 0.5,
+        "thresholdLabel": "50% of daily target",
+        "situation": "Any single day profit < 50% of daily target"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Job size, Mileage, Material cost"
+        },
+        {
+          "type": "solution",
+          "value": "Do not change pricing mid-week. Log the cause and continue execution."
+        },
+        {
+          "type": "reflection",
+          "value": "What made this day weak? Identify the dominant cost driver."
+        }
+      ],
+      "is_active": true,
+      "color": "red"
+    },
+    {
+      "id": "tr2",
+      "name": "Good Day Investigation",
+      "conditions": {
+        "type": "good_day",
+        "expression": "profit >= target * 1.5",
+        "threshold": 1.5,
+        "thresholdLabel": "150% of daily target",
+        "situation": "Any day profit ≥ 150–200% of daily target"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Flag that job as reference. Compare future jobs against it."
+        },
+        {
+          "type": "solution",
+          "value": "Use this job as a benchmark for pricing, scope size, travel radius, and customer type."
+        },
+        {
+          "type": "reflection",
+          "value": "What made this job structurally strong?"
+        }
+      ],
+      "is_active": true,
+      "color": "green"
+    },
+    {
+      "id": "tr3",
+      "name": "Travel Friction Alert",
+      "conditions": {
+        "type": "travel",
+        "expression": "mileageCost > quoted * 0.15",
+        "threshold": 0.15,
+        "thresholdLabel": "15% of quoted price",
+        "situation": "Mileage cost exceeds 15% of quoted price"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Should this job have been priced higher or bundled differently?"
+        },
+        {
+          "type": "solution",
+          "value": "Bundle similar jobs geographically or add a trip minimum charge."
+        },
+        {
+          "type": "reflection",
+          "value": "Adjust future pricing rules for distance, add trip minimums."
+        }
+      ],
+      "is_active": true,
+      "color": "orange"
+    },
+    {
+      "id": "tr4",
+      "name": "Service Job Overreach",
+      "conditions": {
+        "type": "streak",
+        "expression": "3+ service jobs in a row below target",
+        "threshold": 3,
+        "thresholdLabel": "3 consecutive jobs below target",
+        "situation": "3+ service jobs in a row below target profit"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Are service jobs supporting overhead or consuming capacity?"
+        },
+        {
+          "type": "solution",
+          "value": "Raise minimum service pricing, enforce scope boundaries, or shift to project leads."
+        },
+        {
+          "type": "reflection",
+          "value": "Pause accepting similar service jobs for 48 hours."
+        }
+      ],
+      "is_active": true,
+      "color": "red"
+    },
+    {
+      "id": "tr5",
+      "name": "False Comfort Trigger",
+      "conditions": {
+        "type": "weekly",
+        "expression": "1–2 days carry entire week profit",
+        "threshold": 2,
+        "thresholdLabel": "≤2 days carrying the week",
+        "situation": "1–2 days carry the entire week"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Is weekly performance dependent on a small number of outsized wins?"
+        },
+        {
+          "type": "solution",
+          "value": "Increase consistency by improving average job quality."
+        },
+        {
+          "type": "reflection",
+          "value": "Mark the week as fragile. Do nothing operationally."
+        }
+      ],
+      "is_active": true,
+      "color": "gold"
+    },
+    {
+      "id": "tr6",
+      "name": "Below-Minimum Profit Risk",
+      "conditions": {
+        "type": "minimum",
+        "expression": "profit < minJobFloor",
+        "threshold": 0,
+        "thresholdLabel": "Below minimum job floor",
+        "situation": "Estimated profit < minimum acceptable daily fraction"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Is this job capable of contributing meaningfully to daily profit?"
+        },
+        {
+          "type": "solution",
+          "value": "Decline, reprice, or expand scope before acceptance."
+        },
+        {
+          "type": "reflection",
+          "value": "Can this job mathematically meet the minimum profit floor?"
+        }
+      ],
+      "is_active": true,
+      "color": "red"
+    },
+    {
+      "id": "tr7",
+      "name": "High Travel Friction",
+      "conditions": {
+        "type": "material",
+        "expression": "mat > quoted * 0.4",
+        "threshold": 0.4,
+        "thresholdLabel": "Material > 40% of quoted price",
+        "situation": "Material cost is a high percentage of quoted price"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Does this job rely too heavily on pass-through material with limited margin?"
+        },
+        {
+          "type": "solution",
+          "value": "Increase markup, charge procurement fee, or decline low-margin material-heavy work."
+        },
+        {
+          "type": "reflection",
+          "value": "What is the actual labor margin after material pass-through?"
+        }
+      ],
+      "is_active": true,
+      "color": "orange"
+    },
+    {
+      "id": "tr8",
+      "name": "Customer Risk Indicator",
+      "conditions": {
+        "type": "manual",
+        "expression": "Manual flag",
+        "threshold": 0,
+        "thresholdLabel": "Manual flag only",
+        "situation": "Price resistance, scope creep signals, or urgency without clarity"
+      },
+      "actions": [
+        {
+          "type": "review",
+          "value": "Does this customer increase execution or payment risk?"
+        },
+        {
+          "type": "solution",
+          "value": "Tighten terms, require deposit, or decline before engagement."
+        },
+        {
+          "type": "reflection",
+          "value": "Communication quality and expectation alignment."
+        }
+      ],
+      "is_active": true,
+      "color": "purple"
+    }
+  ]
+}

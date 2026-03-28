@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PowerOn Hub — AI Agent Platform v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060608;--bg1:#0C0C10;--bg2:#111116;--bg3:#18181F;--bg4:#22222C;--bg5:#2E2E3A;
+  --bdr:rgba(255,255,255,.07);--bdr2:rgba(255,255,255,.12);--bdr3:rgba(255,255,255,.20);
+  --t1:#F0F0FF;--t2:#A8A8C0;--t3:#60607A;--t4:#30303F;
+  --grn:#2EE89A;--grn2:rgba(46,232,154,.1);--grn3:rgba(46,232,154,.06);
+  --blu:#3A8EFF;--blu2:rgba(58,142,255,.12);
+  --gld:#FFD24A;--gld2:rgba(255,210,74,.1);
+  --red:#FF5060;--red2:rgba(255,80,96,.1);
+  --org:#FF9040;--org2:rgba(255,144,64,.1);
+  --pur:#AA6EFF;--pur2:rgba(170,110,255,.1);
+  --tel:#40D4FF;--tel2:rgba(64,212,255,.1);
+  --pnk:#FF5FA0;--pnk2:rgba(255,95,160,.1);
+  --lime:#A8FF3E;--lime2:rgba(168,255,62,.1);
+  --rose:#FF6B6B;--rose2:rgba(255,107,107,.1);
+  --sky:#00C2FF;--sky2:rgba(0,194,255,.1);
+  --font:'Syne',sans-serif;--mono:'IBM Plex Mono',monospace;
+}
+html,body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--bg5);border-radius:3px}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");background-size:200px 200px;pointer-events:none;z-index:0;opacity:.5}
+.grid-bg{position:fixed;inset:0;background-image:linear-gradient(var(--bdr) 1px,transparent 1px),linear-gradient(90deg,var(--bdr) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,black 0%,transparent 80%)}
+.hero-glow{position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:900px;height:500px;background:radial-gradient(ellipse,rgba(46,232,154,.07) 0%,transparent 70%);pointer-events:none;z-index:0}
+.wrap{position:relative;z-index:1;max-width:1140px;margin:0 auto;padding:0 24px 80px}
+
+/* ── HEADER ── */
+header{padding:48px 0 40px;text-align:center;animation:fadeUp .8s ease both}
+.badge{display:inline-flex;align-items:center;gap:6px;background:var(--grn3);border:1px solid rgba(46,232,154,.25);border-radius:100px;padding:5px 14px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--grn);margin-bottom:20px}
+.badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 8px var(--grn);animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+h1{font-size:clamp(30px,5vw,56px);font-weight:800;line-height:1.05;letter-spacing:-.02em;background:linear-gradient(135deg,#F0F0FF 0%,#A8A8C0 55%,var(--grn) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:14px}
+.sub{font-size:15.5px;color:var(--t2);max-width:640px;margin:0 auto 28px;line-height:1.65;font-weight:400}
+.header-chips{display:flex;justify-content:center;gap:7px;flex-wrap:wrap}
+
+/* ── SECTION ── */
+.section{margin-bottom:52px;animation:fadeUp .7s ease both}
+.sec-label{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.sec-label span{font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--t3)}
+.sec-label::after{content:'';flex:1;height:1px;background:var(--bdr)}
+.sec-num{font-family:var(--mono);font-size:10px;color:var(--grn);min-width:28px}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:4px;margin-bottom:24px;flex-wrap:wrap}
+.tab{flex:1;min-width:72px;padding:8px 10px;border-radius:10px;font-size:11.5px;font-weight:700;text-align:center;cursor:pointer;transition:all .2s;color:var(--t3);border:none;background:transparent;font-family:var(--font);letter-spacing:.01em}
+.tab:hover{color:var(--t2)}
+.tab.active{background:var(--bg4);color:var(--t1);border:1px solid var(--bdr2)}
+.panel{display:none}.panel.active{display:block}
+
+/* ── MANAGER CARD ── */
+.manager-card{background:linear-gradient(135deg,var(--bg2) 0%,var(--bg3) 100%);border:1px solid var(--bdr2);border-radius:20px;padding:30px;position:relative;overflow:hidden;margin-bottom:14px}
+.manager-card::before{content:'';position:absolute;top:-60px;right:-60px;width:200px;height:200px;background:radial-gradient(circle,rgba(46,232,154,.1) 0%,transparent 70%);pointer-events:none}
+.manager-top{display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap}
+.manager-icon{width:60px;height:60px;border-radius:15px;background:linear-gradient(135deg,rgba(46,232,154,.2),rgba(46,232,154,.04));border:1px solid rgba(46,232,154,.3);display:flex;align-items:center;justify-content:center;font-size:26px;flex-shrink:0}
+.manager-info{flex:1;min-width:200px}
+.manager-name{font-size:21px;font-weight:800;letter-spacing:-.01em;margin-bottom:3px}
+.manager-role{font-size:11px;color:var(--grn);font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+.manager-desc{font-size:13px;color:var(--t2);line-height:1.65}
+.caps{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.cap{background:var(--bg4);border:1px solid var(--bdr2);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--t2);font-weight:600}
+.cap.voice{background:var(--grn3);border-color:rgba(46,232,154,.3);color:var(--grn)}
+.cap.ai{background:var(--pur2);border-color:rgba(170,110,255,.3);color:var(--pur)}
+
+/* ── AGENT GRID ── */
+.agent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px}
+.agent-card{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;padding:18px;cursor:pointer;transition:all .25s ease;position:relative;overflow:hidden}
+.agent-card:hover{border-color:var(--bdr3);transform:translateY(-2px);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.agent-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:16px 16px 0 0;opacity:0;transition:opacity .3s}
+.agent-card:hover::before{opacity:1}
+.a-est::before{background:linear-gradient(90deg,var(--gld),transparent)}
+.a-graph::before{background:linear-gradient(90deg,var(--blu),transparent)}
+.a-proj::before{background:linear-gradient(90deg,var(--pur),transparent)}
+.a-money::before{background:linear-gradient(90deg,var(--grn),transparent)}
+.a-marketing::before{background:linear-gradient(90deg,var(--pnk),transparent)}
+.a-blueprint::before{background:linear-gradient(90deg,var(--org),transparent)}
+.a-ohm::before{background:linear-gradient(90deg,var(--lime),transparent)}
+.a-chrono::before{background:linear-gradient(90deg,var(--sky),transparent)}
+.a-scout::before{background:linear-gradient(90deg,var(--tel),transparent)}
+
+.new-badge{position:absolute;top:12px;right:12px;background:var(--grn2);border:1px solid rgba(46,232,154,.3);border-radius:20px;padding:2px 8px;font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--grn);text-transform:uppercase}
+
+.agent-hdr{display:flex;align-items:center;gap:11px;margin-bottom:11px}
+.agent-ico{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.agent-title{font-size:14px;font-weight:800;letter-spacing:-.01em}
+.agent-sub{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-top:1px}
+.agent-desc{font-size:12px;color:var(--t2);line-height:1.6;margin-bottom:11px}
+.agent-features{display:flex;flex-direction:column;gap:5px}
+.feat{display:flex;align-items:flex-start;gap:7px;font-size:11.5px;color:var(--t2)}
+.feat::before{content:'→';color:var(--t3);flex-shrink:0;margin-top:1px}
+
+/* ── VOICE CARD ── */
+.voice-card{background:linear-gradient(135deg,var(--bg2),var(--bg3));border:1px solid rgba(46,232,154,.14);border-radius:16px;padding:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.voice-visual{display:flex;align-items:center;gap:3px;height:36px}
+.voice-bar{width:3px;border-radius:2px;background:var(--grn);animation:wave 1.2s ease infinite}
+.voice-bar:nth-child(1){height:8px;animation-delay:0s}.voice-bar:nth-child(2){height:18px;animation-delay:.1s}
+.voice-bar:nth-child(3){height:28px;animation-delay:.2s}.voice-bar:nth-child(4){height:22px;animation-delay:.3s}
+.voice-bar:nth-child(5){height:32px;animation-delay:.4s}.voice-bar:nth-child(6){height:16px;animation-delay:.5s}
+.voice-bar:nth-child(7){height:10px;animation-delay:.6s}.voice-bar:nth-child(8){height:24px;animation-delay:.7s}
+.voice-bar:nth-child(9){height:14px;animation-delay:.8s}
+@keyframes wave{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.4)}}
+.voice-info{flex:1;min-width:180px}
+.voice-title{font-size:15px;font-weight:800;margin-bottom:4px}
+.voice-desc{font-size:12px;color:var(--t2);line-height:1.55}
+
+/* ── FULL-DETAIL AGENT ── */
+.agent-full{background:var(--bg2);border:1px solid var(--bdr);border-radius:18px;padding:26px;margin-bottom:14px;position:relative;overflow:hidden}
+.agent-full-hdr{display:flex;align-items:flex-start;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+.agent-full-ico{width:52px;height:52px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.agent-full-meta{flex:1;min-width:180px}
+.agent-full-name{font-size:18px;font-weight:800;margin-bottom:3px}
+.agent-full-role{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+.agent-full-desc{font-size:13px;color:var(--t2);line-height:1.65}
+.agent-domains{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.domain{background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:4px 11px;font-size:11px;color:var(--t2);font-weight:600}
+.feat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+@media(max-width:580px){.feat-grid{grid-template-columns:1fr}}
+.feat-block{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:12px}
+.feat-block-title{font-size:11px;font-weight:700;color:var(--t2);margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase}
+.feat-block-desc{font-size:11.5px;color:var(--t3);line-height:1.55}
+.agent-full-glow{position:absolute;top:-60px;right:-60px;width:180px;height:180px;border-radius:50%;pointer-events:none;opacity:.4}
+
+/* ── PROPOSAL CARD ── */
+.analyzer-card{background:var(--bg2);border:1px solid rgba(168,255,62,.15);border-radius:16px;padding:24px;position:relative;overflow:hidden}
+.analyzer-card::before{content:'';position:absolute;top:-80px;right:-80px;width:200px;height:200px;background:radial-gradient(circle,rgba(168,255,62,.07) 0%,transparent 70%)}
+.proposal-item{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-top:10px;display:flex;align-items:flex-start;gap:12px}
+.prop-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.prop-body{flex:1}
+.prop-title{font-size:13px;font-weight:700;margin-bottom:4px}
+.prop-desc{font-size:12px;color:var(--t2);line-height:1.5;margin-bottom:8px}
+.prop-source{font-size:10px;font-family:var(--mono);color:var(--t3);margin-bottom:6px}
+.prop-actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn-confirm{background:var(--grn);color:#000;border:none;border-radius:7px;padding:5px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:var(--font)}
+.btn-skip{background:var(--bg4);color:var(--t2);border:1px solid var(--bdr);border-radius:7px;padding:5px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:var(--font)}
+
+/* ── COMMS SVG ── */
+.comms-wrap{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;padding:24px;overflow-x:auto}
+.comms-inner{min-width:740px}
+.flow-svg{width:100%;height:auto;display:block}
+
+/* ── MEMORY / SEC / STACK ── */
+.mem-flow{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:16px}
+.mem-node{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px;text-align:center}
+.mem-ico{font-size:22px;margin-bottom:8px}.mem-title{font-size:12px;font-weight:700;margin-bottom:4px}.mem-desc{font-size:11px;color:var(--t3);line-height:1.5}
+.sec-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.sec-item{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:16px;display:flex;gap:12px;align-items:flex-start}
+.sec-ico{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.sec-title{font-size:12.5px;font-weight:700;margin-bottom:3px}.sec-desc{font-size:11.5px;color:var(--t3);line-height:1.5}
+.platform-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.plat-card{background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;text-align:center}
+.plat-icon{font-size:28px;margin-bottom:10px}.plat-name{font-size:13px;font-weight:700;margin-bottom:4px}.plat-info{font-size:11.5px;color:var(--t3);line-height:1.5}
+.plat-tech{display:inline-block;margin-top:8px;background:var(--bg4);border:1px solid var(--bdr);border-radius:6px;padding:3px 8px;font-size:10.5px;font-family:var(--mono);color:var(--t2)}
+.stack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.stack-item{background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px}
+.stack-cat{font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);margin-bottom:5px}
+.stack-val{font-size:12px;font-weight:600;color:var(--t1)}.stack-why{font-size:11px;color:var(--t3);margin-top:2px}
+.phase-list{display:flex;flex-direction:column;gap:10px}
+.phase{background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px 20px;display:flex;gap:16px;align-items:flex-start}
+.phase-num{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--t3);flex-shrink:0;padding-top:2px;min-width:24px}
+.phase-body{flex:1}.phase-title{font-size:14px;font-weight:700;margin-bottom:4px}.phase-desc{font-size:12.5px;color:var(--t2);line-height:1.6}
+.phase-time{display:inline-block;margin-top:8px;background:var(--bg4);border:1px solid var(--bdr);border-radius:6px;padding:3px 9px;font-size:11px;font-family:var(--mono);color:var(--gld)}
+.phase-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ptag{background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:2px 8px;font-size:10.5px;color:var(--t3)}
+.memory-card{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;padding:24px}
+.verify-flow{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:10px;margin-top:14px}
+.vf-step{background:var(--bg3);border:1px solid var(--bdr);border-radius:11px;padding:13px;position:relative}
+.vf-num{font-family:var(--mono);font-size:9px;color:var(--t4);margin-bottom:6px;text-transform:uppercase;letter-spacing:.1em}
+.vf-ico{font-size:18px;margin-bottom:6px}.vf-title{font-size:12px;font-weight:700;margin-bottom:3px}.vf-desc{font-size:11px;color:var(--t3);line-height:1.5}
+.vf-badge{position:absolute;top:10px;right:10px}
+
+/* ── CHIPS ── */
+.chip{display:inline-flex;align-items:center;gap:5px;border-radius:100px;padding:3px 10px;font-size:10.5px;font-weight:700;letter-spacing:.04em}
+.chip-grn{background:var(--grn2);color:var(--grn);border:1px solid rgba(46,232,154,.2)}
+.chip-pur{background:var(--pur2);color:var(--pur);border:1px solid rgba(170,110,255,.2)}
+.chip-blu{background:var(--blu2);color:var(--blu);border:1px solid rgba(58,142,255,.2)}
+.chip-org{background:var(--org2);color:var(--org);border:1px solid rgba(255,144,64,.2)}
+.chip-tel{background:var(--tel2);color:var(--tel);border:1px solid rgba(64,212,255,.2)}
+.chip-pnk{background:var(--pnk2);color:var(--pnk);border:1px solid rgba(255,95,160,.2)}
+.chip-lime{background:var(--lime2);color:var(--lime);border:1px solid rgba(168,255,62,.2)}
+.chip-sky{background:var(--sky2);color:var(--sky);border:1px solid rgba(0,194,255,.2)}
+.chip-gld{background:var(--gld2);color:var(--gld);border:1px solid rgba(255,210,74,.2)}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.dot-grn{background:var(--grn)}.dot-org{background:var(--org)}.dot-tel{background:var(--tel)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.s1{animation-delay:.1s}.s2{animation-delay:.2s}.s3{animation-delay:.3s}.s4{animation-delay:.4s}.s5{animation-delay:.5s}
+footer{text-align:center;padding:30px 0;color:var(--t4);font-size:11px;font-family:var(--mono);border-top:1px solid var(--bdr);margin-top:40px}
+@media(max-width:600px){.agent-grid{grid-template-columns:1fr}.tabs{gap:3px}.tab{font-size:10px;padding:7px 6px}}
+
+/* ── CALENDAR VISUAL ── */
+.cal-demo{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:14px}
+.cal-day-header{background:var(--bg4);border-radius:6px;padding:6px 4px;text-align:center;font-size:9.5px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase}
+.cal-slot{background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:7px 6px;min-height:56px;font-size:9.5px}
+.cal-event{border-radius:4px;padding:3px 5px;margin-bottom:3px;font-size:9px;font-weight:700;line-height:1.3}
+.cal-event.type-job{background:rgba(46,232,154,.15);color:var(--grn);border-left:2px solid var(--grn)}
+.cal-event.type-estimate{background:rgba(255,210,74,.12);color:var(--gld);border-left:2px solid var(--gld)}
+.cal-event.type-follow{background:rgba(58,142,255,.12);color:var(--blu);border-left:2px solid var(--blu)}
+.cal-event.type-hold{background:rgba(255,144,64,.1);color:var(--org);border-left:2px solid var(--org)}
+
+/* ── MKTG VISUAL ── */
+.mktg-channels{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:14px}
+.mktg-ch{background:var(--bg3);border:1px solid var(--bdr);border-radius:11px;padding:13px}
+.mktg-ch-ico{font-size:20px;margin-bottom:7px}
+.mktg-ch-name{font-size:12px;font-weight:700;margin-bottom:3px}
+.mktg-ch-desc{font-size:11px;color:var(--t3);line-height:1.5}
+
+/* ── OHM COACHING ── */
+.ohm-proposal{background:var(--bg3);border:1px solid rgba(168,255,62,.15);border-radius:12px;padding:14px;margin-top:10px;display:flex;gap:12px}
+.ohm-ico{width:36px;height:36px;border-radius:9px;background:var(--lime2);border:1px solid rgba(168,255,62,.2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.ohm-body{flex:1}
+.ohm-title{font-size:13px;font-weight:700;margin-bottom:3px}
+.ohm-cat{font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--lime);margin-bottom:5px;font-family:var(--mono)}
+.ohm-desc{font-size:12px;color:var(--t2);line-height:1.5;margin-bottom:8px}
+.ohm-actions{display:flex;gap:7px;flex-wrap:wrap}
+.btn-verify{background:var(--lime);color:#0A0A0A;border:none;border-radius:7px;padding:5px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:var(--font)}
+.btn-detail{background:var(--bg4);color:var(--t2);border:1px solid var(--bdr);border-radius:7px;padding:5px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:var(--font)}
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="hero-glow"></div>
+<div class="wrap">
+
+<!-- ══ HEADER ══ -->
+<header>
+  <div class="badge"><span>v2.0 Blueprint — Updated</span></div>
+  <h1>PowerOn Hub<br>AI Agent Platform</h1>
+  <p class="sub">11 specialized AI agents working as a unified team — each owning a domain, all sharing memory, all reporting to NEXUS, all accountable to you.</p>
+  <div class="header-chips">
+    <span class="chip chip-grn"><span class="dot dot-grn"></span>11 Agents</span>
+    <span class="chip chip-pur">Manager + Voice</span>
+    <span class="chip chip-sky">Calendar Control</span>
+    <span class="chip chip-pnk">Marketing Engine</span>
+    <span class="chip chip-lime">Electrical Coach</span>
+    <span class="chip chip-org">Compliance + RFI</span>
+    <span class="chip chip-tel">Cross-Platform</span>
+    <span class="chip chip-gld">Audit Trail</span>
+  </div>
+</header>
+
+<!-- ══ TABS ══ -->
+<div class="tabs" id="main-tabs">
+  <button class="tab active" onclick="switchTab('agents')">Agents</button>
+  <button class="tab" onclick="switchTab('new')">New Agents</button>
+  <button class="tab" onclick="switchTab('network')">Network</button>
+  <button class="tab" onclick="switchTab('analyzer')">Analyzer</button>
+  <button class="tab" onclick="switchTab('memory')">Memory</button>
+  <button class="tab" onclick="switchTab('security')">Security</button>
+  <button class="tab" onclick="switchTab('platform')">Platforms</button>
+  <button class="tab" onclick="switchTab('roadmap')">Roadmap</button>
+  <button class="tab" onclick="switchTab('stack')">Tech Stack</button>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: ALL AGENTS (OVERVIEW)
+══════════════════════════════════ -->
+<div class="panel active" id="panel-agents">
+
+  <!-- MANAGER -->
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Command Layer</span></div>
+    <div class="manager-card">
+      <div class="manager-top">
+        <div class="manager-icon">🧠</div>
+        <div class="manager-info">
+          <div class="manager-name">NEXUS — Manager Agent</div>
+          <div class="manager-role">Central Command · Delegates to all 10 agents · Voice-Enabled</div>
+          <div class="manager-desc">Your AI chief-of-staff. NEXUS monitors every sub-agent in real time, delegates tasks, surfaces conflicts, and communicates with you directly via text or voice. It knows the complete state of every job, estimate, invoice, marketing campaign, compliance status, and schedule across your entire operation. NEXUS also has full context on field logs, the 275-item price book, material takeoffs, the 52-week revenue tracker, coordination items, agenda tasks, per-project labor/material/overhead cost breakdowns, and the GC relationship pipeline — all migrated from the Operations Hub and accessible through scoped memory queries.</div>
+          <div class="caps">
+            <span class="cap voice">🎤 Voice Chat</span>
+            <span class="cap ai">Delegates to 10 agents</span>
+            <span class="cap">Daily briefing</span>
+            <span class="cap">Conflict detection</span>
+            <span class="cap">Priority escalation</span>
+            <span class="cap">Cross-agent arbitration</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="voice-card">
+      <div class="voice-visual">
+        <div class="voice-bar"></div><div class="voice-bar"></div><div class="voice-bar"></div>
+        <div class="voice-bar"></div><div class="voice-bar"></div><div class="voice-bar"></div>
+        <div class="voice-bar"></div><div class="voice-bar"></div><div class="voice-bar"></div>
+      </div>
+      <div class="voice-info">
+        <div class="voice-title">NEXUS Voice Interface</div>
+        <div class="voice-desc">"What's the status on the Henderson job?" · "Any unpaid invoices over 3 days?" · "Book the Garcia estimate for Thursday afternoon." · "What marketing posts go out this week?" · "Any NEC compliance flags on the Riverside install?" NEXUS answers in natural language and routes every command to the right agent.</div>
+      </div>
+      <span class="chip chip-grn">ElevenLabs + Whisper</span>
+    </div>
+  </div>
+
+  <!-- AGENT GRID — ALL 10 SUB-AGENTS -->
+  <div class="section s2">
+    <div class="sec-label"><span class="sec-num">02</span><span>All Sub-Agents (10)</span></div>
+    <div class="agent-grid">
+
+      <!-- VAULT -->
+      <div class="agent-card a-est">
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--gld2);border:1px solid rgba(255,210,74,.2)">💰</div>
+          <div><div class="agent-title">VAULT</div><div class="agent-sub" style="color:var(--gld)">Estimating</div></div>
+        </div>
+        <div class="agent-desc">Cost intelligence from archived jobs. Flags margin erosion, suggests pricing, compares bid vs actuals.</div>
+        <div class="agent-features">
+          <div class="feat">Historical pricing suggestions</div>
+          <div class="feat">Live margin erosion alerts</div>
+          <div class="feat">Bid vs actual closeout analysis</div>
+        </div>
+      </div>
+
+      <!-- PULSE -->
+      <div class="agent-card a-graph">
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--blu2);border:1px solid rgba(58,142,255,.2)">📊</div>
+          <div><div class="agent-title">PULSE</div><div class="agent-sub" style="color:var(--blu)">Graph Dashboard</div></div>
+        </div>
+        <div class="agent-desc">Auto-generates live charts, trend lines, and performance digests from your real project data.</div>
+        <div class="agent-features">
+          <div class="feat">Revenue & labor trend charts</div>
+          <div class="feat">Weekly digest to NEXUS</div>
+          <div class="feat">KPI tracking across all jobs</div>
+        </div>
+      </div>
+
+      <!-- LEDGER -->
+      <div class="agent-card a-money">
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--grn2);border:1px solid rgba(46,232,154,.2)">💳</div>
+          <div><div class="agent-title">LEDGER</div><div class="agent-sub" style="color:var(--grn)">Money</div></div>
+        </div>
+        <div class="agent-desc">Monitors every invoice and cash position. Flags overdue AR 3+ days and sends reminders on your approval.</div>
+        <div class="agent-features">
+          <div class="feat">Live AR & payment tracking</div>
+          <div class="feat">3-day overdue flag + confirm flow</div>
+          <div class="feat">Cash flow forecasting</div>
+        </div>
+      </div>
+
+      <!-- SPARK — MARKETING (NEW) -->
+      <div class="agent-card a-marketing">
+        <div class="new-badge">New</div>
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--pnk2);border:1px solid rgba(255,95,160,.2)">📣</div>
+          <div><div class="agent-title">SPARK</div><div class="agent-sub" style="color:var(--pnk)">Marketing</div></div>
+        </div>
+        <div class="agent-desc">Runs your brand presence, campaigns, reviews, and lead pipeline. Tells NEXUS when a new lead comes in.</div>
+        <div class="agent-features">
+          <div class="feat">Google Business & review monitoring</div>
+          <div class="feat">Social media post scheduling</div>
+          <div class="feat">Lead capture & follow-up pipeline</div>
+        </div>
+      </div>
+
+      <!-- BLUEPRINT — PROJECT FRAMEWORK (NEW) -->
+      <div class="agent-card a-blueprint">
+        <div class="new-badge">New</div>
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--org2);border:1px solid rgba(255,144,64,.2)">📐</div>
+          <div><div class="agent-title">BLUEPRINT</div><div class="agent-sub" style="color:var(--org)">Project Framework + Compliance + RFI</div></div>
+        </div>
+        <div class="agent-desc">Unified project intelligence — phases, templates, permit compliance, NEC code checks, and RFI tracking in one agent.</div>
+        <div class="agent-features">
+          <div class="feat">Permit & compliance status per job</div>
+          <div class="feat">RFI tracking with deadline alerts</div>
+          <div class="feat">Change order ↔ estimate linking</div>
+        </div>
+      </div>
+
+      <!-- OHM — ELECTRICAL COACH (NEW) -->
+      <div class="agent-card a-ohm">
+        <div class="new-badge">New</div>
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--lime2);border:1px solid rgba(168,255,62,.2)">⚡</div>
+          <div><div class="agent-title">OHM</div><div class="agent-sub" style="color:var(--lime)">Electrical Coach</div></div>
+        </div>
+        <div class="agent-desc">Senior electrical intelligence layer. Analyzes your operations against NEC standards and best practices, then proposes verified improvements.</div>
+        <div class="agent-features">
+          <div class="feat">NEC code compliance analysis</div>
+          <div class="feat">Operational efficiency proposals</div>
+          <div class="feat">Safety & risk gap identification</div>
+        </div>
+      </div>
+
+      <!-- CHRONO — CALENDAR (NEW) -->
+      <div class="agent-card a-chrono">
+        <div class="new-badge">New</div>
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--sky2);border:1px solid rgba(0,194,255,.2)">📅</div>
+          <div><div class="agent-title">CHRONO</div><div class="agent-sub" style="color:var(--sky)">Calendar</div></div>
+        </div>
+        <div class="agent-desc">Controls the entire business schedule. Books jobs, estimates, follow-ups, and crew dispatch — and alerts you to conflicts before they happen.</div>
+        <div class="agent-features">
+          <div class="feat">Job + estimate auto-scheduling</div>
+          <div class="feat">Crew dispatch & travel optimization</div>
+          <div class="feat">Idle slot detection & follow-up filling</div>
+        </div>
+      </div>
+
+      <!-- SCOUT -->
+      <div class="agent-card a-scout">
+        <div class="agent-hdr">
+          <div class="agent-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">🔬</div>
+          <div><div class="agent-title">SCOUT</div><div class="agent-sub" style="color:var(--tel)">System Analyzer</div></div>
+        </div>
+        <div class="agent-desc">Continuously monitors the entire platform, surfaces improvement proposals, and routes them through the MiroFish verification chain.</div>
+        <div class="agent-features">
+          <div class="feat">Pattern detection across all agents</div>
+          <div class="feat">Confirm-to-integrate proposal flow</div>
+          <div class="feat">Multi-agent verification gatekeeper</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: NEW AGENTS (DEEP DIVE)
+══════════════════════════════════ -->
+<div class="panel" id="panel-new">
+
+  <!-- SPARK: MARKETING -->
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>SPARK — Marketing Agent</span></div>
+    <div class="agent-full">
+      <div class="agent-full-glow" style="background:radial-gradient(circle,rgba(255,95,160,.15) 0%,transparent 70%)"></div>
+      <div class="agent-full-hdr">
+        <div class="agent-full-ico" style="background:var(--pnk2);border:1px solid rgba(255,95,160,.2)">📣</div>
+        <div class="agent-full-meta">
+          <div class="agent-full-name">SPARK — Marketing Agent</div>
+          <div class="agent-full-role" style="color:var(--pnk)">Brand Presence · Lead Gen · Campaigns · Reputation</div>
+          <div class="agent-full-desc">SPARK runs Power On Solutions' entire outward-facing presence. From Google Business reviews to social media posts, from lead follow-up to campaign performance — SPARK keeps your brand active and your pipeline full without you having to think about it.</div>
+          <div class="agent-domains">
+            <span class="domain">Google Business</span><span class="domain">Social Media</span><span class="domain">Lead Pipeline</span>
+            <span class="domain">Reviews & Reputation</span><span class="domain">Email Campaigns</span><span class="domain">Ad Performance</span>
+          </div>
+        </div>
+      </div>
+      <div class="feat-grid">
+        <div class="feat-block">
+          <div class="feat-block-title">📍 Google Business Management</div>
+          <div class="feat-block-desc">Monitors your Google Business listing, tracks new reviews, drafts professional responses for your approval, and flags negative reviews immediately for fast action.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📲 Social Media Scheduling</div>
+          <div class="feat-block-desc">Generates and schedules posts for Facebook, Instagram, and LinkedIn based on completed jobs (before/after shots), seasonal campaigns, and industry news. Posts on confirmation.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🎯 Lead Capture & Follow-Up</div>
+          <div class="feat-block-desc">Monitors inbound leads from website forms, Google Ads, and phone call logs. Auto-assigns a follow-up task and alerts CHRONO to book a call or site visit within 24 hours.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📧 Email Campaign Engine</div>
+          <div class="feat-block-desc">Manages seasonal outreach campaigns — annual panel inspections, HVAC season prep, commercial maintenance contracts. Drafts campaigns, you approve, SPARK sends.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📊 Campaign Analytics</div>
+          <div class="feat-block-desc">Tracks which channels produce the most leads and revenue. Reports to PULSE for dashboard inclusion. Surfaces underperforming campaigns for review.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🤝 Communicates With</div>
+          <div class="feat-block-desc">→ CHRONO when a new lead needs a booking<br>→ LEDGER when a campaign converts to revenue<br>→ NEXUS with weekly brand health summary</div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px">Marketing Channels Managed</div>
+        <div class="mktg-channels">
+          <div class="mktg-ch"><div class="mktg-ch-ico">🌐</div><div class="mktg-ch-name">Google Business</div><div class="mktg-ch-desc">Reviews, hours, listing accuracy, Q&A</div></div>
+          <div class="mktg-ch"><div class="mktg-ch-ico">📸</div><div class="mktg-ch-name">Instagram</div><div class="mktg-ch-desc">Job photo posts, reels, engagement</div></div>
+          <div class="mktg-ch"><div class="mktg-ch-ico">👥</div><div class="mktg-ch-name">Facebook</div><div class="mktg-ch-desc">Page posts, ads, community groups</div></div>
+          <div class="mktg-ch"><div class="mktg-ch-ico">💼</div><div class="mktg-ch-name">LinkedIn</div><div class="mktg-ch-desc">Commercial B2B outreach, project highlights</div></div>
+          <div class="mktg-ch"><div class="mktg-ch-ico">📧</div><div class="mktg-ch-name">Email (Resend)</div><div class="mktg-ch-desc">Seasonal campaigns, past client outreach</div></div>
+          <div class="mktg-ch"><div class="mktg-ch-ico">🎯</div><div class="mktg-ch-name">Google Ads</div><div class="mktg-ch-desc">Campaign performance monitoring + alerts</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BLUEPRINT: PROJECT FRAMEWORK -->
+  <div class="section s2">
+    <div class="sec-label"><span class="sec-num">02</span><span>BLUEPRINT — Project Framework Agent</span></div>
+    <div class="agent-full">
+      <div class="agent-full-glow" style="background:radial-gradient(circle,rgba(255,144,64,.12) 0%,transparent 70%)"></div>
+      <div class="agent-full-hdr">
+        <div class="agent-full-ico" style="background:var(--org2);border:1px solid rgba(255,144,64,.2)">📐</div>
+        <div class="agent-full-meta">
+          <div class="agent-full-name">BLUEPRINT — Project Framework Agent</div>
+          <div class="agent-full-role" style="color:var(--org)">Compliance · Project Phases · RFI Tracking · Change Orders</div>
+          <div class="agent-full-desc">BLUEPRINT is the single source of truth for how every job is built. It unifies your project templates, phase tracking, permit and code compliance monitoring, and RFI management into one cohesive agent that ensures every project runs clean from kickoff to closeout.</div>
+          <div class="agent-domains">
+            <span class="domain">Project Phases</span><span class="domain">Templates</span><span class="domain">Permits</span>
+            <span class="domain">NEC Compliance</span><span class="domain">RFI Tracking</span><span class="domain">Change Orders</span><span class="domain">Closeout</span>
+          </div>
+        </div>
+      </div>
+      <div class="feat-grid">
+        <div class="feat-block">
+          <div class="feat-block-title">📋 Compliance Monitoring</div>
+          <div class="feat-block-desc">Tracks permit status, inspection schedules, AHJ requirements, and code version compliance per jurisdiction. Flags any gaps before they become stop-work orders.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🏗️ Project Framework</div>
+          <div class="feat-block-desc">Manages templates, phases, milestones, and task assignments. Auto-applies the right template at project creation and escalates stalled phases to NEXUS.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📋 RFI Tracker</div>
+          <div class="feat-block-desc">Monitors every open RFI — deadline, recipient, status. Flags unanswered RFIs 48h before deadline. Tracks response quality and escalates to NEXUS if a GC goes silent.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🔄 Change Order Management</div>
+          <div class="feat-block-desc">Links every RFI outcome to a potential change order. Alerts VAULT when scope changes need a re-estimate. Ensures no scope creep goes unbilled.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📁 Closeout Scoring</div>
+          <div class="feat-block-desc">Scores each project on closeout efficiency — payment delay, RFI friction, inspection passes, punch list resolution. Feeds data to VAULT's archive for future pricing.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🤝 Communicates With</div>
+          <div class="feat-block-desc">→ VAULT when scope changes affect estimates<br>→ LEDGER when payment milestones are hit<br>→ OHM for code compliance cross-checks<br>→ NEXUS daily project status digest</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OHM: ELECTRICAL COACH -->
+  <div class="section s3">
+    <div class="sec-label"><span class="sec-num">03</span><span>OHM — Electrical Coach Agent</span></div>
+    <div class="agent-full" style="border-color:rgba(168,255,62,.15)">
+      <div class="agent-full-glow" style="background:radial-gradient(circle,rgba(168,255,62,.12) 0%,transparent 70%)"></div>
+      <div class="agent-full-hdr">
+        <div class="agent-full-ico" style="background:var(--lime2);border:1px solid rgba(168,255,62,.25)">⚡</div>
+        <div class="agent-full-meta">
+          <div class="agent-full-name">OHM — Electrical Coach Agent</div>
+          <div class="agent-full-role" style="color:var(--lime)">NEC Compliance · Operations Analysis · Best Practices · Safety</div>
+          <div class="agent-full-desc">OHM is a senior-level electrical intelligence agent trained on NEC 2023, OSHA 1910, California Title 24, and Power On Solutions' own job history. It continuously analyzes your operations and proposes verified, actionable improvements — each requiring your sign-off before implementation.</div>
+          <div class="agent-domains">
+            <span class="domain">NEC 2023</span><span class="domain">OSHA 1910</span><span class="domain">CA Title 24</span>
+            <span class="domain">Load Calculations</span><span class="domain">Arc Flash</span><span class="domain">Grounding</span><span class="domain">Operations Efficiency</span>
+          </div>
+        </div>
+      </div>
+      <div class="feat-grid">
+        <div class="feat-block">
+          <div class="feat-block-title">📏 NEC Code Analysis</div>
+          <div class="feat-block-desc">Reviews project documentation against current NEC standards. Flags potential violations in panel schedules, conductor sizing, GFCI/AFCI requirements, and service entrance specs before inspection.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">⚙️ Operations Improvement</div>
+          <div class="feat-block-desc">Analyzes job history, field friction points, labor overruns, and rework patterns. Proposes process improvements — from crew workflow to material staging to site safety protocols.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🛡️ Safety & Risk Analysis</div>
+          <div class="feat-block-desc">Reviews incident reports, near-miss patterns, and arc flash exposure. Proposes safety upgrades, PPE policy improvements, and LOTO procedure enhancements.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📚 Training Suggestions</div>
+          <div class="feat-block-desc">Based on identified gaps, OHM suggests specific training topics for your crew — code updates, new materials, inspection trends, or recurring field mistakes from your own job data.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🔮 Industry Intelligence</div>
+          <div class="feat-block-desc">Monitors NEC code cycle updates, OSHA enforcement trends, AHJ preference shifts in your area, and utility interconnection changes (solar, EV, battery storage).</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🤝 Communicates With</div>
+          <div class="feat-block-desc">→ BLUEPRINT for real-time compliance cross-checks<br>→ VAULT when code changes affect cost estimates<br>→ NEXUS with weekly electrical ops report<br>→ SCOUT to log findings in memory</div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px">Sample OHM Proposals (Verify to Implement)</div>
+        <div class="ohm-proposal">
+          <div class="ohm-ico">🔌</div>
+          <div class="ohm-body">
+            <div class="ohm-cat">NEC 210.52 · Residential</div>
+            <div class="ohm-title">AFCI Coverage Gap on Bedroom Circuits</div>
+            <div class="ohm-desc">Review of the Morales job reveals 4 bedroom circuits installed without AFCI breakers per NEC 2020 §210.12. AHJ has started enforcing this since January. Recommend updating your standard residential scope to include AFCI as default.</div>
+            <div class="ohm-actions">
+              <button class="btn-verify" onclick="handleOhm(this,'verify')">✓ Verify & Apply</button>
+              <button class="btn-detail" onclick="handleOhm(this,'detail')">View NEC Reference</button>
+              <button class="btn-detail" onclick="handleOhm(this,'skip')">Not Applicable</button>
+            </div>
+          </div>
+        </div>
+        <div class="ohm-proposal">
+          <div class="ohm-ico">⚡</div>
+          <div class="ohm-body">
+            <div class="ohm-cat">Operations · Labor Efficiency</div>
+            <div class="ohm-title">Panel Staging Sequence Causing 40-min Delay Pattern</div>
+            <div class="ohm-desc">Across your last 6 Commercial TI jobs, field notes show a consistent 35-45 min delay in panel rough-in caused by conduit staging arriving after the panel. Restructuring your delivery checklist could eliminate this pattern.</div>
+            <div class="ohm-actions">
+              <button class="btn-verify" onclick="handleOhm(this,'verify')">✓ Verify & Apply</button>
+              <button class="btn-detail" onclick="handleOhm(this,'detail')">See Job Analysis</button>
+              <button class="btn-detail" onclick="handleOhm(this,'skip')">Skip</button>
+            </div>
+          </div>
+        </div>
+        <div class="ohm-proposal">
+          <div class="ohm-ico">🛡️</div>
+          <div class="ohm-body">
+            <div class="ohm-cat">OSHA 1910.333 · Safety</div>
+            <div class="ohm-title">LOTO Procedure Documentation Gap</div>
+            <div class="ohm-desc">Your current scope documents don't include a standardized LOTO verification step for service work on energized panels. Adding a 3-step LOTO confirmation to your Service Call template reduces liability and matches OSHA 1910.333 requirements.</div>
+            <div class="ohm-actions">
+              <button class="btn-verify" onclick="handleOhm(this,'verify')">✓ Verify & Apply</button>
+              <button class="btn-detail" onclick="handleOhm(this,'detail')">OSHA Reference</button>
+              <button class="btn-detail" onclick="handleOhm(this,'skip')">Skip</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHRONO: CALENDAR -->
+  <div class="section s4">
+    <div class="sec-label"><span class="sec-num">04</span><span>CHRONO — Calendar Agent</span></div>
+    <div class="agent-full" style="border-color:rgba(0,194,255,.15)">
+      <div class="agent-full-glow" style="background:radial-gradient(circle,rgba(0,194,255,.1) 0%,transparent 70%)"></div>
+      <div class="agent-full-hdr">
+        <div class="agent-full-ico" style="background:var(--sky2);border:1px solid rgba(0,194,255,.2)">📅</div>
+        <div class="agent-full-meta">
+          <div class="agent-full-name">CHRONO — Calendar Agent</div>
+          <div class="agent-full-role" style="color:var(--sky)">Scheduling · Dispatch · Crew Routing · Idle Detection</div>
+          <div class="agent-full-desc">CHRONO owns the full business calendar. It books jobs, schedules estimates, routes crews efficiently, detects idle windows, fills them with follow-ups, and alerts you to conflicts before they happen — all in sync with every other agent in real time.</div>
+          <div class="agent-domains">
+            <span class="domain">Job Scheduling</span><span class="domain">Estimate Booking</span><span class="domain">Crew Dispatch</span>
+            <span class="domain">Travel Routing</span><span class="domain">Idle Detection</span><span class="domain">Client Reminders</span><span class="domain">Google Calendar Sync</span>
+          </div>
+        </div>
+      </div>
+      <div class="feat-grid">
+        <div class="feat-block">
+          <div class="feat-block-title">📆 Smart Job Scheduling</div>
+          <div class="feat-block-desc">Books jobs into the calendar based on crew availability, travel distance, job duration estimates from VAULT, and permit ready dates from BLUEPRINT. Avoids double-booking automatically.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🚗 Crew Dispatch & Routing</div>
+          <div class="feat-block-desc">Builds optimized daily routes for each technician — minimizing drive time, clustering nearby jobs, and accounting for material pickup stops. Sends briefing to crew before the day starts.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🔍 Idle Slot Detection</div>
+          <div class="feat-block-desc">Identifies unbooked windows and cross-references LEDGER's follow-up queue, SPARK's lead pipeline, and BLUEPRINT's pending estimates to fill gaps proactively with a one-confirm booking.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">⚠️ Conflict Alerts</div>
+          <div class="feat-block-desc">Catches scheduling conflicts 48+ hours in advance — permit delays, crew conflicts, material delivery clashes — and proposes rescheduling options before they become same-day emergencies.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">📩 Client Reminders</div>
+          <div class="feat-block-desc">Sends automatic appointment confirmations, 24h reminders, and day-of arrival windows to clients via SMS or email. Tracks confirmation responses and alerts you to non-responses.</div>
+        </div>
+        <div class="feat-block">
+          <div class="feat-block-title">🤝 Communicates With</div>
+          <div class="feat-block-desc">→ SPARK when a new lead needs a booking slot<br>→ BLUEPRINT for permit-driven scheduling constraints<br>→ LEDGER for payment-milestone follow-up bookings<br>→ NEXUS for daily schedule summary each morning</div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px">CHRONO Calendar Preview</div>
+        <div class="cal-demo">
+          <div class="cal-day-header">Mon</div><div class="cal-day-header">Tue</div><div class="cal-day-header">Wed</div>
+          <div class="cal-day-header">Thu</div><div class="cal-day-header">Fri</div><div class="cal-day-header">Sat</div><div class="cal-day-header">Sun</div>
+          <div class="cal-slot">
+            <div class="cal-event type-job">7:30 · Panel Upgrade — Garcia</div>
+            <div class="cal-event type-estimate">2:00 · Estimate — Riverside</div>
+          </div>
+          <div class="cal-slot">
+            <div class="cal-event type-job">8:00 · EV Install — Henderson</div>
+            <div class="cal-event type-follow">1:00 · Follow-up Call — Martinez</div>
+          </div>
+          <div class="cal-slot">
+            <div class="cal-event type-hold">⚠️ Crew conflict — CHRONO flagged</div>
+          </div>
+          <div class="cal-slot">
+            <div class="cal-event type-job">7:00 · Service Call — Oakwood</div>
+            <div class="cal-event type-job">11:00 · Rough-In — Commercial TI</div>
+          </div>
+          <div class="cal-slot">
+            <div class="cal-event type-estimate">9:00 · Site Walk — New Lead</div>
+            <div class="cal-event type-follow">3:00 · Invoice follow-up</div>
+          </div>
+          <div class="cal-slot" style="opacity:.5;font-size:10px;color:var(--t3);padding-top:10px">Open — CHRONO detected idle</div>
+          <div class="cal-slot" style="opacity:.3;font-size:10px;color:var(--t4);padding-top:10px">Day off</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /panel-new -->
+
+<!-- ══════════════════════════════════
+     TAB: NETWORK DIAGRAM
+══════════════════════════════════ -->
+<div class="panel" id="panel-network">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Full Agent Communication Network</span></div>
+    <div class="comms-wrap">
+      <div class="comms-inner">
+        <svg viewBox="0 0 820 420" xmlns="http://www.w3.org/2000/svg" class="flow-svg">
+          <defs>
+            <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="rgba(46,232,154,.7)"/>
+            </marker>
+            <marker id="arr2" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="rgba(255,255,255,.2)"/>
+            </marker>
+            <marker id="arr3" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="rgba(168,255,62,.4)"/>
+            </marker>
+          </defs>
+
+          <!-- YOU (top center) -->
+          <rect x="330" y="8" width="140" height="44" rx="10" fill="rgba(46,232,154,.1)" stroke="rgba(46,232,154,.45)" stroke-width="1.2"/>
+          <text x="400" y="27" text-anchor="middle" fill="#2EE89A" font-size="10" font-weight="700" font-family="Syne,sans-serif" letter-spacing="1">YOU</text>
+          <text x="400" y="43" text-anchor="middle" fill="rgba(46,232,154,.65)" font-size="8.5" font-family="Syne,sans-serif">Owner · Voice · Dashboard</text>
+
+          <!-- NEXUS (center) -->
+          <rect x="300" y="100" width="200" height="56" rx="13" fill="rgba(24,24,32,.95)" stroke="rgba(46,232,154,.4)" stroke-width="1.8"/>
+          <text x="400" y="123" text-anchor="middle" fill="#F0F0FF" font-size="12" font-weight="800" font-family="Syne,sans-serif">🧠  NEXUS</text>
+          <text x="400" y="143" text-anchor="middle" fill="rgba(168,168,192,.65)" font-size="8.5" font-family="Syne,sans-serif">Manager · Voice · Delegates · Reports</text>
+
+          <!-- YOU ↔ NEXUS -->
+          <line x1="400" y1="52" x2="400" y2="98" stroke="rgba(46,232,154,.55)" stroke-width="1.5" marker-end="url(#arr)" stroke-dasharray="4 3"/>
+          <line x1="393" y1="98" x2="393" y2="54" stroke="rgba(46,232,154,.3)" stroke-width="1" marker-end="url(#arr)" stroke-dasharray="2 4"/>
+
+          <!-- ROW 1 agents — y=212, spaced across 820px -->
+          <!-- VAULT x=10 -->
+          <rect x="10" y="212" width="108" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(255,210,74,.28)" stroke-width="1"/>
+          <text x="64" y="231" text-anchor="middle" fill="#FFD24A" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">💰 VAULT</text>
+          <text x="64" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">Estimating</text>
+
+          <!-- PULSE x=130 -->
+          <rect x="130" y="212" width="108" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(58,142,255,.28)" stroke-width="1"/>
+          <text x="184" y="231" text-anchor="middle" fill="#3A8EFF" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">📊 PULSE</text>
+          <text x="184" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">Dashboard</text>
+
+          <!-- LEDGER x=250 -->
+          <rect x="250" y="212" width="108" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(46,232,154,.28)" stroke-width="1"/>
+          <text x="304" y="231" text-anchor="middle" fill="#2EE89A" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">💳 LEDGER</text>
+          <text x="304" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">Money</text>
+
+          <!-- SPARK x=370 -->
+          <rect x="370" y="212" width="108" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(255,95,160,.28)" stroke-width="1"/>
+          <text x="424" y="231" text-anchor="middle" fill="#FF5FA0" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">📣 SPARK</text>
+          <text x="424" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">Marketing</text>
+
+          <!-- BLUEPRINT x=490 -->
+          <rect x="490" y="212" width="118" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(255,144,64,.28)" stroke-width="1"/>
+          <text x="549" y="231" text-anchor="middle" fill="#FF9040" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">📐 BLUEPRINT</text>
+          <text x="549" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">Projects+Compliance+RFI</text>
+
+          <!-- OHM x=620 -->
+          <rect x="620" y="212" width="108" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(168,255,62,.28)" stroke-width="1"/>
+          <text x="674" y="231" text-anchor="middle" fill="#A8FF3E" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">⚡ OHM</text>
+          <text x="674" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">Electrical Coach</text>
+
+          <!-- CHRONO x=740 -->
+          <rect x="740" y="212" width="70" height="46" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(0,194,255,.28)" stroke-width="1"/>
+          <text x="775" y="231" text-anchor="middle" fill="#00C2FF" font-size="9" font-weight="700" font-family="Syne,sans-serif">📅 CHRONO</text>
+          <text x="775" y="247" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="7.5" font-family="Syne,sans-serif">Calendar</text>
+
+          <!-- NEXUS → agent lines -->
+          <line x1="358" y1="156" x2="88" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <line x1="365" y1="156" x2="195" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <line x1="375" y1="156" x2="310" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <line x1="400" y1="156" x2="424" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <line x1="425" y1="156" x2="545" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <line x1="440" y1="156" x2="660" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <line x1="450" y1="156" x2="762" y2="210" stroke="rgba(255,255,255,.11)" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+          <!-- SCOUT (side left at y=100) -->
+          <rect x="0" y="100" width="110" height="52" rx="9" fill="rgba(24,24,32,.95)" stroke="rgba(64,212,255,.25)" stroke-width="1"/>
+          <text x="55" y="121" text-anchor="middle" fill="#40D4FF" font-size="9.5" font-weight="700" font-family="Syne,sans-serif">🔬 SCOUT</text>
+          <text x="55" y="138" text-anchor="middle" fill="rgba(168,168,192,.55)" font-size="8" font-family="Syne,sans-serif">System Analyzer</text>
+          <line x1="110" y1="126" x2="298" y2="126" stroke="rgba(64,212,255,.25)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+
+          <!-- Cross-agent comms (horizontal) below agents -->
+          <!-- SPARK ↔ CHRONO -->
+          <line x1="478" y1="240" x2="742" y2="240" stroke="rgba(0,194,255,.18)" stroke-width="1" stroke-dasharray="3 4" marker-end="url(#arr2)"/>
+          <!-- BLUEPRINT ↔ OHM -->
+          <line x1="608" y1="250" x2="622" y2="250" stroke="rgba(168,255,62,.2)" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr3)"/>
+          <!-- VAULT ↔ BLUEPRINT -->
+          <line x1="118" y1="244" x2="492" y2="244" stroke="rgba(255,210,74,.12)" stroke-width="1" stroke-dasharray="3 4" marker-end="url(#arr2)"/>
+          <!-- LEDGER ↔ BLUEPRINT -->
+          <line x1="358" y1="248" x2="490" y2="248" stroke="rgba(46,232,154,.12)" stroke-width="1" stroke-dasharray="3 4" marker-end="url(#arr2)"/>
+
+          <!-- OHM → BLUEPRINT side note -->
+          <text x="634" y="265" fill="rgba(168,255,62,.35)" font-size="7.5" font-family="IBM Plex Mono,monospace">NEC checks</text>
+
+          <!-- SHARED MEMORY BUS (bottom) -->
+          <rect x="0" y="308" width="820" height="12" rx="6" fill="rgba(46,232,154,.05)" stroke="rgba(46,232,154,.15)" stroke-width="1"/>
+          <text x="410" y="318" text-anchor="middle" fill="rgba(46,232,154,.4)" font-size="7.5" font-family="IBM Plex Mono,monospace" letter-spacing="2">SHARED  MEMORY  BUS  ·  VECTOR  STORE  ·  POSTGRESQL  AUDIT  LOG  ·  REDIS  SESSION  LAYER</text>
+
+          <!-- Agent → bus lines -->
+          <line x1="64" y1="258" x2="64" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <line x1="184" y1="258" x2="184" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <line x1="304" y1="258" x2="304" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <line x1="424" y1="258" x2="424" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <line x1="549" y1="258" x2="549" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <line x1="674" y1="258" x2="674" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <line x1="775" y1="258" x2="775" y2="308" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+
+          <!-- LEGEND -->
+          <text x="10" y="345" fill="rgba(255,255,255,.25)" font-size="8" font-family="Syne,sans-serif" font-weight="700">LEGEND</text>
+          <line x1="10" y1="356" x2="50" y2="356" stroke="rgba(46,232,154,.55)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+          <text x="55" y="360" fill="rgba(168,168,192,.5)" font-size="7.5" font-family="Syne,sans-serif">NEXUS ↔ You (voice)</text>
+          <line x1="10" y1="372" x2="50" y2="372" stroke="rgba(255,255,255,.18)" stroke-width="1.2" marker-end="url(#arr2)"/>
+          <text x="55" y="376" fill="rgba(168,168,192,.5)" font-size="7.5" font-family="Syne,sans-serif">NEXUS → Sub-agent delegation</text>
+          <line x1="10" y1="388" x2="50" y2="388" stroke="rgba(168,255,62,.3)" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr3)"/>
+          <text x="55" y="392" fill="rgba(168,168,192,.5)" font-size="7.5" font-family="Syne,sans-serif">Cross-agent comms (OHM ↔ BLUEPRINT etc.)</text>
+          <line x1="10" y1="404" x2="50" y2="404" stroke="rgba(64,212,255,.25)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+          <text x="55" y="408" fill="rgba(168,168,192,.5)" font-size="7.5" font-family="Syne,sans-serif">SCOUT → NEXUS proposals</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: ANALYZER + MIROFISH
+══════════════════════════════════ -->
+<div class="panel" id="panel-analyzer">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>SCOUT — System Analyzer Proposals</span></div>
+    <div class="analyzer-card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+        <div style="width:46px;height:46px;border-radius:12px;background:var(--lime2);border:1px solid rgba(168,255,62,.2);display:flex;align-items:center;justify-content:center;font-size:22px">🔬</div>
+        <div>
+          <div style="font-size:16px;font-weight:800">SCOUT + OHM — Live Proposals</div>
+          <div style="font-size:11px;color:var(--lime);font-weight:700;letter-spacing:.1em;text-transform:uppercase">Confirm One Tap · All Go Through MiroFish Verification</div>
+        </div>
+      </div>
+      <div class="proposal-item">
+        <div class="prop-icon" style="background:var(--pnk2);border:1px solid rgba(255,95,160,.2)">📬</div>
+        <div class="prop-body">
+          <div class="prop-source">SCOUT · via LEDGER · 4 invoices analyzed</div>
+          <div class="prop-title">Invoice Follow-Up Agent</div>
+          <div class="prop-desc">4 invoices are 3+ days unpaid with no outreach. An auto follow-up sequence could recover an estimated $4,200/mo based on your AR history. LEDGER will send reminders after each confirmation.</div>
+          <div class="prop-actions">
+            <button class="btn-confirm" onclick="handleProposal(this,'confirm')">✓ Confirm & Integrate</button>
+            <button class="btn-skip" onclick="handleProposal(this,'detail')">More Detail</button>
+            <button class="btn-skip" onclick="handleProposal(this,'skip')">Skip</button>
+          </div>
+        </div>
+      </div>
+      <div class="proposal-item">
+        <div class="prop-icon" style="background:var(--sky2);border:1px solid rgba(0,194,255,.2)">📅</div>
+        <div class="prop-body">
+          <div class="prop-source">CHRONO · 14 unbooked hours detected next 2 weeks</div>
+          <div class="prop-title">Idle Calendar Slot → Lead Follow-Up</div>
+          <div class="prop-desc">CHRONO found 14+ idle hours. SPARK has 3 leads with no site visit booked. NEXUS recommends CHRONO auto-fill those windows with pending estimate calls. One confirm = all 3 booked.</div>
+          <div class="prop-actions">
+            <button class="btn-confirm" onclick="handleProposal(this,'confirm')">✓ Confirm & Integrate</button>
+            <button class="btn-skip" onclick="handleProposal(this,'detail')">Review Slots</button>
+            <button class="btn-skip" onclick="handleProposal(this,'skip')">Skip</button>
+          </div>
+        </div>
+      </div>
+      <div class="proposal-item">
+        <div class="prop-icon" style="background:var(--pnk2);border:1px solid rgba(255,95,160,.2)">⭐</div>
+        <div class="prop-body">
+          <div class="prop-source">SPARK · Google Business · 2 unanswered reviews</div>
+          <div class="prop-title">Review Response Auto-Draft</div>
+          <div class="prop-desc">You have 2 new Google reviews (4-star + 5-star) with no response in 5 days. SPARK has drafted professional responses. Approve to publish, or edit before sending.</div>
+          <div class="prop-actions">
+            <button class="btn-confirm" onclick="handleProposal(this,'confirm')">✓ Approve Responses</button>
+            <button class="btn-skip" onclick="handleProposal(this,'detail')">Edit Drafts</button>
+            <button class="btn-skip" onclick="handleProposal(this,'skip')">Skip</button>
+          </div>
+        </div>
+      </div>
+      <div class="proposal-item">
+        <div class="prop-icon" style="background:var(--lime2);border:1px solid rgba(168,255,62,.2)">🔌</div>
+        <div class="prop-body">
+          <div class="prop-source">OHM · NEC 210.12 · Morales + 3 other residential jobs</div>
+          <div class="prop-title">Update Residential Scope — AFCI Default</div>
+          <div class="prop-desc">OHM identified AFCI coverage gaps across 4 recent residential jobs. AHJ has started enforcing NEC 2020 §210.12 strictly. Recommend updating your standard residential template to include AFCI as default.</div>
+          <div class="prop-actions">
+            <button class="btn-confirm" onclick="handleProposal(this,'confirm')">✓ Update Template</button>
+            <button class="btn-skip" onclick="handleProposal(this,'detail')">OHM Full Report</button>
+            <button class="btn-skip" onclick="handleProposal(this,'skip')">Skip</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section s2">
+    <div class="sec-label"><span class="sec-num">02</span><span>MiroFish — Multi-Agent Verification Chain</span></div>
+    <div style="background:var(--bg2);border:1px solid rgba(58,142,255,.18);border-radius:16px;padding:24px">
+      <p style="font-size:13px;color:var(--t2);line-height:1.7;margin-bottom:16px">Every high-impact action — confirmed integration, sent customer message, template change, code flag — passes through a 5-step chain before execution. No agent acts alone on something that matters.</p>
+      <div class="verify-flow">
+        <div class="vf-step"><div class="vf-num">Step 01</div><div class="vf-ico">🔬</div><div class="vf-title">Agent flags action</div><div class="vf-desc">SCOUT, OHM, SPARK, or any sub-agent identifies the proposed change and scores its impact and risk level</div><div class="vf-badge"><span class="chip chip-pnk" style="font-size:9px">Propose</span></div></div>
+        <div class="vf-step"><div class="vf-num">Step 02</div><div class="vf-ico">🧠</div><div class="vf-title">NEXUS reviews</div><div class="vf-desc">Checks proposal against memory, your preferences, open constraints, and other agent states before escalating</div><div class="vf-badge"><span class="chip chip-grn" style="font-size:9px">Review</span></div></div>
+        <div class="vf-step"><div class="vf-num">Step 03</div><div class="vf-ico">🤝</div><div class="vf-title">Domain agent verifies</div><div class="vf-desc">The relevant specialist agent (LEDGER, BLUEPRINT, OHM, CHRONO…) confirms feasibility and checks for side effects</div><div class="vf-badge"><span class="chip chip-blu" style="font-size:9px">Verify</span></div></div>
+        <div class="vf-step"><div class="vf-num">Step 04</div><div class="vf-ico">👤</div><div class="vf-title">You confirm</div><div class="vf-desc">One tap. Your final word. Always. The system never executes high-impact actions without your explicit approval</div><div class="vf-badge"><span class="chip chip-org" style="font-size:9px">Approve</span></div></div>
+        <div class="vf-step"><div class="vf-num">Step 05</div><div class="vf-ico">⚡</div><div class="vf-title">Execute + log</div><div class="vf-desc">Action committed, timestamped in audit trail, all relevant agents notified, memory updated with outcome</div><div class="vf-badge"><span class="chip chip-tel" style="font-size:9px">Execute</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: MEMORY
+══════════════════════════════════ -->
+<div class="panel" id="panel-memory">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Shared Agent Memory System</span></div>
+    <div class="memory-card">
+      <p style="font-size:13px;color:var(--t2);line-height:1.7">Every agent interaction — every decision, flag, proposal, and action — is logged in a shared memory layer. Agents query this before acting, so the system learns from every job, invoice, marketing campaign, code issue, and calendar event over time. CHRONO knows what LEDGER flagged. OHM knows what BLUEPRINT found. SPARK learns which job types produce the best referral reviews. The memory system now includes 15 additional data sources migrated from the Operations Hub: field logs, service logs, price book, material takeoffs, the 52-week tracker, coordination items, agenda tasks, project cost entries (labor/material/overhead), and the GC relationship database.</p>
+      <div class="mem-flow">
+        <div class="mem-node"><div class="mem-ico">🧵</div><div class="mem-title">Event Logging</div><div class="mem-desc">Every action by every agent is timestamped, actor-tagged, and stored immutably.</div></div>
+        <div class="mem-node"><div class="mem-ico">🔍</div><div class="mem-title">Vector Search</div><div class="mem-desc">"Find jobs where AFCI was flagged" or "show leads SPARK converted to bookings" — instant semantic search across 30+ entity types.</div></div>
+        <div class="mem-node"><div class="mem-ico">🔄</div><div class="mem-title">Cross-Agent Context</div><div class="mem-desc">CHRONO reads field logs and agenda tasks. VAULT queries the price book and MTOs. SPARK tracks GC pipeline and bid history. PULSE aggregates the 52-week tracker.</div></div>
+        <div class="mem-node"><div class="mem-ico">📈</div><div class="mem-title">Pattern Learning</div><div class="mem-desc">The system improves its suggestions over time from your actual outcomes — field logs vs. estimates, bid win rates, GC payment behavior, and weekly revenue trends.</div></div>
+        <div class="mem-node"><div class="mem-ico">🗃️</div><div class="mem-title">Project Archive</div><div class="mem-desc">Completed jobs feed VAULT's pricing intelligence, OHM's coaching library, and BLUEPRINT's labor/material/overhead cost benchmarks.</div></div>
+        <div class="mem-node"><div class="mem-ico">🔐</div><div class="mem-title">Scoped Access</div><div class="mem-desc">NEXUS reads all. Sub-agents read their domain + cross-agent alerts only. You read everything.</div></div>
+        <div class="mem-node"><div class="mem-ico">📋</div><div class="mem-title">Operations Hub Data</div><div class="mem-desc">Field logs, price book (275 items), material takeoffs, coordination items, GC contacts, agenda tasks — all migrated and live in Supabase.</div></div>
+        <div class="mem-node"><div class="mem-ico">💰</div><div class="mem-title">Cost Intelligence</div><div class="mem-desc">Per-project labor, material, and overhead entries feed the project_cost_summary view — real-time margin tracking for VAULT and PULSE.</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="section s2">
+    <div class="sec-label"><span class="sec-num">02</span><span>Memory Architecture</span></div>
+    <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;padding:24px">
+      <div class="stack-grid">
+        <div class="stack-item"><div class="stack-cat">Short-Term</div><div class="stack-val">Upstash Redis</div><div class="stack-why">Live session state, active agent context, real-time flags</div></div>
+        <div class="stack-item"><div class="stack-cat">Long-Term</div><div class="stack-val">Supabase + pgvector</div><div class="stack-why">Full interaction history, embeddings, semantic search</div></div>
+        <div class="stack-item"><div class="stack-cat">Audit Log</div><div class="stack-val">PostgreSQL (immutable)</div><div class="stack-why">Timestamped, actor-tagged log of every agent action</div></div>
+        <div class="stack-item"><div class="stack-cat">Embeddings</div><div class="stack-val">OpenAI / Cohere</div><div class="stack-why">Converts project + interaction data into searchable vectors</div></div>
+        <div class="stack-item"><div class="stack-cat">Real-Time Sync</div><div class="stack-val">Supabase Realtime</div><div class="stack-why">Pushes updates instantly to all agents and UI</div></div>
+        <div class="stack-item"><div class="stack-cat">Backup</div><div class="stack-val">Cloudflare R2</div><div class="stack-why">Encrypted nightly snapshots, 30-day point-in-time recovery</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: SECURITY
+══════════════════════════════════ -->
+<div class="panel" id="panel-security">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Security Architecture</span></div>
+    <div class="sec-grid">
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">🔑</div><div><div class="sec-title">Passcode + Biometric</div><div class="sec-desc">PIN gate at launch. Face ID / Touch ID / Windows Hello on all supported devices.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">🔒</div><div><div class="sec-title">End-to-End Encryption</div><div class="sec-desc">AES-256 at rest, TLS 1.3 in transit. No plaintext storage of sensitive records.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">🧾</div><div><div class="sec-title">Timestamped Audit Trail</div><div class="sec-desc">Every action — user, agent, or system — logged with timestamp, IP, device, and actor ID. Immutable.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">🔍</div><div><div class="sec-title">Activity Trailing</div><div class="sec-desc">Full movement log: who viewed what, what changed, what was exported. Searchable by date, user, or action type.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">👤</div><div><div class="sec-title">Role-Based Access</div><div class="sec-desc">Owner, Admin, Field, View-Only. Every role scoped — agents, users, and data all permission-gated.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">💾</div><div><div class="sec-title">Encrypted Auto-Backup</div><div class="sec-desc">Nightly snapshots to Cloudflare R2. Point-in-time recovery up to 30 days. Downloadable on demand.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">🚨</div><div><div class="sec-title">Anomaly Alerts</div><div class="sec-desc">Unusual logins, bulk exports, off-hours access → immediate push notification to your phone.</div></div></div>
+      <div class="sec-item"><div class="sec-ico" style="background:var(--tel2);border:1px solid rgba(64,212,255,.2)">💳</div><div><div class="sec-title">Stripe Payment Gate</div><div class="sec-desc">Subscription via Stripe. No active subscription → no access. Monthly and annual plans.</div></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: PLATFORMS
+══════════════════════════════════ -->
+<div class="panel" id="panel-platform">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Cross-Platform Deployment</span></div>
+    <div class="platform-grid">
+      <div class="plat-card"><div class="plat-icon">🌐</div><div class="plat-name">Web App</div><div class="plat-info">Deployed to Netlify with a custom domain. Always live, always latest. Zero-install for any browser.</div><div class="plat-tech">poweron.app (Netlify)</div></div>
+      <div class="plat-card"><div class="plat-icon">📱</div><div class="plat-name">iOS App Store</div><div class="plat-info">Native iOS wrapper via Capacitor. Face ID auth, push notifications, offline queue. Submitted to App Store.</div><div class="plat-tech">Capacitor + Xcode</div></div>
+      <div class="plat-card"><div class="plat-icon">🤖</div><div class="plat-name">Google Play</div><div class="plat-info">Android build via Capacitor. Identical feature parity to iOS, submitted to Play Store.</div><div class="plat-tech">Capacitor + Android Studio</div></div>
+      <div class="plat-card"><div class="plat-icon">🖥️</div><div class="plat-name">Windows 11 App</div><div class="plat-info">Packaged as a native Windows desktop app via Tauri. Published to Microsoft Store.</div><div class="plat-tech">Tauri + MSIX Packaging</div></div>
+    </div>
+  </div>
+  <div class="section s2">
+    <div class="sec-label"><span class="sec-num">02</span><span>Sync & Notifications</span></div>
+    <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;padding:22px">
+      <p style="font-size:13px;color:var(--t2);line-height:1.7">Single backend. Every change on web appears instantly on mobile and desktop via Supabase Realtime. Offline mode queues actions locally and syncs when back online. Push notifications via OneSignal cover all four platforms from one API — agents can alert you anywhere.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
+        <span class="chip chip-grn">Single Backend</span><span class="chip chip-blu">Realtime Sync</span>
+        <span class="chip chip-tel">Offline Queue</span><span class="chip chip-pur">Push Notifications (OneSignal)</span>
+        <span class="chip chip-org">Auto-Update Web</span><span class="chip chip-pnk">Store Submissions Included</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: ROADMAP
+══════════════════════════════════ -->
+<div class="panel" id="panel-roadmap">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Build Phases — Updated for 11 Agents</span></div>
+    <div class="phase-list">
+      <div class="phase"><div class="phase-num">01</div><div class="phase-body"><div class="phase-title">Foundation — Backend · Auth · Memory · Audit</div><div class="phase-desc">Supabase setup, data migration from your existing Hub, passcode/biometric auth, RBAC, audit trail schema, shared memory bus (Redis + pgvector), and encrypted backup automation.</div><div class="phase-time">Weeks 1–3</div><div class="phase-tags"><span class="ptag">Supabase</span><span class="ptag">pgvector</span><span class="ptag">Auth</span><span class="ptag">Audit Log</span><span class="ptag">R2 Backup</span></div></div></div>
+      <div class="phase"><div class="phase-num">02</div><div class="phase-body"><div class="phase-title">NEXUS Manager + SCOUT Analyzer + MiroFish</div><div class="phase-desc">Build the orchestration layer (NEXUS), the system analyzer (SCOUT), and the 5-step MiroFish verification chain. Implement the confirm-to-integrate proposal UI for all agents.</div><div class="phase-time">Weeks 4–6</div><div class="phase-tags"><span class="ptag">LangGraph</span><span class="ptag">Claude API</span><span class="ptag">Proposal UI</span><span class="ptag">MiroFish</span></div></div></div>
+      <div class="phase"><div class="phase-num">03</div><div class="phase-body"><div class="phase-title">VAULT · PULSE · LEDGER · Original Agents</div><div class="phase-desc">Build and wire the first three sub-agents with full memory scoping and NEXUS delegation. Estimating intelligence, dashboard generation, and AR/invoice monitoring all operational.</div><div class="phase-time">Weeks 7–9</div><div class="phase-tags"><span class="ptag">Agent Tools</span><span class="ptag">Memory Scoping</span><span class="ptag">NEXUS Routing</span></div></div></div>
+      <div class="phase"><div class="phase-num">04</div><div class="phase-body"><div class="phase-title">BLUEPRINT · OHM — Project Intelligence + Electrical Coach</div><div class="phase-desc">BLUEPRINT unifies your existing project framework, compliance, and RFI tracking into one agent. OHM is trained on NEC 2023, OSHA 1910, CA Title 24, and your archived job history. Both wire into NEXUS and each other for live cross-checks.</div><div class="phase-time">Weeks 10–12</div><div class="phase-tags"><span class="ptag">NEC Embeddings</span><span class="ptag">RFI Tracker</span><span class="ptag">Compliance DB</span><span class="ptag">OHM Training</span></div></div></div>
+      <div class="phase"><div class="phase-num">05</div><div class="phase-body"><div class="phase-title">SPARK · CHRONO — Marketing + Calendar Control</div><div class="phase-desc">SPARK connects to Google Business, social platforms, and your lead capture pipeline. CHRONO takes full control of the business calendar — booking, dispatch, idle detection, and client reminders. Both integrate with NEXUS and each other.</div><div class="phase-time">Weeks 13–15</div><div class="phase-tags"><span class="ptag">Google API</span><span class="ptag">Social APIs</span><span class="ptag">Calendar Sync</span><span class="ptag">CHRONO Routing</span></div></div></div>
+      <div class="phase"><div class="phase-num">06</div><div class="phase-body"><div class="phase-title">NEXUS Voice + ElevenLabs + Whisper STT</div><div class="phase-desc">Add voice interface to NEXUS. You speak — Whisper transcribes — NEXUS routes to the right agent — ElevenLabs responds in natural voice. Test all 10 agent delegation paths via voice commands.</div><div class="phase-time">Weeks 16–17</div><div class="phase-tags"><span class="ptag">ElevenLabs</span><span class="ptag">Whisper STT</span><span class="ptag">Voice Routing</span></div></div></div>
+      <div class="phase"><div class="phase-num">07</div><div class="phase-body"><div class="phase-title">Cross-Platform Packaging + Store Submissions</div><div class="phase-desc">Wrap with Capacitor (iOS + Android) and Tauri (Windows 11). Submit to App Store, Play Store, and Microsoft Store. Deploy web to Netlify with custom domain and edge caching.</div><div class="phase-time">Weeks 18–20</div><div class="phase-tags"><span class="ptag">Capacitor</span><span class="ptag">Tauri</span><span class="ptag">Netlify</span><span class="ptag">Store Review Process</span></div></div></div>
+      <div class="phase"><div class="phase-num">08</div><div class="phase-body"><div class="phase-title">Stripe · Security Hardening · Anomaly Alerts · Launch</div><div class="phase-desc">Stripe subscription gating, anomaly detection alerts, full activity trailing dashboard, encrypted backup verification, final RBAC audit, and production launch with monitoring.</div><div class="phase-time">Weeks 21–22</div><div class="phase-tags"><span class="ptag">Stripe</span><span class="ptag">Encryption</span><span class="ptag">Anomaly Alerts</span><span class="ptag">Monitoring</span></div></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TAB: TECH STACK
+══════════════════════════════════ -->
+<div class="panel" id="panel-stack">
+  <div class="section s1">
+    <div class="sec-label"><span class="sec-num">01</span><span>Full Technology Stack</span></div>
+    <div class="stack-grid">
+      <div class="stack-item"><div class="stack-cat">Frontend</div><div class="stack-val">React + Vite</div><div class="stack-why">Matches existing Hub codebase patterns</div></div>
+      <div class="stack-item"><div class="stack-cat">Database</div><div class="stack-val">Supabase</div><div class="stack-why">Postgres + realtime + auth + storage in one</div></div>
+      <div class="stack-item"><div class="stack-cat">Vector Memory</div><div class="stack-val">pgvector</div><div class="stack-why">Semantic search across all agent interactions</div></div>
+      <div class="stack-item"><div class="stack-cat">AI Orchestration</div><div class="stack-val">LangGraph</div><div class="stack-why">Multi-agent graph execution with shared state</div></div>
+      <div class="stack-item"><div class="stack-cat">LLM</div><div class="stack-val">Claude Sonnet 4</div><div class="stack-why">Best reasoning for business ops, long context</div></div>
+      <div class="stack-item"><div class="stack-cat">Voice TTS</div><div class="stack-val">ElevenLabs</div><div class="stack-why">Natural, professional voice for NEXUS</div></div>
+      <div class="stack-item"><div class="stack-cat">Voice STT</div><div class="stack-val">OpenAI Whisper</div><div class="stack-why">Best-in-class speech recognition</div></div>
+      <div class="stack-item"><div class="stack-cat">Session Cache</div><div class="stack-val">Upstash Redis</div><div class="stack-why">Serverless — agent context, session state</div></div>
+      <div class="stack-item"><div class="stack-cat">Payments</div><div class="stack-val">Stripe</div><div class="stack-why">Subscription billing + webhook gating</div></div>
+      <div class="stack-item"><div class="stack-cat">Mobile</div><div class="stack-val">Capacitor</div><div class="stack-why">iOS + Android from one web codebase</div></div>
+      <div class="stack-item"><div class="stack-cat">Desktop</div><div class="stack-val">Tauri</div><div class="stack-why">Lightweight Windows 11 app</div></div>
+      <div class="stack-item"><div class="stack-cat">Hosting</div><div class="stack-val">Netlify</div><div class="stack-why">Edge CDN, deploy previews, custom domain</div></div>
+      <div class="stack-item"><div class="stack-cat">File Storage</div><div class="stack-val">Cloudflare R2</div><div class="stack-why">Encrypted backups, no egress fees</div></div>
+      <div class="stack-item"><div class="stack-cat">Push Notifications</div><div class="stack-val">OneSignal</div><div class="stack-why">iOS, Android, Web from one API</div></div>
+      <div class="stack-item"><div class="stack-cat">Email/SMS</div><div class="stack-val">Resend + Twilio</div><div class="stack-why">LEDGER reminders, SPARK campaigns, CHRONO confirmations</div></div>
+      <div class="stack-item"><div class="stack-cat">Social APIs</div><div class="stack-val">Meta + Google APIs</div><div class="stack-why">SPARK's social posting + review management</div></div>
+      <div class="stack-item"><div class="stack-cat">Calendar Sync</div><div class="stack-val">Google Calendar API</div><div class="stack-why">CHRONO's two-way calendar sync</div></div>
+      <div class="stack-item"><div class="stack-cat">Analytics</div><div class="stack-val">PostHog</div><div class="stack-why">Self-hosted product analytics, no data leaving your infra</div></div>
+      <div class="stack-item"><div class="stack-cat">NEC Knowledge</div><div class="stack-val">Custom RAG (OHM)</div><div class="stack-why">NEC 2023 + OSHA + Title 24 embedded for OHM</div></div>
+      <div class="stack-item"><div class="stack-cat">Monitoring</div><div class="stack-val">Sentry + Uptime Robot</div><div class="stack-why">Error tracking + 24/7 uptime monitoring</div></div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<footer>POWERON HUB · AI AGENT PLATFORM · BLUEPRINT v2.0 · 11 AGENTS · MARCH 2026</footer>
+
+<!-- ══ TOAST + JS ══ -->
+<script>
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  event.target.classList.add('active');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function handleProposal(btn,action){
+  const item=btn.closest('.proposal-item');
+  if(action==='confirm'){
+    item.style.borderColor='rgba(46,232,154,.35)';
+    item.style.background='rgba(46,232,154,.04)';
+    item.querySelector('.prop-actions').innerHTML='<span class="chip chip-grn">✓ Queued for Integration</span>';
+    const title=item.querySelector('.prop-title').textContent;
+    showToast('✓ "'+title+'" confirmed — entering MiroFish verification chain.');
+  } else if(action==='skip'){
+    item.style.opacity='0.38';item.style.pointerEvents='none';
+  } else {
+    showToast('📋 Generating full implementation report for this proposal...');
+  }
+}
+function handleOhm(btn,action){
+  const item=btn.closest('.ohm-proposal');
+  if(action==='verify'){
+    item.style.borderColor='rgba(168,255,62,.35)';
+    item.style.background='rgba(168,255,62,.04)';
+    item.querySelector('.ohm-actions').innerHTML='<span class="chip chip-lime">✓ Verified — BLUEPRINT updating template</span>';
+    showToast('⚡ OHM proposal verified — BLUEPRINT is applying the change.');
+  } else if(action==='skip'){
+    item.style.opacity='0.38';item.style.pointerEvents='none';
+  } else {
+    showToast('📚 OHM is pulling the full NEC reference and impact analysis...');
+  }
+}
+function showToast(msg){
+  let t=document.getElementById('_toast');
+  if(!t){
+    t=document.createElement('div');t.id='_toast';
+    t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#16161E;border:1px solid rgba(46,232,154,.3);color:#F0F0FF;padding:10px 20px;border-radius:11px;font-size:12.5px;font-family:Syne,sans-serif;z-index:9999;max-width:400px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.7);transition:opacity .35s;pointer-events:none';
+    document.body.appendChild(t);
+  }
+  t.textContent=msg;t.style.opacity='1';
+  clearTimeout(t._h);t._h=setTimeout(()=>t.style.opacity='0',4200);
+}
+</script>
+</body>
+</html>
