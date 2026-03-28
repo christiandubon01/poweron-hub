@@ -407,6 +407,8 @@ export async function routeToAgent(
 
   const content = extractText(claudeResponse) || 'No response generated.'
 
+  console.log(`[Router] ${agentName} Claude response:`, content?.substring(0, 120))
+
   return {
     agentId:     targetAgent,
     agentName,

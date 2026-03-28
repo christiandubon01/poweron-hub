@@ -11,11 +11,10 @@
 
 import { transcribeWithWhisper, estimateConfidence } from '@/api/voice/whisper'
 import { synthesizeWithElevenLabs, revokeAudioUrl, DEFAULT_VOICE_ID } from '@/api/voice/elevenLabs'
-import { classifyVoiceIntent } from '@/api/voice/routing'
 import { getAudioPreprocessor } from './audioPreprocessing'
 import { getWakeWordDetector, type WakeWordConfig } from './wakeWordDetector'
-import { getVoiceCommandExecutor } from './voiceCommandExecutor'
 import { callClaude, extractText } from './claudeProxy'
+import { processMessage } from '@/agents/nexus'
 import { supabase } from '@/lib/supabase'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -492,32 +491,28 @@ export class VoiceSubsystem {
     console.log('[Voice] Transcribed:', transcript)
     let responseText = ''
 
-    // Step 3: Try full agent routing, fall back to direct Claude
+    // Step 3: Route through NEXUS processMessage — classifies AND gets Claude response in one call
     this.setStatus('processing')
     try {
-      const classification = await classifyVoiceIntent(transcript)
+      const nexusResult = await processMessage({
+        message: transcript,
+        orgId: this.orgId,
+        userId: this.userId,
+        conversationHistory: [],
+        isVoiceCommand: true,
+      })
+
+      // Extract the real Claude response
+      responseText = nexusResult?.agent?.content || ''
 
       if (this.currentSession) {
-        this.currentSession.detectedIntent = classification.intent
-        this.currentSession.targetAgent = classification.agent
+        this.currentSession.detectedIntent = nexusResult?.intent?.category || 'general'
+        this.currentSession.targetAgent = nexusResult?.intent?.targetAgent || 'nexus'
       }
 
-      // Step 4: Execute command via agent
-      const executor = getVoiceCommandExecutor()
-      const result = await executor.execute(
-        classification.agent,
-        classification.intent,
-        classification.parameters,
-        {
-          orgId: this.orgId,
-          userId: this.userId,
-          mode: this.currentSession?.mode || 'normal',
-        }
-      )
-      responseText = result.responseText
-      console.log('[Voice] Agent response received via', classification.agent)
+      console.log('[Voice] NEXUS response received via', nexusResult?.intent?.targetAgent, '— text:', responseText?.substring(0, 100))
     } catch (routeErr) {
-      console.warn('[Voice] Agent routing failed, falling back to Claude:', routeErr)
+      console.warn('[Voice] NEXUS processMessage failed, falling back to direct Claude:', routeErr)
 
       // Fallback: send transcript directly to Claude via proxy
       try {
@@ -528,12 +523,20 @@ export class VoiceSubsystem {
           max_tokens: 512,
         })
         responseText = extractText(claudeResult)
-        console.log('[Voice] Claude response received (fallback)')
+        console.log('[Voice] Claude direct fallback response:', responseText?.substring(0, 100))
       } catch (claudeErr) {
         console.error('[Voice] Claude fallback also failed:', claudeErr)
         responseText = 'Sorry, I couldn\'t process that request. Please try again.'
       }
     }
+
+    // Final guard — never send empty text to TTS
+    if (!responseText || responseText.trim().length === 0) {
+      responseText = 'I processed your request but could not generate a response. Please try again.'
+      console.warn('[Voice] Empty response — using fallback text')
+    }
+
+    console.log('[Voice] Speaking:', responseText?.substring(0, 100))
 
     if (this.currentSession) {
       this.currentSession.agentResponse = responseText

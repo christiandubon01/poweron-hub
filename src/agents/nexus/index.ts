@@ -92,7 +92,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     intent.impactLevel === 'CRITICAL'
 
   const duration = Date.now() - startTime
-  console.log(`[NEXUS] Routed to ${agentResponse.agentName} in ${duration}ms`)
+  console.log(`[NEXUS] Routed to ${agentResponse.agentName} in ${duration}ms — response:`, agentResponse.content?.substring(0, 120))
 
   // ── Step 6: Record assistant turn to persistent memory ──────────────────
   try {
