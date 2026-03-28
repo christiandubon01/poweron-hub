@@ -19,6 +19,7 @@ import { logAudit } from '@/lib/memory/audit'
 import { LEDGER_SYSTEM_PROMPT } from './systemPrompt'
 import * as invoiceManager from './invoiceManager'
 import * as cashFlowAnalyzer from './cashFlowAnalyzer'
+import { subscribe, publish, type AgentEvent } from '@/services/agentEventBus'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -210,6 +211,14 @@ Return ONLY valid JSON with these fields. If any required field is missing, incl
       metadata: { invoice_number: invoiceNumber, total },
     })
 
+    // Publish invoice creation event
+    publish(
+      'INVOICE_CREATED',
+      'ledger',
+      { invoiceId: invoice.id, invoiceNumber, total, lineItemCount: lineItems.length },
+      `Invoice ${invoiceNumber} created: $${total.toLocaleString()}, ${lineItems.length} line items`
+    )
+
     return {
       success: true,
       action: 'create_invoice',
@@ -301,6 +310,14 @@ async function handleRecordPayment(req: LedgerRequest): Promise<LedgerResponse> 
     notes: req.payload?.notes as string | undefined,
   })
 
+  // Publish payment event
+  publish(
+    'PAYMENT_RECEIVED',
+    'ledger',
+    { invoiceId, amount, method, newStatus: result.newStatus },
+    `Payment recorded: $${amount.toLocaleString()} via ${method}. Invoice → ${result.newStatus}`
+  )
+
   return {
     success: true,
     action: 'record_payment',
@@ -343,6 +360,55 @@ async function handleGetCollectionRecommendations(req: LedgerRequest): Promise<L
     action: 'get_collection_recommendations',
     data: { recommendations, count: recommendations.length },
   }
+}
+
+// ── Event Bus Integration ────────────────────────────────────────────────────
+
+/**
+ * Subscribe LEDGER to relevant events from other agents.
+ * - ESTIMATE_APPROVED → auto-create invoice from estimate
+ * Call once on app startup after initEventBus().
+ * Returns an unsubscribe function.
+ */
+export function subscribeLedgerToEvents(): () => void {
+  const unsubs: Array<() => void> = []
+
+  // VAULT → LEDGER: estimate approved triggers invoice creation
+  unsubs.push(subscribe('ESTIMATE_APPROVED', async (event: AgentEvent) => {
+    const { estimateId, orgId, estimateNumber, total } = event.payload as {
+      estimateId: string; orgId: string; estimateNumber?: string; total?: number
+    }
+
+    if (!estimateId || !orgId) {
+      console.warn('[LEDGER] ESTIMATE_APPROVED missing required payload:', event.payload)
+      return
+    }
+
+    console.log(`[LEDGER] Creating invoice from approved estimate ${estimateId}`)
+
+    try {
+      const invoiceId = await invoiceManager.createInvoiceFromEstimate(estimateId, orgId, '')
+
+      // Publish invoice creation event
+      publish(
+        'INVOICE_CREATED',
+        'ledger',
+        {
+          invoiceId,
+          fromEstimate: estimateId,
+          estimateNumber: estimateNumber || 'unknown',
+          total: total || 0,
+        },
+        `Invoice created from approved estimate ${estimateNumber || estimateId}: $${(total || 0).toLocaleString()}`
+      )
+
+      console.log(`[LEDGER] Invoice ${invoiceId} created from estimate ${estimateId}`)
+    } catch (err) {
+      console.error(`[LEDGER] Failed to create invoice from estimate ${estimateId}:`, err)
+    }
+  }))
+
+  return () => unsubs.forEach(fn => fn())
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────

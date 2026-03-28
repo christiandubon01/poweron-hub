@@ -9,6 +9,8 @@
 import { supabase } from '@/lib/supabase'
 import { NEXUS_SYSTEM_PROMPT } from './systemPrompt'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { getEventContext } from '@/services/agentEventBus'
+import { getLedgerContext } from '@/services/ledgerDataBridge'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -161,7 +163,17 @@ async function loadAgentContext(
       }
 
       case 'ledger': {
-        // Invoices — focus on outstanding
+        // ── Local state data (ground truth for this contractor) ──────────
+        try {
+          const localLedger = getLedgerContext()
+          if (localLedger) {
+            slices.push({ label: 'Local Financial Data', data: [localLedger], count: 1 })
+          }
+        } catch (err) {
+          console.warn('[Router] Local ledger data load failed:', err)
+        }
+
+        // ── Supabase invoices (cloud data, if available) ─────────────────
         const { data: invoices } = await supabase
           .from('invoices')
           .select('id, invoice_number, status, total, balance_due, due_date, days_overdue')
@@ -380,12 +392,14 @@ export async function routeToAgent(
   // 1. Load agent-specific context from Supabase
   const contextData = await loadAgentContext(orgId, targetAgent, intent.entities)
 
-  // 2. Build the system prompt: base NEXUS + agent-specific identity
+  // 2. Build the system prompt: base NEXUS + agent-specific identity + events
   const agentPromptFragment = AGENT_PROMPTS[targetAgent]
+  const eventContext = getEventContext(6)
   const systemPrompt = [
     NEXUS_SYSTEM_PROMPT,
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',
     contextData ? `\n---\n\n## Live Data Context\n${contextData}` : '',
+    eventContext ? `\n---\n\n${eventContext}` : '',
     `\n---\n\n## Classification\nCategory: ${intent.category}\nConfidence: ${intent.confidence}\nImpact: ${intent.impactLevel}\nEntities: ${JSON.stringify(intent.entities)}`,
   ].join('')
 

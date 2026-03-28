@@ -16,6 +16,7 @@ import { classifyIntent, type ClassifiedIntent, type ConversationMessage } from 
 import { routeToAgent, type AgentResponse } from './router'
 import { addTurn, getContext, updateProjectContext, getMemory } from '@/services/nexusMemory'
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
+import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -46,13 +47,25 @@ export interface NexusResponse {
 export async function processMessage(request: NexusRequest): Promise<NexusResponse> {
   const startTime = Date.now()
 
-  // ── Step 1: Load memory context ─────────────────────────────────────────
+  // ── Step 1: Load memory context + event bus context ─────────────────────
   let memoryContext = ''
 
   try {
     memoryContext = getContext(10)
   } catch (err) {
     console.warn('[NEXUS] Memory context loading failed, continuing:', err)
+  }
+
+  // Append recent cross-agent events for context awareness
+  try {
+    const eventContext = getEventContext(8)
+    if (eventContext) {
+      memoryContext = memoryContext
+        ? `${memoryContext}\n\n${eventContext}`
+        : eventContext
+    }
+  } catch {
+    // Non-critical
   }
 
   // ── Step 2: Record user turn to persistent memory ───────────────────────
@@ -170,6 +183,29 @@ export function mergeInterviewQuestions(
     ...primary,
     questions: merged,
   }
+}
+
+// ── Event Bus Integration ───────────────────────────────────────────────────
+
+/**
+ * Subscribe NEXUS to ALL agent events as a context seed.
+ * Call once on app startup after initEventBus().
+ * Returns an unsubscribe function.
+ */
+export function subscribeNexusToEvents(): () => void {
+  return subscribe('*', (event: AgentEvent) => {
+    // Log all cross-agent events for NEXUS awareness
+    console.log(`[NEXUS] Event received: ${event.type} from ${event.source} — ${event.summary}`)
+
+    // Record significant events in memory for long-term context
+    try {
+      if (['PAYMENT_RECEIVED', 'INVOICE_CREATED', 'ESTIMATE_APPROVED', 'AR_OVERDUE', 'COMPLIANCE_FLAG'].includes(event.type)) {
+        addTurn('system', `[Event] ${event.source.toUpperCase()}: ${event.summary}`)
+      }
+    } catch {
+      // Non-critical
+    }
+  })
 }
 
 // ── Re-exports for convenience ──────────────────────────────────────────────

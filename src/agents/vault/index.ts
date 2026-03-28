@@ -23,10 +23,11 @@ import {
 import { analyzeEstimateMargin as analyzeMarginInsights } from './marginAnalyzer'
 import { supabase } from '@/lib/supabase'
 import { logAudit } from '@/lib/memory/audit'
+import { publish } from '@/services/agentEventBus'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type VaultAction = 'create' | 'analyze_margin' | 'find_similar' | 'send' | 'expire_check'
+export type VaultAction = 'create' | 'analyze_margin' | 'find_similar' | 'send' | 'expire_check' | 'approve'
 
 export interface VaultRequest {
   action: VaultAction
@@ -71,6 +72,9 @@ export async function processVaultRequest(request: VaultRequest): Promise<VaultR
 
       case 'expire_check':
         return await handleExpireCheck(request)
+
+      case 'approve':
+        return await handleApproveEstimate(request)
 
       default:
         return {
@@ -177,6 +181,14 @@ async function handleCreateEstimate(request: VaultRequest): Promise<VaultRespons
         margin_pct: totals.marginPct,
       },
     })
+
+    // Publish event
+    publish(
+      'ESTIMATE_CREATED',
+      'vault',
+      { estimateId: inserted.id, estimateNumber, total: totals.total, marginPct: totals.marginPct, lineItems: lineItems.length },
+      `Estimate ${estimateNumber} created: $${totals.total.toFixed(2)}, ${totals.marginPct.toFixed(1)}% margin, ${lineItems.length} items`
+    )
 
     return {
       success: true,
@@ -395,6 +407,86 @@ async function handleExpireCheck(request: VaultRequest): Promise<VaultResponse> 
       success: false,
       message: `Error checking expirations: ${String(err).slice(0, 200)}`,
     }
+  }
+}
+
+// ── Approve Estimate Handler ──────────────────────────────────────────────
+
+/**
+ * Approve an estimate. Transitions status to 'approved' and publishes
+ * ESTIMATE_APPROVED event, which LEDGER subscribes to for invoice creation.
+ */
+async function handleApproveEstimate(request: VaultRequest): Promise<VaultResponse> {
+  if (!request.estimateId) {
+    return { success: false, message: 'Estimate ID required' }
+  }
+
+  try {
+    const now = new Date().toISOString()
+
+    // Get estimate details before update
+    const { data: estimate, error: fetchError } = await supabase
+      .from('estimates')
+      .select('id, estimate_number, total, client_id, project_id, org_id')
+      .eq('id', request.estimateId)
+      .single()
+
+    if (fetchError || !estimate) {
+      return { success: false, message: `Estimate not found: ${request.estimateId}` }
+    }
+
+    // Update status to approved
+    const { error } = await supabase
+      .from('estimates')
+      .update({
+        status: 'approved',
+        approved_at: now,
+        updated_at: now,
+      })
+      .eq('id', request.estimateId)
+      .eq('org_id', request.orgId)
+
+    if (error) {
+      return { success: false, message: `Failed to approve estimate: ${error.message}` }
+    }
+
+    // Audit log
+    await logAudit({
+      action: 'update',
+      entity_type: 'estimates',
+      entity_id: request.estimateId,
+      description: `VAULT approved estimate ${estimate.estimate_number}: $${estimate.total}`,
+      metadata: { estimate_number: estimate.estimate_number, total: estimate.total },
+    })
+
+    // Publish ESTIMATE_APPROVED event — LEDGER subscribes to this for auto-invoice
+    publish(
+      'ESTIMATE_APPROVED',
+      'vault',
+      {
+        estimateId: estimate.id,
+        estimateNumber: estimate.estimate_number,
+        total: estimate.total,
+        clientId: estimate.client_id,
+        projectId: estimate.project_id,
+        orgId: estimate.org_id,
+      },
+      `Estimate ${estimate.estimate_number} approved: $${(estimate.total || 0).toLocaleString()}`
+    )
+
+    return {
+      success: true,
+      message: `Estimate ${estimate.estimate_number} approved. LEDGER will create an invoice automatically.`,
+      estimateId: request.estimateId,
+      data: {
+        estimateNumber: estimate.estimate_number,
+        total: estimate.total,
+        invoicePending: true,
+      },
+    }
+  } catch (err) {
+    console.error('[VAULT] Approve estimate error:', err)
+    return { success: false, message: `Error approving estimate: ${String(err).slice(0, 200)}` }
   }
 }
 
