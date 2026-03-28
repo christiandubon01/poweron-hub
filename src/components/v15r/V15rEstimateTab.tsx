@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react'
-import { Sparkles } from 'lucide-react'
-import { getBackupData, saveBackupData, num, fmt, fmtK, pct, getPhaseWeights } from '@/services/backupDataService'
+import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
+import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -29,6 +29,9 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [scMiles, setScMiles] = useState('')
   const [scTax, setScTax] = useState(num(backup.settings?.tax || 0))
   const [scNotes, setScNotes] = useState('')
+  const [scStore, setScStore] = useState('')
+  const [showEstForm, setShowEstForm] = useState(false)
+  const [editingEstId, setEditingEstId] = useState<string | null>(null)
 
   const backup = initialBackup || getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
@@ -185,52 +188,132 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const scInternalCost = scOpCost + scMatN + scMileCost
   const scProfit = scQuoted - scInternalCost
 
-  function saveAsServiceLead() {
-    pushState()
-    if (!backup.serviceLeads) backup.serviceLeads = []
-    backup.serviceLeads.push({
-      id: 'slead' + Date.now(),
-      customer: scCust || 'Unknown',
-      address: scAddr,
-      jtype: scJtype,
-      estHours: scHrsN,
-      estMaterials: scMatN,
-      estMileage: scMilesN,
-      estQuote: +scQuoted.toFixed(2),
-      notes: scNotes,
-      status: 'estimate_pending',
-      createdAt: new Date().toISOString().slice(0, 10),
-    })
-    saveBackupData(backup)
-    forceUpdate()
-    alert('Saved as Service Lead')
-    setScCust(''); setScAddr(''); setScDate(new Date().toISOString().slice(0, 10)); setScHrs(''); setScRate(num(backup.settings?.billRate || 65)); setScMat(''); setScMiles(''); setScTax(num(backup.settings?.tax || 0)); setScNotes('')
+  function resetEstForm() {
+    setScCust(''); setScAddr(''); setScDate(new Date().toISOString().slice(0, 10))
+    setScHrs(''); setScRate(num(backup.settings?.billRate || 65)); setScMat('')
+    setScMiles(''); setScTax(num(backup.settings?.tax || 0)); setScNotes(''); setScStore('')
+    setEditingEstId(null)
   }
 
-  function convertToServiceLog() {
-    pushState()
+  function saveEstimate() {
+    if (!scCust.trim()) { alert('Customer / Job Name is required.'); return }
+    pushState(backup)
+    if (!backup.serviceEstimates) backup.serviceEstimates = []
+    const id = editingEstId || ('sest' + Date.now() + Math.random().toString(36).slice(2, 6))
+    const estObj = {
+      id,
+      customer: scCust.trim(),
+      address: scAddr.trim(),
+      jtype: scJtype,
+      date: scDate,
+      estHours: scHrsN,
+      rate: scRateN,
+      estMaterials: scMatN,
+      estMileage: scMilesN,
+      taxPct: scTaxN,
+      store: scStore.trim(),
+      notes: scNotes.trim(),
+      quoted: +scQuoted.toFixed(2),
+      internalCost: +scInternalCost.toFixed(2),
+      profit: +scProfit.toFixed(2),
+      createdAt: new Date().toISOString(),
+    }
+    if (editingEstId) {
+      const idx = backup.serviceEstimates.findIndex(e => e.id === editingEstId)
+      if (idx >= 0) backup.serviceEstimates[idx] = { ...backup.serviceEstimates[idx], ...estObj }
+    } else {
+      backup.serviceEstimates.push(estObj)
+    }
+    saveBackupDataAndSync(backup, 'serviceEstimates')
+    resetEstForm()
+    setShowEstForm(false)
+    forceUpdate()
+  }
+
+  function editEstimate(est) {
+    setScCust(est.customer || ''); setScAddr(est.address || ''); setScJtype(est.jtype || 'GFCI / Receptacles')
+    setScDate(est.date || new Date().toISOString().slice(0, 10)); setScHrs(String(est.estHours || ''))
+    setScRate(est.rate || num(backup.settings?.billRate || 65)); setScMat(String(est.estMaterials || ''))
+    setScMiles(String(est.estMileage || '')); setScTax(est.taxPct || num(backup.settings?.tax || 0))
+    setScStore(est.store || ''); setScNotes(est.notes || ''); setEditingEstId(est.id)
+    setShowEstForm(true)
+  }
+
+  function deleteEstimate(id) {
+    if (!confirm('Delete this estimate?')) return
+    pushState(backup)
+    backup.serviceEstimates = (backup.serviceEstimates || []).filter(e => e.id !== id)
+    saveBackupDataAndSync(backup, 'serviceEstimates')
+    forceUpdate()
+  }
+
+  function moveToActive(id) {
+    pushState(backup)
+    const ests = backup.serviceEstimates || []
+    const idx = ests.findIndex(e => e.id === id)
+    if (idx < 0) return
+    const est = ests[idx]
+    if (!backup.activeServiceCalls) backup.activeServiceCalls = []
+    backup.activeServiceCalls.push({
+      id: 'asc' + Date.now() + Math.random().toString(36).slice(2, 6),
+      fromEstimateId: est.id,
+      customer: est.customer,
+      address: est.address,
+      jtype: est.jtype,
+      date: est.date,
+      estHours: est.estHours,
+      rate: est.rate,
+      estMaterials: est.estMaterials,
+      estMileage: est.estMileage,
+      taxPct: est.taxPct,
+      store: est.store,
+      notes: est.notes,
+      quoted: est.quoted,
+      internalCost: est.internalCost,
+      profit: est.profit,
+      movedAt: new Date().toISOString(),
+    })
+    backup.serviceEstimates = ests.filter(e => e.id !== id)
+    saveBackupDataAndSync(backup, 'activeServiceCalls')
+    forceUpdate()
+  }
+
+  function completeAndLog(id) {
+    pushState(backup)
+    const calls = backup.activeServiceCalls || []
+    const idx = calls.findIndex(c => c.id === id)
+    if (idx < 0) return
+    const call = calls[idx]
     if (!backup.serviceLogs) backup.serviceLogs = []
     backup.serviceLogs.push({
       id: 'svc' + Date.now(),
-      date: new Date().toISOString().slice(0, 10),
-      customer: scCust || 'Unknown',
-      address: scAddr,
-      jtype: scJtype,
-      hrs: scHrsN,
-      miles: scMilesN,
-      quoted: +scQuoted.toFixed(2),
-      mat: scMatN,
+      date: call.date || new Date().toISOString().slice(0, 10),
+      customer: call.customer || 'Unknown',
+      address: call.address || '',
+      jtype: call.jtype || '',
+      hrs: call.estHours || 0,
+      miles: call.estMileage || 0,
+      quoted: call.quoted || 0,
+      mat: call.estMaterials || 0,
       collected: 0,
       payStatus: 'N',
-      balanceDue: +scQuoted.toFixed(2),
-      store: '',
-      notes: scNotes,
+      balanceDue: call.quoted || 0,
+      store: call.store || '',
+      notes: call.notes || '',
       adjustments: [],
+      fromActiveCallId: call.id,
     })
-    saveBackupData(backup)
+    backup.activeServiceCalls = calls.filter(c => c.id !== id)
+    saveBackupDataAndSync(backup, 'serviceLogs')
     forceUpdate()
-    alert('Converted to Service Log entry')
-    setScCust(''); setScAddr(''); setScDate(new Date().toISOString().slice(0, 10)); setScHrs(''); setScRate(num(backup.settings?.billRate || 65)); setScMat(''); setScMiles(''); setScTax(num(backup.settings?.tax || 0)); setScNotes('')
+  }
+
+  function deleteActiveCall(id) {
+    if (!confirm('Delete this active service call?')) return
+    pushState(backup)
+    backup.activeServiceCalls = (backup.activeServiceCalls || []).filter(c => c.id !== id)
+    saveBackupDataAndSync(backup, 'activeServiceCalls')
+    forceUpdate()
   }
 
   // Generate AI insights
@@ -344,134 +427,153 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       {/* SERVICE CALL ESTIMATE SUBTAB */}
       {subtab === 'service' && (
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
-            <h3 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 16px 0', fontSize: '15px' }}>Service Call Quick Estimate</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Customer</label>
-                <input value={scCust} onChange={e => setScCust(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }} />
+          {/* TWO-BUCKET HEADER ROW */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            {/* LEFT BUCKET: Open Service Estimates */}
+            <div style={{ backgroundColor: '#232738', borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={{ backgroundColor: 'rgba(59,130,246,0.15)', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <h4 style={{ color: '#3b82f6', fontWeight: '600', margin: 0, fontSize: '13px' }}>Open Service Estimates</h4>
+                <button onClick={() => { resetEstForm(); setShowEstForm(true) }} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', backgroundColor: 'rgba(59,130,246,0.25)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                  <Plus size={12} /> Add Estimate
+                </button>
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Address</label>
-                <input value={scAddr} onChange={e => setScAddr(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Date</label>
-                <input type="date" value={scDate} onChange={e => setScDate(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Job Type</label>
-                <select value={scJtype} onChange={e => setScJtype(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }}>
-                  {SVC_JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Est. Hours</label>
-                <input type="number" step="0.5" value={scHrs} onChange={e => setScHrs(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Hourly Rate $</label>
-                <input type="number" step="0.01" value={scRate} onChange={e => setScRate(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Materials $</label>
-                <input type="number" step="0.01" value={scMat} onChange={e => setScMat(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Miles RT</label>
-                <input type="number" value={scMiles} onChange={e => setScMiles(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Tax %</label>
-                <input type="number" step="0.01" value={scTax} onChange={e => setScTax(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
+              <div style={{ padding: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+                {(backup.serviceEstimates || []).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--t3)', fontSize: '12px' }}>No open estimates</div>
+                ) : (backup.serviceEstimates || []).map(est => (
+                  <div key={est.id} style={{ backgroundColor: '#1e2130', borderRadius: '6px', padding: '10px 12px', marginBottom: '6px', borderLeft: '3px solid #3b82f6' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                      <div>
+                        <div style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '13px' }}>{est.customer}</div>
+                        <div style={{ color: 'var(--t3)', fontSize: '11px' }}>{est.jtype} &middot; {est.date}</div>
+                      </div>
+                      <span style={{ color: '#eab308', fontWeight: '700', fontFamily: 'monospace', fontSize: '14px' }}>{fmt(est.quoted)}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                      <button onClick={() => editEstimate(est)} style={{ padding: '3px 8px', backgroundColor: 'rgba(234,179,8,0.15)', color: '#eab308', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Edit</button>
+                      <button onClick={() => moveToActive(est.id)} style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', backgroundColor: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}><ArrowRight size={10} /> Move to Active</button>
+                      <button onClick={() => deleteEstimate(est.id)} style={{ padding: '3px 6px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', marginLeft: 'auto' }}><Trash2 size={10} /></button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-            <div style={{ marginTop: '12px' }}>
-              <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Notes / Scope</label>
-              <textarea value={scNotes} onChange={e => setScNotes(e.target.value)} rows={2} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', resize: 'none' }} />
-            </div>
-          </div>
 
-          {/* LIVE QUOTE CALC */}
-          <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', marginBottom: '16px', borderLeft: '3px solid #eab308' }}>
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 12px 0', fontSize: '14px' }}>Calculation Breakdown</h4>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '13px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span style={{ color: 'var(--t3)' }}>Labor ({scHrsN}h × ${scRateN})</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)' }}>{fmt(scLaborQuote)}</span>
+            {/* RIGHT BUCKET: Active Service Calls */}
+            <div style={{ backgroundColor: '#232738', borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={{ backgroundColor: 'rgba(249,115,22,0.15)', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <h4 style={{ color: '#f97316', fontWeight: '600', margin: 0, fontSize: '13px' }}>Active Service Calls</h4>
+                <span style={{ fontSize: '11px', color: 'var(--t3)', fontWeight: '600' }}>{(backup.activeServiceCalls || []).length} active</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span style={{ color: 'var(--t3)' }}>Materials</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)' }}>{fmt(scMatN)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span style={{ color: 'var(--t3)' }}>Mileage ({scMilesN}mi × ${mileRate})</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)' }}>{fmt(scMileCost)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span style={{ color: 'var(--t3)' }}>Tax ({scTaxN}%)</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)' }}>{fmt(scMaterialsTax)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--bdr2)' }}>
-                <span style={{ color: 'var(--t3)', fontWeight: '600' }}>Subtotal</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)', fontWeight: '600' }}>{fmt(scSubtotal)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span style={{ color: 'var(--t3)' }}>Markup ({Math.round(scMarkup * 100)}%)</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)' }}>{fmt(scSubtotal * scMarkup)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }} />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--bdr2)', marginTop: '8px' }}>
-              <span style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '15px' }}>Quoted Total</span>
-              <span style={{ fontFamily: 'monospace', color: '#eab308', fontWeight: '700', fontSize: '18px' }}>{fmt(scQuoted)}</span>
-            </div>
-            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--bdr2)' }}>
-              <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 8px 0', fontSize: '13px' }}>Profit Analysis</h4>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '13px' }}>
-                <span style={{ color: 'var(--t3)' }}>Internal Cost ({scHrsN}h × ${opRate} + mat + miles)</span>
-                <span style={{ fontFamily: 'monospace', color: 'var(--t1)' }}>{fmt(scInternalCost)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span style={{ color: 'var(--t3)', fontWeight: '600' }}>Projected Profit</span>
-                <span style={{ fontFamily: 'monospace', color: scProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '700' }}>{fmt(scProfit)}</span>
+              <div style={{ padding: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+                {(backup.activeServiceCalls || []).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--t3)', fontSize: '12px' }}>No active calls</div>
+                ) : (backup.activeServiceCalls || []).map(call => (
+                  <div key={call.id} style={{ backgroundColor: '#1e2130', borderRadius: '6px', padding: '10px 12px', marginBottom: '6px', borderLeft: '3px solid #f97316' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                      <div>
+                        <div style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '13px' }}>{call.customer}</div>
+                        <div style={{ color: 'var(--t3)', fontSize: '11px' }}>{call.jtype} &middot; {call.date}</div>
+                      </div>
+                      <span style={{ color: '#eab308', fontWeight: '700', fontFamily: 'monospace', fontSize: '14px' }}>{fmt(call.quoted)}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                      <button onClick={() => completeAndLog(call.id)} style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', backgroundColor: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}><Check size={10} /> Complete & Log</button>
+                      <button onClick={() => deleteActiveCall(call.id)} style={{ padding: '3px 6px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', marginLeft: 'auto' }}><Trash2 size={10} /></button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* ACTION BUTTONS */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              onClick={saveAsServiceLead}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: 'rgba(59,130,246,0.2)',
-                color: '#3b82f6',
-                border: '1px solid rgba(59,130,246,0.3)',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              Save as Service Lead
-            </button>
-            <button
-              onClick={convertToServiceLog}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: 'rgba(249,115,22,0.2)',
-                color: '#f97316',
-                border: '1px solid rgba(249,115,22,0.3)',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              Convert to Service Log
-            </button>
-          </div>
+          {/* SERVICE CALL ESTIMATOR FORM (collapsible) */}
+          {showEstForm && (
+            <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', marginBottom: '16px', border: '1px solid rgba(59,130,246,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ color: 'var(--t1)', fontWeight: '600', margin: 0, fontSize: '15px' }}>{editingEstId ? 'Edit Service Estimate' : 'New Service Estimate'}</h3>
+                <button onClick={() => { setShowEstForm(false); resetEstForm() }} style={{ background: 'none', border: 'none', color: 'var(--t3)', cursor: 'pointer' }}><X size={16} /></button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Customer / Job Name *</label>
+                  <input value={scCust} onChange={e => setScCust(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Job Type</label>
+                  <select value={scJtype} onChange={e => setScJtype(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }}>
+                    {SVC_JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Date</label>
+                  <input type="date" value={scDate} onChange={e => setScDate(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Total Quoted $</label>
+                  <div style={{ padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '4px', color: '#eab308', fontSize: '13px', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(scQuoted)}</div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Material Cost $</label>
+                  <input type="number" step="0.01" value={scMat} onChange={e => setScMat(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Est Labor Hours</label>
+                  <input type="number" step="0.5" value={scHrs} onChange={e => setScHrs(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Hourly Rate $</label>
+                  <input type="number" step="0.01" value={scRate} onChange={e => setScRate(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Miles RT</label>
+                  <input type="number" value={scMiles} onChange={e => setScMiles(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Store / Supplier</label>
+                  <input value={scStore} onChange={e => setScStore(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Tax %</label>
+                  <input type="number" step="0.01" value={scTax} onChange={e => setScTax(e.target.value)} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', fontFamily: 'monospace' }} />
+                </div>
+              </div>
+              <div style={{ marginTop: '12px' }}>
+                <label style={{ display: 'block', fontSize: '10px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase' }}>Notes / Scope</label>
+                <textarea value={scNotes} onChange={e => setScNotes(e.target.value)} rows={2} style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--t1)', fontSize: '13px', resize: 'none' }} />
+              </div>
+
+              {/* COST BREAKDOWN BAR */}
+              {scQuoted > 0 && (
+                <div style={{ marginTop: '16px' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--t3)', marginBottom: '6px', fontWeight: '600', textTransform: 'uppercase' }}>Cost Breakdown</div>
+                  <div style={{ display: 'flex', height: '20px', borderRadius: '4px', overflow: 'hidden', gap: '1px', backgroundColor: '#1e2130' }}>
+                    {scMatN > 0 && <div style={{ flex: scMatN / scQuoted, backgroundColor: '#f59e0b', minWidth: '2px' }} title={`Material: ${fmt(scMatN)}`} />}
+                    {scMileCost > 0 && <div style={{ flex: scMileCost / scQuoted, backgroundColor: '#06b6d4', minWidth: '2px' }} title={`Mileage: ${fmt(scMileCost)}`} />}
+                    {scOpCost > 0 && <div style={{ flex: scOpCost / scQuoted, backgroundColor: '#a855f7', minWidth: '2px' }} title={`OP Cost: ${fmt(scOpCost)}`} />}
+                    {scProfit > 0 && <div style={{ flex: scProfit / scQuoted, backgroundColor: '#10b981', minWidth: '2px' }} title={`Profit: ${fmt(scProfit)}`} />}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '6px', fontSize: '10px', flexWrap: 'wrap' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--t3)' }}><span style={{ width: '6px', height: '6px', backgroundColor: '#eab308', borderRadius: '1px', display: 'inline-block' }} />Quoted {fmt(scQuoted)}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--t3)' }}><span style={{ width: '6px', height: '6px', backgroundColor: '#f59e0b', borderRadius: '1px', display: 'inline-block' }} />Material {fmt(scMatN)}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--t3)' }}><span style={{ width: '6px', height: '6px', backgroundColor: '#06b6d4', borderRadius: '1px', display: 'inline-block' }} />Mileage {fmt(scMileCost)}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--t3)' }}><span style={{ width: '6px', height: '6px', backgroundColor: '#a855f7', borderRadius: '1px', display: 'inline-block' }} />OP Cost {fmt(scOpCost)}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: scProfit >= 0 ? '#10b981' : '#ef4444' }}><span style={{ width: '6px', height: '6px', backgroundColor: scProfit >= 0 ? '#10b981' : '#ef4444', borderRadius: '1px', display: 'inline-block' }} />Profit {fmt(scProfit)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* SAVE BUTTON */}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                <button onClick={saveEstimate} style={{ padding: '10px 20px', backgroundColor: 'rgba(59,130,246,0.25)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                  {editingEstId ? 'Update Estimate' : 'Save Estimate'}
+                </button>
+                <button onClick={() => { setShowEstForm(false); resetEstForm() }} style={{ padding: '10px 16px', backgroundColor: 'transparent', color: 'var(--t3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -8,10 +8,11 @@
  */
 
 import { useState, useCallback } from 'react'
-import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText } from 'lucide-react'
+import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
   health,
   getOverallCompletion,
   getProjectFinancials,
@@ -23,17 +24,93 @@ import {
   syncAllProjectFinanceBuckets,
   type BackupProject,
 } from '@/services/backupDataService'
+import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
+  prefillFromLead?: { name?: string; customer?: string; contract?: number; type?: string; notes?: string; leadId?: string; leadType?: string } | null
+  onPrefillUsed?: () => void
 }
 
-export default function V15rProjectsPanel({ onSelectProject }: Props) {
+const JOB_TYPES = ['Residential', 'Commercial', 'Service', 'Solar', 'New Construction', 'Commercial TI']
+const STATUS_OPTIONS = ['active', 'coming']
+const DEFAULT_PHASES = { Planning: 0, Estimating: 0, 'Site Prep': 0, 'Rough-in': 0, Trim: 0, Finish: 0 }
+
+export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, onPrefillUsed }: Props) {
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [showQBImport, setShowQBImport] = useState(false)
+  const [showNewProject, setShowNewProject] = useState(false)
+
+  // New Project form state
+  const [npName, setNpName] = useState('')
+  const [npClient, setNpClient] = useState('')
+  const [npContract, setNpContract] = useState('')
+  const [npType, setNpType] = useState('Residential')
+  const [npStartDate, setNpStartDate] = useState(new Date().toISOString().slice(0, 10))
+  const [npStatus, setNpStatus] = useState('active')
+  const [npNotes, setNpNotes] = useState('')
+
   const backup = getBackupData()
+
+  // Handle prefill from lead conversion
+  if (prefillFromLead && !showNewProject) {
+    setNpName(prefillFromLead.name || prefillFromLead.customer || '')
+    setNpClient(prefillFromLead.customer || '')
+    setNpContract(prefillFromLead.contract ? String(prefillFromLead.contract) : '')
+    setNpType(prefillFromLead.type || 'Residential')
+    setNpNotes(prefillFromLead.notes || '')
+    setShowNewProject(true)
+    onPrefillUsed?.()
+  }
+
+  function openNewProjectModal() {
+    setNpName(''); setNpClient(''); setNpContract(''); setNpType('Residential')
+    setNpStartDate(new Date().toISOString().slice(0, 10)); setNpStatus('active'); setNpNotes('')
+    setShowNewProject(true)
+  }
+
+  function saveNewProject() {
+    if (!npName.trim()) { alert('Project name is required.'); return }
+    if (!backup) return
+    pushState(backup)
+    const id = 'proj' + Date.now() + Math.random().toString(36).slice(2, 6)
+    const newProj: any = {
+      id,
+      name: npName.trim(),
+      client: npClient.trim(),
+      type: npType,
+      status: npStatus,
+      contract: num(npContract),
+      billed: 0,
+      paid: 0,
+      mileRT: 0,
+      miDays: 0,
+      phases: { ...DEFAULT_PHASES },
+      tasks: { Planning: [], Estimating: [], 'Site Prep': [], 'Rough-in': [], Trim: [], Finish: [] },
+      laborRows: [],
+      ohRows: [],
+      matRows: [],
+      mtoRows: [],
+      rfis: [],
+      coord: {},
+      logs: [],
+      finance: {},
+      lastMove: npStartDate,
+      notes: npNotes.trim(),
+      created: new Date().toISOString(),
+    }
+    // If converted from a lead, add conversion tracking fields
+    if (prefillFromLead?.leadId) {
+      newProj.convertedFromLeadId = prefillFromLead.leadId
+      newProj.convertedFromLeadType = prefillFromLead.leadType || 'unknown'
+    }
+    backup.projects = [...(backup.projects || []), newProj]
+    saveBackupDataAndSync(backup)
+    setShowNewProject(false)
+    forceUpdate()
+  }
 
   if (!backup) {
     return (
@@ -216,7 +293,7 @@ export default function V15rProjectsPanel({ onSelectProject }: Props) {
           >
             <FileText size={12} /> New from QB Estimate
           </button>
-          <button className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold">
+          <button onClick={openNewProjectModal} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold">
             <Plus size={12} /> New Project
           </button>
         </div>
@@ -240,6 +317,64 @@ export default function V15rProjectsPanel({ onSelectProject }: Props) {
           onClose={() => setShowQBImport(false)}
           onImported={() => { forceUpdate() }}
         />
+      )}
+
+      {/* New Project Modal */}
+      {showNewProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#232738] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">New Project</h3>
+              <button onClick={() => setShowNewProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Project Name *</label>
+                <input value={npName} onChange={e => setNpName(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" placeholder="e.g. Smith Residence Panel Upgrade" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Client / Customer</label>
+                  <input value={npClient} onChange={e => setNpClient(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
+                  <input type="number" value={npContract} onChange={e => setNpContract(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" placeholder="0" />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job Type</label>
+                  <select value={npType} onChange={e => setNpType(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500">
+                    {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
+                  <input type="date" value={npStartDate} onChange={e => setNpStartDate(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Status</label>
+                  <select value={npStatus} onChange={e => setNpStatus(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500">
+                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s === 'active' ? 'Active' : 'Coming Up'}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Notes</label>
+                <textarea value={npNotes} onChange={e => setNpNotes(e.target.value)} rows={2} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={saveNewProject} className="flex-1 px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700 transition-colors">
+                Create Project
+              </button>
+              <button onClick={() => setShowNewProject(false)} className="px-4 py-2 bg-gray-700 text-gray-300 text-xs font-bold rounded hover:bg-gray-600 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

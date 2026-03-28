@@ -22,6 +22,68 @@
 
 const STORAGE_KEY = 'poweron_backup_data'
 
+// ── ISSUE 5: Sync infrastructure ─────────────────────────────────────────────
+
+let _saveDebounceTimer: any = null
+let _dataChanged = false
+let _lastSyncedAt = 0
+const SYNC_INTERVAL_MS = 30_000 // 30 seconds
+const SAVE_DEBOUNCE_MS = 100
+
+/** Track which top-level keys changed since last sync */
+const _changedKeys = new Set<string>()
+
+/** Per-key last modified timestamps (stored in localStorage) */
+const PER_KEY_TS_KEY = 'poweron_key_timestamps'
+
+function getKeyTimestamps(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(PER_KEY_TS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch { return {} }
+}
+
+function setKeyTimestamp(key: string) {
+  try {
+    const ts = getKeyTimestamps()
+    ts[key] = Date.now()
+    localStorage.setItem(PER_KEY_TS_KEY, JSON.stringify(ts))
+  } catch { /* ignore */ }
+}
+
+/** Mark a data key as changed (called before saving) */
+export function markChanged(...keys: string[]) {
+  keys.forEach(k => {
+    _changedKeys.add(k)
+    setKeyTimestamp(k)
+  })
+  _dataChanged = true
+}
+
+/** Start periodic sync timer — call from V15rLayout on mount */
+export function startPeriodicSync(): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const id = setInterval(() => {
+    if (_dataChanged && Date.now() - _lastSyncedAt >= SYNC_INTERVAL_MS) {
+      _dataChanged = false
+      _lastSyncedAt = Date.now()
+      _changedKeys.clear()
+      syncToSupabase().catch(err => console.warn('[sync] Periodic sync failed:', err))
+    }
+  }, SYNC_INTERVAL_MS)
+  return () => clearInterval(id)
+}
+
+/** Debounced save — waits 100ms before writing to prevent rapid overwrites during typing */
+export function debouncedSave(data: BackupData, changedKey?: string) {
+  if (changedKey) markChanged(changedKey)
+  if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer)
+  _saveDebounceTimer = setTimeout(() => {
+    data._lastSavedAt = new Date().toISOString()
+    saveBackupData(data)
+  }, SAVE_DEBOUNCE_MS)
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface BackupLog {
@@ -174,19 +236,31 @@ export function getBackupData(): BackupData | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const data = JSON.parse(raw) as BackupData
-      // If priceBook is empty/missing, try to hydrate from poweron_v2 key
-      if (!data.priceBook || (Array.isArray(data.priceBook) && data.priceBook.length === 0) || (typeof data.priceBook === 'object' && Object.keys(data.priceBook).length === 0)) {
-        try {
-          const v2Raw = localStorage.getItem('poweron_v2')
-          if (v2Raw) {
-            const v2Data = JSON.parse(v2Raw)
-            if (v2Data && Array.isArray(v2Data.priceBook) && v2Data.priceBook.length > 0) {
-              console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2Data.priceBook.length, 'items')
-              data.priceBook = v2Data.priceBook
+      // ISSUE 4: Price book dual-storage reconciliation
+      // Step 1: If local priceBook empty, hydrate from poweron_v2
+      const localPBArr = Array.isArray(data.priceBook) ? data.priceBook : (data.priceBook ? Object.values(data.priceBook) : [])
+      try {
+        const v2Raw = localStorage.getItem('poweron_v2')
+        if (v2Raw) {
+          const v2Data = JSON.parse(v2Raw)
+          const v2PB = Array.isArray(v2Data?.priceBook) ? v2Data.priceBook : (v2Data?.priceBook ? Object.values(v2Data.priceBook) : [])
+          if (localPBArr.length === 0 && v2PB.length > 0) {
+            // Hydrate from poweron_v2
+            console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2PB.length, 'items')
+            data.priceBook = v2Data.priceBook
+          } else if (localPBArr.length > v2PB.length && v2PB.length >= 0) {
+            // Step 2: One-time migration — local has MORE items, merge into poweron_v2
+            const v2Ids = new Set(v2PB.map((i: any) => i.id).filter(Boolean))
+            const diff = localPBArr.filter((i: any) => i.id && !v2Ids.has(i.id))
+            if (diff.length > 0) {
+              const merged = [...v2PB, ...diff]
+              v2Data.priceBook = merged
+              localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+              console.log('[backupDataService] One-time migration: merged', diff.length, 'extra items into poweron_v2')
             }
           }
-        } catch { /* ignore poweron_v2 parse errors */ }
-      }
+        }
+      } catch { /* ignore poweron_v2 parse errors */ }
       return data
     }
     // If no data under STORAGE_KEY, try poweron_v2 as fallback
@@ -205,6 +279,19 @@ export function getBackupData(): BackupData | null {
 export function saveBackupData(data: BackupData): void {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) }
   catch (err) { console.error('[backupDataService] Failed to save:', err) }
+  // ISSUE 4: Keep poweron_v2 price book in sync to prevent dual-storage divergence
+  try {
+    const v2Raw = localStorage.getItem('poweron_v2')
+    if (v2Raw && data.priceBook) {
+      const v2Data = JSON.parse(v2Raw)
+      const pbArr = Array.isArray(data.priceBook) ? data.priceBook : Object.values(data.priceBook)
+      if (pbArr.length > 0) {
+        v2Data.priceBook = pbArr
+        v2Data._lastSavedAt = data._lastSavedAt
+        localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+      }
+    }
+  } catch { /* ignore poweron_v2 sync errors */ }
 }
 
 export function clearBackupData(): void {
@@ -693,8 +780,10 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
 }
 
 /** Enhanced saveBackupData that also syncs to Supabase */
-export function saveBackupDataAndSync(data: BackupData): void {
+export function saveBackupDataAndSync(data: BackupData, changedKey?: string): void {
   data._lastSavedAt = new Date().toISOString()
+  if (changedKey) markChanged(changedKey)
+  _dataChanged = true
   saveBackupData(data)
   // Fire and forget — sync to Supabase in background
   syncToSupabase().catch(err => console.warn('[sync] Background sync failed:', err))

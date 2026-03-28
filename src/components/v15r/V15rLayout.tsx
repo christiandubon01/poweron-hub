@@ -21,7 +21,7 @@ import {
   Menu,
   X,
 } from 'lucide-react'
-import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, type BackupData } from '@/services/backupDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
 
 interface V15rLayoutProps {
@@ -106,10 +106,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }).catch(() => setSyncStatus('failed'))
   }, [])
 
-  // Periodic sync to Supabase
+  // Periodic sync to Supabase (30s via startPeriodicSync + legacy fallback)
   useEffect(() => {
     if (!isSupabaseConfigured()) return
 
+    // Start the new 30s debounced periodic sync from Issue 5
+    const stopSync = startPeriodicSync()
+
+    // Also keep a status-polling interval for UI indicators
     const interval = setInterval(() => {
       syncToSupabase().then(result => {
         if (result.success) {
@@ -119,9 +123,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           setSyncStatus('failed')
         }
       }).catch(() => setSyncStatus('failed'))
-    }, 60000) // every 60 seconds
+    }, 30000) // every 30 seconds (aligned with new sync interval)
 
-    return () => clearInterval(interval)
+    return () => { stopSync(); clearInterval(interval) }
   }, [])
 
   // Track window width for responsive breakpoints

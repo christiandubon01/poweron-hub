@@ -17,6 +17,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
   getProjectFinancials,
   resolveProjectBucket,
   num,
@@ -214,6 +215,65 @@ export default function V15rMoneyPanel() {
   const [weeklyEdit, setWeeklyEdit] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
   const [showWeeklyGaps, setShowWeeklyGaps] = useState(true)
+  const [recalculating, setRecalculating] = useState(false)
+
+  // ISSUE 3: Recalculate weekly data from actual project/service log data
+  function recalcWeeklyFromData() {
+    if (!backup) return
+    const wdArr = backup.weeklyData || []
+    if (wdArr.length === 0) return
+    setRecalculating(true)
+
+    const allLogs = backup.logs || []
+    const allSvcLogs = backup.serviceLogs || []
+    const allProjects = backup.projects || []
+
+    let accum = 0
+    for (const w of wdArr) {
+      // Skip manually overridden weeks
+      if (w.manualOverride) continue
+
+      const weekStart = w.start ? new Date(w.start) : null
+      if (!weekStart) continue
+      const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
+
+      // proj: SUM of collected from project logs where date falls within week
+      const projCollected = allLogs.reduce((s, l) => {
+        const ld = l.date ? new Date(l.date) : null
+        if (ld && ld >= weekStart && ld < weekEnd) return s + num(l.collected)
+        return s
+      }, 0)
+
+      // svc: SUM of serviceLogs.collected where date falls within week
+      const svcCollected = allSvcLogs.reduce((s, l) => {
+        const ld = l.date ? new Date(l.date) : null
+        if (ld && ld >= weekStart && ld < weekEnd) return s + num(l.collected)
+        return s
+      }, 0)
+
+      w.proj = projCollected
+      w.svc = svcCollected
+      accum += projCollected + svcCollected
+      w.accum = accum
+
+      // unbilled: SUM of active project contracts minus paid
+      const activeUnbilled = allProjects
+        .filter(p => p.status === 'active')
+        .reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
+      w.unbilled = activeUnbilled
+
+      // pendingInv: SUM of serviceLogs where collected=0 and quoted>0
+      const pending = allSvcLogs
+        .filter(l => num(l.collected) === 0 && num(l.quoted) > 0)
+        .reduce((s, l) => s + num(l.quoted), 0)
+      w.pendingInv = pending
+    }
+
+    saveBackupDataAndSync(backup, 'weeklyData')
+    setRecalculating(false)
+    // Force re-render
+    window.location.reload()
+  }
 
   if (!backup) {
     return (
@@ -700,16 +760,25 @@ export default function V15rMoneyPanel() {
   <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
     <div className="flex items-center justify-between mb-3">
       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">52-Week Cash Flow</h3>
-      <button
-        onClick={() => setShowWeeklyGaps(!showWeeklyGaps)}
-        className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
-          showWeeklyGaps
-            ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
-            : 'bg-gray-700/30 text-gray-400 border border-gray-600/30'
-        }`}
-      >
-        {showWeeklyGaps ? 'Hide Gaps' : 'Show Gaps'}
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={recalcWeeklyFromData}
+          disabled={recalculating}
+          className="px-2 py-1 rounded text-xs font-semibold bg-blue-600/20 text-blue-400 border border-blue-600/30 hover:bg-blue-600/30 transition-all disabled:opacity-50"
+        >
+          {recalculating ? 'Recalculating...' : 'Recalculate from Data'}
+        </button>
+        <button
+          onClick={() => setShowWeeklyGaps(!showWeeklyGaps)}
+          className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
+            showWeeklyGaps
+              ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
+              : 'bg-gray-700/30 text-gray-400 border border-gray-600/30'
+          }`}
+        >
+          {showWeeklyGaps ? 'Hide Gaps' : 'Show Gaps'}
+        </button>
+      </div>
     </div>
     <div className="overflow-x-auto">
       <table className="w-full text-[10px]">

@@ -812,25 +812,8 @@ function JobMixSliders({ values, onChange }: { values: { solarOnly: number, batt
 
   const total = values.solarOnly + values.batteryOnly + values.panelOnly + values.batteryPanel
 
-  const handleSliderChange = (changedKey: string, newVal: number, field: string) => {
-    const others = sliders.filter(s => s.key !== changedKey)
-    const otherTotal = others.reduce((s, o) => s + values[o.key as keyof typeof values], 0)
-    const remaining = 100 - newVal
-
-    if (otherTotal > 0) {
-      // Scale others proportionally
-      others.forEach(o => {
-        const ratio = values[o.key as keyof typeof values] / otherTotal
-        const adjusted = Math.round(remaining * ratio)
-        onChange(o.field, adjusted)
-      })
-    } else if (others.length > 0) {
-      // Distribute evenly if all others are 0
-      const each = Math.floor(remaining / others.length)
-      others.forEach((o, i) => {
-        onChange(o.field, i === others.length - 1 ? remaining - each * (others.length - 1) : each)
-      })
-    }
+  // ISSUE 6: Each slider moves INDEPENDENTLY — no auto-adjustment of others
+  const handleSliderChange = (field: string, newVal: number) => {
     onChange(field, newVal)
   }
 
@@ -847,7 +830,7 @@ function JobMixSliders({ values, onChange }: { values: { solarOnly: number, batt
             min={0}
             max={100}
             value={values[s.key as keyof typeof values]}
-            onChange={(e) => handleSliderChange(s.key, Number(e.target.value), s.field)}
+            onChange={(e) => handleSliderChange(s.field, Number(e.target.value))}
             className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
             style={{
               background: `linear-gradient(to right, ${s.color} ${values[s.key as keyof typeof values]}%, #374151 ${values[s.key as keyof typeof values]}%)`,
@@ -855,9 +838,15 @@ function JobMixSliders({ values, onChange }: { values: { solarOnly: number, batt
           />
         </div>
       ))}
-      <div className={`text-[10px] font-semibold text-right ${total === 100 ? 'text-emerald-400' : 'text-yellow-400'}`}>
-        Total: {total}%
-      </div>
+      {total === 100 ? (
+        <div className="text-[10px] font-semibold text-right text-emerald-400">
+          ✓ 100%
+        </div>
+      ) : (
+        <div className="text-[10px] font-semibold text-right text-red-400">
+          ⚠ {total}% — must equal 100%
+        </div>
+      )}
     </div>
   )
 }

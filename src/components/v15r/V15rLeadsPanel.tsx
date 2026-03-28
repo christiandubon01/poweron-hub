@@ -12,10 +12,11 @@
  */
 
 import { useState, useCallback } from 'react'
-import { Plus, Edit3, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
   fmtK,
   fmt,
   num,
@@ -35,6 +36,7 @@ const PHASE_COLORS: Record<string, string> = {
   'Prospecting': '#6b7280',
   'First Contact': '#06b6d4',
   'Dormant': '#374151',
+  'Converted': '#10b981',
 }
 
 const SVC_STATUS_COLORS: Record<string, string> = {
@@ -43,6 +45,7 @@ const SVC_STATUS_COLORS: Record<string, string> = {
   'Booked': '#06b6d4',
   'Park': '#f59e0b',
   'Kill': '#ef4444',
+  'Converted': '#10b981',
 }
 const SVC_STATUS_CYCLE = ['Advance', 'Quoted', 'Booked', 'Park', 'Kill']
 
@@ -151,6 +154,54 @@ export default function V15rLeadsPanel() {
     setOpenLogFormId(null)
     setLogFormData({ method: 'Call', notes: '' })
     persist()
+  }
+
+  // ── Lead-to-Project Conversion ───────────────────────────────────────────
+
+  function convertGCToProject(gc: any) {
+    if (!confirm(`Convert "${gc.company}" to a new project?`)) return
+    pushState(backup)
+    const projId = 'proj' + Date.now() + Math.random().toString(36).slice(2, 6)
+    const newProj: any = {
+      id: projId, name: gc.company + (gc.contact ? ' — ' + gc.contact : ''),
+      client: gc.company, type: 'Commercial', status: 'active',
+      contract: num(gc.avg), billed: 0, paid: 0, mileRT: 0, miDays: 0,
+      phases: { Planning: 0, Estimating: 0, 'Site Prep': 0, 'Rough-in': 0, Trim: 0, Finish: 0 },
+      tasks: { Planning: [], Estimating: [], 'Site Prep': [], 'Rough-in': [], Trim: [], Finish: [] },
+      laborRows: [], ohRows: [], matRows: [], mtoRows: [], rfis: [], coord: {}, logs: [], finance: {},
+      lastMove: today(), notes: gc.notes || '', created: new Date().toISOString(),
+      convertedFromLeadId: gc.id, convertedFromLeadType: 'gcContact',
+    }
+    backup.projects = [...(backup.projects || []), newProj]
+    // Update GC contact phase to Converted and link
+    gc.phase = 'Converted'
+    gc.convertedProjectId = projId
+    saveBackupDataAndSync(backup)
+    forceUpdate()
+    alert(`Project created: ${newProj.name}`)
+  }
+
+  function convertSvcLeadToProject(lead: any) {
+    if (!confirm(`Convert service lead "${lead.customer}" to a new project?`)) return
+    pushState(backup)
+    const projId = 'proj' + Date.now() + Math.random().toString(36).slice(2, 6)
+    const newProj: any = {
+      id: projId, name: lead.customer || 'Service Project',
+      client: lead.customer, type: lead.type || 'Service', status: 'active',
+      contract: num(lead.price || lead.totalQuote || 0), billed: 0, paid: 0, mileRT: num(lead.miles || lead.milesRT || 0), miDays: 0,
+      phases: { Planning: 0, Estimating: 0, 'Site Prep': 0, 'Rough-in': 0, Trim: 0, Finish: 0 },
+      tasks: { Planning: [], Estimating: [], 'Site Prep': [], 'Rough-in': [], Trim: [], Finish: [] },
+      laborRows: [], ohRows: [], matRows: [], mtoRows: [], rfis: [], coord: {}, logs: [], finance: {},
+      lastMove: today(), notes: lead.notes || '', created: new Date().toISOString(),
+      convertedFromLeadId: lead.id, convertedFromLeadType: 'serviceLead',
+    }
+    backup.projects = [...(backup.projects || []), newProj]
+    // Update service lead status to Converted and link
+    lead.status = 'Converted'
+    lead.convertedProjectId = projId
+    saveBackupDataAndSync(backup)
+    forceUpdate()
+    alert(`Project created: ${newProj.name}`)
   }
 
   // ── Service Leads CRUD ─────────────────────────────────────────────────
@@ -323,6 +374,12 @@ export default function V15rLeadsPanel() {
                         </td>
                         <td className="py-2 px-2 text-center">
                           <div className="flex gap-1 justify-center">
+                            {c.phase === 'Awarded' && !c.convertedProjectId && (
+                              <button onClick={() => convertGCToProject(c)} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-700/50 text-emerald-300 hover:text-emerald-200 font-semibold" title="Convert to Project">→Proj</button>
+                            )}
+                            {c.convertedProjectId && (
+                              <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">Converted</span>
+                            )}
                             <button onClick={() => editGC(c.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">✎</button>
                             <button onClick={() => deleteGC(c.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300">✕</button>
                             <button onClick={() => setExpandedGCId(isExpanded ? null : c.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400">
@@ -525,6 +582,12 @@ export default function V15rLeadsPanel() {
                       </td>
                       <td className="py-2 px-2 text-center">
                         <div className="flex gap-1 justify-center">
+                          {l.status === 'Booked' && !l.convertedProjectId && (
+                            <button onClick={() => convertSvcLeadToProject(l)} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-700/50 text-emerald-300 hover:text-emerald-200 font-semibold" title="Convert to Project">→Proj</button>
+                          )}
+                          {l.convertedProjectId && (
+                            <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">Converted</span>
+                          )}
                           <button onClick={() => cycleSvcStatus(l.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">↻</button>
                           <button onClick={() => deleteSvcLead(l.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300">✕</button>
                         </div>
