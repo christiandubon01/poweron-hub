@@ -641,6 +641,108 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
   return <canvas ref={canvasRef} />
 }
 
+// ── SCP: Service Calls Performance CHART COMPONENT ──
+function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const chartRef = useRef<any>(null)
+  const chartReady = useChartJS()
+
+  useEffect(() => {
+    if (!chartReady || !canvasRef.current || !serviceLogs.length) return
+
+    const Chart = (window as any).Chart
+    if (!Chart) return
+
+    if (chartRef.current) {
+      chartRef.current.destroy()
+      chartRef.current = null
+    }
+
+    const ctx = canvasRef.current.getContext('2d')
+    if (!ctx) return
+
+    // Take last 8 service calls
+    const recent = serviceLogs.slice(-8)
+    const labels = recent.map((l: any) => (l.customer || 'Unknown').substring(0, 12))
+    const quotedData = recent.map((l: any) => num(l.quoted || 0))
+    const materialData = recent.map((l: any) => num(l.materialCost || l.material || 0))
+    const netData = recent.map((l: any) => {
+      const quoted = num(l.quoted || 0)
+      const mat = num(l.materialCost || l.material || 0)
+      const miles = num(l.mileage || 0) * num(backup.settings?.mileRate || 0.66)
+      return Math.max(0, quoted - mat - miles)
+    })
+
+    chartRef.current = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Quoted',
+            data: quotedData,
+            backgroundColor: '#3b82f6',
+            borderRadius: 3,
+          },
+          {
+            label: 'Material',
+            data: materialData,
+            backgroundColor: '#f59e0b',
+            borderRadius: 3,
+          },
+          {
+            label: 'Net Profit',
+            data: netData,
+            backgroundColor: '#10b981',
+            borderRadius: 3,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            titleColor: '#fff',
+            bodyColor: '#ccc',
+            padding: 8,
+            callbacks: {
+              label: (ctx: any) => `${ctx.dataset.label}: $${Number(ctx.parsed.y).toLocaleString()}`
+            }
+          },
+          legend: {
+            labels: { color: '#9ca3af', font: { size: 11 } }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#9ca3af', font: { size: 10 } },
+            grid: { display: false }
+          },
+          y: {
+            ticks: {
+              color: '#9ca3af',
+              callback: (v: any) => '$' + Number(v).toLocaleString()
+            },
+            grid: { color: 'rgba(255,255,255,0.05)' }
+          }
+        }
+      }
+    })
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy()
+        chartRef.current = null
+      }
+    }
+  }, [chartReady, serviceLogs, backup])
+
+  return <canvas ref={canvasRef} />
+}
+
 // ── REVENUE vs COST ANALYSIS CHART COMPONENT ──
 function RevenueCostChart({ projects, backup }: { projects: any[], backup: BackupData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -927,6 +1029,10 @@ function V15rDashboardInner() {
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 6)
 
+  // ── SCP: Service Calls Performance (last 8) ──
+  const serviceLogs = backup.serviceLogs || []
+  const scpLogs = serviceLogs.slice(-8)
+
   // ── RCA: Revenue vs Cost Analysis (Active Projects) ──
   const rcaProjects = projects
     .filter(p => p.status === 'active' && (p.contract || 0) > 0)
@@ -1014,6 +1120,22 @@ function V15rDashboardInner() {
               <EVRChart projects={evrProjects} backup={backup} />
             </ChartErrorBoundary>
           </div>
+        </div>
+
+        {/* SCP: Service Calls Performance */}
+        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+          <h2 className="text-lg font-bold text-gray-100 mb-4">SCP: Service Calls Performance</h2>
+          {scpLogs.length > 0 ? (
+            <div className="relative w-full h-64">
+              <ChartErrorBoundary>
+                <SCPChart serviceLogs={scpLogs} backup={backup} />
+              </ChartErrorBoundary>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
+              No service call data yet
+            </div>
+          )}
         </div>
 
         {/* RCA: Revenue vs Cost Analysis — Active Projects */}

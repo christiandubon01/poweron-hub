@@ -53,10 +53,40 @@ export default function V15rPriceBookPanel() {
 
   if (!backup) return <NoData />
 
+  // ── DEBUG: Log all top-level keys to identify where price book data lives ──
+  if (typeof console !== 'undefined') {
+    const topKeys = Object.keys(backup)
+    const pbCandidates = topKeys.filter(k => /price|book|catalog|item|product/i.test(k))
+    console.log('[PriceBook] Top-level backup keys:', topKeys.join(', '))
+    console.log('[PriceBook] Candidate price book keys:', pbCandidates.length ? pbCandidates.join(', ') : 'NONE — using priceBook or catalog fallback')
+    console.log('[PriceBook] backup.priceBook type:', typeof backup.priceBook, Array.isArray(backup.priceBook) ? `(array, length=${backup.priceBook.length})` : '')
+    console.log('[PriceBook] backup.priceBookItems type:', typeof (backup as any).priceBookItems)
+    console.log('[PriceBook] backup.priceBookCategories type:', typeof (backup as any).priceBookCategories)
+    console.log('[PriceBook] backup.catalog type:', typeof (backup as any).catalog)
+    console.log('[PriceBook] backup.pricebook (lowercase) type:', typeof (backup as any).pricebook)
+  }
+
   // Handle both formats: array (from HTML app backup) or Record (from React app)
-  // Also check 'catalog' key — legacy HTML builds sometimes use that instead of 'priceBook'
-  const rawPB = backup.priceBook || (backup as any).catalog || {}
-  const priceBookItems: BackupPriceBookItem[] = Array.isArray(rawPB) ? rawPB : Object.values(rawPB)
+  // Extended fallback chain: priceBook → priceBookItems → priceBookCategories → catalog → pricebook (lowercase)
+  const rawPB = backup.priceBook || (backup as any).priceBookItems || (backup as any).priceBookCategories || (backup as any).catalog || (backup as any).pricebook || {}
+
+  // If priceBookCategories was a nested { category: [items] } structure, flatten it
+  let priceBookItems: BackupPriceBookItem[]
+  if (Array.isArray(rawPB)) {
+    priceBookItems = rawPB
+  } else if (typeof rawPB === 'object' && rawPB !== null) {
+    // Check if it's { catName: [...items] } or { id: { ...item } }
+    const vals = Object.values(rawPB)
+    if (vals.length > 0 && Array.isArray(vals[0])) {
+      // Nested categories — flatten
+      priceBookItems = (vals as BackupPriceBookItem[][]).flat()
+    } else {
+      priceBookItems = vals as BackupPriceBookItem[]
+    }
+  } else {
+    priceBookItems = []
+  }
+  console.log('[PriceBook] Resolved items count:', priceBookItems.length)
   const settings = backup.settings || {}
   const markup = settings.markup ?? 150 // 150% = 2.5x markup (cost × 1.5 = client price)
 

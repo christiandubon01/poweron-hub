@@ -150,11 +150,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return () => clearInterval(interval)
   }, [])
 
-  // Apply theme (light/dark toggle)
+  // Apply theme (light/dark toggle) — sync data-theme attr + Tailwind dark class + body.lt
   useEffect(() => {
     if (backupData?.settings?.theme) {
       const theme = backupData.settings.theme
       document.documentElement.setAttribute('data-theme', theme)
+      document.documentElement.classList.toggle('dark', theme !== 'light')
+      document.documentElement.classList.toggle('light', theme === 'light')
       document.body.classList.toggle('lt', theme === 'light')
     }
   }, [backupData?.settings?.theme])
@@ -279,6 +281,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Calculate percentage for revenue target progress
   const annualTarget = backupData?.settings?.annualTarget || 120000
   const revenueTargetPct = Math.min(100, Math.round((safeKpis.paid / annualTarget) * 100))
+
+  // SERVICE NET = Total Quoted - Material - Mileage from service calls
+  const serviceNet = (() => {
+    const svcLogs = backupData?.serviceLogs || []
+    const mileRate = backupData?.settings?.mileRate || 0.66
+    let totalQuoted = 0, totalMaterial = 0, totalMileage = 0
+    svcLogs.forEach((l: any) => {
+      totalQuoted += Number(l.quoted || 0)
+      totalMaterial += Number(l.materialCost || l.material || 0)
+      totalMileage += Number(l.mileage || 0) * mileRate
+    })
+    return totalQuoted - totalMaterial - totalMileage
+  })()
 
   // Responsive breakpoints
   const isCompact = windowWidth < 1200
@@ -590,6 +605,23 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       <span className="text-[8px] font-bold uppercase text-gray-500">Open RFIs</span>
                       <span className="text-base font-bold text-purple-400">
                         {safeKpis.openRfis}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {/* Separator */}
+                <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
+
+                {/* SERVICE NET */}
+                <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Service Net' : undefined}>
+                  {isCompact ? (
+                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${(serviceNet / 1000).toFixed(0)}k</span>
+                  ) : (
+                    <>
+                      <span className="text-[8px] font-bold uppercase text-gray-500">Service Net</span>
+                      <span className={`text-base font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        ${(serviceNet / 1000).toFixed(0)}k
                       </span>
                     </>
                   )}

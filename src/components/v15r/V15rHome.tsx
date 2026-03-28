@@ -104,9 +104,9 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
 export default function V15rHome() {
   const [, setTick] = useState(0)
   const [calOffset, setCalOffset] = useState(0)
-  const [customAlerts, setCustomAlerts] = useState<Array<{id: string, title: string, description: string, action: string, isAI: boolean, manuallyEdited?: boolean}>>([])
+  const [customAlerts, setCustomAlerts] = useState<Array<{id: string, title: string, description: string, action: string, isAI: boolean, manuallyEdited?: boolean, scheduledAt?: string, linkedProjectId?: string}>>([])
   const [editingAlertId, setEditingAlertId] = useState<string | null>(null)
-  const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string}>({title: '', description: '', action: ''})
+  const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}>({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
   const [addingAlert, setAddingAlert] = useState(false)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
@@ -283,7 +283,7 @@ export default function V15rHome() {
 
   // ── Alert management handlers ─────────────────────────────────────────────
 
-  function saveAlert(alertId: string | null, data: {title: string, description: string, action: string}, isAI: boolean) {
+  function saveAlert(alertId: string | null, data: {title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}, isAI: boolean) {
     if (!data.title.trim()) {
       alert('Alert title is required')
       return
@@ -293,14 +293,16 @@ export default function V15rHome() {
       backup.customAlerts = []
     }
     if (alertId) {
-      const alert = backup.customAlerts.find(a => a.id === alertId)
-      if (alert) {
-        alert.title = data.title
-        alert.description = data.description
-        alert.action = data.action
+      const existingAlert = backup.customAlerts.find(a => a.id === alertId)
+      if (existingAlert) {
+        existingAlert.title = data.title
+        existingAlert.description = data.description
+        existingAlert.action = data.action
+        existingAlert.scheduledAt = data.scheduledAt || ''
+        existingAlert.linkedProjectId = data.linkedProjectId || ''
         // Mark as edited if this was an AI alert
-        if (alert.isAI) {
-          alert.manuallyEdited = true
+        if (existingAlert.isAI) {
+          existingAlert.manuallyEdited = true
         }
       }
     } else {
@@ -309,13 +311,25 @@ export default function V15rHome() {
         title: data.title,
         description: data.description,
         action: data.action,
-        isAI: isAI
+        isAI: isAI,
+        scheduledAt: data.scheduledAt || '',
+        linkedProjectId: data.linkedProjectId || '',
       })
+    }
+    // OneSignal push stub — when scheduledAt is set, queue for push notification
+    if (data.scheduledAt && typeof (window as any).OneSignal !== 'undefined') {
+      try {
+        console.log('[OneSignal] Push notification queued for alert:', data.title, 'at', data.scheduledAt)
+        // TODO: Replace with actual OneSignal API call when integrated
+        // (window as any).OneSignal.push(() => { ... })
+      } catch (e) {
+        console.warn('[OneSignal] Push notification failed:', e)
+      }
     }
     persist()
     setEditingAlertId(null)
     setAddingAlert(false)
-    setEditingAlertData({title: '', description: '', action: ''})
+    setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
   }
 
   function dismissAlert(alertId: string) {
@@ -326,12 +340,14 @@ export default function V15rHome() {
     persist()
   }
 
-  function startEditAlert(alert: any) {
-    setEditingAlertId(alert.id)
+  function startEditAlert(alertItem: any) {
+    setEditingAlertId(alertItem.id)
     setEditingAlertData({
-      title: alert.title,
-      description: alert.description,
-      action: alert.action
+      title: alertItem.title,
+      description: alertItem.description,
+      action: alertItem.action,
+      scheduledAt: alertItem.scheduledAt || '',
+      linkedProjectId: alertItem.linkedProjectId || '',
     })
   }
 
@@ -555,6 +571,25 @@ export default function V15rHome() {
                   <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: a.clr }} />
                   <div className="flex items-start gap-2 flex-1">
                     <div className="text-xs text-gray-200 flex-1">{a.txt}</div>
+                    <button
+                      onClick={() => {
+                        // Promote AI alert to custom alert for editing
+                        pushState(backup)
+                        if (!backup.customAlerts) backup.customAlerts = []
+                        const newId = 'ai2c_' + Date.now() + '_' + i
+                        backup.customAlerts.push({
+                          id: newId, title: a.txt, description: '', action: '',
+                          isAI: true, scheduledAt: '', linkedProjectId: a.id || ''
+                        })
+                        persist()
+                        forceUpdate()
+                        startEditAlert({ id: newId, title: a.txt, description: '', action: '', scheduledAt: '', linkedProjectId: a.id || '' })
+                      }}
+                      className="text-[9px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex-shrink-0"
+                      title="Edit alert"
+                    >
+                      <Edit3 size={10} className="inline" />
+                    </button>
                     <span className="text-[8px] bg-purple-500/30 text-purple-300 px-1.5 py-0.5 rounded flex-shrink-0">AI</span>
                   </div>
                 </div>
@@ -596,6 +631,30 @@ export default function V15rHome() {
                       onChange={(e) => setEditingAlertData({...editingAlertData, action: e.target.value})}
                       className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600"
                     />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[9px] text-gray-500 mb-0.5 block">Schedule Push At</label>
+                        <input
+                          type="datetime-local"
+                          value={editingAlertData.scheduledAt || ''}
+                          onChange={(e) => setEditingAlertData({...editingAlertData, scheduledAt: e.target.value})}
+                          className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-gray-500 mb-0.5 block">Link to Project</label>
+                        <select
+                          value={editingAlertData.linkedProjectId || ''}
+                          onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})}
+                          className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
+                        >
+                          <option value="">None</option>
+                          {projects.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     <div className="flex gap-2">
                       <button
                         onClick={() => saveAlert(a.id, editingAlertData, a.isAI)}
@@ -604,7 +663,7 @@ export default function V15rHome() {
                         Save
                       </button>
                       <button
-                        onClick={() => {setEditingAlertId(null); setEditingAlertData({title: '', description: '', action: ''})}}
+                        onClick={() => {setEditingAlertId(null); setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})}}
                         className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-semibold"
                       >
                         Cancel
@@ -629,6 +688,8 @@ export default function V15rHome() {
                       </div>
                       {a.description && <div className="text-[9px] text-gray-400 mt-1">{a.description}</div>}
                       {a.action && <div className="text-[9px] text-gray-500 mt-1">Action: {a.action}</div>}
+                      {a.scheduledAt && <div className="text-[9px] text-blue-400 mt-1">Push: {new Date(a.scheduledAt).toLocaleString()}</div>}
+                      {a.linkedProjectId && <div className="text-[9px] text-teal-400 mt-1">Project: {projects.find(p => p.id === a.linkedProjectId)?.name || a.linkedProjectId}</div>}
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
@@ -675,6 +736,30 @@ export default function V15rHome() {
                   onChange={(e) => setEditingAlertData({...editingAlertData, action: e.target.value})}
                   className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600"
                 />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[9px] text-gray-500 mb-0.5 block">Schedule Push At</label>
+                    <input
+                      type="datetime-local"
+                      value={editingAlertData.scheduledAt || ''}
+                      onChange={(e) => setEditingAlertData({...editingAlertData, scheduledAt: e.target.value})}
+                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-gray-500 mb-0.5 block">Link to Project</label>
+                    <select
+                      value={editingAlertData.linkedProjectId || ''}
+                      onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})}
+                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
+                    >
+                      <option value="">None</option>
+                      {projects.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => saveAlert(null, editingAlertData, false)}
@@ -683,7 +768,7 @@ export default function V15rHome() {
                     Add Alert
                   </button>
                   <button
-                    onClick={() => {setAddingAlert(false); setEditingAlertData({title: '', description: '', action: ''})}}
+                    onClick={() => {setAddingAlert(false); setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})}}
                     className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-semibold"
                   >
                     Cancel

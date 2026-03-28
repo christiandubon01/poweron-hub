@@ -18,6 +18,30 @@
     <title>PowerOn Hub</title>
   </head>
   <body>
+    <!-- Apply saved theme before first render to prevent flash -->
+    <script>
+      (function() {
+        try {
+          var raw = localStorage.getItem('poweron_backup_data');
+          if (raw) {
+            var data = JSON.parse(raw);
+            var theme = data && data.settings && data.settings.theme;
+            if (theme === 'light') {
+              document.documentElement.setAttribute('data-theme', 'light');
+              document.documentElement.classList.add('light');
+              document.body && document.body.classList.add('lt');
+            } else {
+              document.documentElement.setAttribute('data-theme', 'dark');
+              document.documentElement.classList.add('dark');
+            }
+          } else {
+            document.documentElement.classList.add('dark');
+          }
+        } catch(e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

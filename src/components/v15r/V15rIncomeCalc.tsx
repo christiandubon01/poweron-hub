@@ -199,13 +199,23 @@ export default function V15rIncomeCalc() {
 
           {/* Contract Adders + Job Mix */}
           <div className="bg-[#232738] rounded-lg p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-gray-200 uppercase">Contract Adders + Job Mix</h3>
+            <h3 className="text-sm font-semibold text-gray-200 uppercase">Contract Adders</h3>
             <InputField label="Battery Fee Add-On $" value={batteryFeePerSystem} onChange={(v) => updateField('batteryFeePerSystem', v)} />
             <InputField label="Panel Upgrade Fee $" value={panelUpgradeFeePerSystem} onChange={(v) => updateField('panelUpgradeFeePerSystem', v)} />
-            <InputField label="Solar Only Jobs %" value={solarOnlyPct} onChange={(v) => updateField('solarOnlyPct', v)} />
-            <InputField label="Battery Only Jobs %" value={batteryOnlyPct} onChange={(v) => updateField('batteryOnlyPct', v)} />
-            <InputField label="Panel Upgrade Only %" value={panelOnlyPct} onChange={(v) => updateField('panelOnlyPct', v)} />
-            <InputField label="Battery+Panel Jobs %" value={batteryPanelPct} onChange={(v) => updateField('batteryPanelPct', v)} />
+          </div>
+
+          {/* Job Mix Sliders */}
+          <div className="bg-[#232738] rounded-lg p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-gray-200 uppercase">Job Mix</h3>
+            <JobMixSliders
+              values={{
+                solarOnly: solarOnlyPct,
+                batteryOnly: batteryOnlyPct,
+                panelOnly: panelOnlyPct,
+                batteryPanel: batteryPanelPct,
+              }}
+              onChange={(key, val) => updateField(key, val)}
+            />
           </div>
 
           {/* Install Revenue */}
@@ -784,6 +794,66 @@ function BusinessProjectionsChart({
       <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Business-Linked Projections</h3>
       <div style={{ height: '300px' }}>
         <canvas ref={canvasRef} />
+      </div>
+    </div>
+  )
+}
+
+function JobMixSliders({ values, onChange }: { values: { solarOnly: number, batteryOnly: number, panelOnly: number, batteryPanel: number }, onChange: (key: string, val: number) => void }) {
+  const sliders = [
+    { key: 'solarOnly', label: 'Solar Only %', color: '#3b82f6', field: 'solarOnlyPct' },
+    { key: 'batteryOnly', label: 'Battery Only %', color: '#f59e0b', field: 'batteryOnlyPct' },
+    { key: 'panelOnly', label: 'Panel Upgrade Only %', color: '#8b5cf6', field: 'panelOnlyPct' },
+    { key: 'batteryPanel', label: 'Battery+Panel %', color: '#10b981', field: 'batteryPanelPct' },
+  ]
+
+  const total = values.solarOnly + values.batteryOnly + values.panelOnly + values.batteryPanel
+
+  const handleSliderChange = (changedKey: string, newVal: number, field: string) => {
+    const others = sliders.filter(s => s.key !== changedKey)
+    const otherTotal = others.reduce((s, o) => s + values[o.key as keyof typeof values], 0)
+    const remaining = 100 - newVal
+
+    if (otherTotal > 0) {
+      // Scale others proportionally
+      others.forEach(o => {
+        const ratio = values[o.key as keyof typeof values] / otherTotal
+        const adjusted = Math.round(remaining * ratio)
+        onChange(o.field, adjusted)
+      })
+    } else if (others.length > 0) {
+      // Distribute evenly if all others are 0
+      const each = Math.floor(remaining / others.length)
+      others.forEach((o, i) => {
+        onChange(o.field, i === others.length - 1 ? remaining - each * (others.length - 1) : each)
+      })
+    }
+    onChange(field, newVal)
+  }
+
+  return (
+    <div className="space-y-3">
+      {sliders.map(s => (
+        <div key={s.key}>
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400">{s.label}</label>
+            <span className="text-xs font-mono text-gray-200">{values[s.key as keyof typeof values]}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={values[s.key as keyof typeof values]}
+            onChange={(e) => handleSliderChange(s.key, Number(e.target.value), s.field)}
+            className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, ${s.color} ${values[s.key as keyof typeof values]}%, #374151 ${values[s.key as keyof typeof values]}%)`,
+            }}
+          />
+        </div>
+      ))}
+      <div className={`text-[10px] font-semibold text-right ${total === 100 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+        Total: {total}%
       </div>
     </div>
   )
