@@ -81,13 +81,17 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         setTimeout(() => setErrorFlash(false), 2000)
 
         const errData = event.data as { error?: string; permissionDenied?: boolean } | undefined
-        if (errData?.permissionDenied || errData?.error?.includes('blocked') || errData?.error?.includes('Microphone')) {
+        const errMsg = typeof errData?.error === 'string' ? errData.error : ''
+        if (errData?.permissionDenied || errMsg.includes('blocked') || errMsg.includes('Microphone')) {
           const msg = isIOS
             ? 'On iPhone/iPad: Settings \u2192 Safari \u2192 Microphone \u2192 Allow for this site'
-            : (errData?.error || 'Microphone access blocked. Tap the lock icon in your browser and allow microphone.')
+            : (errMsg || 'Microphone access blocked. Tap the lock icon in your browser and allow microphone.')
           setPermissionError(msg)
           setTimeout(() => setPermissionError(''), 8000)
         }
+
+        // Auto-reset to idle after error so button doesn't lock up
+        setTimeout(() => setStatus('inactive'), 3000)
       }
     })
 

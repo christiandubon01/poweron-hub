@@ -1,9 +1,9 @@
 /**
  * Whisper API Integration — Speech-to-Text
  *
- * Uses OpenAI's Whisper API to transcribe voice commands.
+ * Uses Netlify proxy (/.netlify/functions/whisper) to call OpenAI Whisper API.
+ * Falls back to direct API call with VITE_OPENAI_API_KEY if proxy unavailable.
  * Supports audio preprocessing for job-site noise environments.
- * Requires VITE_OPENAI_API_KEY in .env
  */
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -36,16 +36,39 @@ export interface WhisperResponse {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const WHISPER_API_URL = 'https://api.openai.com/v1/audio/transcriptions'
+const PROXY_URL = '/.netlify/functions/whisper'
+const DIRECT_URL = 'https://api.openai.com/v1/audio/transcriptions'
 const WHISPER_MODEL = 'whisper-1'
 const MAX_AUDIO_SIZE_MB = 25   // Whisper limit
 const SUPPORTED_FORMATS = ['audio/webm', 'audio/wav', 'audio/mp3', 'audio/mp4', 'audio/mpeg', 'audio/ogg']
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Convert a Blob to a base64-encoded string */
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+/** Build the prompt string for Whisper context */
+function buildPrompt(options: { prompt?: string; noiseDb?: number }): string | undefined {
+  if (options.prompt) return options.prompt
+  if (options.noiseDb && options.noiseDb > 70) {
+    return 'PowerOn Hub electrical contracting. Commands like schedule, leads, invoices, estimates, crew, projects.'
+  }
+  return undefined
+}
+
 // ── Implementation ───────────────────────────────────────────────────────────
 
 /**
- * Transcribe audio using OpenAI Whisper API.
- * Returns transcribed text with confidence and timing metadata.
+ * Transcribe audio via Netlify proxy → OpenAI Whisper API.
+ * Falls back to direct API call if proxy is unavailable.
  */
 export async function transcribeWithWhisper(
   audioBlob: Blob,
@@ -56,12 +79,6 @@ export async function transcribeWithWhisper(
     noiseDb?: number
   } = {}
 ): Promise<WhisperResponse> {
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY
-
-  if (!apiKey) {
-    throw new Error('VITE_OPENAI_API_KEY not configured. Add it to your .env file.')
-  }
-
   // Validate audio size
   const sizeMb = audioBlob.size / (1024 * 1024)
   if (sizeMb > MAX_AUDIO_SIZE_MB) {
@@ -73,39 +90,59 @@ export async function transcribeWithWhisper(
     console.warn(`[Whisper] Unexpected audio type: ${audioBlob.type}. Attempting transcription anyway.`)
   }
 
-  // Build form data
-  const formData = new FormData()
-
-  // Whisper requires a filename with extension
   const ext = getExtensionFromMimeType(audioBlob.type)
+  const promptText = buildPrompt(options)
+
+  console.log(`[Whisper] Transcribing ${sizeMb.toFixed(2)}MB audio (${audioBlob.type})...`)
+
+  // ── Try 1: Netlify proxy (sends base64 JSON, keeps API key server-side) ──
+  try {
+    const base64Audio = await blobToBase64(audioBlob)
+
+    const proxyBody: Record<string, any> = {
+      audio: base64Audio,
+      filename: `recording.${ext}`,
+      language: options.language || 'en',
+    }
+    if (options.temperature !== undefined) proxyBody.temperature = options.temperature
+    if (promptText) proxyBody.prompt = promptText
+
+    const proxyRes = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proxyBody),
+    })
+
+    if (proxyRes.ok) {
+      const data = await proxyRes.json()
+      const result = parseWhisperResponse(data, options.language)
+      console.log(`[Whisper] Transcribed via proxy: "${result.text}" (${result.duration.toFixed(1)}s)`)
+      return result
+    }
+
+    console.warn(`[Whisper] Proxy returned ${proxyRes.status}, falling back to direct API...`)
+  } catch (proxyErr) {
+    console.warn('[Whisper] Proxy unavailable, falling back to direct API...', proxyErr)
+  }
+
+  // ── Try 2: Direct OpenAI call (needs VITE_OPENAI_API_KEY) ────────────────
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('Whisper proxy unavailable and no VITE_OPENAI_API_KEY configured.')
+  }
+
+  const formData = new FormData()
   formData.append('file', audioBlob, `recording.${ext}`)
   formData.append('model', WHISPER_MODEL)
   formData.append('language', options.language || 'en')
   formData.append('response_format', 'verbose_json')
   formData.append('timestamp_granularities[]', 'segment')
+  if (options.temperature !== undefined) formData.append('temperature', String(options.temperature))
+  if (promptText) formData.append('prompt', promptText)
 
-  if (options.temperature !== undefined) {
-    formData.append('temperature', String(options.temperature))
-  }
-
-  // Add context prompt for better accuracy in noisy environments
-  if (options.prompt) {
-    formData.append('prompt', options.prompt)
-  } else if (options.noiseDb && options.noiseDb > 70) {
-    // Provide construction/field context for noisy environments
-    formData.append(
-      'prompt',
-      'PowerOn Hub electrical contracting. Commands like schedule, leads, invoices, estimates, crew, projects.'
-    )
-  }
-
-  console.log(`[Whisper] Transcribing ${sizeMb.toFixed(2)}MB audio (${audioBlob.type})...`)
-
-  const response = await fetch(WHISPER_API_URL, {
+  const response = await fetch(DIRECT_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers: { Authorization: `Bearer ${apiKey}` },
     body: formData,
   })
 
@@ -115,17 +152,19 @@ export async function transcribeWithWhisper(
   }
 
   const data = await response.json()
+  const result = parseWhisperResponse(data, options.language)
+  console.log(`[Whisper] Transcribed via direct API: "${result.text}" (${result.duration.toFixed(1)}s)`)
+  return result
+}
 
-  const result: WhisperResponse = {
+/** Parse raw Whisper API JSON into our typed WhisperResponse */
+function parseWhisperResponse(data: any, fallbackLang?: string): WhisperResponse {
+  return {
     text: data.text?.trim() || '',
-    language: data.language || options.language || 'en',
+    language: data.language || fallbackLang || 'en',
     duration: data.duration || 0,
     segments: data.segments || [],
   }
-
-  console.log(`[Whisper] Transcribed: "${result.text}" (${result.duration.toFixed(1)}s, lang=${result.language})`)
-
-  return result
 }
 
 /**
