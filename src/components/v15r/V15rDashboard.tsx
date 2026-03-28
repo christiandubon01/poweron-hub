@@ -133,7 +133,7 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
       }
     })
 
-    // Custom plugin for milestone annotations
+    // Custom plugin for milestone annotations with collision detection
     const milestonePlugin = {
       id: 'milestoneAnnotations',
       afterDraw(chart: any) {
@@ -141,10 +141,28 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
         const xScale = chart.scales.x
         const yScale = chart.scales.y
 
-        milestones.forEach(m => {
+        // Sort milestones by x position to detect collisions
+        const sorted = [...milestones].sort((a, b) => a.weekIdx - b.weekIdx)
+
+        // Assign vertical offsets to prevent label overlap
+        // Labels within 14 days (~2 week indices) of each other get staggered
+        const labelOffsets: number[] = []
+        sorted.forEach((m, i) => {
+          let offset = 0
+          for (let j = 0; j < i; j++) {
+            const gap = Math.abs(m.weekIdx - sorted[j].weekIdx)
+            if (gap < 2 && labelOffsets[j] === offset) {
+              offset += 25
+            }
+          }
+          labelOffsets.push(offset)
+        })
+
+        sorted.forEach((m, i) => {
           const x = xScale.getPixelForValue(m.weekIdx)
           const yTop = yScale.top
           const yBottom = yScale.bottom
+          const labelY = yTop + 14 + labelOffsets[i]
 
           // Dashed vertical line
           ctx2.save()
@@ -152,17 +170,30 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
           ctx2.strokeStyle = m.color + '80'
           ctx2.lineWidth = 1
           ctx2.beginPath()
-          ctx2.moveTo(x, yTop + 20)
+          ctx2.moveTo(x, labelY + 4)
           ctx2.lineTo(x, yBottom)
           ctx2.stroke()
           ctx2.restore()
+
+          // Leader line from label to data point (if offset)
+          if (labelOffsets[i] > 0) {
+            ctx2.save()
+            ctx2.strokeStyle = m.color + '60'
+            ctx2.lineWidth = 0.8
+            ctx2.setLineDash([2, 2])
+            ctx2.beginPath()
+            ctx2.moveTo(x, labelY + 2)
+            ctx2.lineTo(x, yTop + 18)
+            ctx2.stroke()
+            ctx2.restore()
+          }
 
           // Label above
           ctx2.save()
           ctx2.font = '9px sans-serif'
           ctx2.fillStyle = m.color
           ctx2.textAlign = 'center'
-          ctx2.fillText(m.label, x, yTop + 14)
+          ctx2.fillText(m.label, x, labelY)
           ctx2.restore()
 
           // Dot on accumulative line

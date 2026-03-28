@@ -299,7 +299,8 @@ export default function V15rMoneyPanel() {
   const totalCollected = projectPaid + svcCollected
 
   // 3. Total Material Cost = sum of mat field across all logs + service logs
-  const totalMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projectId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0) + svcMatTotal
+  const projectMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projectId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0)
+  const totalMatCost = projectMatCost + svcMatTotal
 
   // 4. Total Labor Cost = sum of hours × costRate across all logs
   const totalLaborCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projectId === m.p.id).reduce((ls, l) => ls + (num(l.hrs) * opCostRate), 0), 0) + svcOpTotal
@@ -403,17 +404,24 @@ export default function V15rMoneyPanel() {
         {[
           { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Contracts + Unbilled' },
           { lbl: 'Total Collected', val: fmtK(totalCollected), sub: 'Projects + Service', clr: '#10b981' },
-          { lbl: 'Total Material Cost', val: fmtK(totalMatCost), sub: 'All materials' },
+          { lbl: 'Total Material Cost', val: fmtK(totalMatCost), sub: 'All materials', isMaterialCard: true },
           { lbl: 'Total Labor Cost', val: fmtK(totalLaborCost), sub: 'All hours × rate' },
           { lbl: 'Total Mileage Cost', val: fmtK(totalMileageCost), sub: 'All miles × rate' },
           { lbl: 'Combined Total Cost', val: fmtK(combinedTotalCost), sub: 'Mat + Labor + Mile' },
           { lbl: 'Gross Margin %', val: grossMarginPct.toFixed(1) + '%', sub: '(Collected - Cost) / Collected', clr: grossMarginPct >= 50 ? '#10b981' : grossMarginPct >= 30 ? '#f59e0b' : '#ef4444' },
           { lbl: 'Balance Left', val: fmtK(balanceLeft), sub: 'Pipeline - Collected', clr: balanceLeft >= 0 ? '#10b981' : '#ef4444' },
-        ].map((k, i) => (
+        ].map((k: any, i) => (
           <div key={i} className="bg-[var(--bg-card)] border border-gray-700/50 rounded-lg p-3">
             <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">{k.lbl}</div>
             <div className="text-lg font-bold font-mono mt-1" style={{ color: k.clr || '#f0f0ff' }}>{k.val}</div>
-            <div className="text-[10px] text-gray-600 mt-0.5">{k.sub}</div>
+            {k.isMaterialCard ? (
+              <div className="mt-1 space-y-0.5">
+                <div className="text-[10px] text-gray-500">Projects: <span className="text-gray-400 font-mono">{fmtK(projectMatCost)}</span></div>
+                <div className="text-[10px] text-gray-500">Service Calls: <span className="text-gray-400 font-mono">{fmtK(svcMatTotal)}</span></div>
+              </div>
+            ) : (
+              <div className="text-[10px] text-gray-600 mt-0.5">{k.sub}</div>
+            )}
           </div>
         ))}
       </div>

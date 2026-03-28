@@ -476,6 +476,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
       options: {
         responsive: true,
         maintainAspectRatio: true,
+        aspectRatio: 1,
         cutout: '35%',
         plugins: {
           legend: {
@@ -523,8 +524,10 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
     <div className="bg-[#232738] rounded-lg p-4">
       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Job Mix Distribution</h3>
 
-      <div className="h-80 flex items-center justify-center">
-        <canvas ref={canvasRef} />
+      <div className="flex items-center justify-center">
+        <div style={{ position: 'relative', maxWidth: '320px', maxHeight: '320px', width: '100%' }}>
+          <canvas ref={canvasRef} />
+        </div>
       </div>
 
       {/* Segment Breakdown Legend — matches Business Health Overview format */}

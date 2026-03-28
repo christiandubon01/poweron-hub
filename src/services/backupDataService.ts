@@ -172,8 +172,30 @@ export function hasBackupData(): boolean {
 export function getBackupData(): BackupData | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as BackupData
+    if (raw) {
+      const data = JSON.parse(raw) as BackupData
+      // If priceBook is empty/missing, try to hydrate from poweron_v2 key
+      if (!data.priceBook || (Array.isArray(data.priceBook) && data.priceBook.length === 0) || (typeof data.priceBook === 'object' && Object.keys(data.priceBook).length === 0)) {
+        try {
+          const v2Raw = localStorage.getItem('poweron_v2')
+          if (v2Raw) {
+            const v2Data = JSON.parse(v2Raw)
+            if (v2Data && Array.isArray(v2Data.priceBook) && v2Data.priceBook.length > 0) {
+              console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2Data.priceBook.length, 'items')
+              data.priceBook = v2Data.priceBook
+            }
+          }
+        } catch { /* ignore poweron_v2 parse errors */ }
+      }
+      return data
+    }
+    // If no data under STORAGE_KEY, try poweron_v2 as fallback
+    const v2Raw = localStorage.getItem('poweron_v2')
+    if (v2Raw) {
+      console.log('[backupDataService] No data in', STORAGE_KEY, '— loading from poweron_v2')
+      return JSON.parse(v2Raw) as BackupData
+    }
+    return null
   } catch (err) {
     console.error('[backupDataService] Failed to parse backup data:', err)
     return null

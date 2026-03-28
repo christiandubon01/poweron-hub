@@ -21,29 +21,50 @@ import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy,
 import { getBackupData, saveBackupData, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 
+/**
+ * getPriceBookSource — Reads price book data from localStorage.
+ * The old HTML app stores data under key 'poweron_v2' (with data.priceBook as a flat array).
+ * The React app stores under 'poweron_backup_data'.
+ * Try 'poweron_v2' first, fall back to 'poweron_backup_data'.
+ */
+function getPriceBookSource(): { backup: BackupData | null, priceBookItems: BackupPriceBookItem[], source: string } {
+  // 1. Try poweron_v2 key first (HTML app's localStorage key)
+  try {
+    const v2Raw = localStorage.getItem('poweron_v2')
+    if (v2Raw) {
+      const v2Data = JSON.parse(v2Raw)
+      if (v2Data && Array.isArray(v2Data.priceBook) && v2Data.priceBook.length > 0) {
+        console.log('[PriceBook] Loaded from poweron_v2 key — items:', v2Data.priceBook.length)
+        return { backup: v2Data as BackupData, priceBookItems: v2Data.priceBook, source: 'poweron_v2' }
+      }
+    }
+  } catch (e) {
+    console.warn('[PriceBook] Failed to parse poweron_v2:', e)
+  }
+
+  // 2. Fall back to poweron_backup_data key (React app's localStorage key)
+  const backup = getBackupData()
+  if (!backup) return { backup: null, priceBookItems: [], source: 'none' }
+
+  const rawPB = backup.priceBook
+  const items: BackupPriceBookItem[] = Array.isArray(rawPB) ? rawPB : []
+  console.log('[PriceBook] Loaded from poweron_backup_data key — items:', items.length)
+  return { backup, priceBookItems: items, source: 'poweron_backup_data' }
+}
+
 export default function V15rPriceBookPanel() {
   // ── Reactive backup data ────────────────────────────────────────────────
-  // Read from localStorage on mount AND re-read whenever backup data changes.
-  // This ensures the panel picks up data loaded asynchronously from Supabase.
-  const [backup, setBackup] = useState<BackupData | null>(() => getBackupData())
+  const [pbSource, setPbSource] = useState(() => getPriceBookSource())
 
   const refreshBackup = useCallback(() => {
-    const data = getBackupData()
-    setBackup(data)
+    setPbSource(getPriceBookSource())
   }, [])
 
   useEffect(() => {
-    // Re-read when another tab / component writes to localStorage
     const onStorage = () => refreshBackup()
     window.addEventListener('storage', onStorage)
-
-    // Re-read periodically in case Supabase sync completed after initial render
-    // (covers the case where the panel mounted before loadFromSupabase finished)
     const timer = setInterval(refreshBackup, 2000)
-
-    // Also do one deferred read after a short delay for initial Supabase sync
     const deferred = setTimeout(refreshBackup, 1500)
-
     return () => {
       window.removeEventListener('storage', onStorage)
       clearInterval(timer)
@@ -51,42 +72,11 @@ export default function V15rPriceBookPanel() {
     }
   }, [refreshBackup])
 
+  const backup = pbSource.backup
+  const priceBookItems = pbSource.priceBookItems
+
   if (!backup) return <NoData />
 
-  // ── DEBUG: Log all top-level keys to identify where price book data lives ──
-  if (typeof console !== 'undefined') {
-    const topKeys = Object.keys(backup)
-    const pbCandidates = topKeys.filter(k => /price|book|catalog|item|product/i.test(k))
-    console.log('[PriceBook] Top-level backup keys:', topKeys.join(', '))
-    console.log('[PriceBook] Candidate price book keys:', pbCandidates.length ? pbCandidates.join(', ') : 'NONE — using priceBook or catalog fallback')
-    console.log('[PriceBook] backup.priceBook type:', typeof backup.priceBook, Array.isArray(backup.priceBook) ? `(array, length=${backup.priceBook.length})` : '')
-    console.log('[PriceBook] backup.priceBookItems type:', typeof (backup as any).priceBookItems)
-    console.log('[PriceBook] backup.priceBookCategories type:', typeof (backup as any).priceBookCategories)
-    console.log('[PriceBook] backup.catalog type:', typeof (backup as any).catalog)
-    console.log('[PriceBook] backup.pricebook (lowercase) type:', typeof (backup as any).pricebook)
-  }
-
-  // Handle both formats: array (from HTML app backup) or Record (from React app)
-  // Extended fallback chain: priceBook → priceBookItems → priceBookCategories → catalog → pricebook (lowercase)
-  const rawPB = backup.priceBook || (backup as any).priceBookItems || (backup as any).priceBookCategories || (backup as any).catalog || (backup as any).pricebook || {}
-
-  // If priceBookCategories was a nested { category: [items] } structure, flatten it
-  let priceBookItems: BackupPriceBookItem[]
-  if (Array.isArray(rawPB)) {
-    priceBookItems = rawPB
-  } else if (typeof rawPB === 'object' && rawPB !== null) {
-    // Check if it's { catName: [...items] } or { id: { ...item } }
-    const vals = Object.values(rawPB)
-    if (vals.length > 0 && Array.isArray(vals[0])) {
-      // Nested categories — flatten
-      priceBookItems = (vals as BackupPriceBookItem[][]).flat()
-    } else {
-      priceBookItems = vals as BackupPriceBookItem[]
-    }
-  } else {
-    priceBookItems = []
-  }
-  console.log('[PriceBook] Resolved items count:', priceBookItems.length)
   const settings = backup.settings || {}
   const markup = settings.markup ?? 150 // 150% = 2.5x markup (cost × 1.5 = client price)
 
@@ -181,6 +171,19 @@ export default function V15rPriceBookPanel() {
     setEditNotes(item.notes || '')
   }
 
+  /** Persist price book changes to the correct localStorage key */
+  const persistPriceBook = () => {
+    if (pbSource.source === 'poweron_v2') {
+      try {
+        localStorage.setItem('poweron_v2', JSON.stringify(backup))
+      } catch (e) {
+        console.error('[PriceBook] Failed to save to poweron_v2:', e)
+      }
+    }
+    // Always also save to React backup key for consistency
+    saveBackupData(backup)
+  }
+
   const saveNotes = (id: string) => {
     pushState()
     if (Array.isArray(backup.priceBook)) {
@@ -190,7 +193,7 @@ export default function V15rPriceBookPanel() {
       if (!backup.priceBook[id]) return
       backup.priceBook[id].notes = editNotes
     }
-    saveBackupData(backup)
+    persistPriceBook()
     setEditingId(null)
     refreshBackup()
   }
@@ -203,7 +206,7 @@ export default function V15rPriceBookPanel() {
     } else {
       delete backup.priceBook[id]
     }
-    saveBackupData(backup)
+    persistPriceBook()
     refreshBackup()
   }
 
