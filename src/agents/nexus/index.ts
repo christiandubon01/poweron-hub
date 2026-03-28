@@ -15,6 +15,7 @@
 import { classifyIntent, type ClassifiedIntent, type ConversationMessage } from './classifier'
 import { routeToAgent, type AgentResponse } from './router'
 import { addTurn, getContext, updateProjectContext, getMemory } from '@/services/nexusMemory'
+import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ export interface NexusResponse {
   /** If true, the UI should show a confirmation card before executing */
   needsConfirmation: boolean
   conversationMessage: ConversationMessage
+  /** If set, the UI should show an interview card instead of a chat response */
+  interviewTrigger?: AgentInterviewDefinition
 }
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -67,6 +70,12 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   )
 
   console.log(`[NEXUS] Classified → ${intent.targetAgent} (${intent.category}, ${intent.confidence.toFixed(2)})`)
+
+  // ── Step 3b: Check for interview triggers ─────────────────────────────
+  const interviewDef = checkInterviewTrigger(request.message, intent.targetAgent)
+  if (interviewDef && !request.isVoiceCommand) {
+    console.log(`[NEXUS] Interview triggered for ${interviewDef.agentName}`)
+  }
 
   // ── Step 4: Route to target agent ───────────────────────────────────────
   const agentResponse = await routeToAgent(
@@ -123,10 +132,49 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     agent: agentResponse,
     needsConfirmation,
     conversationMessage,
+    interviewTrigger: (interviewDef && !request.isVoiceCommand) ? interviewDef : undefined,
+  }
+}
+
+/**
+ * Check if a message + agent combination should trigger an interview.
+ * Exposed for UI components to call directly.
+ */
+export function checkForInterview(
+  message: string,
+  targetAgent: string
+): AgentInterviewDefinition | null {
+  return checkInterviewTrigger(message, targetAgent as any)
+}
+
+/**
+ * Merge interview questions when two agents need the same project info.
+ * Returns a combined interview definition scoped to the primary agent,
+ * with questions from both agents deduplicated by memoryKey.
+ */
+export function mergeInterviewQuestions(
+  primary: AgentInterviewDefinition,
+  secondary: AgentInterviewDefinition
+): AgentInterviewDefinition {
+  const seenKeys = new Set(primary.questions.map(q => q.memoryKey).filter(Boolean))
+  const extraQuestions = secondary.questions.filter(q => {
+    if (!q.memoryKey || seenKeys.has(q.memoryKey)) return false
+    seenKeys.add(q.memoryKey)
+    return true
+  })
+
+  // Limit to max 3 total questions
+  const merged = [...primary.questions, ...extraQuestions].slice(0, 3)
+
+  return {
+    ...primary,
+    questions: merged,
   }
 }
 
 // ── Re-exports for convenience ──────────────────────────────────────────────
 export type { ClassifiedIntent, ConversationMessage } from './classifier'
 export type { AgentResponse } from './router'
+export type { AgentInterviewDefinition } from './interviewDefinitions'
 export { INTENT_CATEGORIES, IMPACT_LEVELS, TARGET_AGENTS } from './classifier'
+export { AGENT_INTERVIEWS, checkInterviewTrigger } from './interviewDefinitions'
