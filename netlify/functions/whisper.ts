@@ -2,14 +2,22 @@
 /**
  * Netlify Function — Whisper API Proxy
  *
- * Accepts POST with multipart/form-data containing an audio file.
+ * Accepts POST with JSON body containing base64-encoded audio.
  * Forwards to OpenAI Whisper API using server-side OPENAI_API_KEY.
  * Returns the transcription JSON.
  *
- * This keeps the API key off the client and avoids CORS issues.
+ * Uses Node built-in https module (not fetch) for maximum compatibility
+ * with Netlify's Node 18 runtime.
  */
 
-const WHISPER_API_URL = 'https://api.openai.com/v1/audio/transcriptions'
+const https = require('https')
+
+const WHISPER_HOST = 'api.openai.com'
+const WHISPER_PATH = '/v1/audio/transcriptions'
+
+// Log key prefix on cold start (never log full key)
+const _key = process.env.OPENAI_API_KEY || ''
+console.log(`[whisper-proxy] Cold start. OPENAI_API_KEY present: ${!!_key}, prefix: ${_key.slice(0, 8)}...`)
 
 exports.handler = async (event: any, _context: any) => {
   const headers = {
@@ -28,6 +36,7 @@ exports.handler = async (event: any, _context: any) => {
 
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
+    console.error('[whisper-proxy] OPENAI_API_KEY is undefined')
     return {
       statusCode: 500,
       headers,
@@ -36,8 +45,7 @@ exports.handler = async (event: any, _context: any) => {
   }
 
   try {
-    // Parse the JSON body sent from the client
-    // Client sends: { audio: base64string, filename: string, language: string, ... }
+    // ── Parse client JSON body ──────────────────────────────────────────────
     const body = JSON.parse(event.body || '{}')
     const { audio, filename, language, temperature, prompt } = body
 
@@ -49,73 +57,113 @@ exports.handler = async (event: any, _context: any) => {
       }
     }
 
-    // Convert base64 back to binary
+    console.log(`[whisper-proxy] Received audio: ${audio.length} base64 chars, filename=${filename || 'recording.webm'}`)
+
+    // ── Convert base64 → Buffer ─────────────────────────────────────────────
     const binaryAudio = Buffer.from(audio, 'base64')
+    console.log(`[whisper-proxy] Decoded audio buffer: ${binaryAudio.length} bytes`)
 
-    // Build multipart form data manually for the OpenAI API
-    const boundary = '----NetlifyWhisperBoundary' + Date.now()
+    // ── Build multipart/form-data ───────────────────────────────────────────
+    const boundary = '----WhisperProxy' + Date.now()
+    const CRLF = '\r\n'
 
-    const parts: Buffer[] = []
+    const fieldParts: Array<{ name: string; value: string }> = [
+      { name: 'model', value: 'whisper-1' },
+      { name: 'response_format', value: 'verbose_json' },
+      { name: 'timestamp_granularities[]', value: 'segment' },
+    ]
+    if (language) fieldParts.push({ name: 'language', value: language })
+    if (temperature !== undefined) fieldParts.push({ name: 'temperature', value: String(temperature) })
+    if (prompt) fieldParts.push({ name: 'prompt', value: prompt })
+
+    // Assemble all parts into a single Buffer
+    const buffers: Buffer[] = []
 
     // File part
-    const fileHeader = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename || 'recording.webm'}"\r\nContent-Type: application/octet-stream\r\n\r\n`
-    parts.push(Buffer.from(fileHeader))
-    parts.push(binaryAudio)
-    parts.push(Buffer.from('\r\n'))
+    buffers.push(Buffer.from(
+      `--${boundary}${CRLF}` +
+      `Content-Disposition: form-data; name="file"; filename="${filename || 'recording.webm'}"${CRLF}` +
+      `Content-Type: audio/webm${CRLF}${CRLF}`
+    ))
+    buffers.push(binaryAudio)
+    buffers.push(Buffer.from(CRLF))
 
-    // Model part
-    const modelPart = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n`
-    parts.push(Buffer.from(modelPart))
-
-    // Language part
-    if (language) {
-      const langPart = `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${language}\r\n`
-      parts.push(Buffer.from(langPart))
+    // Text field parts
+    for (const field of fieldParts) {
+      buffers.push(Buffer.from(
+        `--${boundary}${CRLF}` +
+        `Content-Disposition: form-data; name="${field.name}"${CRLF}${CRLF}` +
+        `${field.value}${CRLF}`
+      ))
     }
 
-    // Response format
-    const fmtPart = `--${boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\nverbose_json\r\n`
-    parts.push(Buffer.from(fmtPart))
+    // Closing boundary
+    buffers.push(Buffer.from(`--${boundary}--${CRLF}`))
 
-    // Timestamp granularities
-    const tsPart = `--${boundary}\r\nContent-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\nsegment\r\n`
-    parts.push(Buffer.from(tsPart))
+    const multipartBody = Buffer.concat(buffers)
+    console.log(`[whisper-proxy] Multipart body size: ${multipartBody.length} bytes`)
 
-    // Temperature
-    if (temperature !== undefined) {
-      const tempPart = `--${boundary}\r\nContent-Disposition: form-data; name="temperature"\r\n\r\n${temperature}\r\n`
-      parts.push(Buffer.from(tempPart))
-    }
+    // ── Send to OpenAI via Node https ───────────────────────────────────────
+    const openaiResult = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: WHISPER_HOST,
+          path: WHISPER_PATH,
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': multipartBody.length,
+          },
+        },
+        (res: any) => {
+          const chunks: Buffer[] = []
+          res.on('data', (chunk: Buffer) => chunks.push(chunk))
+          res.on('end', () => {
+            resolve({
+              statusCode: res.statusCode,
+              body: Buffer.concat(chunks).toString('utf-8'),
+            })
+          })
+        }
+      )
 
-    // Prompt
-    if (prompt) {
-      const promptPart = `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\n${prompt}\r\n`
-      parts.push(Buffer.from(promptPart))
-    }
-
-    // End boundary
-    parts.push(Buffer.from(`--${boundary}--\r\n`))
-
-    const multipartBody = Buffer.concat(parts)
-
-    const response = await fetch(WHISPER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      },
-      body: multipartBody,
+      req.on('error', (err: Error) => reject(err))
+      req.write(multipartBody)
+      req.end()
     })
 
-    const result = await response.json()
+    console.log(`[whisper-proxy] OpenAI returned status ${openaiResult.statusCode}`)
 
-    if (!response.ok) {
+    // ── Parse & return ──────────────────────────────────────────────────────
+    let result: any
+    try {
+      result = JSON.parse(openaiResult.body)
+    } catch (parseErr) {
+      console.error(`[whisper-proxy] Failed to parse OpenAI response: ${openaiResult.body.slice(0, 500)}`)
       return {
-        statusCode: response.status,
+        statusCode: 502,
         headers,
-        body: JSON.stringify({ error: result.error?.message || 'Whisper API error', detail: result }),
+        body: JSON.stringify({
+          error: 'Failed to parse OpenAI response',
+          raw: openaiResult.body.slice(0, 500),
+        }),
       }
     }
+
+    if (openaiResult.statusCode !== 200) {
+      console.error(`[whisper-proxy] OpenAI error: ${JSON.stringify(result)}`)
+      return {
+        statusCode: openaiResult.statusCode,
+        headers,
+        body: JSON.stringify({
+          error: result.error?.message || 'Whisper API error',
+          detail: result,
+        }),
+      }
+    }
+
+    console.log(`[whisper-proxy] Transcribed: "${(result.text || '').slice(0, 80)}"`)
 
     return {
       statusCode: 200,
@@ -123,10 +171,14 @@ exports.handler = async (event: any, _context: any) => {
       body: JSON.stringify(result),
     }
   } catch (err: any) {
+    console.error(`[whisper-proxy] Unhandled error: ${err?.message}`, err?.stack)
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: err?.message || 'Internal server error' }),
+      body: JSON.stringify({
+        error: err?.message || 'Internal server error',
+        stack: err?.stack || 'no stack',
+      }),
     }
   }
 }
