@@ -119,6 +119,7 @@ export async function routeVoiceCommand(
     message: transcript,
     orgId: context.orgId,
     userId: context.userId,
+    conversationHistory: [],
   })
 
   const responseTime = Date.now() - startTime
@@ -127,7 +128,7 @@ export async function routeVoiceCommand(
 
   return {
     classification,
-    agentResponse: nexusResponse?.response || 'I could not process that command.',
+    agentResponse: nexusResponse?.agent?.content || 'I could not process that command.',
     responseTime,
   }
 }
@@ -143,17 +144,19 @@ async function classifyWithNexus(text: string): Promise<IntentClassification> {
     // For voice, we add context that this is a spoken command
     const response = await processMessage({
       message: text,
-      orgId: '', // Will be filled by caller
+      orgId: '',
       userId: '',
+      conversationHistory: [],
       isVoiceCommand: true,
     })
 
-    if (response?.targetAgent) {
+    // NexusResponse has .intent (ClassifiedIntent) and .agent (AgentResponse)
+    if (response?.intent?.targetAgent) {
       return {
-        agent: response.targetAgent as TargetAgent,
-        intent: response.intent || 'general',
-        confidence: response.confidence || 0.7,
-        parameters: response.entities || {},
+        agent: response.intent.targetAgent as TargetAgent,
+        intent: response.intent.category || 'general',
+        confidence: response.intent.confidence || 0.7,
+        parameters: {},
       }
     }
   } catch (err) {

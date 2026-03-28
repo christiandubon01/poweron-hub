@@ -153,8 +153,8 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         await voice.stopRecording()
         break
       case 'responding':
-        // Stop TTS playback (user interrupts)
-        await voice.stopAll()
+        // Stop TTS playback (user interrupts) → return to IDLE, not LISTENING
+        await voice.stopSpeaking()
         break
       default:
         // Processing states — can't interrupt

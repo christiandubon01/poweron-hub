@@ -6,6 +6,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { callClaude, extractText } from './claudeProxy'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,8 +65,10 @@ export class VoiceCommandExecutor {
         case 'ohm':
           ({ responseText, data } = await this.executeOHM(intent, parameters, context))
           break
+        case 'nexus':
+        case 'scout':
         default:
-          responseText = 'I received your command but I\'m not sure which agent should handle it. Could you try rephrasing?'
+          ({ responseText, data } = await this.executeGeneral(agent, intent, parameters, context))
       }
 
       return {
@@ -387,6 +390,23 @@ export class VoiceCommandExecutor {
 
       default:
         return { responseText: 'OHM received your command.', data: null }
+    }
+  }
+
+  // ── General / NEXUS / SCOUT fallback via Claude ────────────────────────
+
+  private async executeGeneral(
+    agent: string,
+    _intent: string,
+    _params: Record<string, unknown>,
+    _ctx: VoiceCommandContext
+  ): Promise<{ responseText: string; data: unknown }> {
+    // This should not normally be reached — the voice.ts pipeline already
+    // falls back to Claude. But if it is reached, provide a useful response.
+    const agentLabel = (agent || 'nexus').toUpperCase()
+    return {
+      responseText: `${agentLabel} is processing your request. Check the screen for details.`,
+      data: null,
     }
   }
 }

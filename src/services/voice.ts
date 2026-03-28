@@ -123,6 +123,11 @@ export class VoiceSubsystem {
   private audioChunks: Blob[] = []
   private recordingTimeout: ReturnType<typeof setTimeout> | null = null
 
+  // Speaking state — mic suppression during TTS playback
+  private currentAudio: HTMLAudioElement | null = null
+  private speakingStartTime: number = 0
+  private static readonly MIN_SPEAKING_DISPLAY_MS = 2000
+
   // Context
   private orgId: string = ''
   private userId: string = ''
@@ -186,6 +191,14 @@ export class VoiceSubsystem {
    * Stop all voice activity.
    */
   async stopAll(): Promise<void> {
+    // Stop any playing audio
+    this.stopCurrentAudio()
+
+    // Cancel browser speechSynthesis if active
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop()
     }
@@ -195,6 +208,35 @@ export class VoiceSubsystem {
 
     this.cleanupRecording()
     this.setStatus('inactive')
+  }
+
+  /**
+   * Stop speaking only — interrupt TTS playback and return to idle.
+   * Does NOT restart listening.
+   */
+  async stopSpeaking(): Promise<void> {
+    console.log('[Voice] Stopping speech (user interrupt)')
+    this.stopCurrentAudio()
+
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+
+    this.setStatus('inactive')
+  }
+
+  /**
+   * Stop the current audio element if playing.
+   */
+  private stopCurrentAudio(): void {
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause()
+        this.currentAudio.currentTime = 0
+        this.currentAudio.src = ''
+      } catch { /* ignore cleanup errors */ }
+      this.currentAudio = null
+    }
   }
 
   /**
@@ -497,8 +539,23 @@ export class VoiceSubsystem {
       this.currentSession.agentResponse = responseText
     }
 
-    // Step 5: Synthesize speech via ElevenLabs, fall back to speechSynthesis
+    // ── SPEAKING state: mic OFF, wake word OFF ─────────────────────────
+    // Completely disable microphone and audio input before playing response
+    // to prevent ambient noise from canceling playback on iPhone/iOS.
     this.setStatus('responding')
+    this.speakingStartTime = Date.now()
+
+    // Ensure mic is fully released
+    this.cleanupRecording()
+
+    // Stop wake word detector during playback
+    try {
+      const detector = getWakeWordDetector()
+      await detector.stop()
+    } catch { /* ignore */ }
+
+    console.log('[Voice] Entering SPEAKING state — mic disabled')
+
     let ttsPlayed = false
     try {
       const ttsResult = await synthesizeWithElevenLabs({
@@ -516,9 +573,9 @@ export class VoiceSubsystem {
         this.currentSession.responseDurationSeconds = ttsResult.durationSeconds
       }
 
-      // Step 6: Play response
+      // Step 6: Play response (with interruptible audio reference)
       console.log('[Voice] Playing TTS audio')
-      await this.playAudio(ttsResult.audioUrl)
+      await this.playAudioTracked(ttsResult.audioUrl)
       revokeAudioUrl(ttsResult.audioUrl)
       ttsPlayed = true
     } catch (ttsErr) {
@@ -535,6 +592,12 @@ export class VoiceSubsystem {
       }
     }
 
+    // Enforce minimum display time (2s) so transcript is readable
+    const elapsed = Date.now() - this.speakingStartTime
+    if (elapsed < VoiceSubsystem.MIN_SPEAKING_DISPLAY_MS) {
+      await new Promise(resolve => setTimeout(resolve, VoiceSubsystem.MIN_SPEAKING_DISPLAY_MS - elapsed))
+    }
+
     // Step 7: Complete session
     if (this.currentSession) {
       this.currentSession.status = 'complete'
@@ -547,12 +610,9 @@ export class VoiceSubsystem {
     // Step 8: Log session to database
     await this.logSession()
 
-    // Return to listening state if wake word is enabled
-    if (this.preferences.wakeWordEnabled) {
-      setTimeout(() => this.startListening(), 500)
-    } else {
-      this.setStatus('inactive')
-    }
+    // Always return to IDLE — user must tap again to speak next message.
+    // This prevents ambient noise from accidentally re-activating the mic.
+    this.setStatus('inactive')
 
     return this.currentSession!
   }
@@ -580,6 +640,39 @@ export class VoiceSubsystem {
       audio.onended = () => resolve()
       audio.onerror = (err) => reject(err)
       audio.play().catch(reject)
+    })
+  }
+
+  /**
+   * Play audio with a tracked reference so it can be interrupted.
+   * Resolves when audio finishes or is stopped externally.
+   */
+  private playAudioTracked(audioUrl: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Stop any previously playing audio
+      this.stopCurrentAudio()
+
+      const audio = new Audio(audioUrl)
+      audio.playbackRate = this.preferences.ttsSpeed
+      this.currentAudio = audio
+
+      audio.onended = () => {
+        this.currentAudio = null
+        resolve()
+      }
+      audio.onerror = (err) => {
+        this.currentAudio = null
+        reject(err)
+      }
+      audio.onpause = () => {
+        // If paused externally (interrupt), resolve instead of hanging
+        this.currentAudio = null
+        resolve()
+      }
+      audio.play().catch((err) => {
+        this.currentAudio = null
+        reject(err)
+      })
     })
   }
 

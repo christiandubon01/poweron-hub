@@ -250,6 +250,46 @@ Impact level guide:
 
 Return ONLY valid JSON. No markdown, no explanation outside the JSON.`
 
+// ── Guaranteed routing rules ─────────────────────────────────────────────────
+// These run BEFORE keyword scoring to ensure common contractor terms always route.
+
+interface GuaranteedRoute {
+  keywords: string[]
+  agent: TargetAgent
+  minScore: number
+}
+
+const GUARANTEED_ROUTES: GuaranteedRoute[] = [
+  { keywords: ['project', 'job', 'status', 'operations', 'week', 'attention', 'active jobs', 'phase', 'permit', 'rfi', 'punch list'], agent: 'blueprint', minScore: 0.5 },
+  { keywords: ['nec', 'code requirement', 'title 24', 'cec', 'install', 'wire', 'breaker', 'panel', 'site', 'afci', 'gfci', 'conductor', 'ampacity'], agent: 'ohm', minScore: 0.5 },
+  { keywords: ['money', 'invoice', 'paid', 'collect', 'ar', 'cash', 'revenue', 'pipeline', 'overdue', 'receivable', 'balance due', 'who owes'], agent: 'ledger', minScore: 0.5 },
+  { keywords: ['estimate', 'quote', 'mto', 'material', 'takeoff', 'price', 'bid', 'pricing', 'cost', 'markup', 'price book'], agent: 'vault', minScore: 0.5 },
+  { keywords: ['schedule', 'crew', 'calendar', 'book', 'dispatch', 'appointment', 'agenda', 'reminder', 'tomorrow', 'next week'], agent: 'chrono', minScore: 0.5 },
+  { keywords: ['lead', 'gc', 'contact', 'marketing', 'outreach', 'prospect', 'referral', 'campaign', 'review', 'yelp'], agent: 'spark', minScore: 0.5 },
+  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker'], agent: 'pulse', minScore: 0.5 },
+  { keywords: ['research', 'analyze', 'pattern', 'optimization', 'improvement', 'scout'], agent: 'scout', minScore: 0.5 },
+]
+
+/**
+ * Check guaranteed routing rules. Returns the first matching agent with its floor score.
+ */
+function checkGuaranteedRoutes(message: string): { agent: TargetAgent; score: number; reasoning: string } | null {
+  const lower = message.toLowerCase()
+  for (const route of GUARANTEED_ROUTES) {
+    for (const kw of route.keywords) {
+      if (lower.includes(kw)) {
+        console.log(`[Classifier] Guaranteed route: "${kw}" → ${route.agent}`)
+        return {
+          agent: route.agent,
+          score: route.minScore,
+          reasoning: `Guaranteed route: matched "${kw}" → ${route.agent}`,
+        }
+      }
+    }
+  }
+  return null
+}
+
 // ── Keyword scoring (Tier 1) ────────────────────────────────────────────────
 
 /**
@@ -284,7 +324,7 @@ function scoreAgentKeywords(message: string, keywords: AgentKeywords): number {
 
 /**
  * Perform Tier 1: Fast keyword scoring across all agents.
- * Returns winning agent and score if above 0.6 threshold, else null.
+ * Returns winning agent and score if above 0.5 threshold, else null.
  */
 function tier1KeywordScoring(message: string): { agent: TargetAgent; score: number; reasoning: string } | null {
   const scores: Record<TargetAgent, number> = {} as Record<TargetAgent, number>
@@ -292,6 +332,8 @@ function tier1KeywordScoring(message: string): { agent: TargetAgent; score: numb
   for (const agent of TARGET_AGENTS) {
     scores[agent] = scoreAgentKeywords(message, AGENT_KEYWORDS[agent])
   }
+
+  console.log('[Classifier] Tier 1 scores:', Object.entries(scores).filter(([, s]) => s > 0).map(([a, s]) => `${a}=${s.toFixed(2)}`).join(', ') || '(all zero)')
 
   // Find top agent
   let topAgent: TargetAgent | null = null
@@ -450,6 +492,47 @@ export async function classifyIntent(
   memoryContext: string,
   conversationHistory: ConversationMessage[]
 ): Promise<ClassifiedIntent> {
+  console.log('[Classifier] Running classification for:', message)
+
+  const categoryMap: Record<TargetAgent, IntentCategory> = {
+    vault: 'estimating',
+    pulse: 'dashboard',
+    ledger: 'finance',
+    spark: 'marketing',
+    blueprint: 'projects',
+    ohm: 'compliance',
+    chrono: 'calendar',
+    scout: 'analysis',
+    nexus: 'general',
+  }
+
+  const impactMap: Record<TargetAgent, ImpactLevel> = {
+    vault: 'MEDIUM',
+    pulse: 'LOW',
+    ledger: 'MEDIUM',
+    spark: 'MEDIUM',
+    blueprint: 'MEDIUM',
+    ohm: 'LOW',
+    chrono: 'MEDIUM',
+    scout: 'LOW',
+    nexus: 'LOW',
+  }
+
+  // Tier 0: Guaranteed routing rules — always checked first
+  const guaranteed = checkGuaranteedRoutes(message)
+  if (guaranteed) {
+    console.log(`[Classifier] Tier 0 guaranteed → ${guaranteed.agent} (${guaranteed.score.toFixed(2)})`)
+    return {
+      category: categoryMap[guaranteed.agent],
+      targetAgent: guaranteed.agent,
+      confidence: guaranteed.score,
+      entities: [],
+      requiresConfirmation: guaranteed.agent === 'ledger' || guaranteed.agent === 'vault',
+      impactLevel: impactMap[guaranteed.agent],
+      reasoning: guaranteed.reasoning,
+    }
+  }
+
   // Tier 1: Fast keyword scoring
   const tier1 = tier1KeywordScoring(message)
   if (tier1 && tier1.score >= 0.5) {
@@ -462,29 +545,7 @@ export async function classifyIntent(
       finalScore = Math.min(finalScore + contextBoost.boost, 1.0)
     }
 
-    const categoryMap: Record<TargetAgent, IntentCategory> = {
-      vault: 'estimating',
-      pulse: 'dashboard',
-      ledger: 'finance',
-      spark: 'marketing',
-      blueprint: 'projects',
-      ohm: 'compliance',
-      chrono: 'calendar',
-      scout: 'analysis',
-      nexus: 'general',
-    }
-
-    const impactMap: Record<TargetAgent, ImpactLevel> = {
-      vault: 'MEDIUM',
-      pulse: 'LOW',
-      ledger: 'MEDIUM',
-      spark: 'MEDIUM',
-      blueprint: 'MEDIUM',
-      ohm: 'LOW',
-      chrono: 'MEDIUM',
-      scout: 'LOW',
-      nexus: 'LOW',
-    }
+    console.log(`[Classifier] Tier 1 winner → ${finalAgent} (${finalScore.toFixed(2)})`)
 
     return {
       category: categoryMap[finalAgent],
@@ -500,6 +561,7 @@ export async function classifyIntent(
   // Tier 2: Multi-agent detection
   const tier2 = tier2MultiAgentDetection(message)
   if (tier2) {
+    console.log(`[Classifier] Tier 2 multi-agent → nexus`)
     return {
       category: tier2.category,
       targetAgent: tier2.targetAgent,
@@ -511,39 +573,44 @@ export async function classifyIntent(
     }
   }
 
-  // Tier 3: Check if any agent scored above 0.4
+  // Tier 3: Claude fallback for low-scoring or unrecognized input
   const scores: Record<TargetAgent, number> = {} as Record<TargetAgent, number>
   for (const agent of TARGET_AGENTS) {
     scores[agent] = scoreAgentKeywords(message, AGENT_KEYWORDS[agent])
   }
-
   const maxScore = Math.max(...Object.values(scores))
 
-  if (maxScore < 0.4) {
-    // Fallback to Claude
+  if (maxScore >= 0.1) {
+    // Some keyword signal exists — try Claude for nuanced classification
     try {
+      console.log(`[Classifier] Tier 3 Claude fallback (maxScore: ${maxScore.toFixed(2)})`)
       return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
     } catch (error) {
       console.error('[Classifier] Claude fallback failed:', error)
-      // Final safe fallback
-      return {
-        category: 'general',
-        targetAgent: 'nexus',
-        confidence: 0.3,
-        entities: [],
-        requiresConfirmation: false,
-        impactLevel: 'LOW',
-        reasoning: 'Could you be more specific? Are you asking about a project, an estimate, or something else?',
-      }
     }
   }
 
-  // If maxScore >= 0.4 but tier 1 didn't catch it (likely between 0.4-0.6),
-  // use Claude for more nuanced classification
+  // Final fallback: for 3+ word inputs, route to NEXUS general (never show error)
+  const wordCount = message.trim().split(/\s+/).length
+  if (wordCount >= 3) {
+    console.log(`[Classifier] Final fallback → nexus general (${wordCount} words)`)
+    return {
+      category: 'general',
+      targetAgent: 'nexus',
+      confidence: 0.4,
+      entities: [],
+      requiresConfirmation: false,
+      impactLevel: 'LOW',
+      reasoning: `Routed to NEXUS general handler (${wordCount}-word input, no strong keyword match)`,
+    }
+  }
+
+  // Very short input with no matches — still try Claude
   try {
+    console.log('[Classifier] Short input Claude fallback')
     return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
   } catch (error) {
-    console.error('[Classifier] Claude fallback failed:', error)
+    console.error('[Classifier] All classification failed:', error)
     return {
       category: 'general',
       targetAgent: 'nexus',
@@ -551,7 +618,7 @@ export async function classifyIntent(
       entities: [],
       requiresConfirmation: false,
       impactLevel: 'LOW',
-      reasoning: 'Could you be more specific? Are you asking about a project, an estimate, or something else?',
+      reasoning: 'Routed to NEXUS for general assistance.',
     }
   }
 }
