@@ -2,17 +2,26 @@
 /**
  * ProactiveInsightCard — Shared card for displaying AI agent proactive insights.
  *
- * Shows loading skeleton, AI response, error state, empty proactive suggestion,
- * and a "Dive Deeper" button for follow-up analysis.
+ * Features:
+ * - Shows loading skeleton, AI response, error state
+ * - Multi-turn "Dive Deeper" follow-up with full conversation history
+ * - Text input at bottom for typed follow-up questions
+ * - Conversation history persists for the session (cleared on panel close)
  */
 
-import React, { useState } from 'react'
-import { Sparkles, RefreshCw, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import React, { useState, useRef, useEffect } from 'react'
+import { Sparkles, RefreshCw, Loader2, ChevronDown, ChevronUp, Send } from 'lucide-react'
 import { callClaude, extractText } from '@/services/claudeProxy'
+
+interface ConversationEntry {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+}
 
 interface ProactiveInsightCardProps {
   agentName: string
-  agentColor: string // tailwind color like '#10b981'
+  agentColor: string // hex color like '#10b981'
   response: string
   loading: boolean
   error: string
@@ -32,27 +41,56 @@ export function ProactiveInsightCard({
   systemPrompt,
 }: ProactiveInsightCardProps) {
   const [diveDeeper, setDiveDeeper] = useState(false)
-  const [deepResponse, setDeepResponse] = useState('')
-  const [deepLoading, setDeepLoading] = useState(false)
-  const [deepInput, setDeepInput] = useState('')
+  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([])
+  const [followUpInput, setFollowUpInput] = useState('')
+  const [followUpLoading, setFollowUpLoading] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-  const handleDiveDeeper = async () => {
-    if (!deepInput.trim() || !systemPrompt) return
-    setDeepLoading(true)
+  // Auto-scroll conversation to bottom
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [conversationHistory])
+
+  const handleFollowUp = async () => {
+    const trimmed = followUpInput.trim()
+    if (!trimmed || !systemPrompt || followUpLoading) return
+
+    setFollowUpInput('')
+    setFollowUpLoading(true)
+
+    // Add user message to history
+    const userEntry: ConversationEntry = { role: 'user', content: trimmed, timestamp: Date.now() }
+    const updatedHistory = [...conversationHistory, userEntry]
+    setConversationHistory(updatedHistory)
+
     try {
+      // Build messages array with full conversation context
+      const messages = [
+        // Start with the initial proactive response as context
+        { role: 'assistant' as const, content: response },
+        // Include all follow-up exchanges
+        ...updatedHistory.map(e => ({
+          role: e.role as 'user' | 'assistant',
+          content: e.content,
+        })),
+      ]
+
       const result = await callClaude({
-        system: systemPrompt,
-        messages: [
-          { role: 'assistant', content: response },
-          { role: 'user', content: deepInput },
-        ],
+        system: systemPrompt + `\n\nYou are continuing a conversation. Reference previous exchanges naturally. The user's name is Christian. Be concise and practical.`,
+        messages,
         max_tokens: 1024,
       })
-      setDeepResponse(extractText(result))
+
+      const responseText = extractText(result)
+      const assistantEntry: ConversationEntry = { role: 'assistant', content: responseText, timestamp: Date.now() }
+      setConversationHistory(prev => [...prev, assistantEntry])
     } catch (err) {
-      setDeepResponse('Error: ' + (err instanceof Error ? err.message : String(err)))
+      const errorText = 'Error: ' + (err instanceof Error ? err.message : String(err))
+      setConversationHistory(prev => [...prev, { role: 'assistant', content: errorText, timestamp: Date.now() }])
     } finally {
-      setDeepLoading(false)
+      setFollowUpLoading(false)
     }
   }
 
@@ -108,7 +146,7 @@ export function ProactiveInsightCard({
         </div>
       )}
 
-      {/* Dive Deeper */}
+      {/* Multi-turn Conversation Section */}
       {!loading && response && systemPrompt && (
         <div style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '10px' }}>
           <button
@@ -116,31 +154,54 @@ export function ProactiveInsightCard({
             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', color: agentColor, fontSize: '12px', fontWeight: '600', cursor: 'pointer', padding: 0 }}
           >
             {diveDeeper ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            Dive Deeper
+            Dive Deeper {conversationHistory.length > 0 ? `(${Math.ceil(conversationHistory.length / 2)} exchanges)` : ''}
           </button>
 
           {diveDeeper && (
-            <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
-              <input
-                value={deepInput}
-                onChange={e => setDeepInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleDiveDeeper()}
-                placeholder="Ask a follow-up question..."
-                style={{ flex: 1, padding: '6px 10px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: '#e5e7eb', fontSize: '12px' }}
-              />
-              <button
-                onClick={handleDiveDeeper}
-                disabled={deepLoading || !deepInput.trim()}
-                style={{ padding: '6px 12px', backgroundColor: `${agentColor}33`, color: agentColor, border: `1px solid ${agentColor}55`, borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', opacity: deepLoading ? 0.5 : 1 }}
-              >
-                {deepLoading ? '...' : 'Ask'}
-              </button>
-            </div>
-          )}
+            <div style={{ marginTop: '8px' }}>
+              {/* Conversation history scroll area */}
+              {conversationHistory.length > 0 && (
+                <div ref={scrollRef} style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '8px', padding: '8px', backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: '4px' }}>
+                  {conversationHistory.map((entry, i) => (
+                    <div key={i} style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: i < conversationHistory.length - 1 ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
+                      <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '2px' }}>
+                        {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      <div style={{ fontSize: '12px', color: entry.role === 'user' ? '#e5e7eb' : '#d1d5db', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                        <span style={{ fontWeight: '700', color: entry.role === 'user' ? '#ffffff' : agentColor }}>
+                          {entry.role === 'user' ? 'You: ' : `${agentName}: `}
+                        </span>
+                        {entry.content}
+                      </div>
+                    </div>
+                  ))}
+                  {followUpLoading && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 0' }}>
+                      <Loader2 size={12} style={{ color: agentColor, animation: 'spin 1s linear infinite' }} />
+                      <span style={{ fontSize: '11px', color: '#6b7280' }}>Thinking...</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
-          {deepResponse && (
-            <div style={{ marginTop: '8px', fontSize: '12px', color: '#d1d5db', lineHeight: '1.5', padding: '8px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px', whiteSpace: 'pre-wrap' }}>
-              {deepResponse}
+              {/* Follow-up input */}
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  value={followUpInput}
+                  onChange={e => setFollowUpInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleFollowUp()}
+                  placeholder="Ask a follow-up question..."
+                  style={{ flex: 1, padding: '6px 10px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: '#e5e7eb', fontSize: '12px', outline: 'none' }}
+                />
+                <button
+                  onClick={handleFollowUp}
+                  disabled={followUpLoading || !followUpInput.trim()}
+                  style={{ padding: '6px 12px', backgroundColor: `${agentColor}33`, color: agentColor, border: `1px solid ${agentColor}55`, borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', opacity: followUpLoading || !followUpInput.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <Send size={10} />
+                  Ask
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -2,22 +2,19 @@
 /**
  * NEXUS Orchestrator — the main entry point for all user interactions.
  *
- * Pipeline: classify → route → respond → audit
+ * Pipeline: load memory → classify → route → respond → log → update memory
  *
  * Every user message flows through this orchestrator. It:
- * 1. Loads memory context from Redis + vector search
- * 2. Classifies the intent
- * 3. Routes to the correct agent
+ * 1. Loads memory context from nexusMemory (localStorage + Supabase)
+ * 2. Classifies the intent using fast keyword scoring + Claude fallback
+ * 3. Routes to the correct agent via claudeProxy
  * 4. Returns the response
- * 5. Logs everything to audit_trail
+ * 5. Updates persistent memory with conversation turn
  */
 
 import { classifyIntent, type ClassifiedIntent, type ConversationMessage } from './classifier'
 import { routeToAgent, type AgentResponse } from './router'
-import { getAgentContext, recordAgentDecision, type AgentId } from '@/lib/memory/redis-context'
-import { searchMemory } from '@/lib/memory/embeddings'
-import { logAudit } from '@/lib/memory/audit'
-import { supabase } from '@/lib/supabase'
+import { addTurn, getContext, updateProjectContext, getMemory } from '@/services/nexusMemory'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -25,8 +22,9 @@ export interface NexusRequest {
   message:     string
   orgId:       string
   userId:      string
-  userName:    string
+  userName?:   string
   conversationHistory: ConversationMessage[]
+  isVoiceCommand?: boolean
 }
 
 export interface NexusResponse {
@@ -49,54 +47,28 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   let memoryContext = ''
 
   try {
-    // Load NEXUS short-term context from Redis
-    const nexusCtx = await getAgentContext(request.orgId, 'nexus')
-    const ctxParts: string[] = []
-
-    if (nexusCtx.activeFlags.length > 0) {
-      ctxParts.push(
-        `Active Flags:\n${nexusCtx.activeFlags.map(f => `  - [${f.severity}] ${f.type}: ${f.message}`).join('\n')}`
-      )
-    }
-
-    if (nexusCtx.recentDecisions.length > 0) {
-      ctxParts.push(
-        `Recent Decisions:\n${nexusCtx.recentDecisions.slice(0, 3).map(d => `  - ${d.description}`).join('\n')}`
-      )
-    }
-
-    // Semantic search for relevant memories
-    try {
-      const memories = await searchMemory({
-        orgId:     request.orgId,
-        query:     request.message,
-        limit:     5,
-        threshold: 0.72,
-      })
-
-      if (memories.length > 0) {
-        ctxParts.push(
-          `Relevant Memories:\n${memories.map(m => `  - [${m.entity_type}] ${m.content.slice(0, 200)}`).join('\n')}`
-        )
-      }
-    } catch {
-      // Vector search may fail if OpenAI key isn't set — that's ok
-      console.warn('[NEXUS] Semantic search unavailable, continuing without it.')
-    }
-
-    memoryContext = ctxParts.join('\n\n')
+    memoryContext = getContext(10)
   } catch (err) {
     console.warn('[NEXUS] Memory context loading failed, continuing:', err)
   }
 
-  // ── Step 2: Classify intent ─────────────────────────────────────────────
+  // ── Step 2: Record user turn to persistent memory ───────────────────────
+  try {
+    addTurn('user', request.message)
+  } catch {
+    // Non-critical
+  }
+
+  // ── Step 3: Classify intent ─────────────────────────────────────────────
   const intent = await classifyIntent(
     request.message,
     memoryContext,
     request.conversationHistory
   )
 
-  // ── Step 3: Route to target agent ───────────────────────────────────────
+  console.log(`[NEXUS] Classified → ${intent.targetAgent} (${intent.category}, ${intent.confidence.toFixed(2)})`)
+
+  // ── Step 4: Route to target agent ───────────────────────────────────────
   const agentResponse = await routeToAgent(
     intent,
     request.message,
@@ -104,64 +76,37 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     request.conversationHistory
   )
 
-  // ── Step 4: Determine if confirmation is needed ─────────────────────────
+  // ── Step 5: Determine if confirmation is needed ─────────────────────────
   const needsConfirmation =
     intent.requiresConfirmation ||
     intent.impactLevel === 'HIGH' ||
     intent.impactLevel === 'CRITICAL'
 
-  // ── Step 5: Log to audit trail ──────────────────────────────────────────
   const duration = Date.now() - startTime
+  console.log(`[NEXUS] Routed to ${agentResponse.agentName} in ${duration}ms`)
 
+  // ── Step 6: Record assistant turn to persistent memory ──────────────────
   try {
-    await logAudit({
-      action:      'send',
-      entity_type: 'agent_messages',
-      description: `NEXUS processed message → ${agentResponse.agentName} (${intent.category}, ${intent.impactLevel}, ${intent.confidence.toFixed(2)} confidence, ${duration}ms)`,
-      metadata: {
-        user_message:   request.message.slice(0, 500),
-        category:       intent.category,
-        target_agent:   intent.targetAgent,
-        confidence:     intent.confidence,
-        impact_level:   intent.impactLevel,
-        entities:       intent.entities,
-        duration_ms:    duration,
-        needs_confirm:  needsConfirmation,
-      },
-    })
-  } catch (err) {
-    console.warn('[NEXUS] Audit log failed:', err)
-  }
+    addTurn('assistant', agentResponse.content, agentResponse.agentId)
 
-  // ── Step 6: Record decision in Redis context ────────────────────────────
-  try {
-    await recordAgentDecision(request.orgId, 'nexus', {
-      description: `Routed "${request.message.slice(0, 100)}" → ${agentResponse.agentName} (${intent.impactLevel})`,
-      reasoning:   intent.reasoning,
-    })
+    // Update project context if entities mention a project
+    const projectEntity = intent.entities.find(e => e.type === 'project')
+    if (projectEntity) {
+      updateProjectContext({ lastDiscussedProject: projectEntity.value })
+    }
+
+    // Track code questions for OHM
+    if (intent.targetAgent === 'ohm') {
+      const memory = getMemory()
+      const codeQuestions = memory.projectContext.activeCodeQuestions || []
+      if (codeQuestions.length < 10) {
+        updateProjectContext({
+          activeCodeQuestions: [...codeQuestions, request.message.slice(0, 100)]
+        })
+      }
+    }
   } catch {
-    // Non-critical — continue
-  }
-
-  // ── Step 7: Log inter-agent message to Supabase ─────────────────────────
-  try {
-    await supabase.from('agent_messages').insert({
-      org_id:     request.orgId,
-      from_agent: 'nexus',
-      to_agent:   intent.targetAgent,
-      type:       'delegation',
-      priority:   intent.impactLevel === 'CRITICAL' || intent.impactLevel === 'HIGH' ? 'high' : 'normal',
-      subject:    request.message.slice(0, 200),
-      payload: {
-        user_message:  request.message,
-        intent,
-        response_preview: agentResponse.content.slice(0, 500),
-      },
-      status: 'processed',
-      processed_at: new Date().toISOString(),
-    })
-  } catch (err) {
-    console.warn('[NEXUS] Agent message log failed:', err)
+    // Non-critical
   }
 
   // ── Return ──────────────────────────────────────────────────────────────

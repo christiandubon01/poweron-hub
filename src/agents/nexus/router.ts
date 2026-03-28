@@ -8,6 +8,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { NEXUS_SYSTEM_PROMPT } from './systemPrompt'
+import { callClaude, extractText } from '@/services/claudeProxy'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -373,12 +374,6 @@ export async function routeToAgent(
   orgId:        string,
   conversationHistory: ConversationMessage[]
 ): Promise<AgentResponse> {
-  const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
-
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error('VITE_ANTHROPIC_API_KEY is not set.')
-  }
-
   const targetAgent = intent.targetAgent
   const agentName   = AGENT_DISPLAY_NAMES[targetAgent]
 
@@ -403,33 +398,14 @@ export async function routeToAgent(
     { role: 'user' as const, content: userMessage },
   ]
 
-  // 4. Call Claude
-  const response = await fetch('/api/anthropic/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key':         ANTHROPIC_API_KEY,
-      'anthropic-version':  '2023-06-01',
-      'content-type':       'application/json',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      system:     systemPrompt,
-      messages,
-    }),
+  // 4. Call Claude via proxy
+  const claudeResponse = await callClaude({
+    system: systemPrompt,
+    messages,
+    max_tokens: 2048,
   })
 
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Agent ${agentName} API call failed: ${response.status} ${errText}`)
-  }
-
-  const data = await response.json() as {
-    content: Array<{ type: string; text: string }>
-  }
-
-  const content = data.content[0]?.text ?? 'No response generated.'
+  const content = extractText(claudeResponse) || 'No response generated.'
 
   return {
     agentId:     targetAgent,

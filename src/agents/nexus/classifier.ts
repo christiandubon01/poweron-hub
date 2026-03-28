@@ -117,7 +117,108 @@ function validateIntent(raw: unknown): { data: ClassifiedIntent } | { error: str
   }
 }
 
-// ── Classifier ──────────────────────────────────────────────────────────────
+// ── Keyword maps for fast local classification ──────────────────────────────
+
+interface AgentKeywords {
+  multi: string[]    // 3-word+ phrases
+  single: string[]   // single/2-word keywords
+}
+
+const AGENT_KEYWORDS: Record<TargetAgent, AgentKeywords> = {
+  blueprint: {
+    multi: [
+      'check my projects', 'status of', 'project overview', 'operations flow',
+      'what needs attention', 'stagnant jobs', 'project this week', 'active jobs',
+      'phase progress', 'field log', 'punch list', 'change order',
+    ],
+    single: [
+      'project', 'permit', 'rfi', 'phase', 'coordination',
+    ],
+  },
+  pulse: {
+    multi: [
+      'cash flow', 'how much have i collected', 'pipeline', 'what\'s my exposure',
+      'revenue this week', 'profit margin', 'financial overview', 'money situation',
+      'what do i have coming in', 'weekly tracker', 'performance', 'margin analysis',
+    ],
+    single: [
+      'dashboard', 'kpi', 'metric', 'trend', 'revenue', 'margin',
+    ],
+  },
+  ohm: {
+    multi: [
+      'code requirement', 'load calc', 'breaker size', 'wire gauge', 'panel schedule',
+      'what are the requirements for', 'is this up to code', 'on site', 'working on',
+      'installing', 'rough in', 'trim out', 'compliance',
+    ],
+    single: [
+      'nec', 'cec', 'cbc', 'title 24', 'afci', 'gfci', 'safety',
+      'article', 'conductor', 'ampacity', 'ground fault', 'arc fault',
+    ],
+  },
+  vault: {
+    multi: [
+      'material takeoff', 'how much should i charge', 'materials needed',
+      'bill of materials', 'compare against', 'takeoff list', 'margin analysis',
+      'price book',
+    ],
+    single: [
+      'estimate', 'quote', 'mto', 'price this job', 'blueprints',
+      'bid', 'pricing', 'cost', 'markup',
+    ],
+  },
+  ledger: {
+    multi: [
+      'who owes me', 'accounts receivable', 'ar aging', 'outstanding balance',
+      'send invoice', 'follow up on payment', 'accounts receivable',
+    ],
+    single: [
+      'invoice', 'collections', 'payment', 'billing', 'receivable',
+      'overdue', 'balance due',
+    ],
+  },
+  spark: {
+    multi: [
+      'gc contacts', 'follow up', 'google review', 'win rate', 'fit score',
+      'new customer',
+    ],
+    single: [
+      'leads', 'prospects', 'referral', 'marketing', 'outreach', 'who should i call',
+      'campaign', 'review', 'yelp', 'reputation',
+    ],
+  },
+  chrono: {
+    multi: [
+      'who\'s working', 'job assignment', 'crew today', 'who\'s free',
+    ],
+    single: [
+      'schedule', 'crew', 'dispatch', 'calendar', 'availability',
+      'appointment', 'agenda', 'reminder', 'tomorrow', 'next week',
+    ],
+  },
+  scout: {
+    multi: [
+      'market rate', 'competitor pricing', 'look up', 'find information',
+      'what does this cost', 'supplier pricing', 'improvement idea',
+      'analyze this code', 'code analysis', 'migrate this',
+    ],
+    single: [
+      'research', 'analyze', 'pattern', 'optimization', 'improvement',
+    ],
+  },
+  nexus: {
+    multi: [
+      'weekly overview', 'operations flow', 'what needs my attention',
+      'morning briefing', 'daily summary', 'status update', 'how\'s business',
+      'what\'s going on',
+    ],
+    single: [
+      'hi', 'hello', 'help', 'general',
+    ],
+  },
+}
+
+// ── Classifier prompt for fallback ──────────────────────────────────────────
 
 const CLASSIFIER_PROMPT = `You are the intent classifier for NEXUS, the manager agent of PowerOn Hub — an AI platform for an electrical contracting business.
 
@@ -149,28 +250,139 @@ Impact level guide:
 
 Return ONLY valid JSON. No markdown, no explanation outside the JSON.`
 
+// ── Keyword scoring (Tier 1) ────────────────────────────────────────────────
+
 /**
- * Classify a user message into an intent with agent routing.
- *
- * @param message - The user's message text
- * @param memoryContext - Relevant memory/context from Redis and vector search
- * @param conversationHistory - Recent conversation messages for context
- * @returns Validated ClassifiedIntent
+ * Score a message against an agent's keyword map.
+ * Multi-word phrases score 3, single words score 1.
+ * Returns normalized score 0-1.
  */
-export async function classifyIntent(
+function scoreAgentKeywords(message: string, keywords: AgentKeywords): number {
+  const lowerMessage = message.toLowerCase()
+  let score = 0
+
+  // Multi-word phrases (weight 3)
+  for (const phrase of keywords.multi) {
+    if (lowerMessage.includes(phrase)) {
+      score += 3
+    }
+  }
+
+  // Single words (weight 1)
+  for (const word of keywords.single) {
+    if (lowerMessage.includes(word)) {
+      score += 1
+    }
+  }
+
+  // Normalize by a fixed threshold (score of 4 = 1.0)
+  // One multi-word match (3) + one single-word match (1) = 4 → confident
+  // Just one multi-word match (3) → 0.75 → high confidence
+  // Just one single word (1) → 0.25 → low, needs Claude fallback
+  return Math.min(score / 4, 1.0)
+}
+
+/**
+ * Perform Tier 1: Fast keyword scoring across all agents.
+ * Returns winning agent and score if above 0.6 threshold, else null.
+ */
+function tier1KeywordScoring(message: string): { agent: TargetAgent; score: number; reasoning: string } | null {
+  const scores: Record<TargetAgent, number> = {} as Record<TargetAgent, number>
+
+  for (const agent of TARGET_AGENTS) {
+    scores[agent] = scoreAgentKeywords(message, AGENT_KEYWORDS[agent])
+  }
+
+  // Find top agent
+  let topAgent: TargetAgent | null = null
+  let topScore = 0
+  for (const agent of TARGET_AGENTS) {
+    if (scores[agent] > topScore) {
+      topScore = scores[agent]
+      topAgent = agent
+    }
+  }
+
+  if (!topAgent || topScore < 0.5) {
+    return null
+  }
+
+  return {
+    agent: topAgent,
+    score: topScore,
+    reasoning: `Matched on keywords for ${topAgent} (score: ${topScore.toFixed(2)})`,
+  }
+}
+
+/**
+ * Perform Tier 2: Detect if top 2 agents are close.
+ * If both above 0.4 and within 0.15, return multi_agent routing to nexus.
+ */
+function tier2MultiAgentDetection(message: string): { category: 'multi_agent'; targetAgent: 'nexus'; confidence: number; reasoning: string } | null {
+  const scores: Record<TargetAgent, number> = {} as Record<TargetAgent, number>
+
+  for (const agent of TARGET_AGENTS) {
+    scores[agent] = scoreAgentKeywords(message, AGENT_KEYWORDS[agent])
+  }
+
+  // Sort by score descending
+  const sorted = (TARGET_AGENTS as readonly TargetAgent[])
+    .map(agent => ({ agent, score: scores[agent] }))
+    .sort((a, b) => b.score - a.score)
+
+  const top1 = sorted[0]
+  const top2 = sorted[1]
+
+  if (!top1 || !top2) return null
+
+  const withinRange = top1.score - top2.score <= 0.15
+  const bothAboveThreshold = top1.score >= 0.4 && top2.score >= 0.4
+
+  if (withinRange && bothAboveThreshold) {
+    return {
+      category: 'multi_agent',
+      targetAgent: 'nexus',
+      confidence: top1.score,
+      reasoning: `Split between ${top1.agent} and ${top2.agent} (scores: ${top1.score.toFixed(2)} vs ${top2.score.toFixed(2)})`,
+    }
+  }
+
+  return null
+}
+
+/**
+ * Get recent agent context boost.
+ * If last user or assistant message has an agentId, boost that agent +0.15.
+ */
+function getContextBoost(conversationHistory: ConversationMessage[]): { agent: TargetAgent; boost: number } | null {
+  const recent = conversationHistory.slice(-3)
+  for (const msg of recent) {
+    if (msg.agentId) {
+      const agent = msg.agentId as TargetAgent
+      if (isValidAgent(agent)) {
+        return { agent, boost: 0.15 }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Import callClaude from proxy service for fallback.
+ */
+import { callClaude, extractText } from '@/services/claudeProxy'
+
+/**
+ * Perform Tier 3: Claude fallback.
+ * Only called if no keyword scores above 0.4.
+ */
+async function tier3ClaudeFallback(
   message: string,
   memoryContext: string,
   conversationHistory: ConversationMessage[]
 ): Promise<ClassifiedIntent> {
-  const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
-
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error('VITE_ANTHROPIC_API_KEY is not set. Add it to .env.local.')
-  }
-
-  // Build conversation context for the classifier
   const historyText = conversationHistory
-    .slice(-6)  // Last 6 messages for context
+    .slice(-6)
     .map(m => `${m.role === 'user' ? 'User' : `Assistant (${m.agentId ?? 'nexus'})`}: ${m.content}`)
     .join('\n')
 
@@ -178,34 +390,17 @@ export async function classifyIntent(
     memoryContext ? `## Active Context\n${memoryContext}\n` : '',
     historyText ? `## Recent Conversation\n${historyText}\n` : '',
     `## New Message\n${message}`,
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 
-  const response = await fetch('/api/anthropic/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key':         ANTHROPIC_API_KEY,
-      'anthropic-version':  '2023-06-01',
-      'content-type':       'application/json',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
-      max_tokens: 512,
-      system:     CLASSIFIER_PROMPT,
-      messages:   [{ role: 'user', content: userPrompt }],
-    }),
+  const response = await callClaude({
+    messages: [{ role: 'user', content: userPrompt }],
+    system: CLASSIFIER_PROMPT,
+    max_tokens: 512,
   })
 
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Classifier API call failed: ${response.status} ${errText}`)
-  }
-
-  const data = await response.json() as {
-    content: Array<{ type: string; text: string }>
-  }
-
-  const rawText = data.content[0]?.text ?? ''
+  const rawText = extractText(response)
 
   // Parse JSON from response
   let parsed: unknown
@@ -225,17 +420,138 @@ export async function classifyIntent(
 
   if ('error' in result) {
     console.error('[Classifier] Validation failed:', result.error)
-    // Return a safe fallback — route to NEXUS with low confidence
+    // Return safe fallback
     return {
-      category:             'general',
-      targetAgent:          'nexus',
-      confidence:           0.3,
-      entities:             [],
+      category: 'general',
+      targetAgent: 'nexus',
+      confidence: 0.3,
+      entities: [],
       requiresConfirmation: false,
-      impactLevel:          'LOW',
-      reasoning:            `Classification validation failed: ${result.error}. Falling back to NEXUS.`,
+      impactLevel: 'LOW',
+      reasoning: `Classification validation failed: ${result.error}. Falling back to NEXUS.`,
     }
   }
 
   return result.data
+}
+
+/**
+ * Classify a user message into an intent with agent routing.
+ * Uses three-tier classification: keyword scoring (fast), multi-agent detection,
+ * then Claude fallback only if needed.
+ *
+ * @param message - The user's message text
+ * @param memoryContext - Relevant memory/context from Redis and vector search
+ * @param conversationHistory - Recent conversation messages for context
+ * @returns Validated ClassifiedIntent
+ */
+export async function classifyIntent(
+  message: string,
+  memoryContext: string,
+  conversationHistory: ConversationMessage[]
+): Promise<ClassifiedIntent> {
+  // Tier 1: Fast keyword scoring
+  const tier1 = tier1KeywordScoring(message)
+  if (tier1 && tier1.score >= 0.5) {
+    const contextBoost = getContextBoost(conversationHistory)
+    let finalScore = tier1.score
+    let finalAgent = tier1.agent
+
+    // Apply context boost if applicable
+    if (contextBoost && contextBoost.agent === tier1.agent) {
+      finalScore = Math.min(finalScore + contextBoost.boost, 1.0)
+    }
+
+    const categoryMap: Record<TargetAgent, IntentCategory> = {
+      vault: 'estimating',
+      pulse: 'dashboard',
+      ledger: 'finance',
+      spark: 'marketing',
+      blueprint: 'projects',
+      ohm: 'compliance',
+      chrono: 'calendar',
+      scout: 'analysis',
+      nexus: 'general',
+    }
+
+    const impactMap: Record<TargetAgent, ImpactLevel> = {
+      vault: 'MEDIUM',
+      pulse: 'LOW',
+      ledger: 'MEDIUM',
+      spark: 'MEDIUM',
+      blueprint: 'MEDIUM',
+      ohm: 'LOW',
+      chrono: 'MEDIUM',
+      scout: 'LOW',
+      nexus: 'LOW',
+    }
+
+    return {
+      category: categoryMap[finalAgent],
+      targetAgent: finalAgent,
+      confidence: finalScore,
+      entities: [],
+      requiresConfirmation: finalAgent === 'ledger' || finalAgent === 'vault',
+      impactLevel: impactMap[finalAgent],
+      reasoning: tier1.reasoning,
+    }
+  }
+
+  // Tier 2: Multi-agent detection
+  const tier2 = tier2MultiAgentDetection(message)
+  if (tier2) {
+    return {
+      category: tier2.category,
+      targetAgent: tier2.targetAgent,
+      confidence: tier2.confidence,
+      entities: [],
+      requiresConfirmation: false,
+      impactLevel: 'LOW',
+      reasoning: tier2.reasoning,
+    }
+  }
+
+  // Tier 3: Check if any agent scored above 0.4
+  const scores: Record<TargetAgent, number> = {} as Record<TargetAgent, number>
+  for (const agent of TARGET_AGENTS) {
+    scores[agent] = scoreAgentKeywords(message, AGENT_KEYWORDS[agent])
+  }
+
+  const maxScore = Math.max(...Object.values(scores))
+
+  if (maxScore < 0.4) {
+    // Fallback to Claude
+    try {
+      return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+    } catch (error) {
+      console.error('[Classifier] Claude fallback failed:', error)
+      // Final safe fallback
+      return {
+        category: 'general',
+        targetAgent: 'nexus',
+        confidence: 0.3,
+        entities: [],
+        requiresConfirmation: false,
+        impactLevel: 'LOW',
+        reasoning: 'Could you be more specific? Are you asking about a project, an estimate, or something else?',
+      }
+    }
+  }
+
+  // If maxScore >= 0.4 but tier 1 didn't catch it (likely between 0.4-0.6),
+  // use Claude for more nuanced classification
+  try {
+    return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+  } catch (error) {
+    console.error('[Classifier] Claude fallback failed:', error)
+    return {
+      category: 'general',
+      targetAgent: 'nexus',
+      confidence: 0.3,
+      entities: [],
+      requiresConfirmation: false,
+      impactLevel: 'LOW',
+      reasoning: 'Could you be more specific? Are you asking about a project, an estimate, or something else?',
+    }
+  }
 }

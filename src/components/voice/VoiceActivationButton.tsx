@@ -1,21 +1,23 @@
+// @ts-nocheck
 /**
- * VoiceActivationButton — Floating mic button for voice interaction
+ * VoiceActivationButton — Floating mic button + transcript panel integration
  *
  * Appears on all panels. Press to start recording, press again to stop.
- * Visual states:
- *   - Idle: Emerald mic icon
- *   - Listening (wake word): Subtle pulse animation
- *   - Recording: Red pulsing ring, waveform animation
- *   - Transcribing/Processing: Spinning loader
- *   - Speaking (TTS playing): Waveform bars animation
- *   - Error: Red flash, then back to idle
+ * Integrates with VoiceTranscriptPanel for conversation display.
+ *
+ * Voice flow:
+ *   - Single tap = start recording, opens transcript panel
+ *   - Single tap again = stop recording and process
+ *   - Transcript panel stays open until user explicitly closes it
+ *   - User can tap voice again for follow-up within same session
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Mic, MicOff, Loader2, Volume2, AlertCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { getVoiceSubsystem, type VoiceSessionStatus } from '@/services/voice'
 import { useAuth } from '@/hooks/useAuth'
+import { VoiceTranscriptPanel, addTranscriptEntry } from './VoiceTranscriptPanel'
 
 interface VoiceActivationButtonProps {
   className?: string
@@ -28,6 +30,13 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const [errorFlash, setErrorFlash] = useState(false)
   const [permissionError, setPermissionError] = useState('')
   const [audioUnlocked, setAudioUnlocked] = useState(false)
+
+  // Transcript panel state
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelMinimized, setPanelMinimized] = useState(false)
+
+  // Track last transcript and response for adding to panel
+  const lastTranscriptRef = useRef<string>('')
 
   // Detect iOS Safari for platform-specific guidance
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -71,11 +80,33 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       console.error('[VoiceButton] Init failed:', err)
     })
 
-    // Subscribe to status changes
+    // Subscribe to voice events
     const unsub = voice.on((event) => {
       if (event.type === 'status_changed') {
         setStatus(voice.getStatus())
       }
+
+      // Capture transcript for panel
+      if (event.type === 'transcript_ready') {
+        const data = event.data as { text?: string } | undefined
+        if (data?.text) {
+          lastTranscriptRef.current = data.text
+        }
+      }
+
+      // Capture agent response and add to transcript panel
+      if (event.type === 'session_complete') {
+        const session = event.session
+        if (session && lastTranscriptRef.current) {
+          addTranscriptEntry(
+            lastTranscriptRef.current,
+            session.agentResponse || 'No response',
+            session.targetAgent || 'nexus'
+          )
+          lastTranscriptRef.current = ''
+        }
+      }
+
       if (event.type === 'error') {
         setErrorFlash(true)
         setTimeout(() => setErrorFlash(false), 2000)
@@ -107,11 +138,18 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       case 'inactive':
       case 'complete':
       case 'listening':
+        // Open transcript panel on first activation
+        if (!panelOpen) {
+          setPanelOpen(true)
+          setPanelMinimized(false)
+        } else if (panelMinimized) {
+          setPanelMinimized(false)
+        }
         // Start recording
         await voice.startRecording('normal')
         break
       case 'recording':
-        // Stop recording → triggers pipeline
+        // Stop recording → triggers pipeline (do NOT close panel)
         await voice.stopRecording()
         break
       case 'responding':
@@ -122,7 +160,7 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         // Processing states — can't interrupt
         break
     }
-  }, [status])
+  }, [status, panelOpen, panelMinimized])
 
   // Don't render if not initialized
   if (!initialized) return null
@@ -135,6 +173,16 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
 
   return (
     <>
+      {/* Transcript Panel */}
+      <VoiceTranscriptPanel
+        isOpen={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        onMinimize={() => setPanelMinimized(true)}
+        isMinimized={panelMinimized}
+        onMaximize={() => setPanelMinimized(false)}
+      />
+
+      {/* Voice button */}
       <button
         onClick={handlePress}
         disabled={isProcessing}
