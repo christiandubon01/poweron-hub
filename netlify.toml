@@ -8,12 +8,6 @@
 [functions]
   directory = "netlify/functions"
 
-# Netlify function must be matched before SPA catch-all
-[[redirects]]
-  from   = "/.netlify/functions/*"
-  to     = "/.netlify/functions/:splat"
-  status = 200
-
 # SPA routing: all paths serve index.html
 [[redirects]]
   from   = "/*"

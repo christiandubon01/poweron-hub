@@ -58,7 +58,7 @@ export default function V15rPricingIntelligencePanel() {
   const scoutBackup = getBackupData()
   const allProjects = scoutBackup?.projects || []
   const completedProjects = allProjects.filter(p => p.status === 'completed')
-  const activeProjects = allProjects.filter(p => p.status !== 'completed')
+  const scoutActiveProjects = allProjects.filter(p => p.status !== 'completed')
   const jobTypes = [...new Set(allProjects.map(p => p.type).filter(Boolean))]
 
   // Calculate margin by job type
