@@ -22,7 +22,7 @@ export interface ElevenLabsVoice {
 export interface TTSRequest {
   text: string
   voice_id: string
-  model_id?: string           // 'eleven_monolingual_v1' | 'eleven_multilingual_v2'
+  model_id?: string           // 'eleven_turbo_v2_5' (default) | 'eleven_multilingual_v2'
   voice_settings?: {
     stability: number
     similarity_boost: number
@@ -117,7 +117,7 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
       },
       body: JSON.stringify({
         text,
-        model_id: request.model_id || 'eleven_monolingual_v1',
+        model_id: request.model_id || 'eleven_turbo_v2_5',
         voice_settings: request.voice_settings || {
           stability: 0.75,
           similarity_boost: 0.75,
@@ -175,7 +175,7 @@ export async function streamSynthesis(
       },
       body: JSON.stringify({
         text,
-        model_id: 'eleven_monolingual_v1',
+        model_id: 'eleven_turbo_v2_5',
         voice_settings: { stability: 0.75, similarity_boost: 0.75 },
       }),
     }
