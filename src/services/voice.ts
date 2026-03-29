@@ -93,6 +93,26 @@ export type VoiceEventCallback = (event: {
   data?: unknown
 }) => void
 
+// ── Debug Log (on-screen diagnostics when ?debug=1) ─────────────────────────
+// Module-level log array consumed by VoiceActivationButton debug overlay.
+
+export const voiceDebugLog: string[] = []
+let _debugListeners: Set<() => void> = new Set()
+
+/** Push a timestamped entry to the on-screen debug log. Max 80 entries. */
+export function debugPush(msg: string): void {
+  const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  voiceDebugLog.push(`[${ts}] ${msg}`)
+  if (voiceDebugLog.length > 80) voiceDebugLog.shift()
+  _debugListeners.forEach(fn => { try { fn() } catch { /* ignore */ } })
+}
+
+/** Subscribe to debug log updates. Returns unsubscribe function. */
+export function onDebugUpdate(fn: () => void): () => void {
+  _debugListeners.add(fn)
+  return () => _debugListeners.delete(fn)
+}
+
 // ── iOS AudioContext Singleton ───────────────────────────────────────────────
 // iOS Safari only allows AudioContext creation and resume during a user gesture.
 // This module-level singleton is unlocked on the first mic-button tap and reused
@@ -109,12 +129,15 @@ let unlockedAudioContext: AudioContext | null = null
 export function unlockAudioContext(): void {
   if (!unlockedAudioContext) {
     unlockedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    debugPush(`AudioContext CREATED — state: ${unlockedAudioContext.state}`)
     console.log('[iOS Audio] Shared AudioContext created, state:', unlockedAudioContext.state)
   }
   if (unlockedAudioContext.state === 'suspended') {
     unlockedAudioContext.resume()
+    debugPush(`AudioContext RESUMED — state: ${unlockedAudioContext.state}`)
     console.log('[iOS Audio] Shared AudioContext resumed')
   }
+  debugPush(`unlockAudioContext() called — state: ${unlockedAudioContext.state}`)
   // Silent buffer unlock — fully satisfies iOS autoplay gate
   try {
     const silentBuffer = unlockedAudioContext.createBuffer(1, 1, 22050)
@@ -122,8 +145,11 @@ export function unlockAudioContext(): void {
     source.buffer = silentBuffer
     source.connect(unlockedAudioContext.destination)
     source.start(0)
+    debugPush('Silent buffer played — context fully unlocked')
     console.log('[iOS Audio] Silent buffer played — context fully unlocked')
-  } catch { /* ignore — context may already be unlocked */ }
+  } catch (e) {
+    debugPush(`Silent buffer ERROR: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 /**
@@ -294,13 +320,16 @@ export class VoiceSubsystem {
     // Prefer the module-level singleton (unlocked on user tap)
     const shared = getUnlockedAudioContext()
     if (shared) {
+      debugPush(`ensureAudioContext() — using shared, state: ${shared.state}`)
       if (shared.state === 'suspended') {
         await shared.resume()
+        debugPush(`ensureAudioContext() — resumed, now: ${shared.state}`)
         console.log('[iOS Audio] Shared AudioContext resumed at playback time')
       }
       return shared
     }
     // Fallback: create one now (may fail on iOS if not in gesture stack)
+    debugPush('ensureAudioContext() — NO shared context, creating fallback')
     console.warn('[iOS Audio] No pre-unlocked AudioContext — creating fallback (may fail on iOS)')
     unlockAudioContext()
     return getUnlockedAudioContext()!
@@ -649,6 +678,7 @@ export class VoiceSubsystem {
 
     let ttsPlayed = false
     try {
+      debugPush('ElevenLabs TTS — requesting synthesis...')
       const ttsResult = await synthesizeWithElevenLabs({
         text: responseText,
         voice_id: this.preferences.ttsVoiceId,
@@ -658,6 +688,8 @@ export class VoiceSubsystem {
         },
       })
 
+      debugPush(`ElevenLabs TTS — received blob ${ttsResult.audioBlob.size} bytes, ~${ttsResult.durationSeconds}s`)
+
       if (this.currentSession) {
         this.currentSession.responseAudioUrl = ttsResult.audioUrl
         this.currentSession.responseVoiceId = this.preferences.ttsVoiceId
@@ -665,11 +697,14 @@ export class VoiceSubsystem {
       }
 
       // Step 6: Play response (with interruptible audio reference)
+      debugPush('playAudioTracked() — starting playback...')
       console.log('[Voice] Playing TTS audio')
       await this.playAudioTracked(ttsResult.audioUrl)
+      debugPush('playAudioTracked() — playback completed')
       revokeAudioUrl(ttsResult.audioUrl)
       ttsPlayed = true
     } catch (ttsErr) {
+      debugPush(`TTS ERROR: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
       console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
     }
 
@@ -757,11 +792,13 @@ export class VoiceSubsystem {
     this.stopCurrentAudio()
 
     if (VoiceSubsystem.IS_IOS) {
+      debugPush('playAudioTracked() — iOS detected, trying AudioContext path')
       console.log('[iOS Audio] Attempting iOS playback path')
       try {
         await this.playAudioIOS(audioUrl)
         return
       } catch (iosErr) {
+        debugPush(`iOS AudioContext FAILED: ${iosErr instanceof Error ? iosErr.message : String(iosErr)} — falling back to HTMLAudioElement`)
         console.warn('[iOS Audio] iOS AudioContext playback failed, trying HTMLAudioElement:', iosErr)
       }
     }
@@ -810,15 +847,24 @@ export class VoiceSubsystem {
    * Includes a 10-second timeout fallback in case onended never fires (iOS Safari bug).
    */
   private async playAudioIOS(audioUrl: string): Promise<void> {
+    debugPush('playAudioIOS() — starting iOS path')
     console.log('[iOS Audio] Attempting playback via AudioContext')
     const ctx = await this.ensureAudioContext()
 
     // Fetch the audio blob from the object URL
     const response = await fetch(audioUrl)
     const arrayBuffer = await response.arrayBuffer()
+    debugPush(`playAudioIOS() — fetched ${arrayBuffer.byteLength} bytes from blob URL`)
 
     // Decode the audio data
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+    let audioBuffer: AudioBuffer
+    try {
+      audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+      debugPush(`decodeAudioData() — OK, duration: ${audioBuffer.duration.toFixed(2)}s, channels: ${audioBuffer.numberOfChannels}`)
+    } catch (decodeErr) {
+      debugPush(`decodeAudioData() ERROR: ${decodeErr instanceof Error ? decodeErr.message : String(decodeErr)}`)
+      throw decodeErr
+    }
 
     // Calculate expected duration for smart timeout
     const expectedDuration = audioBuffer.duration || 10
@@ -838,6 +884,7 @@ export class VoiceSubsystem {
       source.connect(ctx.destination)
 
       source.onended = () => {
+        debugPush('BufferSource onended FIRED — playback complete')
         console.log('[iOS Audio] Playback completed via onended')
         safeResolve()
       }
@@ -845,12 +892,14 @@ export class VoiceSubsystem {
       // Timeout fallback: expected duration + 2s grace, minimum 10s
       const timeoutMs = Math.max(10000, (expectedDuration / this.preferences.ttsSpeed) * 1000 + 2000)
       const timeoutId = setTimeout(() => {
+        debugPush(`TIMEOUT after ${(timeoutMs / 1000).toFixed(1)}s — onended never fired`)
         console.warn(`[iOS Audio] Timeout after ${timeoutMs}ms — resolving (onended never fired)`)
         try { source.stop() } catch { /* may already be stopped */ }
         safeResolve()
       }, timeoutMs)
 
       source.start(0)
+      debugPush(`BufferSource.start(0) called — duration: ${expectedDuration.toFixed(1)}s, timeout: ${(timeoutMs / 1000).toFixed(1)}s, ctx.state: ${ctx.state}`)
       console.log(`[iOS Audio] AudioBufferSourceNode started (duration: ${expectedDuration.toFixed(1)}s, timeout: ${(timeoutMs / 1000).toFixed(1)}s)`)
     })
   }

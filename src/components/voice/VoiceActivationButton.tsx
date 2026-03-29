@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Mic, MicOff, Loader2, Volume2, AlertCircle } from 'lucide-react'
 import { clsx } from 'clsx'
-import { getVoiceSubsystem, unlockAudioContext, type VoiceSessionStatus } from '@/services/voice'
+import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, type VoiceSessionStatus } from '@/services/voice'
 import { useAuth } from '@/hooks/useAuth'
 import { VoiceTranscriptPanel, addTranscriptEntry } from './VoiceTranscriptPanel'
 
@@ -37,6 +37,23 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
 
   // Track last transcript and response for adding to panel
   const lastTranscriptRef = useRef<string>('')
+
+  // Debug panel — only active when ?debug=1 is in the URL
+  const showDebug = typeof window !== 'undefined' && window.location.search.includes('debug=1')
+  const [debugTick, setDebugTick] = useState(0)
+  const debugScrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showDebug) return
+    return onDebugUpdate(() => setDebugTick(t => t + 1))
+  }, [showDebug])
+
+  // Auto-scroll debug log
+  useEffect(() => {
+    if (debugScrollRef.current) {
+      debugScrollRef.current.scrollTop = debugScrollRef.current.scrollHeight
+    }
+  }, [debugTick])
 
   // Detect iOS Safari for platform-specific guidance
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -270,6 +287,52 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       {permissionError && (
         <div className="fixed bottom-[88px] right-4 z-50 max-w-[260px] bg-red-900/95 border border-red-500/50 rounded-lg px-3 py-2 shadow-xl">
           <p className="text-[11px] text-red-200 leading-snug m-0">{permissionError}</p>
+        </div>
+      )}
+
+      {/* On-screen audio debug panel — only when ?debug=1 */}
+      {showDebug && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            maxHeight: '200px',
+            zIndex: 9999,
+            backgroundColor: 'rgba(0, 0, 0, 0.92)',
+            borderTop: '1px solid #333',
+            fontFamily: 'monospace',
+            fontSize: '10px',
+            color: '#0f0',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <div style={{ padding: '4px 8px', backgroundColor: '#111', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+            <span style={{ fontWeight: 700, color: '#0ff', fontSize: '10px' }}>AUDIO DEBUG</span>
+            <span style={{ color: '#666', fontSize: '9px' }}>{voiceDebugLog.length} entries · {status}</span>
+          </div>
+          <div
+            ref={debugScrollRef}
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '4px 8px',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            {voiceDebugLog.length === 0 ? (
+              <div style={{ color: '#666', padding: '8px 0' }}>Waiting for audio events... Tap mic to start.</div>
+            ) : (
+              voiceDebugLog.map((line, i) => (
+                <div key={i} style={{ padding: '1px 0', borderBottom: '1px solid #1a1a1a', color: line.includes('ERROR') || line.includes('FAILED') ? '#f44' : line.includes('OK') || line.includes('complete') || line.includes('unlocked') ? '#0f0' : '#ccc' }}>
+                  {line}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
     </>
