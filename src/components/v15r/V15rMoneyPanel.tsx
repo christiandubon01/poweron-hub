@@ -562,7 +562,7 @@ export default function V15rMoneyPanel() {
       {/* ── SERVICE JOB PERFORMANCE ──────────────────────────────────────── */}
       <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Service Job Performance</h3>
-        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {[
             { lbl: 'Jobs Logged', val: String(svcCount) },
             { lbl: 'Jobs Paid', val: String(svcPaidCount) },
@@ -587,7 +587,7 @@ export default function V15rMoneyPanel() {
       {/* ── BUSINESS ROLL-UP ─────────────────────────────────────────────── */}
       <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Business Roll-Up</h3>
-        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {[
             { lbl: 'Project Contract', val: fmtK(projectContract) },
             { lbl: 'Service Quoted', val: fmtK(svcQuoted) },

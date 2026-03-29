@@ -943,8 +943,12 @@ const SNAPSHOT_INTERVAL = 5 * 60 * 1000 // 5 minutes minimum between auto-snapsh
 
 function maybeAutoSnapshot(changeSummary: string): void {
   const now = Date.now()
-  if (now - _lastSnapshotTime < SNAPSHOT_INTERVAL) return
+  if (now - _lastSnapshotTime < SNAPSHOT_INTERVAL) {
+    console.log('[Snapshot] maybeAutoSnapshot skipped (too soon):', changeSummary)
+    return
+  }
   _lastSnapshotTime = now
+  console.log('[Snapshot] maybeAutoSnapshot triggered:', changeSummary)
   try {
     createSnapshot(`Auto: ${changeSummary}`)
   } catch {
@@ -1001,16 +1005,19 @@ export function createSnapshot(changeSummary: string): DataSnapshot | null {
 async function saveSnapshotToSupabase(snapshot: DataSnapshot): Promise<void> {
   try {
     const { supabase } = await import('@/lib/supabase')
+    // Store full snapshot list under 'poweron_snapshots' key so all devices sync
+    const allSnapshots = getSnapshots()
     await supabase
       .from('app_state')
       .upsert({
-        state_key: `snapshot_${snapshot.id}`,
-        state_value: snapshot,
+        state_key: 'poweron_snapshots',
+        state_value: allSnapshots,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'state_key' })
       .select()
-  } catch {
-    // Non-critical
+    console.log('[Snapshot] Saved', allSnapshots.length, 'snapshots to Supabase under poweron_snapshots')
+  } catch (err) {
+    console.warn('[Snapshot] Supabase save failed (non-critical):', err)
   }
 }
 

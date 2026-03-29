@@ -18,6 +18,7 @@ import * as rfiManager from './rfiManager'
 import * as changeOrderManager from './changeOrderManager'
 import * as coordinationTracker from './coordinationTracker'
 import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
+import { getLocalProjectContext } from '@/agents/nexus/router'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -714,6 +715,12 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
       throw new Error('VITE_ANTHROPIC_API_KEY not set')
     }
 
+    // Inject local project context (status buckets + financials from device state)
+    const localProjectCtx = getLocalProjectContext()
+    const systemWithContext = localProjectCtx
+      ? `${BLUEPRINT_SYSTEM_PROMPT}\n\n---\n\n## Live Project Context (from device state)\n${localProjectCtx}`
+      : BLUEPRINT_SYSTEM_PROMPT
+
     const response = await fetch('/api/anthropic/v1/messages', {
       method: 'POST',
       headers: {
@@ -725,7 +732,7 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1500,
-        system: BLUEPRINT_SYSTEM_PROMPT,
+        system: systemWithContext,
         messages: [
           {
             role: 'user',

@@ -678,13 +678,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   }
                 }}
               >
-                <div className={`w-2 h-2 rounded-full ${
+                <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                   syncStatus === 'synced' ? 'bg-green-500' :
                   syncStatus === 'syncing' ? 'bg-yellow-500 animate-pulse' :
                   syncStatus === 'failed' ? 'bg-red-500' :
                   'bg-gray-500'
                 }`} />
-                <span className={`text-xs ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
+                {/* Sync label — visible on all screen sizes */}
+                <span className={`text-xs flex-shrink-0 ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
                   {syncStatus === 'synced' && lastSyncTime
                     ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
                     : syncStatus === 'syncing' ? 'Pending sync...'

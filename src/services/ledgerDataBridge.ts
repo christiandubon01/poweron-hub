@@ -98,10 +98,11 @@ export function getMonthlyCollections(months = 12): MonthlyCollection[] {
   const backup = getBackupData()
   if (!backup) return []
 
-  const logs = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
   const buckets = new Map<string, MonthlyCollection>()
 
-  for (const log of logs) {
+  // Service logs — primary source for collections
+  const serviceLogs = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
+  for (const log of serviceLogs) {
     const mk = monthKey(log.date)
     if (mk === 'unknown') continue
 
@@ -115,6 +116,25 @@ export function getMonthlyCollections(months = 12): MonthlyCollection[] {
     b.quoted += quoted
     b.collected += collected
     b.balance += Math.max(0, quoted - collected)
+    b.count++
+  }
+
+  // Project field logs — also contribute collected amounts
+  const fieldLogs = Array.isArray(backup.logs) ? backup.logs : []
+  for (const log of fieldLogs as any[]) {
+    const collected = num(log.collected)
+    if (collected <= 0) continue
+
+    const mk = monthKey(log.date)
+    if (mk === 'unknown') continue
+
+    if (!buckets.has(mk)) {
+      buckets.set(mk, { month: mk, collected: 0, quoted: 0, balance: 0, count: 0 })
+    }
+
+    const b = buckets.get(mk)!
+    b.collected += collected
+    // Project logs: quoted = collected (already billed) — add to quoted if not already tracked
     b.count++
   }
 

@@ -16,6 +16,7 @@ import { getWakeWordDetector, type WakeWordConfig } from './wakeWordDetector'
 import { callClaude, extractText } from './claudeProxy'
 import { processMessage } from '@/agents/nexus'
 import { supabase } from '@/lib/supabase'
+import { addTranscriptEntry } from '@/components/voice/VoiceTranscriptPanel'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -573,6 +574,9 @@ export class VoiceSubsystem {
       this.currentSession.agentResponse = responseText
     }
 
+    // Add transcript entry for voice session
+    addTranscriptEntry(transcript, responseText, this.currentSession?.targetAgent)
+
     // ── SPEAKING state: mic OFF, wake word OFF ─────────────────────────
     // Completely disable microphone and audio input before playing response
     // to prevent ambient noise from canceling playback on iPhone/iOS.
@@ -669,11 +673,25 @@ export class VoiceSubsystem {
 
   private playAudio(audioUrl: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const audio = new Audio(audioUrl)
+      // iOS requires: set src, call load(), append to DOM, then play
+      const audio = new Audio()
+      audio.src = audioUrl
       audio.playbackRate = this.preferences.ttsSpeed
-      audio.onended = () => resolve()
-      audio.onerror = (err) => reject(err)
-      audio.play().catch(reject)
+      audio.load() // critical for iOS — forces buffering before play
+      document.body.appendChild(audio) // required for iOS WebView audio playback
+      audio.onended = () => {
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        resolve()
+      }
+      audio.onerror = (err) => {
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        reject(err)
+      }
+      audio.play().catch((e) => {
+        console.error('[iOS] Play failed:', e)
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        reject(e)
+      })
     })
   }
 
@@ -695,27 +713,35 @@ export class VoiceSubsystem {
       }
     }
 
-    // Standard path: HTMLAudioElement
+    // Standard path: HTMLAudioElement with iOS-safe load() + DOM append pattern
     return new Promise((resolve, reject) => {
-      const audio = new Audio(audioUrl)
+      const audio = new Audio()
+      audio.src = audioUrl
       audio.playbackRate = this.preferences.ttsSpeed
+      audio.load() // critical for iOS — forces buffering
+      document.body.appendChild(audio) // required for iOS WebView audio
       this.currentAudio = audio
 
       audio.onended = () => {
         this.currentAudio = null
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
         resolve()
       }
       audio.onerror = (err) => {
         this.currentAudio = null
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
         reject(err)
       }
       audio.onpause = () => {
         // If paused externally (interrupt), resolve instead of hanging
         this.currentAudio = null
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
         resolve()
       }
       audio.play().catch((err) => {
+        console.error('[iOS] playAudioTracked play() failed:', err)
         this.currentAudio = null
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
         reject(err)
       })
     })

@@ -174,7 +174,7 @@ export function ProactiveInsightCard({
           {/* Thread header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Follow-up {conversationHistory.length > 0 ? `· ${Math.ceil(conversationHistory.length / 2)} exchange${Math.ceil(conversationHistory.length / 2) !== 1 ? 's' : ''}` : ''}
+              Open Analysis Chat {conversationHistory.length > 0 ? `· ${Math.ceil(conversationHistory.length / 2)} exchange${Math.ceil(conversationHistory.length / 2) !== 1 ? 's' : ''}` : ''}
             </span>
             {conversationHistory.length > 0 && (
               <button

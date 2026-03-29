@@ -180,6 +180,20 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
 
+    // Compute suggestedMax for dual Y-axes: max(revenue, costs) * 1.2
+    const maxRevenue = Math.max(...pipelineRevenues, 0)
+    const maxCost = Math.max(...employeeCosts, 0)
+    const suggestedMax = Math.max(maxRevenue, maxCost) * 1.2 || 10000
+
+    // Helper: format dollar value without "-$0.2m" bug — use $200k not -$0.2m
+    const fmtAxisDollar = (v: number) => {
+      const abs = Math.abs(v)
+      const sign = v < 0 ? '-' : ''
+      if (abs >= 1000000) return sign + '$' + (abs / 1000000).toFixed(1) + 'm'
+      if (abs >= 1000) return sign + '$' + Math.round(abs / 1000) + 'k'
+      return sign + '$' + Math.round(abs)
+    }
+
     chartRef.current = new Chart(ctx, {
       type: 'bar',
       data: {
@@ -188,16 +202,24 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
           {
             label: 'Employee Cost',
             data: employeeCosts,
-            backgroundColor: '#3b82f6',
-            borderColor: 'rgba(59, 130, 246, 0.5)',
-            borderWidth: 1
+            backgroundColor: '#ef4444',
+            borderColor: 'rgba(239,68,68,0.5)',
+            borderWidth: 2,
+            type: 'line',
+            borderWidth: 3,
+            pointBackgroundColor: '#ef4444',
+            pointRadius: 4,
+            fill: false,
+            tension: 0.3,
+            yAxisID: 'y',
           },
           {
             label: 'Pipeline Revenue',
             data: pipelineRevenues,
-            backgroundColor: '#10b981',
-            borderColor: 'rgba(16, 185, 129, 0.5)',
-            borderWidth: 1
+            backgroundColor: 'rgba(16,185,129,0.25)',
+            borderColor: '#10b981',
+            borderWidth: 2,
+            yAxisID: 'y1',
           }
         ]
       },
@@ -217,7 +239,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
               label: (ctx: any) => {
                 const label = ctx.dataset.label || ''
                 const value = ctx.parsed.y || 0
-                return `${label}: $${Number(value).toLocaleString()}`
+                return `${label}: ${fmtAxisDollar(value)}`
               }
             }
           },
@@ -227,17 +249,32 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
         },
         scales: {
           x: {
-            stacked: true,
             ticks: { color: '#9ca3af', font: { size: 10 } },
             grid: { display: false }
           },
           y: {
-            stacked: true,
+            type: 'linear',
+            position: 'left',
+            suggestedMax,
+            suggestedMin: 0,
             ticks: {
-              color: '#9ca3af',
-              callback: (v: any) => '$' + (Number(v) / 1000).toFixed(0) + 'k'
+              color: '#ef4444',
+              callback: (v: any) => fmtAxisDollar(Number(v))
             },
-            grid: { color: 'rgba(255,255,255,0.05)' }
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            title: { display: true, text: 'Employee Cost', color: '#ef4444', font: { size: 10 } }
+          },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            suggestedMax,
+            suggestedMin: 0,
+            ticks: {
+              color: '#10b981',
+              callback: (v: any) => fmtAxisDollar(Number(v))
+            },
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: 'Revenue', color: '#10b981', font: { size: 10 } }
           }
         }
       }
@@ -296,6 +333,8 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
 
     let accumCost = 0
     let accumRevenue = 0
+    let maxRevenue = 0
+    let maxCosts = 0
     const accumCosts: number[] = []
     const accumRevenues: number[] = []
     const laborPcts: number[] = []
@@ -340,6 +379,8 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
       accumRevenue += weekRevenue
       accumCosts.push(accumCost)
       accumRevenues.push(accumRevenue)
+      maxCosts = Math.max(maxCosts, accumCost)
+      maxRevenue = Math.max(maxRevenue, accumRevenue)
       laborPcts.push(accumRevenue > 0 ? (accumCost / accumRevenue) * 100 : 0)
     })
 
@@ -420,10 +461,15 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
             type: 'linear',
             position: 'left',
             beginAtZero: true,
+            suggestedMax: Math.max(maxRevenue, maxCosts) * 1.2,
             grid: { color: 'rgba(255,255,255,0.05)' },
             ticks: {
               color: '#9ca3af',
-              callback: (v: any) => '$' + (Number(v) / 1000).toFixed(0) + 'k'
+              callback: (v: any) => {
+                const abs = Math.abs(Number(v))
+                if (abs < 1000) return '$' + Number(v).toFixed(0)
+                return '$' + (Number(v) / 1000).toFixed(1) + 'k'
+              }
             },
             title: { display: true, text: 'Dollars', color: '#9ca3af', font: { size: 11 } }
           },
@@ -887,7 +933,14 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
             stacked: true,
             ticks: {
               color: '#9ca3af',
-              callback: (v: any) => '$' + (Number(v) / 1000).toFixed(0) + 'k'
+              callback: (v: any) => {
+                // Fix "-$0.2m" bug — show "-$200k" instead
+                const abs = Math.abs(Number(v))
+                const sign = Number(v) < 0 ? '-' : ''
+                if (abs >= 1000000) return sign + '$' + (abs / 1000000).toFixed(1) + 'm'
+                if (abs >= 1000) return sign + '$' + Math.round(abs / 1000) + 'k'
+                return sign + '$' + Math.round(abs)
+              }
             },
             grid: { color: 'rgba(255,255,255,0.05)' }
           }
@@ -968,15 +1021,17 @@ function formatCurrency(value: number | undefined): string {
 function calcEmployeeCost(emp: any, backup: any) {
   const hourlyRate = num(emp.costRate || emp.rate || 0)
   const hrsPerWeek = num(emp.hoursPerWeek || 40)
+  // Formula: base = hourlyRate × hoursPerWeek × 4.33 × 1.208 (employer burden)
   const baseMonthlyCost = hourlyRate * hrsPerWeek * 4.33
-  const payrollTax = baseMonthlyCost * 0.153
-  const workersComp = baseMonthlyCost * 0.04
-  const glInsurance = baseMonthlyCost * 0.015
-  const loadedMonthlyCost = baseMonthlyCost + payrollTax + workersComp + glInsurance
+  const payrollTax = baseMonthlyCost * 0.153  // FICA + FUTA
+  const workersComp = baseMonthlyCost * 0.04  // CA Workers Comp ~4%
+  const glInsurance = baseMonthlyCost * 0.015 // GL Insurance ~1.5%
+  const taxesAndInsurance = payrollTax + workersComp + glInsurance  // = base × 0.208
+  const loadedMonthlyCost = baseMonthlyCost + taxesAndInsurance     // = base × 1.208
   const sixMonthCost = loadedMonthlyCost * 6
   const targetMargin = num(backup?.settings?.markup || 35) / 100
   const targetRevenue = targetMargin > 0 ? loadedMonthlyCost / targetMargin : 0
-  return { baseMonthlyCost, loadedMonthlyCost, sixMonthCost, targetRevenue, hourlyRate, hrsPerWeek }
+  return { baseMonthlyCost, taxesAndInsurance, loadedMonthlyCost, sixMonthCost, targetRevenue, hourlyRate, hrsPerWeek }
 }
 
 function NoData() {
@@ -1095,9 +1150,14 @@ function EmployeeCard({
 
       {cost && (
         <div className="mt-4 pt-4 border-t border-gray-700 space-y-1 text-xs">
-          <div className="flex justify-between">
-            <span className="text-gray-400">Monthly (loaded)</span>
-            <span className="text-white font-medium">{formatCurrency(cost.loadedMonthlyCost)}</span>
+          {/* Breakdown: Base | Taxes/Insurance | Total */}
+          <div className="bg-[var(--bg-secondary)] rounded p-2 mb-2">
+            <div className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Monthly Cost Breakdown</div>
+            <div className="text-gray-300 text-[11px]">
+              Base: <span className="text-blue-400 font-semibold">{formatCurrency(cost.baseMonthlyCost)}</span>
+              {' | '}Taxes/Insurance: <span className="text-orange-400 font-semibold">{formatCurrency(cost.taxesAndInsurance)}</span>
+              {' | '}Total: <span className="text-white font-bold">{formatCurrency(cost.loadedMonthlyCost)}/mo</span>
+            </div>
           </div>
           <div className="flex justify-between">
             <span className="text-gray-400">6-Month Cost</span>
@@ -1271,7 +1331,7 @@ export default function V15rTeamPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--bg-secondary)] p-5 space-y-6">
+    <div className="min-h-screen bg-[var(--bg-secondary)] p-3 md:p-5 space-y-6 overflow-x-hidden">
       {/* HEADER */}
       <div className="flex items-center gap-3 mb-8">
         <Users className="w-8 h-8 text-blue-400" />

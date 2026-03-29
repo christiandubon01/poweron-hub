@@ -111,16 +111,18 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
             )}
           </div>
 
-          <div className="flex gap-1 overflow-x-auto">
+          <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
             {tabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => handleTabClick(tab.id)}
-                className="px-3 py-2 text-sm font-medium whitespace-nowrap rounded-t transition-colors"
+                className="px-3 text-sm font-medium whitespace-nowrap rounded-t transition-colors flex-shrink-0"
                 style={{
+                  minHeight: '44px', // iOS touch target minimum
                   backgroundColor: localTab === tab.id ? 'rgba(59,130,246,0.5)' : 'transparent',
                   color: localTab === tab.id ? '#fff' : 'var(--t3)',
                   borderBottom: localTab === tab.id ? '2px solid #3b82f6' : 'none',
+                  fontSize: '14px',
                 }}
               >
                 {tab.label}

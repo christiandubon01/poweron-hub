@@ -288,24 +288,41 @@ export default function V15rTemplatesPanel() {
                     </button>
                   </div>
 
-                  <button
-                    onClick={async () => {
-                      setAiEstimateLoading(true)
-                      try {
-                        const response = await callClaude({
-                          system: 'You are VAULT, the estimating agent for Power On Solutions, a C-10 electrical contractor in Coachella Valley, CA. Provide actionable estimate suggestions.',
-                          messages: [{ role: 'user', content: `Based on this project template:\nName: ${template?.name || 'Unknown'}\nType: ${template?.type || 'General'}\nPhases: ${JSON.stringify(template?.phases || {})}\n\nSuggest estimate line items, typical labor hours, material categories, and margin targets for this job type in the Coachella Valley electrical market. Keep under 250 words.` }],
-                          max_tokens: 640,
-                        })
-                        setAiEstimate(extractText(response))
-                      } catch { setAiEstimate('Analysis unavailable') }
-                      setAiEstimateLoading(false)
-                    }}
-                    disabled={aiEstimateLoading}
-                    className="w-full px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded-lg text-sm font-medium transition flex items-center justify-center gap-1 disabled:opacity-50"
-                  >
-                    <Sparkles size={14} /> {aiEstimateLoading ? 'Analyzing...' : 'AI Estimate Helper'}
-                  </button>
+                  {!projects || projects.length === 0 ? (
+                    <div className="w-full px-3 py-3 bg-amber-900/30 border border-amber-700/50 text-amber-200 rounded-lg text-sm flex items-start gap-2">
+                      <span className="text-lg flex-shrink-0">⚠️</span>
+                      <span>Select a project to get personalized template suggestions</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        // Check if a project is selected for context
+                        const selectedProjectId = (backup as any).activeId || (backup as any).currentProjectId || null
+                        const activeProject = selectedProjectId
+                          ? (projects || []).find((p: BackupProject) => p.id === selectedProjectId)
+                          : (projects || [])[0]
+
+                        setAiEstimateLoading(true)
+                        try {
+                          const phasesActivated = template?.activatedPhases || Object.keys(template?.tasks || {})
+                          const projectContext = activeProject
+                            ? `\n\nCurrently selected project for context:\n- Name: ${activeProject.name}\n- Type: ${activeProject.type || 'Unknown'}\n- Contract: $${activeProject.contract || 0}\n- Status: ${activeProject.status || 'active'}`
+                            : '\n\n(No project selected — providing general template guidance)'
+                          const response = await callClaude({
+                            system: 'You are VAULT, the estimating agent for Power On Solutions, a C-10 electrical contractor in Coachella Valley, CA. Provide actionable estimate suggestions specific to the template and project context.',
+                            messages: [{ role: 'user', content: `Based on this project template:\nName: ${template?.name || 'Unknown'}\nType: ${template?.type || 'General'}\nJob Type: ${template?.type || 'General'}\nPhases: ${phasesActivated.join(', ')}\nTasks: ${JSON.stringify(template?.tasks || {}, null, 2)}${projectContext}\n\nSuggest estimate line items, typical labor hours, material categories, and margin targets for this job type in the Coachella Valley electrical market. Keep under 250 words.` }],
+                            max_tokens: 640,
+                          })
+                          setAiEstimate(extractText(response))
+                        } catch { setAiEstimate('Analysis unavailable') }
+                        setAiEstimateLoading(false)
+                      }}
+                      disabled={aiEstimateLoading}
+                      className="w-full px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded-lg text-sm font-medium transition flex items-center justify-center gap-1 disabled:opacity-50"
+                    >
+                      <Sparkles size={14} /> {aiEstimateLoading ? 'Analyzing...' : 'AI Estimate Helper'}
+                    </button>
+                  )}
 
                   {aiEstimate && (
                     <div className="mt-3 p-4 bg-purple-900/20 border border-purple-500/20 rounded-lg">

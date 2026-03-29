@@ -1031,6 +1031,18 @@ export default function V15rSettingsPanel() {
                 </button>
               </div>
 
+              {/* Quick Create Snapshot Now button */}
+              <button
+                onClick={() => {
+                  createSnapshot(`Manual snapshot ${new Date().toLocaleTimeString()}`)
+                  setVersionSnapshots(getSnapshots())
+                  alert('Snapshot created successfully ✓')
+                }}
+                className="w-full px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-lg text-sm font-medium hover:bg-emerald-600/30 transition"
+              >
+                Create Snapshot Now
+              </button>
+
               {/* Snapshot list */}
               <div className="space-y-2 max-h-80 overflow-y-auto">
                 {versionSnapshots.length === 0 ? (

@@ -28,7 +28,7 @@ function resolveStatusBucket(status: string): 'ACTIVE CONSTRUCTION' | 'ESTIMATIN
  * Build a project status/financials summary from local backup data.
  * Returns a formatted context string for injection into the Claude prompt.
  */
-function getLocalProjectContext(): string {
+export function getLocalProjectContext(): string {
   const backup = getBackupData()
   if (!backup) return ''
 

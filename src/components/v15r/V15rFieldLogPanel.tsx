@@ -764,7 +764,7 @@ export default function V15rFieldLogPanel() {
               disabled={aiProfitLoading}
               className="px-3 py-1.5 bg-purple-600/20 text-purple-400 rounded-lg text-xs hover:bg-purple-600/30 flex items-center gap-1.5 disabled:opacity-50"
             >
-              <Sparkles size={12} /> {aiProfitLoading ? 'Analyzing...' : 'AI Profit Analysis'}
+              <Sparkles size={12} /> {aiProfitLoading ? 'Analyzing...' : activeTab === 'svc' ? 'Analyze Service Log' : 'Analyze Project Log'}
             </button>
             <button
               onClick={() => { resetProjForm(); setShowProjForm(true) }}

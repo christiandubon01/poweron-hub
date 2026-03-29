@@ -15,6 +15,56 @@ import { PULSE_SYSTEM_PROMPT } from './systemPrompt'
 import { calculateWeeklyKPIs, calculateARaging, generateCashFlowForecast, getHistoricalRevenue } from './kpiCalculator'
 import { analyzeTrends } from './trendAnalyzer'
 import { logAudit } from '@/lib/memory/audit'
+import { getBackupData } from '@/services/backupDataService'
+
+// ── Local Backup Weekly Context ──────────────────────────────────────────────
+
+function num(v: any): number {
+  if (v === null || v === undefined || v === '') return 0
+  const n = Number(v)
+  return isNaN(n) ? 0 : n
+}
+
+/**
+ * Read backup.logs + backup.serviceLogs grouped by ISO week.
+ * Returns a context string: "This week: $X | Last week: $Y | 4-week avg: $Z"
+ */
+function getLocalWeeklyContext(): string {
+  const backup = getBackupData()
+  if (!backup) return ''
+
+  const allLogs = [
+    ...(Array.isArray(backup.logs) ? backup.logs : []),
+    ...(Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []),
+  ]
+  if (allLogs.length === 0) return ''
+
+  function isoWeek(dateStr: string): string {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return ''
+    const jan1 = new Date(d.getFullYear(), 0, 1)
+    const week = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7)
+    return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`
+  }
+
+  const weekBuckets = new Map<string, number>()
+  for (const log of allLogs) {
+    const dateStr: string = (log as any).date || ''
+    if (!dateStr) continue
+    const wk = isoWeek(dateStr)
+    if (!wk) continue
+    const collected = num((log as any).collected)
+    weekBuckets.set(wk, (weekBuckets.get(wk) || 0) + collected)
+  }
+
+  const sortedWeeks = Array.from(weekBuckets.entries()).sort((a, b) => b[0].localeCompare(a[0]))
+  const thisWeek = sortedWeeks[0]?.[1] ?? 0
+  const lastWeek = sortedWeeks[1]?.[1] ?? 0
+  const last4 = sortedWeeks.slice(0, 4).map(([, v]) => v)
+  const avg4 = last4.length ? last4.reduce((s, v) => s + v, 0) / last4.length : 0
+
+  return `This week: $${thisWeek.toLocaleString()} | Last week: $${lastWeek.toLocaleString()} | 4-week avg: $${Math.round(avg4).toLocaleString()}`
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,10 +170,14 @@ async function generateKPISummary(data: unknown, context?: string): Promise<stri
   try {
     const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
 
+    // Enrich with real local device data (source of truth)
+    const localWeeklyCtx = getLocalWeeklyContext()
+
     const userPrompt = `Here are this week's financial KPIs:
 
 ${JSON.stringify(data, null, 2)}
 
+${localWeeklyCtx ? `## Weekly Revenue (from device state)\n${localWeeklyCtx}\n` : ''}
 ${context ? `Additional context: ${context}` : ''}
 
 Provide a concise 2-3 sentence executive summary highlighting:

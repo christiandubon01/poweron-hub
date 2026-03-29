@@ -267,17 +267,6 @@ export default function V15rPricingIntelligencePanel() {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="bg-[#1a1d27] text-white p-6">
-      <ProactiveInsightCard
-        agentName="SCOUT"
-        agentColor="#06b6d4"
-        response={scout.response}
-        loading={scout.loading}
-        error={scout.error}
-        onRefresh={scout.refresh}
-        emptyMessage="Add completed jobs to analyze your pricing patterns and market positioning."
-        systemPrompt={scoutSystem}
-      />
-
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-start justify-between mb-4">
@@ -587,31 +576,48 @@ export default function V15rPricingIntelligencePanel() {
             </div>
           )}
 
-          {/* SCOUT AI Button */}
-          <button
-            onClick={handleScoutAnalysis}
-            disabled={scoutLoading}
-            className="w-full px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            <Sparkles size={16} />
-            {scoutLoading ? 'Analyzing...' : 'Scout AI Analysis'}
-          </button>
         </div>
       </div>
 
-      {/* SCOUT Analysis Display */}
-      {scoutAnalysis && (
-        <div className="mt-6 bg-[#232738] rounded-lg border border-gray-700 p-4">
-          <div className="flex justify-between items-start mb-3">
-            <div className="flex items-center gap-2">
-              <Sparkles size={16} className="text-purple-400" />
-              <span className="text-purple-400 text-sm font-medium">SCOUT Analysis</span>
+      {/* SCOUT AI Analysis — absolute bottom, below archived jobs */}
+      <div className="mt-8">
+        <ProactiveInsightCard
+          agentName="SCOUT"
+          agentColor="#06b6d4"
+          response={scout.response}
+          loading={scout.loading}
+          error={scout.error}
+          onRefresh={scout.refresh}
+          emptyMessage="Add completed jobs to analyze your pricing patterns and market positioning."
+          systemPrompt={scoutSystem}
+        />
+      </div>
+
+      {/* SCOUT AI Button + Analysis Display — moved to bottom */}
+      <div className="space-y-4">
+        <button
+          onClick={handleScoutAnalysis}
+          disabled={scoutLoading}
+          className="w-full px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          <Sparkles size={16} />
+          {scoutLoading ? 'Analyzing...' : 'Scout AI Analysis'}
+        </button>
+
+        {/* SCOUT Analysis Display */}
+        {scoutAnalysis && (
+          <div className="bg-[#232738] rounded-lg border border-gray-700 p-4">
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles size={16} className="text-purple-400" />
+                <span className="text-purple-400 text-sm font-medium">SCOUT Analysis</span>
+              </div>
+              <button onClick={() => setScoutAnalysis(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
             </div>
-            <button onClick={() => setScoutAnalysis(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+            <p className="text-gray-300 text-sm whitespace-pre-wrap">{scoutAnalysis}</p>
           </div>
-          <p className="text-gray-300 text-sm whitespace-pre-wrap">{scoutAnalysis}</p>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* AI Insight Modal */}
       {showAIInsight && (

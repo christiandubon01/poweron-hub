@@ -44,17 +44,46 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: Dynamically load Chart.js from CDN ──
+// ── HELPER: Dynamically load Chart.js + zoom plugin from CDN ──
 function useChartJS() {
   const [ready, setReady] = useState(false)
   useEffect(() => {
+    const loadZoomPlugin = () => {
+      if ((window as any).ChartZoom) {
+        const Chart = (window as any).Chart
+        if (Chart && (window as any).ChartZoom) {
+          try { Chart.register((window as any).ChartZoom) } catch { /* already registered */ }
+        }
+        setReady(true)
+        return
+      }
+      // Load hammerjs first (required by chartjs-plugin-zoom for touch/pinch)
+      const hammer = document.createElement('script')
+      hammer.src = 'https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js'
+      hammer.onload = () => {
+        const zoom = document.createElement('script')
+        zoom.src = 'https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js'
+        zoom.onload = () => {
+          const Chart = (window as any).Chart
+          if (Chart && (window as any).ChartZoom) {
+            try { Chart.register((window as any).ChartZoom) } catch { /* already registered */ }
+          }
+          setReady(true)
+        }
+        zoom.onerror = () => setReady(true) // zoom optional — still show charts
+        document.head.appendChild(zoom)
+      }
+      hammer.onerror = () => setReady(true) // hammer optional
+      document.head.appendChild(hammer)
+    }
+
     if ((window as any).Chart) {
-      setReady(true)
+      loadZoomPlugin()
       return
     }
     const s = document.createElement('script')
     s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js'
-    s.onload = () => setReady(true)
+    s.onload = loadZoomPlugin
     s.onerror = () => console.error('Failed to load Chart.js')
     document.head.appendChild(s)
   }, [])
@@ -66,6 +95,8 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
+  const [isZoomed, setIsZoomed] = useState(false)
+  const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !data.length) return
@@ -332,21 +363,33 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
             }
           },
           legend: {
-            position: 'top',
+            position: isMobileView ? 'bottom' : 'top',
             labels: {
               color: '#d1d5db',
-              font: { size: 14 },
-              padding: 15,
+              font: { size: isMobileView ? 11 : 14 },
+              padding: isMobileView ? 8 : 15,
               usePointStyle: true,
             }
-          }
+          },
+          zoom: (window as any).ChartZoom ? {
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: 'x',
+              onZoom: () => setIsZoomed(true),
+            },
+            pan: {
+              enabled: true,
+              mode: 'x',
+            },
+          } : undefined,
         },
         scales: {
           x: {
             ticks: {
               color: '#9ca3af',
               font: { size: 10 },
-              maxTicksLimit: 26,
+              maxTicksLimit: isMobileView ? 6 : 12,
               maxRotation: 45,
             },
             grid: { color: 'rgba(255,255,255,0.03)' }
@@ -374,7 +417,19 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
     }
   }, [chartReady, data, backup])
 
-  return <canvas ref={canvasRef} />
+  return (
+    <div className="relative w-full h-full">
+      {isZoomed && (
+        <button
+          onClick={() => { chartRef.current?.resetZoom?.(); setIsZoomed(false) }}
+          className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded"
+        >
+          Reset Zoom
+        </button>
+      )}
+      <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+    </div>
+  )
 }
 
 // ── OPP CHART COMPONENT ──
@@ -382,6 +437,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
+  const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
@@ -431,6 +487,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
             }
           },
           legend: {
+            position: isMobileView ? 'bottom' : 'top',
             labels: { color: '#9ca3af', font: { size: 12 } }
           }
         },
@@ -456,7 +513,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup])
+  }, [chartReady, projects, backup, isMobileView])
 
   return <canvas ref={canvasRef} />
 }
@@ -466,6 +523,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
+  const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   const phaseNames = ['Planning', 'Estimating', 'Site Prep', 'Rough-in', 'Trim', 'Finish']
   const phaseColors = ['#6b7280', '#8b5cf6', '#f59e0b', '#3b82f6', '#eab308', '#10b981']
@@ -522,6 +580,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
             }
           },
           legend: {
+            position: isMobileView ? 'bottom' : 'top',
             labels: { color: '#9ca3af', font: { size: 11 } }
           }
         },
@@ -546,7 +605,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup])
+  }, [chartReady, projects, backup, isMobileView])
 
   return <canvas ref={canvasRef} />
 }
@@ -556,6 +615,7 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
+  const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
@@ -644,6 +704,7 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
             }
           },
           legend: {
+            position: isMobileView ? 'bottom' : 'top',
             labels: { color: '#9ca3af', font: { size: 12 } }
           }
         },
@@ -669,7 +730,7 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup])
+  }, [chartReady, projects, backup, isMobileView])
 
   return <canvas ref={canvasRef} />
 }
@@ -1110,13 +1171,76 @@ interface NEXUSAnalysis {
   bullets?: Array<{ icon: string; text: string; priority: 'high' | 'medium' | 'low' }>
 }
 
+interface NEXUSChatEntry {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+}
+
+// Parse **bold** markdown and color-code by keyword
+function NEXUSRichText({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/)
+  const keywordBorder = (t: string): string => {
+    const upper = t.toUpperCase()
+    if (upper.includes('CRITICAL')) return '#ef4444'
+    if (upper.includes('HIGH RISK')) return '#f97316'
+    if (upper.includes('ATTENTION')) return '#eab308'
+    if (upper.includes('HEALTHY')) return '#10b981'
+    return ''
+  }
+  const border = keywordBorder(text)
+  return (
+    <span style={{ borderLeft: border ? `3px solid ${border}` : 'none', paddingLeft: border ? '6px' : '0' }}>
+      {parts.map((p, i) =>
+        p.startsWith('**') && p.endsWith('**')
+          ? <strong key={i}>{p.slice(2, -2)}</strong>
+          : <span key={i}>{p}</span>
+      )}
+    </span>
+  )
+}
+
 function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
   backup: BackupData
   cfotSummary: { exposure: number; unbilled: number; pending: number; svcTotal: number; projTotal: number; accumTotal: number }
   projects: any[]
 }) {
   const [state, setState] = useState<NEXUSAnalysis>({ loading: true })
-  const [expanded, setExpanded] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatHistory, setChatHistory] = useState<NEXUSChatEntry[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const chatScrollRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight
+  }, [chatHistory])
+
+  const handleChatSend = async () => {
+    const trimmed = chatInput.trim()
+    if (!trimmed || chatLoading) return
+    setChatInput('')
+    setChatLoading(true)
+    const userEntry: NEXUSChatEntry = { role: 'user', content: trimmed, timestamp: Date.now() }
+    const updated = [...chatHistory, userEntry]
+    setChatHistory(updated)
+    try {
+      const result = await callClaude({
+        system: 'You are NEXUS, the AI dashboard analyzer for Power On Solutions. Continue the analysis conversation. Be concise and actionable.',
+        messages: [
+          { role: 'assistant' as const, content: state.analysis || 'Dashboard analysis unavailable.' },
+          ...updated.map(e => ({ role: e.role as 'user' | 'assistant', content: e.content })),
+        ],
+        max_tokens: 1024,
+      })
+      const responseText = extractText(result)
+      setChatHistory(prev => [...prev, { role: 'assistant', content: responseText, timestamp: Date.now() }])
+    } catch (err) {
+      setChatHistory(prev => [...prev, { role: 'assistant', content: 'Error: ' + String(err), timestamp: Date.now() }])
+    } finally {
+      setChatLoading(false)
+    }
+  }
 
   useEffect(() => {
     const analyze = async () => {
@@ -1197,29 +1321,69 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
           <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
         </div>
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => setChatOpen(!chatOpen)}
           className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors"
         >
-          {expanded ? 'Collapse' : 'Dive Deeper'}
+          {chatOpen ? 'Close Chat' : 'Open Analysis Chat'}
         </button>
       </div>
 
       <div className="space-y-2">
         {state.bullets ? (
-          state.bullets.map((b, i) => (
-            <div key={i} className="flex gap-3 text-sm text-gray-300">
-              <span className="text-lg flex-shrink-0">{b.icon}</span>
-              <span>{b.text}</span>
-            </div>
-          ))
+          state.bullets.map((b, i) => {
+            const borderClr = b.priority === 'high' ? '#ef4444' : b.priority === 'medium' ? '#f97316' : '#10b981'
+            return (
+              <div key={i} className="flex gap-3 text-sm text-gray-300 rounded px-2 py-1.5" style={{ borderLeft: `3px solid ${borderClr}` }}>
+                <span className="text-lg flex-shrink-0">{b.icon}</span>
+                <NEXUSRichText text={b.text} />
+              </div>
+            )
+          })
         ) : (
-          <p className="text-gray-400 text-sm">{state.analysis}</p>
+          <div className="text-gray-400 text-sm">
+            {state.analysis ? <NEXUSRichText text={state.analysis} /> : null}
+          </div>
         )}
       </div>
 
-      {expanded && state.analysis && (
-        <div className="mt-4 pt-4 border-t border-gray-600 max-h-80 overflow-y-auto">
-          <p className="text-gray-400 text-xs whitespace-pre-wrap">{state.analysis}</p>
+      {/* Persistent Analysis Chat */}
+      {chatOpen && (
+        <div className="mt-4 pt-4 border-t border-gray-700">
+          <div ref={chatScrollRef} className="max-h-72 overflow-y-auto space-y-2 mb-3 pr-1">
+            {chatHistory.length === 0 && (
+              <p className="text-gray-500 text-xs italic">Ask a follow-up question about your dashboard data...</p>
+            )}
+            {chatHistory.map((entry, i) => (
+              <div key={i} style={{ marginBottom: '6px' }}>
+                <div className="text-[10px] text-gray-600 mb-0.5">{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <div className="text-xs leading-relaxed" style={{ color: entry.role === 'user' ? '#e5e7eb' : '#d1d5db' }}>
+                  <span style={{ fontWeight: 700, color: entry.role === 'user' ? '#fff' : '#a855f7' }}>
+                    {entry.role === 'user' ? 'You: ' : 'NEXUS: '}
+                  </span>
+                  {entry.role === 'assistant' ? <NEXUSRichText text={entry.content} /> : entry.content}
+                </div>
+              </div>
+            ))}
+            {chatLoading && (
+              <div className="text-purple-400 text-xs animate-pulse">NEXUS is thinking...</div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleChatSend()}
+              placeholder="Ask NEXUS about your dashboard..."
+              className="flex-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-xs text-gray-200 outline-none"
+            />
+            <button
+              onClick={handleChatSend}
+              disabled={chatLoading || !chatInput.trim()}
+              className="px-3 py-2 bg-purple-700 hover:bg-purple-600 text-white text-xs rounded disabled:opacity-50"
+            >
+              Send
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -1324,7 +1488,10 @@ function V15rDashboardInner() {
             <h2 className="text-[30px] font-bold text-gray-100 leading-tight">Projects Cash Flow Over Time</h2>
             <p className="text-sm text-gray-400 italic mt-1">Accumulative vs Total Exposure — Detailed with Unbilled, Invoiced and Received</p>
           </div>
-          <div className="relative w-full h-[500px]">
+          <div
+            className="relative w-full"
+            style={{ height: Math.max(250, Math.round(window.innerHeight * 0.4)) + 'px' }}
+          >
             <ChartErrorBoundary>
               <CFOTChart data={cfotData} backup={backup} />
             </ChartErrorBoundary>

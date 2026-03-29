@@ -115,6 +115,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ status: 'loading', error: null })
 
     try {
+      // Safari iOS strips URL fragments on redirect — check both hash and search for tokens
+      // before calling getSession() so Supabase can pick them up.
+      try {
+        const hash = window.location.hash?.slice(1) || ''
+        const search = window.location.search?.slice(1) || ''
+        const params = new URLSearchParams(hash || search)
+        const accessToken = params.get('access_token')
+        const refreshToken = params.get('refresh_token')
+        const type = params.get('type')
+        if (accessToken && refreshToken) {
+          console.log('[Auth] iOS Safari fallback: found tokens in URL', { type, via: hash ? 'hash' : 'search' })
+          await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+          // Clear tokens from URL bar
+          window.history.replaceState({}, document.title, window.location.pathname)
+        }
+      } catch (urlErr) {
+        console.warn('[Auth] iOS Safari URL token fallback (non-blocking):', urlErr)
+      }
+
       // 1. Check Supabase session (JWT)
       const { data: { session } } = await supabase.auth.getSession()
 
