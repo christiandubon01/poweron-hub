@@ -121,8 +121,27 @@ export function onDebugUpdate(fn: () => void): () => void {
 
 let unlockedAudioContext: AudioContext | null = null
 
+// ── iOS HTMLAudioElement Singleton ──────────────────────────────────────────
+// iOS Safari only allows audio.play() within ~1 second of a user gesture.
+// The voice pipeline (STT → Claude → ElevenLabs) takes many seconds, breaking
+// the gesture context. Solution: pre-create and pre-unlock an Audio element on
+// the gesture itself (play a silent WAV), then reuse it at playback time by
+// swapping its src to the real Blob URL.
+
+let iosAudioElement: HTMLAudioElement | null = null
+
+// Minimal silent WAV — 44-byte header, 1 sample of silence
+const SILENT_WAV_BASE64 = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+
 /**
- * Pre-unlock the AudioContext on a user gesture (tap/click).
+ * Get the pre-unlocked iOS Audio element (or null if not yet created).
+ */
+export function getIOSAudioElement(): HTMLAudioElement | null {
+  return iosAudioElement
+}
+
+/**
+ * Pre-unlock the AudioContext AND HTMLAudioElement on a user gesture (tap/click).
  * MUST be called synchronously in the same call stack as the gesture event.
  * Plays a silent buffer to fully satisfy iOS autoplay policy.
  */
@@ -149,6 +168,37 @@ export function unlockAudioContext(): void {
     console.log('[iOS Audio] Silent buffer played — context fully unlocked')
   } catch (e) {
     debugPush(`Silent buffer ERROR: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  // ── Pre-unlock HTMLAudioElement for iOS ────────────────────────────────
+  // Create once, play silent WAV on gesture, then reuse for real audio later.
+  // This keeps the Audio element "gesture-blessed" so .play() works even after
+  // the long async pipeline completes.
+  if (!iosAudioElement) {
+    try {
+      iosAudioElement = new Audio()
+      iosAudioElement.src = SILENT_WAV_BASE64
+      iosAudioElement.load()
+      document.body.appendChild(iosAudioElement)
+      iosAudioElement.play().then(() => {
+        debugPush('iOS Audio element pre-unlocked — silent WAV played OK')
+        console.log('[iOS Audio] HTMLAudioElement pre-unlocked with silent WAV')
+      }).catch((e) => {
+        debugPush(`iOS Audio element pre-unlock play() failed: ${e instanceof Error ? e.message : String(e)}`)
+        console.warn('[iOS Audio] HTMLAudioElement silent WAV play() failed:', e)
+      })
+    } catch (e) {
+      debugPush(`iOS Audio element creation ERROR: ${e instanceof Error ? e.message : String(e)}`)
+      console.warn('[iOS Audio] Failed to create HTMLAudioElement singleton:', e)
+    }
+  } else {
+    // Already exists — just re-play silent WAV to keep it gesture-blessed
+    try {
+      iosAudioElement.src = SILENT_WAV_BASE64
+      iosAudioElement.load()
+      iosAudioElement.play().catch(() => { /* ignore re-unlock failures */ })
+      debugPush('iOS Audio element RE-unlocked on gesture')
+    } catch { /* ignore */ }
   }
 }
 
@@ -841,18 +891,19 @@ export class VoiceSubsystem {
   }
 
   /**
-   * iOS-specific audio playback using HTMLAudioElement with Blob URL.
+   * iOS-specific audio playback — reuses the pre-unlocked HTMLAudioElement singleton.
    *
-   * decodeAudioData is unreliable on iOS Safari with MP3 (causes "Load failed").
-   * Instead we fetch the audio data, create an audio/mpeg Blob, generate an
-   * object URL, and play through a DOM-appended HTMLAudioElement.
+   * The iosAudioElement was created and "gesture-blessed" by unlockAudioContext()
+   * on the user's mic tap. Because it already called .play() on the gesture stack,
+   * iOS allows subsequent .play() calls on the SAME element even after long async
+   * chains. We simply swap its src to the real Blob URL and call .play() again.
    *
-   * The Audio element is stored at this.currentAudio so it can be interrupted.
+   * Falls back to creating a new Audio element if the singleton is missing.
    * Includes a 10-second timeout fallback in case onended never fires.
    */
   private async playAudioIOS(audioUrl: string): Promise<void> {
-    debugPush('playAudioIOS() — starting Blob URL path')
-    console.log('[iOS Audio] Attempting playback via Blob URL HTMLAudioElement')
+    debugPush('playAudioIOS() — starting pre-unlocked singleton path')
+    console.log('[iOS Audio] Attempting playback via pre-unlocked HTMLAudioElement singleton')
 
     // Fetch the audio data from the object URL
     const response = await fetch(audioUrl)
@@ -864,27 +915,35 @@ export class VoiceSubsystem {
     const blobUrl = URL.createObjectURL(blob)
     debugPush(`playAudioIOS() — Blob URL created (${blob.size} bytes)`)
 
+    // Reuse the pre-unlocked singleton, or fall back to a new element
+    const audio = getIOSAudioElement() || (() => {
+      debugPush('playAudioIOS() — WARNING: no pre-unlocked singleton, creating new Audio()')
+      console.warn('[iOS Audio] No pre-unlocked singleton — creating new Audio element (may fail)')
+      const el = new Audio()
+      document.body.appendChild(el)
+      return el
+    })()
+
     return new Promise((resolve, reject) => {
       let settled = false
       const cleanup = () => {
         this.currentAudio = null
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        // Do NOT remove the singleton from DOM — we reuse it for future playback
         URL.revokeObjectURL(blobUrl)
         clearTimeout(hangTimeout)
       }
       const safeResolve = () => { if (!settled) { settled = true; cleanup(); resolve() } }
       const safeReject = (err: any) => { if (!settled) { settled = true; cleanup(); reject(err) } }
 
-      const audio = new Audio()
+      // Swap src to the real audio Blob URL
       audio.src = blobUrl
       audio.playbackRate = this.preferences.ttsSpeed
       audio.load() // iOS requires explicit load before play
-      document.body.appendChild(audio) // required for iOS WebView audio playback
       this.currentAudio = audio
 
       audio.onended = () => {
         debugPush('iOS HTMLAudioElement onended FIRED — playback complete')
-        console.log('[iOS Audio] Blob URL playback completed via onended')
+        console.log('[iOS Audio] Pre-unlocked singleton playback completed via onended')
         safeResolve()
       }
       audio.onerror = (err) => {
@@ -900,18 +959,18 @@ export class VoiceSubsystem {
       // 10-second timeout fallback
       const hangTimeout = setTimeout(() => {
         debugPush('iOS audio TIMEOUT (10s) — force-resolving')
-        console.warn('[iOS Audio] Blob URL playback timeout (10s) — force-resolving')
+        console.warn('[iOS Audio] Pre-unlocked singleton playback timeout (10s) — force-resolving')
         try { audio.pause(); audio.src = '' } catch { /* ignore */ }
         safeResolve()
       }, 10000)
 
-      debugPush('iOS audio.play() — calling...')
+      debugPush('iOS audio.play() — calling on pre-unlocked singleton...')
       audio.play().then(() => {
-        debugPush(`iOS audio.play() — OK, playing`)
-        console.log('[iOS Audio] Blob URL play() succeeded')
+        debugPush(`iOS audio.play() — OK, playing via pre-unlocked singleton`)
+        console.log('[iOS Audio] Pre-unlocked singleton play() succeeded')
       }).catch((err) => {
         debugPush(`iOS audio.play() FAILED: ${err instanceof Error ? err.message : String(err)}`)
-        console.error('[iOS Audio] Blob URL play() failed:', err)
+        console.error('[iOS Audio] Pre-unlocked singleton play() failed:', err)
         safeReject(err)
       })
     })
