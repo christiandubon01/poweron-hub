@@ -386,11 +386,6 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         </div>
       </div>
 
-      {/* NEXUS Presence Orb — centered above transcript */}
-      <div style={{ width: '180px', height: '180px', margin: '0 auto 16px', flexShrink: 0 }}>
-        <NexusPresenceOrb state={orbState} size={180} />
-      </div>
-
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {/* Proactive briefing card on first load */}

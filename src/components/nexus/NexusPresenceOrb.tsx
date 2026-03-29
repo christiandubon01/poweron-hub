@@ -229,6 +229,8 @@ export function NexusPresenceOrb({
   size = 80,
   className = '',
 }: NexusPresenceOrbProps) {
+  console.log('[Orb] Rendering with state:', state)
+
   useEffect(() => {
     console.log('[Orb] Mounted with state:', state)
   }, [])

@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronDown, ChevronRight, X, Copy, Save } from 'lucide-react'
 import { addLearnedPattern } from '@/services/nexusMemory'
+import { NexusPresenceOrb, type OrbState } from '@/components/nexus/NexusPresenceOrb'
+import { onOrbStateChange } from '@/services/voice'
 
 // Types
 export interface TranscriptEntry {
@@ -333,6 +335,12 @@ export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
 
+  // Orb state — subscribes to real-time voice subsystem status
+  const [orbState, setOrbState] = useState<OrbState>('inactive')
+  useEffect(() => {
+    return onOrbStateChange((status) => setOrbState(status as OrbState))
+  }, [])
+
   // Initialize on mount
   useEffect(() => {
     initializeStorage()
@@ -567,6 +575,19 @@ export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
           >
             <X size={16} />
           </button>
+        </div>
+      </div>
+
+      {/* NEXUS Presence Orb — always visible in voice panel */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        padding: '10px 0 8px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgba(0,0,0,0.2)',
+      }}>
+        <div style={{ width: '120px', height: '120px', flexShrink: 0 }}>
+          <NexusPresenceOrb state={orbState} size={120} />
         </div>
       </div>
 

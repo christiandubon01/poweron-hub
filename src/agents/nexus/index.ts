@@ -18,7 +18,7 @@ import { addTurn, getContext, getCompactContext, updateProjectContext, getMemory
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
 import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
 import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
-import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceConfirmation } from '@/services/nexusPreferences'
+import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceConfirmation, hasCompletedInterview, isInterviewInProgress, getCurrentInterviewQuestion, startInterview, processInterviewAnswer, resetInterview, getSessionCount, incrementSessionCount } from '@/services/nexusPreferences'
 import { buildLearnedProfilePrompt, analyzeSessionPatterns, addConversationTurn, getRecentTurns, type ConversationTurn } from '@/services/nexusLearnedProfile'
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -330,6 +330,67 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     }
   }
 
+  // ── Step 1e2: Profile interview system ──────────────────────────────────
+  const isInterviewRequest = /interview|profile|calibrate|learn (how i|my style)|get to know|personalize|customize (how you|yourself)|recalibrate/i.test(request.message)
+
+  // Handle "recalibrate my profile" — reset and start fresh
+  if (/recalibrate/i.test(request.message)) {
+    resetInterview()
+  }
+
+  // If currently in an active interview, treat the message as an answer
+  if (isInterviewInProgress()) {
+    const currentQ = getCurrentInterviewQuestion()
+    if (currentQ) {
+      const result = await processInterviewAnswer(request.orgId, request.userId, currentQ.id, request.message)
+
+      const interviewMsg: ConversationMessage = {
+        role: 'assistant',
+        content: result.nextMessage,
+        agentId: 'nexus',
+        timestamp: Date.now(),
+      }
+      try { addTurn('user', request.message) } catch { /* non-critical */ }
+      try { addTurn('assistant', result.nextMessage, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: result.nextMessage, agentUsed: 'nexus', timestamp: Date.now() })
+
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Profile interview in progress' },
+        agent: { content: result.nextMessage, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false,
+        conversationMessage: interviewMsg,
+        mode,
+        voiceSummary: request.isVoiceCommand ? result.nextMessage.slice(0, 300) : undefined,
+      }
+    }
+  }
+
+  // Trigger interview explicitly OR on 3rd session if never completed
+  if (isInterviewRequest || (!hasCompletedInterview() && getSessionCount() >= 3 && request.conversationHistory.length === 0)) {
+    if (!isInterviewInProgress()) {
+      const introMsg = startInterview()
+
+      const interviewConvMsg: ConversationMessage = {
+        role: 'assistant',
+        content: introMsg,
+        agentId: 'nexus',
+        timestamp: Date.now(),
+      }
+      try { addTurn('user', request.message) } catch { /* non-critical */ }
+      try { addTurn('assistant', introMsg, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: introMsg, agentUsed: 'nexus', timestamp: Date.now() })
+
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Profile interview triggered' },
+        agent: { content: introMsg, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false,
+        conversationMessage: interviewConvMsg,
+        mode,
+        voiceSummary: request.isVoiceCommand ? introMsg.slice(0, 300) : undefined,
+      }
+    }
+  }
+
   // ── Step 1f: Load stored preferences into memory context ───────────────
   try {
     const prefPrompt = await buildPreferencePrompt(request.orgId, request.userId)
@@ -413,6 +474,35 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       .find(m => m.role === 'assistant')
 
     if (lastAssistantTurn) {
+      // Check if last turn was an agent list — if so, return a canned response directly
+      const lastAssistantContent = lastAssistantTurn.content || ''
+      const lastTurnWasAgentList = ['NEXUS', 'VAULT', 'LEDGER', 'BLUEPRINT', 'PULSE'].every(n => lastAssistantContent.includes(n))
+
+      if (lastTurnWasAgentList) {
+        const cannedContent = `Yes, that was the complete list of all 11 agents. Each one has a specific role and they all report to me — NEXUS. If you want I can go deeper on any of them. Tell me which agent interests you and I'll break down exactly how it operates, what tasks it handles, what insights it generates for your business, how you control and customize its behavior, and what improvements it can surface for your operations. You can also say "dive deeper on all of them" and I'll give you a full operational profile of the entire team.`
+        const cannedVoice = `Yes, all 11 were listed. Want me to go deeper on any specific agent? Just name one.`
+
+        // Persist conversation turns
+        addConversationTurn({ role: 'assistant', content: cannedContent, agentUsed: 'nexus', timestamp: Date.now() })
+        try { addTurn('assistant', cannedContent, 'nexus') } catch { /* non-critical */ }
+
+        const cannedConvMsg: ConversationMessage = {
+          role: 'assistant',
+          content: cannedContent,
+          agentId: 'nexus',
+          timestamp: Date.now(),
+        }
+
+        return {
+          intent,
+          agent: { content: cannedContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false,
+          conversationMessage: cannedConvMsg,
+          mode,
+          voiceSummary: request.isVoiceCommand ? cannedVoice : undefined,
+        }
+      }
+
       const lastTurnPreview = lastAssistantTurn.content.slice(0, 500)
       const followUpInstruction = `\nFOLLOW-UP RULE: This is a follow-up question referencing the previous response.\nLook at the most recent assistant turn above — that is what the user is referring to.\nDO NOT ask for clarification. DO NOT ask "which list did you mean?"\nAnswer based on the most recent assistant turn directly.\nIf the previous turn was an agent list — confirm it was complete or continue it.\nIf the previous turn was a financial briefing — build on that context.\n\nMOST RECENT RESPONSE WAS: ${lastTurnPreview}\nThe user is asking a follow-up about this specific response.`
       enrichedMessage = enrichedMessage + followUpInstruction
@@ -514,11 +604,16 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   }
 
   // ── Generate voice summary for TTS when this is a voice command ──────────
-  // For operational briefings via voice, strip section headers and convert to
-  // natural conversational sentences under 60 seconds (~150 words).
-  const voiceSummary = request.isVoiceCommand
-    ? stripToVoiceSummary(displayResponse).slice(0, 300)
-    : undefined
+  // For list queries, use a fixed voice summary that names agents but points to chat.
+  // For other queries, strip markdown and truncate to ~150 words.
+  let voiceSummary: string | undefined
+  if (request.isVoiceCommand) {
+    if (isListQuery) {
+      voiceSummary = "I work with 11 agents total — NEXUS, VAULT, PULSE, LEDGER, BLUEPRINT, OHM, SCOUT, SPARK, CHRONO, ECHO, and ATLAS. The full breakdown with what each one does is in the chat window below."
+    } else {
+      voiceSummary = stripToVoiceSummary(displayResponse).slice(0, 300)
+    }
+  }
 
   return {
     intent,
