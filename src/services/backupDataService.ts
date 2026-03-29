@@ -919,3 +919,101 @@ export function mapBackupInvoices(backup: BackupData) {
     project_name: p.name,
   }))
 }
+
+// ── Snapshot System ──────────────────────────────────────────────────────────
+
+export interface DataSnapshot {
+  id: string
+  timestamp: number
+  device: string
+  changeSummary: string
+  data: Record<string, unknown>
+}
+
+const SNAPSHOT_KEY = 'poweron_snapshots'
+const MAX_SNAPSHOTS = 30
+
+function getDeviceIdForSnapshot(): string {
+  const ua = navigator.userAgent
+  if (/iPhone|iPad/.test(ua)) return 'iOS'
+  if (/Android/.test(ua)) return 'Android'
+  if (/Windows/.test(ua)) return 'Windows'
+  if (/Mac/.test(ua)) return 'Mac'
+  return 'Unknown'
+}
+
+export function getSnapshots(): DataSnapshot[] {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+export function createSnapshot(changeSummary: string): DataSnapshot | null {
+  try {
+    const backup = getBackupData()
+    if (!backup) return null
+
+    const snapshot: DataSnapshot = {
+      id: `snap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      device: getDeviceIdForSnapshot(),
+      changeSummary,
+      data: JSON.parse(JSON.stringify(backup)),
+    }
+
+    const snapshots = getSnapshots()
+    snapshots.unshift(snapshot)
+
+    // Trim to max
+    const trimmed = snapshots.slice(0, MAX_SNAPSHOTS)
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(trimmed))
+
+    // Also save to Supabase (fire and forget)
+    saveSnapshotToSupabase(snapshot)
+
+    return snapshot
+  } catch (err) {
+    console.error('[Snapshot] Failed to create:', err)
+    return null
+  }
+}
+
+async function saveSnapshotToSupabase(snapshot: DataSnapshot): Promise<void> {
+  try {
+    const { supabase } = await import('@/lib/supabase')
+    await supabase
+      .from('app_state')
+      .upsert({
+        state_key: `snapshot_${snapshot.id}`,
+        state_value: snapshot,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'state_key' })
+      .select()
+  } catch {
+    // Non-critical
+  }
+}
+
+export function restoreSnapshot(snapshotId: string): boolean {
+  try {
+    const snapshots = getSnapshots()
+    const snapshot = snapshots.find(s => s.id === snapshotId)
+    if (!snapshot) return false
+
+    // Create a pre-restore snapshot first
+    createSnapshot('Auto-backup before restore')
+
+    // Restore the data
+    saveBackupData(snapshot.data as any)
+    return true
+  } catch (err) {
+    console.error('[Snapshot] Restore failed:', err)
+    return false
+  }
+}
+
+export function deleteSnapshot(snapshotId: string): void {
+  const snapshots = getSnapshots().filter(s => s.id !== snapshotId)
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots))
+}

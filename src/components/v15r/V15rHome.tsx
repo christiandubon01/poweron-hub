@@ -24,6 +24,7 @@ import {
   X,
   Sparkles,
   Edit3,
+  Edit2,
   Brain,
   Send,
   Mic,
@@ -113,6 +114,8 @@ export default function V15rHome() {
   const [editingAlertId, setEditingAlertId] = useState<string | null>(null)
   const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}>({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
   const [addingAlert, setAddingAlert] = useState(false)
+  const [editingAIAlertId, setEditingAIAlertId] = useState<string | null>(null)
+  const [editAIAlertText, setEditAIAlertText] = useState('')
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
   // ── AI Daily Assistant state ──
@@ -331,14 +334,8 @@ export default function V15rHome() {
       })
     }
     // OneSignal push stub — when scheduledAt is set, queue for push notification
-    if (data.scheduledAt && typeof (window as any).OneSignal !== 'undefined') {
-      try {
-        console.log('[OneSignal] Push notification queued for alert:', data.title, 'at', data.scheduledAt)
-        // TODO: Replace with actual OneSignal API call when integrated
-        // (window as any).OneSignal.push(() => { ... })
-      } catch (e) {
-        console.warn('[OneSignal] Push notification failed:', e)
-      }
+    if (data.scheduledAt) {
+      console.log('[OneSignal] Push notification scheduled for:', data.scheduledAt)
     }
     persist()
     setEditingAlertId(null)
@@ -576,47 +573,98 @@ export default function V15rHome() {
         {agendaAlerts.length > 0 || loadedCustomAlerts.length > 0 ? (
           <div className="space-y-2">
             {/* AI-generated alerts */}
-            {agendaAlerts.map((a, i) => (
-              <div
-                key={'ai-' + i}
-                className="flex items-start justify-between gap-2 p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg"
-              >
-                <div className="flex items-start gap-2 flex-1">
+            {agendaAlerts.map((a, i) => {
+              const aiAlertId = 'ai-' + i
+              const isEditing = editingAIAlertId === aiAlertId
+              return (
+                <div
+                  key={aiAlertId}
+                  className="flex items-start gap-2 p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg"
+                >
                   <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: a.clr }} />
-                  <div className="flex items-start gap-2 flex-1">
-                    <div className="text-xs text-gray-200 flex-1">{a.txt}</div>
-                    <button
-                      onClick={() => {
-                        // Promote AI alert to custom alert for editing
-                        pushState(backup)
-                        if (!backup.customAlerts) backup.customAlerts = []
-                        const newId = 'ai2c_' + Date.now() + '_' + i
-                        backup.customAlerts.push({
-                          id: newId, title: a.txt, description: '', action: '',
-                          isAI: true, scheduledAt: '', linkedProjectId: a.id || ''
-                        })
-                        persist()
-                        forceUpdate()
-                        startEditAlert({ id: newId, title: a.txt, description: '', action: '', scheduledAt: '', linkedProjectId: a.id || '' })
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editAIAlertText}
+                      onChange={(e) => setEditAIAlertText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          // Save edited AI alert as custom alert
+                          pushState(backup)
+                          if (!backup.customAlerts) backup.customAlerts = []
+                          const newId = 'ai2c_' + Date.now() + '_' + i
+                          backup.customAlerts.push({
+                            id: newId,
+                            title: editAIAlertText,
+                            description: '',
+                            action: '',
+                            isAI: true,
+                            manuallyEdited: true,
+                            scheduledAt: '',
+                            linkedProjectId: a.id || ''
+                          })
+                          persist()
+                          forceUpdate()
+                          setEditingAIAlertId(null)
+                          setEditAIAlertText('')
+                        }
                       }}
-                      className="text-[9px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex-shrink-0"
-                      title="Edit alert"
+                      onBlur={() => {
+                        // Save edited AI alert as custom alert
+                        if (editAIAlertText.trim()) {
+                          pushState(backup)
+                          if (!backup.customAlerts) backup.customAlerts = []
+                          const newId = 'ai2c_' + Date.now() + '_' + i
+                          backup.customAlerts.push({
+                            id: newId,
+                            title: editAIAlertText,
+                            description: '',
+                            action: '',
+                            isAI: true,
+                            manuallyEdited: true,
+                            scheduledAt: '',
+                            linkedProjectId: a.id || ''
+                          })
+                          persist()
+                          forceUpdate()
+                        }
+                        setEditingAIAlertId(null)
+                        setEditAIAlertText('')
+                      }}
+                      className="flex-1 bg-gray-900 border border-cyan-500/50 rounded px-2 py-1 text-gray-200 text-xs"
+                    />
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => {
+                          setEditingAIAlertId(aiAlertId)
+                          setEditAIAlertText(a.txt)
+                        }}
+                        className="text-gray-500 hover:text-gray-300 mt-0.5 flex-shrink-0"
+                        title="Edit alert"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <div className="flex-1">
+                        <p className="text-gray-200 text-xs">{a.txt}</p>
+                        <div className="flex gap-2 mt-1">
+                          <span className="text-[8px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">AI</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => alert('AI analysis for this item coming soon.')}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-0.5"
                     >
-                      <Edit3 size={10} className="inline" />
+                      ✨ Ask AI
                     </button>
-                    <span className="text-[8px] bg-purple-500/30 text-purple-300 px-1.5 py-0.5 rounded flex-shrink-0">AI</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <button
-                    onClick={() => alert('AI analysis for this item coming soon.')}
-                    className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-0.5"
-                  >
-                    ✨ Ask AI
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
 
             {/* Custom alerts */}
             {loadedCustomAlerts.map((a) => (

@@ -700,9 +700,6 @@ export default function V15rFieldLogPanel() {
       return rollCache[projId]
     }
 
-    const chartData = getDailyHoursChart(sorted)
-    const maxDailyHours = Math.max(1, ...Object.values(chartData))
-
     return (
       <div className="space-y-4">
         {/* Filter + Controls */}
@@ -813,28 +810,105 @@ export default function V15rFieldLogPanel() {
           </div>
         )}
 
-        {/* Daily hours bar chart (last 7 days) */}
-        {sorted.length > 0 && (
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-3">
-            <div className="text-[9px] font-bold text-gray-400 uppercase mb-2">Last 7 Days</div>
-            <div className="flex items-end gap-1 h-12">
-              {Object.entries(chartData).reverse().map(([date, hours]) => {
-                const pct = maxDailyHours > 0 ? (hours / maxDailyHours) * 100 : 0
-                const isToday = date === today()
-                return (
-                  <div key={date} className="flex-1 flex flex-col items-center gap-1 text-[9px]">
-                    <div
-                      className={`w-full rounded-t transition-all ${isToday ? 'bg-emerald-500' : 'bg-emerald-600/60'}`}
-                      style={{ height: `${Math.max(2, pct)}%` }}
-                      title={`${date}: ${hours.toFixed(1)}h`}
-                    />
-                    <span className="text-gray-500">{date.slice(5).replace('-', '/')}</span>
+        {/* Last 7 Days summary box */}
+        {sorted.length > 0 && (() => {
+          const now = new Date()
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+
+          // Filter project logs by date range
+          const recentProjectLogs = (backup.logs || []).filter((log: any) => {
+            const logDate = new Date(log.date || log.logDate)
+            return logDate >= sevenDaysAgo
+          })
+
+          // Filter service logs by date range
+          const recentServiceLogs = (backup.serviceLogs || []).filter((log: any) => {
+            const logDate = new Date(log.date)
+            return logDate >= sevenDaysAgo
+          })
+
+          // Compute totals from both log types
+          const totalHours = recentProjectLogs.reduce((s, l) => s + num(l.hrs || l.hours), 0) +
+                            recentServiceLogs.reduce((s, l) => s + num(l.hours || l.hrs), 0)
+          const totalMaterialCost = recentProjectLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0) +
+                                   recentServiceLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0)
+          const totalMiles = recentProjectLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0) +
+                            recentServiceLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0)
+          const logCount = recentProjectLogs.length + recentServiceLogs.length
+
+          // Build per-day breakdown from both log types
+          const perDayData: Record<string, number> = {}
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(now)
+            d.setDate(d.getDate() - i)
+            const key = d.toISOString().slice(0, 10)
+            perDayData[key] = 0
+          }
+
+          recentProjectLogs.forEach(l => {
+            const key = l.date || l.logDate
+            if (perDayData.hasOwnProperty(key)) {
+              perDayData[key] += num(l.hrs || l.hours)
+            }
+          })
+
+          recentServiceLogs.forEach(l => {
+            const key = l.date
+            if (perDayData.hasOwnProperty(key)) {
+              perDayData[key] += num(l.hours || l.hrs)
+            }
+          })
+
+          const maxDailyHoursLast7 = Math.max(1, ...Object.values(perDayData))
+
+          return (
+            <div className="space-y-3">
+              {/* Summary metrics */}
+              <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-3">
+                <div className="text-[9px] font-bold text-gray-400 uppercase mb-3">Last 7 Days Summary</div>
+                <div className="grid grid-cols-4 gap-3 text-center">
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Total Hours</div>
+                    <div className="text-sm font-bold font-mono text-white">{totalHours.toFixed(1)}h</div>
                   </div>
-                )
-              })}
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Material Cost</div>
+                    <div className="text-sm font-bold font-mono text-orange-400">{fmt(totalMaterialCost)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Total Miles</div>
+                    <div className="text-sm font-bold font-mono text-blue-400">{totalMiles.toFixed(1)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Log Count</div>
+                    <div className="text-sm font-bold font-mono text-gray-300">{logCount}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Per-day breakdown bar chart */}
+              <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-3">
+                <div className="text-[9px] font-bold text-gray-400 uppercase mb-2">Daily Hours</div>
+                <div className="flex items-end gap-1 h-12">
+                  {Object.entries(perDayData).reverse().map(([date, hours]) => {
+                    const pct = maxDailyHoursLast7 > 0 ? (hours / maxDailyHoursLast7) * 100 : 0
+                    const isToday = date === today()
+                    return (
+                      <div key={date} className="flex-1 flex flex-col items-center gap-1 text-[9px]">
+                        <div
+                          className={`w-full rounded-t transition-all ${isToday ? 'bg-emerald-500' : 'bg-emerald-600/60'}`}
+                          style={{ height: `${Math.max(2, pct)}%` }}
+                          title={`${date}: ${hours.toFixed(1)}h`}
+                        />
+                        <span className="text-gray-500">{date.slice(5).replace('-', '/')}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* Running Totals Sticky Bar */}
         {sorted.length > 0 && (() => {

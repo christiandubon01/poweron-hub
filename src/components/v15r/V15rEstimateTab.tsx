@@ -285,22 +285,21 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (idx < 0) return
     const call = calls[idx]
     if (!backup.serviceLogs) backup.serviceLogs = []
+    const mileCost = num(call.estMileage || 0) * mileRate
     backup.serviceLogs.push({
-      id: 'svc' + Date.now(),
-      date: call.date || new Date().toISOString().slice(0, 10),
+      id: 'svc_' + Date.now(),
       customer: call.customer || 'Unknown',
       address: call.address || '',
-      jtype: call.jtype || '',
-      hrs: call.estHours || 0,
-      miles: call.estMileage || 0,
-      quoted: call.quoted || 0,
-      mat: call.estMaterials || 0,
+      date: call.date || new Date().toISOString().slice(0, 10),
+      hrs: num(call.estHours || 0),
+      miles: num(call.estMileage || 0),
+      quoted: num(call.quoted || 0),
       collected: 0,
-      payStatus: 'N',
-      balanceDue: call.quoted || 0,
-      store: call.store || '',
+      mat: num(call.estMaterials || 0),
+      opCost: num(call.estHours || 0) * opRate,
+      jtype: call.jtype || 'Service Call',
       notes: call.notes || '',
-      adjustments: [],
+      mileCost: mileCost,
       fromActiveCallId: call.id,
     })
     backup.activeServiceCalls = calls.filter(c => c.id !== id)
@@ -965,6 +964,34 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
             </div>
           </div>
         </div>
+
+        {/* DEAL OVERVIEW CHART */}
+        {num(p.contract || 0) > 0 && (
+          <div style={{ backgroundColor: '#1f2937', borderRadius: '8px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 16px 0' }}>Deal Overview</h4>
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <p style={{ color: '#22c55e', fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', margin: '0 0 4px 0' }}>{fmt(t.profit)}</p>
+              <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>Projected Profit ({t.marginPct.toFixed(1)}%)</p>
+            </div>
+            <div style={{ space: '8px' }}>
+              {[
+                { label: 'Labor', value: t.lab, color: '#3b82f6', pct: t.total > 0 ? (t.lab / t.total) * 100 : 0 },
+                { label: 'Material', value: t.matC, color: '#eab308', pct: t.total > 0 ? (t.matC / t.total) * 100 : 0 },
+                { label: 'Mileage', value: t.mi, color: '#14b8a6', pct: t.total > 0 ? (t.mi / t.total) * 100 : 0 },
+                { label: 'Overhead', value: t.oh, color: '#a855f7', pct: t.total > 0 ? (t.oh / t.total) * 100 : 0 },
+                { label: 'Profit', value: t.profit, color: '#22c55e', pct: t.total > 0 ? (t.profit / t.total) * 100 : 0 },
+              ].map(item => (
+                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                  <span style={{ color: 'var(--t3)', fontSize: '12px', width: '65px', textAlign: 'left' }}>{item.label}</span>
+                  <div style={{ flex: 1, backgroundColor: '#111827', borderRadius: '4px', height: '16px', overflow: 'hidden' }}>
+                    <div style={{ backgroundColor: item.color, height: '100%', borderRadius: '4px', width: Math.max(0, Math.min(100, item.pct)) + '%', transition: 'width 0.2s' }} />
+                  </div>
+                  <span style={{ color: 'var(--t2)', fontSize: '11px', width: '90px', textAlign: 'right', fontFamily: 'monospace' }}>{fmt(item.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* COST BREAKDOWN CHART */}
         {hasAnyData && (

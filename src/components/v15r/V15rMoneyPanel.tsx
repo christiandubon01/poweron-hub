@@ -98,7 +98,7 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
             {
               label: 'Expense Ratio',
               data: [overheadAmount, profitMargin],
-              backgroundColor: ['#ef4444', '#10b981'],
+              backgroundColor: ['#ef4444', '#22c55e'],
               borderColor: '#1a1d27',
               borderWidth: 2,
               borderRadius: 2,
@@ -158,7 +158,7 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
     { name: 'Paid', value: paid, color: '#3b82f6', ring: 'outer' },
     { name: 'Unbilled', value: unbilled, color: '#eab308', ring: 'outer' },
     { name: 'Overhead', value: overheadAmount, color: '#ef4444', ring: 'inner' },
-    { name: 'Profit Margin', value: profitMargin, color: '#10b981', ring: 'inner' }
+    { name: 'Profit Margin', value: profitMargin, color: '#22c55e', ring: 'inner' }
   ]
 
   const outerSegments = segments.filter(s => s.ring === 'outer')

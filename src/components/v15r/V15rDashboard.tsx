@@ -12,9 +12,10 @@
  * 7. Chart instances properly destroyed on unmount
  */
 
-import React, { useState, useEffect, useRef } from 'react'
-import { BarChart3 } from 'lucide-react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 // ── ERROR BOUNDARY ──
 class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
@@ -145,14 +146,15 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
         const sorted = [...milestones].sort((a, b) => a.weekIdx - b.weekIdx)
 
         // Assign vertical offsets to prevent label overlap
-        // Labels within 14 days (~2 week indices) of each other get staggered
+        // Labels within 14 days (~2 week indices) of each other get staggered by 25px
         const labelOffsets: number[] = []
         sorted.forEach((m, i) => {
           let offset = 0
           for (let j = 0; j < i; j++) {
             const gap = Math.abs(m.weekIdx - sorted[j].weekIdx)
-            if (gap < 2 && labelOffsets[j] === offset) {
-              offset += 25
+            // If within 2 weeks and same base offset, increment
+            if (gap < 2 && labelOffsets[j] >= offset) {
+              offset = labelOffsets[j] + 25
             }
           }
           labelOffsets.push(offset)
@@ -794,39 +796,93 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    // Build per-project data for active projects
-    const labels = projects.map(p => (p.name || 'Unknown').substring(0, 18))
+    const mileRate = num(backup.settings?.mileRate || 0.66)
+    const opCost = num(backup.settings?.opCost || 42.45)
+    const logs = backup.logs || []
+    const isSingleProject = projects.length === 1
+
     const collectedData: number[] = []
     const laborCostData: number[] = []
     const materialCostData: number[] = []
     const mileageCostData: number[] = []
     const arExposureData: number[] = []
     const breakEvenData: number[] = []
+    let labels: string[] = []
 
-    const mileRate = num(backup.settings?.mileRate || 0.66)
-    const opCost = num(backup.settings?.opCost || 42.45)
-    const logs = backup.logs || []
-
-    projects.forEach(p => {
-      const fin = getProjectFinancials(p, backup)
+    if (isSingleProject) {
+      // Single project: group by date and show date labels
+      const p = projects[0]
       const projLogs = logs.filter(l => l.projId === p.id)
 
-      const totalHrs = projLogs.reduce((s, l) => s + num(l.hrs), 0)
-      const totalMiles = projLogs.reduce((s, l) => s + num(l.miles), 0)
-      const totalMat = projLogs.reduce((s, l) => s + num(l.mat), 0)
-      const laborTotal = totalHrs * opCost
-      const mileTotal = totalMiles * mileRate
+      // Group logs by date
+      const byDate: { [key: string]: any[] } = {}
+      projLogs.forEach(log => {
+        const dateKey = log.date ? new Date(log.date).toISOString().split('T')[0] : 'unknown'
+        if (!byDate[dateKey]) byDate[dateKey] = []
+        byDate[dateKey].push(log)
+      })
 
-      const collected = fin.paid || 0
-      const arTotal = Math.max(0, (fin.billed || fin.contract || 0) - collected)
+      // Sort dates and process
+      const sortedDates = Object.keys(byDate).sort()
+      const fin = getProjectFinancials(p, backup)
+      const projectCollected = fin.paid || 0
 
-      collectedData.push(collected)
-      laborCostData.push(laborTotal)
-      materialCostData.push(totalMat)
-      mileageCostData.push(mileTotal)
-      arExposureData.push(arTotal)
-      breakEvenData.push(laborTotal + totalMat + mileTotal) // break-even line = total costs
-    })
+      sortedDates.forEach(dateStr => {
+        const dateLogs = byDate[dateStr]
+        const totalHrs = dateLogs.reduce((s, l) => s + num(l.hrs), 0)
+        const totalMiles = dateLogs.reduce((s, l) => s + num(l.miles), 0)
+        const totalMat = dateLogs.reduce((s, l) => s + num(l.mat), 0)
+
+        const laborTotal = totalHrs * opCost
+        const mileTotal = totalMiles * mileRate
+        const breakevenTotal = laborTotal + totalMat + mileTotal
+
+        collectedData.push(projectCollected)
+        laborCostData.push(laborTotal)
+        materialCostData.push(totalMat)
+        mileageCostData.push(mileTotal)
+        arExposureData.push(Math.max(0, (fin.billed || fin.contract || 0) - projectCollected))
+        breakEvenData.push(breakevenTotal)
+
+        // Format date as "Mar 8"
+        const dt = new Date(dateStr + 'T00:00:00')
+        labels.push(dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
+      })
+
+      if (labels.length === 0) {
+        labels = [p.name || 'Unknown']
+        collectedData.push(0)
+        laborCostData.push(0)
+        materialCostData.push(0)
+        mileageCostData.push(0)
+        arExposureData.push(0)
+        breakEvenData.push(0)
+      }
+    } else {
+      // All projects: show project names (one per project)
+      projects.forEach(p => {
+        const fin = getProjectFinancials(p, backup)
+        const projLogs = logs.filter(l => l.projId === p.id)
+
+        const totalHrs = projLogs.reduce((s, l) => s + num(l.hrs), 0)
+        const totalMiles = projLogs.reduce((s, l) => s + num(l.miles), 0)
+        const totalMat = projLogs.reduce((s, l) => s + num(l.mat), 0)
+        const laborTotal = totalHrs * opCost
+        const mileTotal = totalMiles * mileRate
+
+        const collected = fin.paid || 0
+        const arTotal = Math.max(0, (fin.billed || fin.contract || 0) - collected)
+
+        collectedData.push(collected)
+        laborCostData.push(laborTotal)
+        materialCostData.push(totalMat)
+        mileageCostData.push(mileTotal)
+        arExposureData.push(arTotal)
+        breakEvenData.push(laborTotal + totalMat + mileTotal)
+
+        labels.push((p.name || 'Unknown').substring(0, 18))
+      })
+    }
 
     // Shaded zone plugin for red/yellow/green
     const zonePlugin = {
@@ -1018,6 +1074,130 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
   return <canvas ref={canvasRef} />
 }
 
+// ── NEXUS AI DASHBOARD ANALYZER ──
+interface NEXUSAnalysis {
+  loading: boolean
+  error?: string
+  analysis?: string
+  bullets?: Array<{ icon: string; text: string; priority: 'high' | 'medium' | 'low' }>
+}
+
+function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
+  backup: BackupData
+  cfotSummary: { exposure: number; unbilled: number; pending: number; svcTotal: number; projTotal: number; accumTotal: number }
+  projects: any[]
+}) {
+  const [state, setState] = useState<NEXUSAnalysis>({ loading: true })
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    const analyze = async () => {
+      try {
+        setState({ loading: true })
+        const dashboardContext = {
+          summary: cfotSummary,
+          activeProjects: projects.filter(p => p.status === 'active').length,
+          totalContract: projects.reduce((s: number, p: any) => s + num(p.contract), 0),
+          weeklyData: (backup.weeklyData || []).slice(-4),
+          serviceLogs: (backup.serviceLogs || []).slice(-5),
+        }
+
+        const response = await callClaude({
+          system: 'You are NEXUS, the AI dashboard analyzer for Power On Solutions. Analyze financial dashboard data and provide 3-5 priority-scored bullet points (🔴 high risk, 🟡 medium attention, 🟢 healthy). Be concise and actionable.',
+          messages: [{
+            role: 'user',
+            content: `Analyze this dashboard data and identify key risk items, projects needing attention, and healthy indicators:\n${JSON.stringify(dashboardContext, null, 2)}`
+          }],
+          max_tokens: 1024,
+        })
+
+        const text = extractText(response)
+        // Parse bullet points with icons
+        const bullets = text
+          .split('\n')
+          .filter((line: string) => line.match(/^[🔴🟡🟢]/))
+          .map((line: string) => {
+            const match = line.match(/^([🔴🟡🟢])\s*(.+)/)
+            if (!match) return null
+            const iconMap = { '🔴': 'high', '🟡': 'medium', '🟢': 'low' }
+            return {
+              icon: match[1],
+              text: match[2].trim(),
+              priority: iconMap[match[1] as keyof typeof iconMap] || 'medium'
+            }
+          })
+          .filter(Boolean)
+
+        setState({ loading: false, analysis: text, bullets: bullets.length > 0 ? bullets : undefined })
+      } catch (err) {
+        setState({ loading: false, error: (err as any)?.message || 'Analysis failed' })
+      }
+    }
+
+    analyze()
+  }, [backup, cfotSummary, projects])
+
+  if (state.loading) {
+    return (
+      <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 animate-pulse">
+        <div className="flex items-center gap-2 mb-4">
+          <Brain size={24} className="text-purple-400" />
+          <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
+        </div>
+        <div className="h-20 bg-gray-700 rounded"></div>
+      </div>
+    )
+  }
+
+  if (state.error) {
+    return (
+      <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Brain size={24} className="text-purple-400" />
+          <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
+        </div>
+        <p className="text-red-400 text-sm">{state.error}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Brain size={24} className="text-purple-400" />
+          <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors"
+        >
+          {expanded ? 'Collapse' : 'Dive Deeper'}
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {state.bullets ? (
+          state.bullets.map((b, i) => (
+            <div key={i} className="flex gap-3 text-sm text-gray-300">
+              <span className="text-lg flex-shrink-0">{b.icon}</span>
+              <span>{b.text}</span>
+            </div>
+          ))
+        ) : (
+          <p className="text-gray-400 text-sm">{state.analysis}</p>
+        )}
+      </div>
+
+      {expanded && state.analysis && (
+        <div className="mt-4 pt-4 border-t border-gray-600 max-h-80 overflow-y-auto">
+          <p className="text-gray-400 text-xs whitespace-pre-wrap">{state.analysis}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
   const backup = getBackupData()
@@ -1049,8 +1229,8 @@ function V15rDashboardInner() {
     const activeProjects = projects.filter(p => p.status === 'active')
     // Exposure: active project contract value not yet collected
     const exposure = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
-    // Unbilled: completed work not yet invoiced (field logs with no corresponding payment)
-    const unbilled = activeProjects.reduce((s, p) => s + Math.max(0, num(p.billed ? p.contract - p.billed : 0)), 0)
+    // Unbilled: completed work not yet invoiced (contract - billed for active projects)
+    const unbilled = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.billed)), 0)
     // Pending: service calls quoted but not yet collected
     const pending = serviceLogs
       .filter((l: any) => num(l.quoted) > 0 && num(l.collected) < num(l.quoted))
@@ -1222,6 +1402,11 @@ function V15rDashboardInner() {
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(245,158,11,0.15)'}}></span> Warning zone</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(16,185,129,0.15)'}}></span> Profit zone</span>
           </div>
+        </div>
+
+        {/* NEXUS: AI Dashboard Analyzer */}
+        <div className="lg:col-span-2">
+          <NEXUSDashboardAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
         </div>
 
       </div>
