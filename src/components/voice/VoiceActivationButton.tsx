@@ -203,6 +203,7 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       <button
         onClick={handlePress}
         disabled={isProcessing}
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         className={clsx(
           'fixed bottom-6 right-6 z-50',
           'w-14 h-14 rounded-full shadow-lg',
@@ -295,19 +296,20 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         <div
           style={{
             position: 'fixed',
-            bottom: 0,
+            top: 0,
             left: 0,
             right: 0,
-            maxHeight: '200px',
+            maxHeight: '150px',
             zIndex: 9999,
-            backgroundColor: 'rgba(0, 0, 0, 0.92)',
-            borderTop: '1px solid #333',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            borderBottom: '1px solid #333',
             fontFamily: 'monospace',
             fontSize: '10px',
             color: '#0f0',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
+            opacity: 0.85,
           }}
         >
           <div style={{ padding: '4px 8px', backgroundColor: '#111', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
