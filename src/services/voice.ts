@@ -9,7 +9,6 @@
  * Backend wiring only — UI components will be added in a later phase.
  */
 
-import { Howl } from 'howler'
 import { transcribeWithWhisper, estimateConfidence } from '@/api/voice/whisper'
 import { synthesizeWithElevenLabs, revokeAudioUrl, DEFAULT_VOICE_ID } from '@/api/voice/elevenLabs'
 import { getAudioPreprocessor } from './audioPreprocessing'
@@ -196,7 +195,6 @@ export class VoiceSubsystem {
 
   // Speaking state — mic suppression during TTS playback
   private currentAudio: HTMLAudioElement | null = null
-  private currentHowl: Howl | null = null
   private lastTTSText: string = ''
   private speakingStartTime: number = 0
   private static readonly MIN_SPEAKING_DISPLAY_MS = 2000
@@ -273,7 +271,7 @@ export class VoiceSubsystem {
   async stopAll(): Promise<void> {
     // Stop any playing audio
     this.stopCurrentAudio()
-    this.stopCurrentHowl()
+
 
     // Cancel browser speechSynthesis if active
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -298,7 +296,7 @@ export class VoiceSubsystem {
   async stopSpeaking(): Promise<void> {
     console.log('[Voice] Stopping speech (user interrupt)')
     this.stopCurrentAudio()
-    this.stopCurrentHowl()
+
 
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel()
@@ -841,135 +839,107 @@ export class VoiceSubsystem {
 
   /**
    * Play audio with a tracked reference so it can be interrupted.
-   * iOS: skips Howler entirely and uses Web Speech API directly (no autoplay issues).
-   * Non-iOS: uses Howler.js for ElevenLabs audio playback.
+   * Uses direct HTMLAudioElement with playsInline for all platforms.
+   * Falls back to Web Speech API if HTMLAudioElement play() fails.
    */
   private async playAudioTracked(audioUrl: string): Promise<void> {
     // Stop any previously playing audio
     this.stopCurrentAudio()
-    this.stopCurrentHowl()
 
-    // iOS Safari: Howler consistently fails with TypeError {}.
-    // Web Speech API has zero autoplay restrictions on iOS — use it directly.
-    if (VoiceSubsystem.IS_IOS) {
-      debugPush('iOS detected — using Web Speech directly, skipping Howler')
-      console.log('[iOS Audio] Bypassing Howler — using Web Speech API')
-      await this.speakWithWebSpeech(this.lastTTSText || '')
-      return
-    }
-
-    // Non-iOS: use Howler.js for ElevenLabs audio
-    debugPush('playAudioTracked() — using Howler.js for playback')
-    console.log('[Audio] Playing via Howler.js (desktop)')
+    debugPush('playAudioTracked() — using HTMLAudioElement with playsInline')
+    console.log('[Audio] Playing via HTMLAudioElement (cross-platform)')
 
     try {
-      await this.playAudioWithHowler(audioUrl)
-    } catch (howlErr) {
-      debugPush(`Howler.js FAILED: ${howlErr instanceof Error ? howlErr.message : String(howlErr)}`)
-      console.warn('[Audio] Howler.js playback failed:', howlErr)
+      // Fetch the audio data from the ElevenLabs object URL
+      const response = await fetch(audioUrl)
+      const arrayBuffer = await response.arrayBuffer()
+      debugPush(`playAudioTracked() — fetched ${arrayBuffer.byteLength} bytes`)
+
+      await this.playAudioDirect(arrayBuffer)
+    } catch (err) {
+      debugPush(`playAudioDirect FAILED: ${err instanceof Error ? err.message : String(err)} — falling back to WebSpeech`)
+      console.warn('[Audio] HTMLAudioElement playback failed, using WebSpeech:', err)
+      await this.speakWithWebSpeech(this.lastTTSText || '')
     }
   }
 
   /**
-   * Cross-platform audio playback using Howler.js.
+   * Direct HTMLAudioElement playback with playsInline.
    *
-   * Howler.js handles iOS Safari's autoplay restrictions internally.
-   * Key iOS fixes:
-   *  - html5: true + preload: true — forces HTML5 Audio mode with preloading
-   *  - setTimeout(play, 100) — slight delay required on iOS before calling play
-   *  - JSON.stringify on errors — iOS TypeError {} is empty without serialization
-   *  - Howler.unload() on play error — resets the audio engine for next attempt
+   * Chrome iOS responds to HTMLAudioElement with playsInline=true after a user
+   * gesture on the domain. Safari iOS may still fail — the onerror/catch
+   * handlers fall back to Web Speech API automatically.
    *
-   * The audioUrl (an object URL from ElevenLabs synthesis) is fetched, converted
-   * to a Blob URL, and played through Howler. Includes a 30-second timeout.
+   * Includes 35-second timeout fallback.
    */
-  private async playAudioWithHowler(audioUrl: string): Promise<void> {
-    debugPush('playAudioWithHowler() — fetching audio data...')
-
-    // Fetch the audio data from the object URL
-    const response = await fetch(audioUrl)
-    const arrayBuffer = await response.arrayBuffer()
-    debugPush(`playAudioWithHowler() — fetched ${arrayBuffer.byteLength} bytes`)
-
-    // Create an audio/mpeg Blob and object URL for Howler
-    const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' })
-    const blobUrl = URL.createObjectURL(blob)
-    debugPush(`playAudioWithHowler() — Blob URL created (${blob.size} bytes)`)
+  private playAudioDirect(audioData: ArrayBuffer): Promise<void> {
+    const blob = new Blob([audioData], { type: 'audio/mpeg' })
+    const url = URL.createObjectURL(blob)
+    debugPush(`playAudioDirect() — Blob URL created (${blob.size} bytes)`)
 
     return new Promise<void>((resolve) => {
       let settled = false
       const safeResolve = () => {
         if (!settled) {
           settled = true
-          URL.revokeObjectURL(blobUrl)
-          this.currentHowl = null
           clearTimeout(hangTimeout)
           resolve()
         }
       }
 
-      const sound = new Howl({
-        src: [blobUrl],
-        format: ['mp3'],
-        html5: true,
-        preload: true,
-        rate: this.preferences.ttsSpeed,
-        onplay: () => {
-          debugPush('Howler.js — playback started')
-          console.log('[Audio] Howler.js playback started')
-        },
-        onend: () => {
-          debugPush('Howler onend — playback complete')
-          console.log('[Audio] Howler.js playback completed')
-          safeResolve()
-        },
-        onloaderror: (_id: number, err: unknown) => {
-          debugPush(`Howler load error: ${JSON.stringify(err)} — falling back to WebSpeech`)
-          console.error('[Audio] Howler load error:', err)
-          URL.revokeObjectURL(blobUrl)
-          this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
-        },
-        onplayerror: (_id: number, err: unknown) => {
-          debugPush(`Howler play error: ${JSON.stringify(err)} — falling back to WebSpeech`)
-          console.error('[Audio] Howler play error:', err)
-          // iOS play error — reset the audio engine for next attempt
-          try { (Howl as any).unload?.() } catch { /* ignore */ }
-          URL.revokeObjectURL(blobUrl)
-          this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
-        },
-      })
+      const audio = new Audio()
+      audio.playsInline = true
+      audio.autoplay = false
+      audio.src = url
+      audio.volume = 1.0
+      audio.playbackRate = this.preferences.ttsSpeed
+      document.body.appendChild(audio)
+      this.currentAudio = audio
 
-      this.currentHowl = sound
-
-      // Must call play() after a slight delay on iOS — immediate play()
-      // after Howl construction triggers TypeError on Safari
-      debugPush('Howler — scheduling play() with 100ms delay for iOS...')
-      setTimeout(() => {
-        debugPush('Howler.play() — calling...')
-        sound.play()
-      }, 100)
-
-      // 30-second timeout fallback
-      const hangTimeout = setTimeout(() => {
-        debugPush('Howler TIMEOUT (30s) — force-resolving')
-        console.warn('[Audio] Howler.js playback timeout (30s) — force-resolving')
-        try { sound.stop() } catch { /* ignore */ }
+      audio.onended = () => {
+        debugPush('HTMLAudio — playback complete')
+        console.log('[Audio] HTMLAudioElement playback completed')
+        URL.revokeObjectURL(url)
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        this.currentAudio = null
         safeResolve()
-      }, 30000)
-    })
-  }
+      }
 
-  /**
-   * Stop the current Howl instance if playing.
-   */
-  private stopCurrentHowl(): void {
-    if (this.currentHowl) {
-      try {
-        this.currentHowl.stop()
-        this.currentHowl.unload()
-      } catch { /* ignore cleanup errors */ }
-      this.currentHowl = null
-    }
+      audio.onerror = () => {
+        debugPush('HTMLAudio error — falling back to WebSpeech')
+        console.warn('[Audio] HTMLAudioElement error, falling back to WebSpeech')
+        URL.revokeObjectURL(url)
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        this.currentAudio = null
+        this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
+      }
+
+      audio.load()
+
+      const playPromise = audio.play()
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => debugPush('HTMLAudio — play() succeeded'))
+          .catch((err) => {
+            debugPush(`HTMLAudio play() failed: ${err instanceof Error ? err.message : String(err)} — falling back to WebSpeech`)
+            console.warn('[Audio] HTMLAudioElement play() failed:', err)
+            URL.revokeObjectURL(url)
+            try { document.body.removeChild(audio) } catch { /* already removed */ }
+            this.currentAudio = null
+            this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
+          })
+      }
+
+      // 35-second timeout fallback
+      const hangTimeout = setTimeout(() => {
+        debugPush('HTMLAudio — timeout (35s) fallback')
+        console.warn('[Audio] HTMLAudioElement timeout (35s) — force-resolving')
+        try { audio.pause(); document.body.removeChild(audio) } catch { /* ignore */ }
+        URL.revokeObjectURL(url)
+        this.currentAudio = null
+        safeResolve()
+      }, 35000)
+    })
   }
 
   // ── Private: Events ───────────────────────────────────────────────────────
