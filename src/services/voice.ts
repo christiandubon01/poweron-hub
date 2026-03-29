@@ -197,6 +197,7 @@ export class VoiceSubsystem {
   // Speaking state — mic suppression during TTS playback
   private currentAudio: HTMLAudioElement | null = null
   private currentHowl: Howl | null = null
+  private lastTTSText: string = ''
   private speakingStartTime: number = 0
   private static readonly MIN_SPEAKING_DISPLAY_MS = 2000
 
@@ -710,6 +711,8 @@ export class VoiceSubsystem {
       }
 
       // Step 6: Play response (with interruptible audio reference)
+      this.lastTTSText = ttsText
+      debugPush(`TTS chars: ${ttsText.length}`)
       debugPush('playAudioTracked() — starting playback...')
       console.log('[Voice] Playing TTS audio')
       await this.playAudioTracked(ttsResult.audioUrl)
@@ -721,13 +724,15 @@ export class VoiceSubsystem {
       console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
     }
 
-    // Fallback: browser speechSynthesis (especially important for iOS)
+    // Fallback: browser Web Speech API (especially important for iOS)
     if (!ttsPlayed && typeof window !== 'undefined' && window.speechSynthesis) {
       try {
-        console.log(VoiceSubsystem.IS_IOS ? '[iOS Audio] Falling back to speechSynthesis' : '[Voice] Using speechSynthesis fallback')
-        await this.speakWithSynthesis(responseText)
+        debugPush('ElevenLabs/Howler failed — falling back to WebSpeech')
+        console.log(VoiceSubsystem.IS_IOS ? '[iOS Audio] Falling back to WebSpeech' : '[Voice] Using WebSpeech fallback')
+        await this.speakWithWebSpeech(responseText)
       } catch (synthErr) {
-        console.warn('[Voice] speechSynthesis also failed:', synthErr)
+        debugPush(`WebSpeech fallback also failed: ${synthErr instanceof Error ? synthErr.message : String(synthErr)}`)
+        console.warn('[Voice] WebSpeech also failed:', synthErr)
       }
     }
 
@@ -757,16 +762,46 @@ export class VoiceSubsystem {
   }
 
   /**
-   * Fallback TTS using browser's built-in speechSynthesis API.
+   * Fallback TTS using browser's native Web Speech API (speechSynthesis).
+   * Works on iOS Safari with no autoplay restrictions or permissions required.
+   * Picks the best available English voice and truncates to 300 chars.
    */
-  private speakWithSynthesis(text: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (!window.speechSynthesis) { reject(new Error('speechSynthesis not available')); return }
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.rate = this.preferences.ttsSpeed
-      utterance.onend = () => resolve()
-      utterance.onerror = (e) => reject(e)
+  private speakWithWebSpeech(text: string): Promise<void> {
+    return new Promise((resolve) => {
+      if (!window.speechSynthesis) {
+        debugPush('WebSpeech not available')
+        resolve()
+        return
+      }
+
+      window.speechSynthesis.cancel()
+
+      const utterance = new SpeechSynthesisUtterance(text.slice(0, 300))
+      utterance.rate = 0.95
+      utterance.pitch = 1.0
+      utterance.volume = 1.0
+
+      // Pick best available local English voice
+      const voices = window.speechSynthesis.getVoices()
+      const preferred = voices.find(v =>
+        v.lang.startsWith('en') && v.localService
+      )
+      if (preferred) utterance.voice = preferred
+
+      utterance.onstart = () => debugPush('WebSpeech — started')
+      utterance.onend = () => {
+        debugPush('WebSpeech — complete')
+        resolve()
+      }
+      utterance.onerror = (e) => {
+        debugPush(`WebSpeech error: ${e.error}`)
+        resolve()
+      }
+
       window.speechSynthesis.speak(utterance)
+
+      // 30-second timeout fallback
+      setTimeout(() => resolve(), 30000)
     })
   }
 
@@ -871,18 +906,18 @@ export class VoiceSubsystem {
           safeResolve()
         },
         onloaderror: (_id: number, err: unknown) => {
-          debugPush(`Howler load error: ${JSON.stringify(err)}`)
+          debugPush(`Howler load error: ${JSON.stringify(err)} — falling back to WebSpeech`)
           console.error('[Audio] Howler load error:', err)
           URL.revokeObjectURL(blobUrl)
-          safeResolve()
+          this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
         },
         onplayerror: (_id: number, err: unknown) => {
-          debugPush(`Howler play error: ${JSON.stringify(err)}`)
+          debugPush(`Howler play error: ${JSON.stringify(err)} — falling back to WebSpeech`)
           console.error('[Audio] Howler play error:', err)
           // iOS play error — reset the audio engine for next attempt
           try { (Howl as any).unload?.() } catch { /* ignore */ }
           URL.revokeObjectURL(blobUrl)
-          safeResolve()
+          this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
         },
       })
 
