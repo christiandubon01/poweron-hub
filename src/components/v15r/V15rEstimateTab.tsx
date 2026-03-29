@@ -13,6 +13,9 @@ interface V15rEstimateTabProps {
 }
 
 export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBackup }: V15rEstimateTabProps) {
+  // ── Data must be resolved BEFORE any useState that references it (TDZ fix) ──
+  const backup = initialBackup || getBackupData()
+
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [subtab, setSubtab] = useState<'project' | 'service'>('project')
@@ -24,16 +27,14 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [scJtype, setScJtype] = useState('GFCI / Receptacles')
   const [scDate, setScDate] = useState(new Date().toISOString().slice(0, 10))
   const [scHrs, setScHrs] = useState('')
-  const [scRate, setScRate] = useState(num(backup.settings?.billRate || 65))
+  const [scRate, setScRate] = useState(num(backup?.settings?.billRate || 65))
   const [scMat, setScMat] = useState('')
   const [scMiles, setScMiles] = useState('')
-  const [scTax, setScTax] = useState(num(backup.settings?.tax || 0))
+  const [scTax, setScTax] = useState(num(backup?.settings?.tax || 0))
   const [scNotes, setScNotes] = useState('')
   const [scStore, setScStore] = useState('')
   const [showEstForm, setShowEstForm] = useState(false)
   const [editingEstId, setEditingEstId] = useState<string | null>(null)
-
-  const backup = initialBackup || getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
 
   const p = backup.projects.find(x => x.id === projectId)
