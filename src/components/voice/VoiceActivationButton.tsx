@@ -39,8 +39,10 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const lastTranscriptRef = useRef<string>('')
 
   // Debug panel — only active when ?debug=1 is in the URL
-  const showDebug = typeof window !== 'undefined' && window.location.search.includes('debug=1')
+  const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=1')
+  const showDebug = isDebugMode
   const [debugTick, setDebugTick] = useState(0)
+  const [debugExpanded, setDebugExpanded] = useState(false)
   const debugScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -301,49 +303,62 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       )}
 
       {/* On-screen audio debug panel — only when ?debug=1 */}
-      {showDebug && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            maxHeight: '150px',
-            zIndex: 9999,
-            backgroundColor: 'rgba(0, 0, 0, 0.85)',
-            borderBottom: '1px solid #333',
-            fontFamily: 'monospace',
-            fontSize: '10px',
-            color: '#0f0',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            opacity: 0.85,
-          }}
-        >
-          <div style={{ padding: '4px 8px', backgroundColor: '#111', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-            <span style={{ fontWeight: 700, color: '#0ff', fontSize: '10px' }}>AUDIO DEBUG</span>
-            <span style={{ color: '#666', fontSize: '9px' }}>{voiceDebugLog.length} entries · {status}</span>
-          </div>
-          <div
-            ref={debugScrollRef}
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              padding: '4px 8px',
-              WebkitOverflowScrolling: 'touch',
-            }}
-          >
-            {voiceDebugLog.length === 0 ? (
-              <div style={{ color: '#666', padding: '8px 0' }}>Waiting for audio events... Tap mic to start.</div>
-            ) : (
-              voiceDebugLog.map((line, i) => (
-                <div key={i} style={{ padding: '1px 0', borderBottom: '1px solid #1a1a1a', color: line.includes('ERROR') || line.includes('FAILED') ? '#f44' : line.includes('OK') || line.includes('complete') || line.includes('unlocked') ? '#0f0' : '#ccc' }}>
-                  {line}
-                </div>
-              ))
-            )}
-          </div>
+      {isDebugMode && (
+        <div style={{ position: 'fixed', bottom: '90px', right: '12px', zIndex: 9998 }}>
+          {debugExpanded ? (
+            <div style={{
+              background: 'rgba(0,0,0,0.92)',
+              border: '1px solid #2EE89A',
+              borderRadius: '12px',
+              width: '320px',
+              maxHeight: '200px',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '6px 10px',
+                borderBottom: '1px solid rgba(255,255,255,0.1)'
+              }}>
+                <span style={{ color: '#2EE89A', fontFamily: 'monospace', fontSize: '10px', fontWeight: 700 }}>
+                  AUDIO DEBUG · {voiceDebugLog.length} entries · {status}
+                </span>
+                <button onClick={() => setDebugExpanded(false)}
+                  style={{ background: 'none', border: 'none', color: '#60607A', cursor: 'pointer', fontSize: '14px' }}>
+                  ✕
+                </button>
+              </div>
+              <div ref={debugScrollRef} style={{ overflow: 'auto', padding: '6px 10px', flex: 1 }}>
+                {voiceDebugLog.map((entry, i) => (
+                  <div key={i} style={{
+                    fontFamily: 'monospace',
+                    fontSize: '10px',
+                    color: entry.includes('ERROR') || entry.includes('FAILED') ? '#FF5060' :
+                           entry.includes('OK') || entry.includes('complete') || entry.includes('unlocked') ? '#2EE89A' : '#A8A8C0',
+                    marginBottom: '2px',
+                    wordBreak: 'break-all'
+                  }}>{entry}</div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setDebugExpanded(true)} style={{
+              background: 'rgba(0,0,0,0.85)',
+              border: '1px solid #2EE89A',
+              borderRadius: '20px',
+              padding: '6px 12px',
+              color: '#2EE89A',
+              fontFamily: 'monospace',
+              fontSize: '10px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}>
+              DEBUG {voiceDebugLog.length}
+            </button>
+          )}
         </div>
       )}
     </>
