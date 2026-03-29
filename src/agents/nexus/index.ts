@@ -148,15 +148,39 @@ Provide a full per-agent breakdown:
 
 // ── List Query Detection ────────────────────────────────────────────────────
 
-const LIST_QUERY_RE = /tell me (all|about|the)|what agents|list (all|the)|who are|what are your|how many agents|your capabilities|what can you do/i
+const LIST_QUERY_RE = /agent|who (do you|are you)|what (can you|do you)|tell me (all|about|what)|list|capabilities|work with|reference|what.*you.*do|how many.*agent/i
 
 const LIST_FORMAT_INSTRUCTION = `
-## Response Format — LIST / CAPABILITIES QUERY
-CRITICAL: You must list ALL 11 agents completely. Do not stop early. Do not summarize.
-The agents are: NEXUS, VAULT, PULSE, LEDGER, BLUEPRINT, OHM, SCOUT, SPARK, CHRONO, ECHO, ATLAS.
-Format: one agent per line, name then role then one sentence description.
-Do not use markdown headers or bold. Write in plain conversational sentences.
-End with: "That's all 11. What would you like to know about any of them?"
+AGENT LIST INSTRUCTION — CRITICAL:
+The user wants to know about all agents. You MUST list all 11 agents completely.
+Do NOT stop early. Do NOT summarize. Complete the full list before stopping.
+
+Respond in this exact format, one agent per line:
+"I work with 11 agents total. Here's each one:
+
+NEXUS — that's me. I'm your orchestrator and voice interface. I route every question to the right agent and deliver your operational briefings.
+
+VAULT — handles all estimating. Price book with 240+ items, RMO calculations, material takeoffs, and quote generation.
+
+PULSE — your dashboard and analytics. Tracks KPIs, cash flow charts, revenue trends, and weekly performance metrics.
+
+LEDGER — money and collections. Tracks AR, flags overdue invoices, monitors collection rates, and surfaces cash flow gaps.
+
+BLUEPRINT — project management. Tracks project phases, RFIs, compliance items, coordination tasks, and change orders.
+
+OHM — NEC compliance coach. Answers electrical code questions, flags compliance gaps, and cross-references OSHA requirements.
+
+SCOUT — system analyzer. Monitors the platform for gaps and proposes improvements through the verification chain.
+
+SPARK — marketing agent. Manages Google Business, social media, lead pipeline, and campaign performance. (Phase E — building)
+
+CHRONO — calendar and scheduling. Handles crew dispatch, job scheduling, idle slot detection, and conflict alerts. (Phase D — building)
+
+ECHO — long-term memory. Stores conversation patterns and operational history across sessions. (Phase F — building)
+
+ATLAS — geo-mapping. Handles crew location, job site routing, and travel optimization. (Phase H — building)
+
+That's all 11. What would you like to know about any of them?"
 `
 
 const OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION = `
@@ -376,6 +400,23 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     }
   } catch {
     // Non-critical
+  }
+
+  // ── Step 4b: Detect short follow-up questions and inject last turn context ──
+  const query = request.message
+  const isFollowUp = query.split(' ').length <= 12 &&
+    /\b(that|it|the list|was that|which|what about|those|them|more|continue|go on|keep going|all of them)\b/i.test(query)
+
+  if (isFollowUp && request.conversationHistory.length > 0) {
+    const lastAssistantTurn = [...request.conversationHistory]
+      .reverse()
+      .find(m => m.role === 'assistant')
+
+    if (lastAssistantTurn) {
+      const lastTurnPreview = lastAssistantTurn.content.slice(0, 500)
+      const followUpInstruction = `\nFOLLOW-UP RULE: This is a follow-up question referencing the previous response.\nLook at the most recent assistant turn above — that is what the user is referring to.\nDO NOT ask for clarification. DO NOT ask "which list did you mean?"\nAnswer based on the most recent assistant turn directly.\nIf the previous turn was an agent list — confirm it was complete or continue it.\nIf the previous turn was a financial briefing — build on that context.\n\nMOST RECENT RESPONSE WAS: ${lastTurnPreview}\nThe user is asking a follow-up about this specific response.`
+      enrichedMessage = enrichedMessage + followUpInstruction
+    }
   }
 
   let agentResponse = await routeToAgent(

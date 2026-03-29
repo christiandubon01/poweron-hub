@@ -653,7 +653,7 @@ export async function routeToAgent(
   const claudeResponse = await callClaude({
     system: systemPrompt,
     messages,
-    max_tokens: options?.isListQuery ? 800 : 2048,
+    max_tokens: options?.isListQuery ? 1200 : 2048,
   })
 
   const content = extractText(claudeResponse) || 'No response generated.'

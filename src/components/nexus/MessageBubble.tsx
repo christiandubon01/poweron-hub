@@ -5,6 +5,7 @@
 
 import { clsx } from 'clsx'
 import type { ImpactLevel } from '@/agents/nexus/classifier'
+import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 
 // ── Agent colors (matches tailwind.config.ts agent tokens) ──────────────────
 
@@ -121,9 +122,16 @@ export function MessageBubble({
             <span className="w-1.5 h-1.5 bg-green rounded-full animate-pulse [animation-delay:0.4s]" />
           </div>
         ) : (
-          <div className="text-sm text-text-2 leading-relaxed whitespace-pre-wrap">
-            {content}
-          </div>
+          isUser ? (
+            <div className="text-sm text-text-2 leading-relaxed whitespace-pre-wrap">
+              {content}
+            </div>
+          ) : (
+            <div
+              className="text-sm text-text-2 leading-relaxed nexus-markdown"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+            />
+          )
         )}
 
         {/* Timestamp */}

@@ -387,7 +387,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
       </div>
 
       {/* NEXUS Presence Orb — centered above transcript */}
-      <div className="flex justify-center py-4 flex-shrink-0">
+      <div style={{ width: '180px', height: '180px', margin: '0 auto 16px', flexShrink: 0 }}>
         <NexusPresenceOrb state={orbState} size={180} />
       </div>
 

@@ -23,7 +23,7 @@
  * The orb renders as a fixed-position overlay, sized to wrap the mic button area.
  */
 
-import React, { useMemo } from 'react'
+import React, { useMemo, useEffect } from 'react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -229,6 +229,14 @@ export function NexusPresenceOrb({
   size = 80,
   className = '',
 }: NexusPresenceOrbProps) {
+  useEffect(() => {
+    console.log('[Orb] Mounted with state:', state)
+  }, [])
+
+  useEffect(() => {
+    console.log('[Orb] State changed:', state)
+  }, [state])
+
   const v = useMemo(() => getVisuals(state), [state])
 
   const half = size / 2
@@ -335,6 +343,19 @@ export function NexusPresenceOrb({
           ))}
         </>
       )}
+
+      {/* Fallback pulsing circle — visible baseline if CSS animations fail */}
+      <div
+        style={{
+          position: 'absolute',
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(46,232,154,0.12) 0%, transparent 70%)',
+          animation: 'orbBreathe 4s ease-in-out infinite',
+          zIndex: -1,
+        }}
+      />
     </div>
   )
 }
