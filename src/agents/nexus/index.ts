@@ -152,10 +152,11 @@ const LIST_QUERY_RE = /tell me (all|about|the)|what agents|list (all|the)|who ar
 
 const LIST_FORMAT_INSTRUCTION = `
 ## Response Format — LIST / CAPABILITIES QUERY
-Respond in compact conversational format — complete, no truncation, no markdown headers.
-Cover every agent or capability the user is asking about in natural sentences.
-Do NOT use bullet points or headers — write it as a conversational paragraph.
-Be thorough but concise.
+CRITICAL: You must list ALL 11 agents completely. Do not stop early. Do not summarize.
+The agents are: NEXUS, VAULT, PULSE, LEDGER, BLUEPRINT, OHM, SCOUT, SPARK, CHRONO, ECHO, ATLAS.
+Format: one agent per line, name then role then one sentence description.
+Do not use markdown headers or bold. Write in plain conversational sentences.
+End with: "That's all 11. What would you like to know about any of them?"
 `
 
 const OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION = `
@@ -381,7 +382,8 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     intent,
     enrichedMessage,
     request.orgId,
-    request.conversationHistory
+    request.conversationHistory,
+    { isListQuery }
   )
 
   // ── Step 5: Determine if confirmation is needed ─────────────────────────
@@ -448,9 +450,9 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   })
 
   // ── Step 6d: Trigger background pattern analysis (Layer 3) ────────────
-  // Only analyze after 3+ meaningful turns to avoid noise
+  // Analyze after 2+ meaningful turns to catch patterns early
   const recentTurns = getRecentTurns(6)
-  if (recentTurns.length >= 3) {
+  if (recentTurns.length >= 2) {
     // Fire-and-forget — don't block response delivery
     analyzeSessionPatterns(request.orgId, request.userId, recentTurns).catch(() => {
       // Non-critical — pattern analysis failure doesn't affect user experience

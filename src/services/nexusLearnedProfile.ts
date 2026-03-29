@@ -54,12 +54,17 @@ const MIN_CONFIDENCE_FOR_PROMPT = 2 // Only include patterns observed 2+ times
 
 /**
  * Load all active learned patterns for a user.
- * Tries Supabase first, falls back to localStorage cache.
+ * Loads from BOTH Supabase AND localStorage, merges and deduplicates by pattern_key.
+ * This ensures patterns are never lost even if Supabase table doesn't exist yet.
  */
 export async function loadLearnedPatterns(
   orgId: string,
   userId: string
 ): Promise<LearnedPattern[]> {
+  // Always load local patterns first as baseline
+  const localPatterns = getCachedPatterns(userId)
+
+  let supabasePatterns: LearnedPattern[] = []
   try {
     const { data, error } = await supabase
       .from('nexus_learned_profile' as never)
@@ -70,19 +75,37 @@ export async function loadLearnedPatterns(
       .order('confidence', { ascending: false })
 
     if (error) {
-      console.warn('[LearnedProfile] Supabase load failed, using cache:', error.message)
-      return getCachedPatterns(userId)
+      console.warn('[LearnedProfile] Supabase load failed, using localStorage only:', error.message)
+    } else if (data) {
+      supabasePatterns = data as LearnedPattern[]
     }
-
-    // Refresh local cache
-    if (data) {
-      localStorage.setItem(`${CACHE_KEY}_${userId}`, JSON.stringify(data))
-    }
-
-    return (data as LearnedPattern[]) || []
-  } catch {
-    return getCachedPatterns(userId)
+  } catch (err) {
+    console.warn('[LearnedProfile] Supabase unreachable, using localStorage only:', err)
   }
+
+  // Merge: Supabase patterns take priority, then add any local-only patterns
+  const merged = new Map<string, LearnedPattern>()
+  for (const p of supabasePatterns) {
+    merged.set(p.pattern_key, p)
+  }
+  for (const p of localPatterns) {
+    if (!merged.has(p.pattern_key)) {
+      merged.set(p.pattern_key, p)
+    } else {
+      // If local has higher confidence, use local's confidence
+      const existing = merged.get(p.pattern_key)!
+      if (p.confidence > existing.confidence) {
+        merged.set(p.pattern_key, { ...existing, confidence: p.confidence })
+      }
+    }
+  }
+
+  const result = Array.from(merged.values()).sort((a, b) => b.confidence - a.confidence)
+
+  // Refresh local cache with merged result
+  localStorage.setItem(`${CACHE_KEY}_${userId}`, JSON.stringify(result))
+
+  return result
 }
 
 // ── Build prompt from patterns ───────────────────────────────────────────────
@@ -119,9 +142,23 @@ export async function upsertPattern(
   userId: string,
   pattern: DetectedPattern
 ): Promise<void> {
+  // Always write to localStorage first — this is the guaranteed write path
+  upsertLocalCache(orgId, userId, pattern)
+
+  // Attempt Supabase write — verify table exists first with a test query
   try {
-    // Check if pattern already exists
-    const { data: existing } = await supabase
+    const { error: testError } = await supabase
+      .from('nexus_learned_profile' as never)
+      .select('id')
+      .limit(1)
+
+    if (testError) {
+      console.warn('[LearnedProfile] Supabase table not available, using localStorage fallback:', testError.message)
+      return
+    }
+
+    // Check if pattern already exists in Supabase
+    const { data: existing, error: selectError } = await supabase
       .from('nexus_learned_profile' as never)
       .select('id, confidence')
       .eq('org_id', orgId)
@@ -130,22 +167,32 @@ export async function upsertPattern(
       .eq('active', true)
       .single()
 
+    if (selectError && selectError.code !== 'PGRST116') {
+      // PGRST116 = no rows found (expected for new patterns)
+      console.warn('[LearnedProfile] Supabase select failed:', selectError.message)
+      return
+    }
+
     if (existing) {
       // Increment confidence
       const ex = existing as any
-      await supabase
+      const { error: updateError } = await supabase
         .from('nexus_learned_profile' as never)
         .update({
           confidence: (ex.confidence || 1) + 1,
           last_observed: new Date().toISOString(),
-          pattern_value: pattern.pattern_value, // update description in case it improved
+          pattern_value: pattern.pattern_value,
         })
         .eq('id', ex.id)
 
-      console.log(`[LearnedProfile] Incremented "${pattern.pattern_key}" → confidence ${(ex.confidence || 1) + 1}`)
+      if (updateError) {
+        console.warn('[LearnedProfile] Supabase update failed:', updateError.message)
+      } else {
+        console.log(`[LearnedProfile] Supabase: incremented "${pattern.pattern_key}" → confidence ${(ex.confidence || 1) + 1}`)
+      }
     } else {
       // Insert new pattern
-      await supabase
+      const { error: insertError } = await supabase
         .from('nexus_learned_profile' as never)
         .insert({
           org_id: orgId,
@@ -158,15 +205,14 @@ export async function upsertPattern(
           active: true,
         })
 
-      console.log(`[LearnedProfile] New pattern: "${pattern.pattern_key}" [${pattern.pattern_type}]`)
+      if (insertError) {
+        console.warn('[LearnedProfile] Supabase insert failed:', insertError.message)
+      } else {
+        console.log(`[LearnedProfile] Supabase: new pattern "${pattern.pattern_key}" [${pattern.pattern_type}]`)
+      }
     }
-
-    // Refresh cache
-    const all = await loadLearnedPatterns(orgId, userId)
-    localStorage.setItem(`${CACHE_KEY}_${userId}`, JSON.stringify(all))
   } catch (err) {
-    console.warn('[LearnedProfile] Upsert failed, saving to localStorage:', err)
-    upsertLocalCache(orgId, userId, pattern)
+    console.warn('[LearnedProfile] Supabase write failed, localStorage fallback active:', err)
   }
 }
 
@@ -186,14 +232,16 @@ Exchange:`
 /**
  * Analyze recent conversation turns for implicit behavioral patterns.
  * Uses Claude to detect patterns, then upserts them.
- * Should be called after each meaningful exchange (3+ turns).
+ * Fires after 2+ meaningful turns to catch patterns early.
  */
 export async function analyzeSessionPatterns(
   orgId: string,
   userId: string,
   recentTurns: Array<{ role: string; content: string }>
 ): Promise<void> {
-  if (recentTurns.length < 3) return // Need at least 3 turns for pattern detection
+  if (recentTurns.length < 2) return // Need at least 2 turns for pattern detection
+
+  console.log(`[LearnedProfile] Analyzing conversation for patterns... (${recentTurns.length} turns)`)
 
   // Take the last 6 turns max
   const exchange = recentTurns.slice(-6)
@@ -208,14 +256,29 @@ export async function analyzeSessionPatterns(
     })
 
     const text = extractText(response) || '[]'
+    console.log(`[LearnedProfile] Claude analysis raw response: ${text.slice(0, 200)}`)
 
     // Extract JSON from response (handle potential markdown wrapping)
     const jsonMatch = text.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return
+    if (!jsonMatch) {
+      console.log('[LearnedProfile] No valid JSON array found in response')
+      return
+    }
 
-    const patterns: DetectedPattern[] = JSON.parse(jsonMatch[0])
+    let patterns: DetectedPattern[]
+    try {
+      patterns = JSON.parse(jsonMatch[0])
+    } catch (parseErr) {
+      console.warn('[LearnedProfile] JSON parse failed:', parseErr)
+      return
+    }
 
-    if (!Array.isArray(patterns) || patterns.length === 0) return
+    if (!Array.isArray(patterns) || patterns.length === 0) {
+      console.log('[LearnedProfile] No patterns detected in this exchange')
+      return
+    }
+
+    console.log(`[LearnedProfile] Patterns detected: ${JSON.stringify(patterns)}`)
 
     // Validate and upsert each pattern
     for (const p of patterns.slice(0, 3)) {
@@ -224,7 +287,7 @@ export async function analyzeSessionPatterns(
       }
     }
 
-    console.log(`[LearnedProfile] Analyzed exchange → ${patterns.length} pattern(s) detected`)
+    console.log(`[LearnedProfile] Analyzed exchange → ${patterns.length} pattern(s) written`)
   } catch (err) {
     console.warn('[LearnedProfile] Pattern analysis failed (non-critical):', err)
   }

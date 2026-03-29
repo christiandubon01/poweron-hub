@@ -601,7 +601,8 @@ export async function routeToAgent(
   intent:       ClassifiedIntent,
   userMessage:  string,
   orgId:        string,
-  conversationHistory: ConversationMessage[]
+  conversationHistory: ConversationMessage[],
+  options?: { isListQuery?: boolean }
 ): Promise<AgentResponse> {
   const targetAgent = intent.targetAgent
   const agentName   = AGENT_DISPLAY_NAMES[targetAgent]
@@ -624,20 +625,35 @@ export async function routeToAgent(
     `\n---\n\n## Classification\nCategory: ${intent.category}\nConfidence: ${intent.confidence}\nImpact: ${intent.impactLevel}\nEntities: ${JSON.stringify(intent.entities)}`,
   ].join('')
 
-  // 3. Build messages array from conversation history
+  // 3. Build messages array from conversation history with labeled turn numbers
+  const recentHistory = conversationHistory.slice(-10)
+  const hasHistory = recentHistory.length > 0
+
   const messages = [
-    ...conversationHistory.slice(-10).map(m => ({
+    ...recentHistory.map((m, index) => ({
       role: m.role as 'user' | 'assistant',
-      content: m.content,
+      content: m.role === 'assistant'
+        ? `[Turn ${index + 1} - via ${m.agentId || 'nexus'}]: ${m.content}`
+        : `[Turn ${index + 1}]: ${m.content}`,
     })),
     { role: 'user' as const, content: userMessage },
   ]
 
-  // 4. Call Claude via proxy
+  // 3b. Inject conversation context instruction when history exists
+  if (hasHistory) {
+    const contextNote = `\n---\n\nCONVERSATION CONTEXT: You have ${recentHistory.length} previous turns above. When the user refers to "that", "it", "the list", "was that", or any reference to a previous response, look at the MOST RECENT assistant turn and answer based on that specific content. Do not default to a financial briefing if the question is a follow-up.`
+    // Append to system prompt by modifying the messages (system prompt is already built)
+    messages[messages.length - 1] = {
+      role: 'user',
+      content: userMessage + contextNote,
+    }
+  }
+
+  // 4. Call Claude via proxy — list queries get higher token limit for completeness
   const claudeResponse = await callClaude({
     system: systemPrompt,
     messages,
-    max_tokens: 2048,
+    max_tokens: options?.isListQuery ? 800 : 2048,
   })
 
   const content = extractText(claudeResponse) || 'No response generated.'
