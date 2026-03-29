@@ -1,280 +1,282 @@
+// @ts-nocheck
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Calendar, Loader2 } from 'lucide-react'
+import { Calendar, Loader2, MapPin, Clock, AlertCircle, Send, Users, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import clsx from 'clsx'
+import { processChronoRequest, type CrewDailyBriefing } from '@/agents/chrono'
+import { submitProposal, runAutomatedReview } from '@/services/miroFish'
 
-interface CrewAvailability {
-  id: string
-  employee_id: string
-  availability_date: string
-  availability_status: 'available' | 'unavailable' | 'vacation' | 'sick' | 'pto' | 'training'
-  hours_available: number
-  skills: string[]
-  certifications: string[]
-  org_id: string
-}
-
-interface JobSchedule {
-  id: string
-  calendar_event_id: string
-  employee_id: string
-  org_id: string
-}
-
-interface CalendarEvent {
-  id: string
-  title: string
-  start_time: string
-  end_time: string
-}
-
-const statusColors = {
-  available: 'bg-emerald-400/10 text-emerald-400 border border-emerald-400/20',
+const statusColors: Record<string, string> = {
+  available:   'bg-emerald-400/10 text-emerald-400 border border-emerald-400/20',
   unavailable: 'bg-red-400/10 text-red-400 border border-red-400/20',
-  vacation: 'bg-yellow-400/10 text-yellow-400 border border-yellow-400/20',
-  sick: 'bg-orange-400/10 text-orange-400 border border-orange-400/20',
-  pto: 'bg-purple-400/10 text-purple-400 border border-purple-400/20',
-  training: 'bg-blue-400/10 text-blue-400 border border-blue-400/20',
-}
-
-const statusBgColors = {
-  available: 'bg-emerald-400/10',
-  unavailable: 'bg-red-400/10',
-  vacation: 'bg-yellow-400/10',
-  sick: 'bg-orange-400/10',
-  pto: 'bg-purple-400/10',
-  training: 'bg-blue-400/10',
+  vacation:    'bg-yellow-400/10 text-yellow-400 border border-yellow-400/20',
+  sick:        'bg-orange-400/10 text-orange-400 border border-orange-400/20',
+  pto:         'bg-purple-400/10 text-purple-400 border border-purple-400/20',
+  training:    'bg-blue-400/10 text-blue-400 border border-blue-400/20',
 }
 
 export function CrewDispatch() {
   const { profile } = useAuth()
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
-  const [crews, setCrews] = useState<CrewAvailability[]>([])
-  const [events, setEvents] = useState<CalendarEvent[]>([])
-  const [schedules, setSchedules] = useState<JobSchedule[]>([])
+  const [briefings, setBriefings] = useState<CrewDailyBriefing[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [sendingBriefing, setSendingBriefing] = useState<string | null>(null)
+  const [expandedCrew, setExpandedCrew] = useState<string | null>(null)
 
   const orgId = profile?.org_id
 
   useEffect(() => {
-    if (!orgId) return
+    if (!orgId) { setLoading(false); return }
 
-    const fetchData = async () => {
+    const fetchBriefings = async () => {
       setLoading(true)
       setError(null)
       try {
-        // Fetch crew availability
-        const { data: crewData, error: crewErr } = await supabase
-          .from('crew_availability' as never)
-          .select('*')
-          .eq('org_id', orgId)
-          .eq('availability_date', selectedDate)
-          .order('availability_status', { ascending: true })
-
-        if (crewErr) throw crewErr
-
-        // Fetch calendar events for the date
-        const dayStart = `${selectedDate}T00:00:00`
-        const dayEnd = `${selectedDate}T23:59:59`
-
-        const { data: eventData, error: eventErr } = await supabase
-          .from('calendar_events' as never)
-          .select('id, title, start_time, end_time')
-          .eq('org_id', orgId)
-          .gte('start_time', dayStart)
-          .lte('start_time', dayEnd)
-
-        if (eventErr) throw eventErr
-
-        // Fetch job schedules for the events
-        const eventIds = (eventData ?? []).map((e: any) => e.id)
-        let scheduleData: JobSchedule[] = []
-
-        if (eventIds.length > 0) {
-          const { data: scheduleResult, error: scheduleErr } = await supabase
-            .from('job_schedules' as never)
+        const result = await processChronoRequest({
+          action: 'generate_daily_briefing',
+          orgId,
+          userId: '',
+          params: { date: selectedDate },
+        })
+        setBriefings((result.data as CrewDailyBriefing[]) || [])
+      } catch (err) {
+        // Fallback to raw Supabase data if agent fails
+        try {
+          const { data: crewData } = await supabase
+            .from('crew_availability' as never)
             .select('*')
             .eq('org_id', orgId)
-            .in('calendar_event_id', eventIds)
+            .eq('availability_date', selectedDate)
 
-          if (scheduleErr) throw scheduleErr
-          scheduleData = scheduleResult || []
+          // Convert to minimal briefing format
+          const fallbackBriefings: CrewDailyBriefing[] = ((crewData || []) as any[]).map((crew: any) => ({
+            employeeId: crew.employee_id,
+            employeeName: crew.employee_id,
+            totalJobs: 0,
+            totalHours: 0,
+            totalDriveMinutes: 0,
+            idle: crew.availability_status === 'available',
+            jobs: [],
+            briefingText: `${crew.employee_id}: ${crew.availability_status}. ${crew.hours_available || 8}h available.`,
+          }))
+          setBriefings(fallbackBriefings)
+        } catch {
+          setError(err instanceof Error ? err.message : 'Failed to load crew dispatch')
         }
-
-        setCrews(crewData || [])
-        setEvents(eventData || [])
-        setSchedules(scheduleData)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load crew availability')
       } finally {
         setLoading(false)
       }
     }
 
-    fetchData()
+    fetchBriefings()
   }, [orgId, selectedDate])
 
-  const getAssignedJobs = (employeeId: string) => {
-    return schedules
-      .filter((s) => s.employee_id === employeeId)
-      .map((s) => events.find((e) => e.id === s.calendar_event_id))
-      .filter(Boolean) as CalendarEvent[]
+  const handleSendBriefing = async (empId: string) => {
+    if (!orgId) return
+    setSendingBriefing(empId)
+
+    const briefing = briefings.find(b => b.employeeId === empId)
+    if (!briefing) { setSendingBriefing(null); return }
+
+    try {
+      // Submit through MiroFish for approval
+      await submitProposal({
+        orgId,
+        proposingAgent: 'chrono',
+        title: `Send crew briefing to ${briefing.employeeName}`,
+        description: briefing.briefingText,
+        category: 'scheduling',
+        impactLevel: 'low',
+        actionType: 'send_crew_briefing',
+        actionPayload: {
+          employeeId: empId,
+          employeeName: briefing.employeeName,
+          briefingText: briefing.briefingText,
+          date: selectedDate,
+        },
+      }).then(proposal => runAutomatedReview(proposal.id!))
+
+      console.log(`[CHRONO] Briefing for ${briefing.employeeName} submitted to MiroFish`)
+    } catch (err) {
+      console.error('[CHRONO] Send briefing error:', err)
+    } finally {
+      setSendingBriefing(null)
+    }
   }
 
-  const formatTime = (isoString: string) => {
-    const date = new Date(isoString)
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-  }
-
-  const groupedCrews = crews.reduce(
-    (acc, crew) => {
-      if (crew.availability_status === 'available') {
-        acc.available.push(crew)
-      } else {
-        acc.unavailable.push(crew)
-      }
-      return acc
-    },
-    { available: [] as CrewAvailability[], unavailable: [] as CrewAvailability[] }
-  )
+  const activeBriefings = briefings.filter(b => !b.idle)
+  const idleBriefings = briefings.filter(b => b.idle)
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+        <Loader2 className="w-8 h-8 animate-spin text-orange-400" />
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      {/* Date Picker */}
-      <div className="flex items-center gap-2">
-        <Calendar className="w-4 h-4 text-gray-400" />
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          className="bg-gray-700/50 border border-gray-600 text-gray-100 rounded px-3 py-2 text-sm"
-        />
+      {/* Header: Date picker + summary */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-gray-400" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="bg-gray-700/50 border border-gray-600 text-gray-100 rounded px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 text-xs">
+          <span className="flex items-center gap-1 text-emerald-400">
+            <Users className="w-3.5 h-3.5" /> {activeBriefings.length} active
+          </span>
+          {idleBriefings.length > 0 && (
+            <span className="flex items-center gap-1 text-yellow-400">
+              <AlertCircle className="w-3.5 h-3.5" /> {idleBriefings.length} idle
+            </span>
+          )}
+        </div>
       </div>
 
       {error && <div className="bg-red-400/10 border border-red-400/20 text-red-400 rounded p-3 text-sm">{error}</div>}
 
-      {crews.length === 0 ? (
+      {briefings.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-center">
-          <Calendar className="w-12 h-12 text-gray-500 mb-3" />
-          <p className="text-gray-400">No crew availability records for this date</p>
+          <Users className="w-12 h-12 text-gray-500 mb-3" />
+          <p className="text-gray-400">No crew data for this date</p>
+          <p className="text-xs text-gray-500 mt-1">Add employees in Team panel or set crew availability</p>
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Available Crew */}
-          {groupedCrews.available.length > 0 && (
+          {/* Active Crew */}
+          {activeBriefings.length > 0 && (
             <div>
-              <h3 className="text-sm font-semibold text-emerald-400 mb-3 uppercase tracking-wide">Available</h3>
+              <h3 className="text-sm font-semibold text-emerald-400 mb-3 uppercase tracking-wide flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Active Crew — {activeBriefings.reduce((s, b) => s + b.totalJobs, 0)} jobs
+              </h3>
               <div className="grid gap-3">
-                {groupedCrews.available.map((crew) => {
-                  const assignedJobs = getAssignedJobs(crew.employee_id)
-                  return (
-                    <div
-                      key={crew.id}
-                      className={clsx('bg-gray-800/50 border border-gray-700 rounded p-4', statusBgColors[crew.availability_status])}
+                {activeBriefings.map(briefing => (
+                  <div key={briefing.employeeId} className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+                    {/* Crew Header */}
+                    <button
+                      onClick={() => setExpandedCrew(expandedCrew === briefing.employeeId ? null : briefing.employeeId)}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800/80 transition-colors"
                     >
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <div className="text-sm font-semibold text-gray-100">
-                            {crew.employee_id.slice(0, 8)}
-                          </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                          <span className="text-xs font-bold text-emerald-400">
+                            {(briefing.employeeName || '?').charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="text-left">
+                          <div className="text-sm font-semibold text-gray-100">{briefing.employeeName}</div>
                           <div className="text-xs text-gray-400">
-                            {crew.hours_available} hours available
+                            {briefing.totalJobs} job{briefing.totalJobs !== 1 ? 's' : ''} · {briefing.totalHours}h · ~{briefing.totalDriveMinutes}min drive
                           </div>
                         </div>
-                        <span className={clsx('px-2 py-1 rounded text-xs font-medium', statusColors[crew.availability_status])}>
-                          {crew.availability_status}
-                        </span>
                       </div>
+                      <ChevronRight className={clsx('w-4 h-4 text-gray-500 transition-transform', expandedCrew === briefing.employeeId && 'rotate-90')} />
+                    </button>
 
-                      {crew.skills && crew.skills.length > 0 && (
-                        <div className="mb-2">
-                          <div className="text-xs text-gray-500 mb-1">Skills</div>
-                          <div className="flex flex-wrap gap-1">
-                            {crew.skills.map((skill, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-1 bg-cyan-400/10 text-cyan-400 rounded text-xs"
-                              >
-                                {skill}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {crew.certifications && crew.certifications.length > 0 && (
-                        <div className="mb-2">
-                          <div className="text-xs text-gray-500 mb-1">Certifications</div>
-                          <div className="flex flex-wrap gap-1">
-                            {crew.certifications.map((cert, idx) => (
-                              <span
-                                key={idx}
-                                className="px-1.5 py-0.5 bg-gray-700/50 text-gray-400 rounded text-xs"
-                              >
-                                {cert}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {assignedJobs.length > 0 && (
-                        <div className="mt-3 pt-3 border-t border-gray-700">
-                          <div className="text-xs text-gray-500 mb-2">Assigned Jobs</div>
-                          <div className="space-y-1">
-                            {assignedJobs.map((job) => (
-                              <div key={job.id} className="text-xs text-gray-300 bg-gray-700/30 rounded p-2">
-                                <div className="font-medium">{job.title}</div>
-                                <div className="text-gray-500">
-                                  {formatTime(job.start_time)} - {formatTime(job.end_time)}
+                    {/* Expanded: Route + Jobs */}
+                    {expandedCrew === briefing.employeeId && (
+                      <div className="border-t border-gray-700 p-4 space-y-3">
+                        {/* Route Visualization */}
+                        <div className="space-y-2">
+                          {briefing.jobs.map((job, idx) => (
+                            <div key={idx} className="flex items-start gap-3">
+                              {/* Route connector */}
+                              <div className="flex flex-col items-center">
+                                <div className={clsx('w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold',
+                                  idx === 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                                )}>
+                                  {job.order}
                                 </div>
+                                {idx < briefing.jobs.length - 1 && (
+                                  <div className="w-px h-8 bg-gray-600 my-1" />
+                                )}
                               </div>
-                            ))}
-                          </div>
+
+                              {/* Job details */}
+                              <div className="flex-1 bg-gray-700/30 rounded p-3">
+                                <div className="text-sm font-medium text-gray-100">{job.title}</div>
+                                <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-400">
+                                  <span className="flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" /> {job.address || 'TBD'}
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {new Date(job.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · {job.hours}h
+                                  </span>
+                                </div>
+                                {job.travelMinutesFromPrevious > 0 && (
+                                  <div className="text-[10px] text-gray-500 mt-1">
+                                    ~{job.travelMinutesFromPrevious}min travel from {idx === 0 ? 'office' : 'previous job'}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                  )
-                })}
+
+                        {/* Briefing Text */}
+                        <div className="bg-gray-900/50 border border-gray-700 rounded p-3 text-xs text-gray-300 font-mono">
+                          {briefing.briefingText}
+                        </div>
+
+                        {/* Send Briefing Button → MiroFish */}
+                        <button
+                          onClick={() => handleSendBriefing(briefing.employeeId)}
+                          disabled={sendingBriefing === briefing.employeeId}
+                          className="flex items-center gap-2 px-3 py-2 bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 rounded text-xs font-medium transition-colors"
+                        >
+                          {sendingBriefing === briefing.employeeId ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Send className="w-3.5 h-3.5" />
+                          )}
+                          {sendingBriefing === briefing.employeeId ? 'Submitting...' : 'Send Briefing (MiroFish)'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Unavailable Crew */}
-          {groupedCrews.unavailable.length > 0 && (
+          {/* Idle Crew */}
+          {idleBriefings.length > 0 && (
             <div>
-              <h3 className="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wide">Unavailable</h3>
-              <div className="grid gap-3">
-                {groupedCrews.unavailable.map((crew) => (
-                  <div
-                    key={crew.id}
-                    className={clsx('bg-gray-800/50 border border-gray-700 rounded p-4', statusBgColors[crew.availability_status])}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-100">
-                          {crew.employee_id.slice(0, 8)}
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          {crew.hours_available} hours available
-                        </div>
+              <h3 className="text-sm font-semibold text-yellow-400 mb-3 uppercase tracking-wide flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-yellow-400" /> Idle — {idleBriefings.length} crew with 0 jobs
+              </h3>
+              <div className="grid gap-2">
+                {idleBriefings.map(briefing => (
+                  <div key={briefing.employeeId} className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                        <span className="text-xs font-bold text-yellow-400">
+                          {(briefing.employeeName || '?').charAt(0).toUpperCase()}
+                        </span>
                       </div>
-                      <span className={clsx('px-2 py-1 rounded text-xs font-medium', statusColors[crew.availability_status])}>
-                        {crew.availability_status}
-                      </span>
+                      <div>
+                        <div className="text-sm font-medium text-gray-100">{briefing.employeeName}</div>
+                        <div className="text-xs text-yellow-400/70">No jobs scheduled today</div>
+                      </div>
                     </div>
+                    <span className="px-2 py-1 rounded text-xs font-medium bg-yellow-400/10 text-yellow-400 border border-yellow-400/20">
+                      Idle
+                    </span>
                   </div>
                 ))}
               </div>

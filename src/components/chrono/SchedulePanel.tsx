@@ -1,18 +1,19 @@
 // @ts-nocheck
 
 import { useState, useEffect } from 'react'
-import { Calendar, Link2, Unlink, RefreshCw, Loader2 } from 'lucide-react'
+import { Calendar, Link2, Unlink, RefreshCw, Loader2, AlertTriangle, Clock, Zap } from 'lucide-react'
 import clsx from 'clsx'
 import { CalendarView } from './CalendarView'
 import { CrewDispatch } from './CrewDispatch'
 import { JobScheduler } from './JobScheduler'
 import { useAuth } from '@/hooks/useAuth'
 import {
-  initiateGoogleAuth, isConnected, disconnect, fullSync
+  initiateGoogleAuth, isConnected, disconnect, fullSync, startAutoSync, stopAutoSync,
 } from '@/services/googleCalendar'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { getBackupData, num } from '@/services/backupDataService'
+import { processChronoRequest, type ConflictAlert } from '@/agents/chrono'
 
 type TabType = 'calendar' | 'crew' | 'agenda'
 
@@ -26,8 +27,12 @@ export function SchedulePanel() {
   const [activeTab, setActiveTab] = useState<TabType>('calendar')
   const { user, profile } = useAuth()
   const userId = user?.id
+  const orgId = profile?.org_id
   const [gcalConnected, setGcalConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [conflicts, setConflicts] = useState<ConflictAlert[]>([])
+  const [idleSummary, setIdleSummary] = useState<string | null>(null)
+  const [loading7Day, setLoading7Day] = useState(false)
 
   // ── Proactive AI data context ──────────────────────────────────────────────
   const backup = getBackupData()
@@ -38,11 +43,47 @@ export function SchedulePanel() {
   const chronoSystem = 'You are CHRONO, the scheduling optimization agent for Power On Solutions LLC. Analyze crew utilization, scheduling gaps, and workload balance. Be concise with specific recommendations.'
   const chrono = useProactiveAI('chrono', chronoSystem, chronoContext, employees.length > 0 || logs.length > 0)
 
+  // ── Google Calendar connection ─────────────────────────────────────────────
   useEffect(() => {
     if (userId) {
-      isConnected(userId).then(setGcalConnected)
+      isConnected(userId).then(connected => {
+        setGcalConnected(connected)
+        // Start auto-sync if connected
+        if (connected && orgId) {
+          startAutoSync(userId, orgId)
+        }
+      })
     }
-  }, [userId])
+    return () => stopAutoSync()
+  }, [userId, orgId])
+
+  // ── Conflict scan on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!orgId) return
+    processChronoRequest({
+      action: 'run_conflict_scan',
+      orgId,
+      userId: userId || '',
+      params: { daysAhead: 2 },
+    }).then(res => {
+      setConflicts((res.data as ConflictAlert[]) || [])
+    }).catch(() => {})
+  }, [orgId, userId])
+
+  // ── Idle slot detection on mount ───────────────────────────────────────────
+  useEffect(() => {
+    if (!orgId) return
+    processChronoRequest({
+      action: 'detect_idle_slots',
+      orgId,
+      userId: userId || '',
+    }).then(res => {
+      const data = res.data as any
+      if (data?.totalIdleHours > 0) {
+        setIdleSummary(data.suggestions?.join(' ') || `${Math.round(data.totalIdleHours)} idle hours found`)
+      }
+    }).catch(() => {})
+  }, [orgId, userId])
 
   async function handleConnectGoogle() {
     initiateGoogleAuth()
@@ -56,16 +97,18 @@ export function SchedulePanel() {
   }
 
   async function handleSync() {
-    if (!userId || !profile?.org_id) return
+    if (!userId || !orgId) return
     setSyncing(true)
     try {
-      const result = await fullSync(userId, profile.org_id)
+      const result = await fullSync(userId, orgId)
       console.log('[chrono] Sync result:', result)
     } catch (err) {
       console.error('[chrono] Sync failed:', err)
     }
     setSyncing(false)
   }
+
+  const criticalConflicts = conflicts.filter(c => c.severity === 'critical')
 
   return (
     <div className="space-y-4">
@@ -81,11 +124,42 @@ export function SchedulePanel() {
         systemPrompt={chronoSystem}
       />
 
+      {/* Conflict Warnings */}
+      {criticalConflicts.length > 0 && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <span className="text-sm font-semibold text-red-400">
+              {criticalConflicts.length} Critical Conflict{criticalConflicts.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          {criticalConflicts.slice(0, 3).map((c, idx) => (
+            <div key={idx} className="text-xs text-red-300 pl-6">
+              {c.description}
+              <div className="text-red-400/60 mt-0.5">{c.suggestedAction}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Idle Slot Summary */}
+      {idleSummary && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 flex items-start gap-2">
+          <Clock className="w-4 h-4 text-yellow-400 mt-0.5 shrink-0" />
+          <span className="text-xs text-yellow-300">{idleSummary}</span>
+        </div>
+      )}
+
       {/* Header with CHRONO Badge + Google Calendar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 border border-orange-500/30 rounded-full">
           <Calendar className="w-4 h-4 text-orange-500" />
           <span className="text-xs font-semibold text-orange-400 uppercase tracking-wider">CHRONO</span>
+          {conflicts.length > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-bold rounded-full">
+              {conflicts.length}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -106,7 +180,9 @@ export function SchedulePanel() {
               >
                 <Unlink size={12} />
               </button>
-              <span className="text-[10px] text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">Google Connected</span>
+              <span className="text-[10px] text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                Google Connected (15min sync)
+              </span>
             </>
           ) : (
             <button
@@ -140,7 +216,7 @@ export function SchedulePanel() {
 
       {/* Tab Content */}
       <div className="bg-gray-800/30 rounded-lg p-4">
-        {activeTab === 'calendar' && <CalendarView />}
+        {activeTab === 'calendar' && <CalendarView conflicts={conflicts} />}
         {activeTab === 'crew' && <CrewDispatch />}
         {activeTab === 'agenda' && <JobScheduler />}
       </div>

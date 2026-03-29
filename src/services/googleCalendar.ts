@@ -1,19 +1,23 @@
 // @ts-nocheck
 /**
- * googleCalendar.ts — Bidirectional Google Calendar sync for CHRONO
+ * googleCalendar.ts — Enhanced bidirectional Google Calendar sync for CHRONO
  *
- * OAuth2 flow using VITE_GOOGLE_CLIENT_ID, syncs between
- * Supabase `calendar_events` table and Google Calendar.
+ * Phase D enhancements:
+ *   - READ: Pull events tagged "Power On" or created by app
+ *   - READ: Merge with CHRONO internal calendar entries
+ *   - READ: Detect conflicts between Google Calendar and app schedule
+ *   - WRITE: After MiroFish approval, create Google Calendar event with:
+ *     title "[Job type] — [Client name]", description, crew attendees
+ *   - Sync frequency: every 15 minutes when app is open
+ *   - Conflict resolution: app schedule is source of truth
  *
- * Features:
- *   - OAuth2 authorization via popup
- *   - Import existing Google Calendar events on connect
- *   - Push new CHRONO events to Google Calendar
- *   - Pull Google Calendar changes on refresh
- *   - Token refresh handling
+ * Uses existing VITE_GOOGLE_CALENDAR_API_KEY env variable.
  */
 
 import { supabase } from '@/lib/supabase'
+import { publish } from './agentEventBus'
+import { submitProposal, runAutomatedReview } from './miroFish'
+import { logAudit } from '@/lib/memory/audit'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,6 +30,7 @@ export interface GoogleCalendarEvent {
   end: { dateTime: string; timeZone?: string }
   status?: string
   htmlLink?: string
+  attendees?: { email: string; displayName?: string; responseStatus?: string }[]
 }
 
 export interface CalendarSyncState {
@@ -34,6 +39,13 @@ export interface CalendarSyncState {
   lastSyncAt: string | null
   error: string | null
   eventCount: number
+}
+
+export interface SyncConflict {
+  type: 'time_overlap' | 'missing_local' | 'missing_remote'
+  localEventId?: string
+  googleEventId?: string
+  description: string
 }
 
 interface TokenData {
@@ -49,9 +61,10 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 const SCOPES = 'https://www.googleapis.com/auth/calendar'
 const REDIRECT_URI = `${window.location.origin}/auth/google/callback`
 const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
+const SYNC_INTERVAL_MS = 15 * 60 * 1000  // 15 minutes
+const POWER_ON_TAG = 'Power On'
 
 // ── Token Storage ────────────────────────────────────────────────────────────
-// Stored in Supabase profiles.metadata.google_calendar
 
 let cachedToken: TokenData | null = null
 
@@ -72,7 +85,6 @@ async function getStoredToken(userId: string): Promise<TokenData | null> {
 async function storeToken(userId: string, token: TokenData): Promise<void> {
   cachedToken = token
 
-  // Read current metadata first, then merge
   const { data: profile } = await supabase
     .from('profiles' as never)
     .select('metadata')
@@ -130,7 +142,6 @@ export function initiateGoogleAuth(): void {
     state: 'google_calendar_connect',
   })
 
-  // Open OAuth popup
   const width = 500
   const height = 600
   const left = window.screenX + (window.outerWidth - width) / 2
@@ -143,25 +154,17 @@ export function initiateGoogleAuth(): void {
   )
 }
 
-/**
- * Handle the OAuth callback. Call this from the callback route.
- * Exchanges the authorization code for tokens.
- */
 export async function handleGoogleCallback(
   code: string,
   userId: string
 ): Promise<boolean> {
   try {
-    // Exchange code for tokens via Supabase Edge Function (to keep client_secret safe)
     const { data, error } = await supabase.functions.invoke('google-calendar-token', {
       body: { code, redirect_uri: REDIRECT_URI },
     })
 
     if (error || !data?.access_token) {
       console.error('[gcal] Token exchange failed:', error || data)
-
-      // Fallback: If no Edge Function exists yet, try direct exchange
-      // (only works if GOOGLE_CLIENT_SECRET is available — NOT recommended for production)
       return false
     }
 
@@ -180,7 +183,7 @@ export async function handleGoogleCallback(
   }
 }
 
-// ── Check Connection Status ──────────────────────────────────────────────────
+// ── Connection Status ────────────────────────────────────────────────────────
 
 export async function isConnected(userId: string): Promise<boolean> {
   const token = await getStoredToken(userId)
@@ -189,9 +192,10 @@ export async function isConnected(userId: string): Promise<boolean> {
 
 export async function disconnect(userId: string): Promise<void> {
   await clearToken(userId)
+  stopAutoSync()
 }
 
-// ── Fetch Google Calendar Events ─────────────────────────────────────────────
+// ── Authenticated Fetch ──────────────────────────────────────────────────────
 
 async function fetchWithAuth(
   url: string,
@@ -201,9 +205,7 @@ async function fetchWithAuth(
   const token = await getStoredToken(userId)
   if (!token) throw new Error('Not connected to Google Calendar')
 
-  // Check if token is expired
   if (token.expires_at < Date.now() && token.refresh_token) {
-    // Refresh via Edge Function
     const { data } = await supabase.functions.invoke('google-calendar-token', {
       body: { refresh_token: token.refresh_token, grant_type: 'refresh_token' },
     })
@@ -228,6 +230,8 @@ async function fetchWithAuth(
     },
   })
 }
+
+// ── READ: Fetch Google Calendar Events ───────────────────────────────────────
 
 export async function fetchGoogleEvents(
   userId: string,
@@ -256,7 +260,31 @@ export async function fetchGoogleEvents(
   return data.items || []
 }
 
-// ── Import Google Events to Supabase ─────────────────────────────────────────
+/**
+ * Fetch only Power On related events from Google Calendar.
+ * Filters for events tagged with "Power On" or created by the app.
+ */
+export async function fetchPowerOnEvents(
+  userId: string,
+  timeMin?: string,
+  timeMax?: string
+): Promise<GoogleCalendarEvent[]> {
+  const allEvents = await fetchGoogleEvents(userId, timeMin, timeMax)
+
+  return allEvents.filter(event => {
+    const summary = (event.summary || '').toLowerCase()
+    const desc = (event.description || '').toLowerCase()
+    return (
+      summary.includes('power on') ||
+      desc.includes('power on') ||
+      desc.includes('poweron hub') ||
+      desc.includes('chrono:') ||
+      summary.includes('—')  // Our format: "[Job type] — [Client name]"
+    )
+  })
+}
+
+// ── READ: Import Google Events to Supabase ───────────────────────────────────
 
 export async function importGoogleEvents(
   userId: string,
@@ -266,7 +294,7 @@ export async function importGoogleEvents(
 
   let imported = 0
   for (const event of events) {
-    if (!event.start?.dateTime) continue // skip all-day events for now
+    if (!event.start?.dateTime) continue
 
     const { error } = await supabase
       .from('schedule_entries' as never)
@@ -291,8 +319,117 @@ export async function importGoogleEvents(
   return imported
 }
 
-// ── Push CHRONO Event to Google Calendar ─────────────────────────────────────
+// ── READ: Detect Conflicts Between GCal and App Schedule ─────────────────────
 
+export async function detectSyncConflicts(
+  userId: string,
+  orgId: string
+): Promise<SyncConflict[]> {
+  const conflicts: SyncConflict[] = []
+
+  try {
+    const googleEvents = await fetchPowerOnEvents(userId)
+
+    // Get app calendar events for the same timeframe
+    const { data: appEvents } = await supabase
+      .from('calendar_events' as never)
+      .select('id, title, start_time, end_time')
+      .eq('org_id', orgId)
+      .gte('start_time', new Date(Date.now() - 7 * 86400000).toISOString())
+      .lte('start_time', new Date(Date.now() + 30 * 86400000).toISOString())
+
+    const localEvents = (appEvents || []) as any[]
+
+    // Check for time overlaps between Google events and local events
+    for (const gEvent of googleEvents) {
+      if (!gEvent.start?.dateTime) continue
+
+      for (const local of localEvents) {
+        const gStart = new Date(gEvent.start.dateTime).getTime()
+        const gEnd = new Date(gEvent.end?.dateTime || gEvent.start.dateTime).getTime()
+        const lStart = new Date(local.start_time).getTime()
+        const lEnd = new Date(local.end_time).getTime()
+
+        if (gStart < lEnd && gEnd > lStart) {
+          // Overlap detected — only flag if titles don't match
+          const gTitle = (gEvent.summary || '').toLowerCase()
+          const lTitle = (local.title || '').toLowerCase()
+          if (!gTitle.includes(lTitle) && !lTitle.includes(gTitle)) {
+            conflicts.push({
+              type: 'time_overlap',
+              localEventId: local.id,
+              googleEventId: gEvent.id,
+              description: `Time overlap: Google "${gEvent.summary}" conflicts with app "${local.title}"`,
+            })
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[gcal] Conflict detection error:', err)
+  }
+
+  return conflicts
+}
+
+// ── WRITE: Push CHRONO Event to Google Calendar (with MiroFish) ──────────────
+
+/**
+ * Create a Google Calendar event after MiroFish approval.
+ * Format: title "[Job type] — [Client name]"
+ * Includes crew members as attendees if they have email in backup.employees.
+ */
+export async function pushEventToGoogleWithApproval(
+  userId: string,
+  orgId: string,
+  event: {
+    jobType: string
+    clientName: string
+    description?: string
+    location?: string
+    start_time: string
+    end_time: string
+    crewEmails?: string[]
+    projectDetails?: string
+  }
+): Promise<{ googleEventId?: string; proposalId?: string }> {
+  const title = `${event.jobType} — ${event.clientName}`
+  const description = [
+    event.projectDetails || '',
+    event.description || '',
+    `Crew: ${event.crewEmails?.join(', ') || 'TBD'}`,
+    `Location: ${event.location || 'TBD'}`,
+    `\n— Created by PowerOn Hub / CHRONO`,
+  ].filter(Boolean).join('\n')
+
+  // Submit through MiroFish
+  let proposalId: string | undefined
+  try {
+    const proposal = await submitProposal({
+      orgId,
+      proposingAgent: 'chrono',
+      title: `Sync to Google Calendar: ${title}`,
+      description: `Create Google Calendar event for ${event.clientName} on ${new Date(event.start_time).toLocaleDateString()}`,
+      category: 'scheduling',
+      impactLevel: 'low',
+      actionType: 'create_gcal_event',
+      actionPayload: { title, description, location: event.location, start_time: event.start_time, end_time: event.end_time, crewEmails: event.crewEmails },
+    })
+
+    proposalId = proposal.id
+    await runAutomatedReview(proposal.id!)
+  } catch (err) {
+    console.error('[gcal] MiroFish submission error:', err)
+  }
+
+  // Note: Actual Google Calendar creation happens after MiroFish approval
+  // The execution step calls pushEventToGoogle() with the confirmed payload
+  return { proposalId }
+}
+
+/**
+ * Direct push to Google Calendar (called after MiroFish approval).
+ */
 export async function pushEventToGoogle(
   userId: string,
   event: {
@@ -301,14 +438,20 @@ export async function pushEventToGoogle(
     location?: string
     start_time: string
     end_time: string
+    attendees?: string[]
   }
 ): Promise<string | null> {
-  const gcalEvent = {
+  const gcalEvent: any = {
     summary: event.title,
     description: event.description || undefined,
     location: event.location || undefined,
     start: { dateTime: event.start_time, timeZone: 'America/Los_Angeles' },
     end: { dateTime: event.end_time, timeZone: 'America/Los_Angeles' },
+  }
+
+  // Add crew as attendees if emails provided
+  if (event.attendees && event.attendees.length > 0) {
+    gcalEvent.attendees = event.attendees.map(email => ({ email }))
   }
 
   const res = await fetchWithAuth(
@@ -338,19 +481,25 @@ export async function deleteGoogleEvent(
     { method: 'DELETE' }
   )
 
-  return res.ok || res.status === 404 // 404 = already deleted
+  return res.ok || res.status === 404
 }
 
 // ── Full Bidirectional Sync ──────────────────────────────────────────────────
 
+/**
+ * Full bidirectional sync. App schedule is source of truth.
+ * Publishes GCAL_SYNCED event to agentEventBus.
+ */
 export async function fullSync(userId: string, orgId: string): Promise<{
   imported: number
   pushed: number
+  conflicts: SyncConflict[]
   errors: number
 }> {
   let imported = 0
   let pushed = 0
   let errors = 0
+  let conflicts: SyncConflict[] = []
 
   try {
     // 1. Import from Google → Supabase
@@ -390,5 +539,68 @@ export async function fullSync(userId: string, orgId: string): Promise<{
     errors++
   }
 
-  return { imported, pushed, errors }
+  try {
+    // 3. Detect conflicts
+    conflicts = await detectSyncConflicts(userId, orgId)
+  } catch (err) {
+    console.error('[gcal] Conflict detection failed:', err)
+  }
+
+  // Publish sync event
+  publish(
+    'GCAL_SYNCED',
+    'chrono',
+    { imported, pushed, conflicts: conflicts.length, errors },
+    `Google Calendar sync: ${imported} imported, ${pushed} pushed, ${conflicts.length} conflict(s)`
+  )
+
+  await logAudit({
+    orgId,
+    actorType: 'agent',
+    actorId: 'chrono',
+    action: 'update',
+    entityType: 'google_calendar_sync',
+    description: `GCal sync completed: ${imported} imported, ${pushed} pushed`,
+    metadata: { imported, pushed, conflicts: conflicts.length, errors },
+  })
+
+  return { imported, pushed, conflicts, errors }
+}
+
+// ── Auto-Sync Timer (every 15 minutes) ──────────────────────────────────────
+
+let _autoSyncInterval: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Start automatic sync every 15 minutes.
+ * Call from SchedulePanel on mount when Google Calendar is connected.
+ */
+export function startAutoSync(userId: string, orgId: string): void {
+  stopAutoSync()
+
+  console.log('[gcal] Starting auto-sync every 15 minutes')
+
+  _autoSyncInterval = setInterval(async () => {
+    try {
+      const connected = await isConnected(userId)
+      if (!connected) {
+        stopAutoSync()
+        return
+      }
+      await fullSync(userId, orgId)
+    } catch (err) {
+      console.warn('[gcal] Auto-sync error:', err)
+    }
+  }, SYNC_INTERVAL_MS)
+}
+
+/**
+ * Stop automatic sync.
+ */
+export function stopAutoSync(): void {
+  if (_autoSyncInterval) {
+    clearInterval(_autoSyncInterval)
+    _autoSyncInterval = null
+    console.log('[gcal] Auto-sync stopped')
+  }
 }

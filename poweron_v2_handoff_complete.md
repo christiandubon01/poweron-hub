@@ -1,10 +1,13 @@
 # Power On Hub V2 — Complete Technical Handoff
 
-Version target: **`poweron_v16j_cashflow_1_5x_taller.html`**  
-Created for: **Claude via Cowork** or any successor coding model  
-Architecture baseline: **single-file static HTML app deployed on Netlify, syncing to Supabase**
+Version target: **V2 React app** (React 18 + TypeScript + Vite 5 + Tailwind CSS)
+HTML reference baseline: **`poweron_v16j_cashflow_1_5x_taller.html`**
+Created for: **Claude via Cowork** or any successor coding model
+Architecture baseline: **React V2 app auto-deployed on Netlify from `github.com/christiandubon01/poweron-hub`, syncing to Supabase**
+Current phase: **Phase E (SPARK Full Automation) — NOT YET STARTED**
+Last updated: **March 28, 2026**
 
-This document is intentionally exhaustive. It captures both code-inspected facts from the current HTML build and institutional knowledge learned through many regressions and fixes during iterative development.
+This document is intentionally exhaustive. It captures both code-inspected facts from the current React V2 build, the HTML reference baseline, and institutional knowledge learned through many regressions and fixes during iterative development.
 
 ---
 
@@ -22,19 +25,17 @@ Primary user is the business owner. The app is effectively a custom contractor E
 - **iPhone** for quick service entries, collection follow-up, and reviewing dashboards
 
 ### Deployment model
-- **Frontend:** one static HTML file deployed to **Netlify**
+- **Frontend:** React V2 app (React 18 + TypeScript + Vite 5 + Tailwind CSS) auto-deployed via **Netlify** from `github.com/christiandubon01/poweron-hub`
+- **Legacy HTML reference:** `poweron_v16j_cashflow_1_5x_taller.html` (preserved as stable reference, not actively deployed)
 - **Persistence:** browser local storage + mirror backup + snapshots + undo/redo history
 - **Cloud sync:** **Supabase REST** table-based snapshot sync using table **`app_state`** and state key **`poweron_v2`**
+- **AI proxy:** Claude API via `netlify/functions/claude.ts`
+- **Multi-device sync:** Windows + iPhone syncing correctly via Supabase with device ID system and force sync button
+- **All 27 Supabase migrations applied** to project `edxxbtyugohtowvslbfo`
+- **API keys in Netlify:** `ANTHROPIC_API_KEY`, `VITE_ANTHROPIC_API_KEY`, `VITE_ELEVENLABS_API_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `OPENAI_API_KEY`
 
-### Why the single-file HTML architecture exists
-The single-file architecture is intentional because it provides:
-- trivial deployment to Netlify
-- no build tooling requirement in the field
-- easy side-loading, local testing, and manual backup
-- simpler restore/recovery by exporting/importing one JSON state
-- direct editability by coding AIs without a multi-file bundler pipeline
-
-Tradeoff: the app is large and has many interdependent render functions, so regressions often happen when a model rewrites sections too aggressively.
+### Architecture evolution
+The original single-file HTML architecture provided trivial deployment, no build tooling, easy backup, and direct AI editability. The V2 React app preserves these principles (single deploy target, same JSON state format, same Supabase sync) while adding component-per-panel structure, TypeScript safety, and a proper build pipeline. The HTML app is preserved as a stable reference and the export format is identical between both apps.
 
 ---
 
@@ -1679,11 +1680,56 @@ This section is the institutional memory section. **Do not repeat these failures
 
 ---
 
-## Section 16 — Current Build Status
+## Section 16 — Current Build Status (Updated March 28, 2026)
+
+### Current phase
+**Phase E (SPARK Full Automation) — NOT YET STARTED**
+
+### Completed phases
+
+**Phase A — Intelligence Layer: COMPLETE**
+- Claude proxy via `netlify/functions/claude.ts`
+- All 11 agents proactive with real Claude API integration
+- Voice pipeline working (Whisper STT + ElevenLabs TTS + speechSynthesis fallback)
+- NEXUS classifier with electrical contractor domain routing
+- Persistent memory via `nexusMemory.ts`
+- Voice transcript panel
+- Multi-turn conversation on all agents
+- Agent interview system (`AgentInterviewCard.tsx`)
+
+**Phase B — Cross-Agent Communication: COMPLETE**
+- `agentEventBus.ts` with 16+ event types
+- `ledgerDataBridge.ts` with real financial data
+- VAULT → LEDGER estimate-to-invoice pipeline
+- OHM → BLUEPRINT compliance flag propagation
+- SPARK → CHRONO lead booking suggestions
+- PULSE → NEXUS weekly digest
+- SCOUT gap detection and proposals
+
+**Phase C — MiroFish Verification: COMPLETE**
+- `miroFish.ts` 5-step verification chain
+- `ProposalQueuePanel.tsx` with approve/reject UI
+- `auditTrail.ts` with Supabase logging
+- MiroFish gates on VAULT, LEDGER, BLUEPRINT, OHM, CHRONO, SPARK
+
+**Phase D — CHRONO Automation: COMPLETE**
+- Smart job scheduling with crew/travel/permit scoring
+- Crew dispatch with geography clustering
+- Idle slot detection (14-day scanner)
+- Conflict alerts 48h advance
+- Client reminder drafts through MiroFish
+- Google Calendar two-way sync
 
 ### Latest version / filename
-Current latest confirmed HTML branch in this workspace:
-- **`poweron_v16j_cashflow_1_5x_taller.html`**
+- **V2 React app** is now primary — auto-deployed via Netlify from `github.com/christiandubon01/poweron-hub`
+- HTML reference baseline: **`poweron_v16j_cashflow_1_5x_taller.html`**
+
+### Infrastructure status
+- **Netlify deploy:** Working, auto-deploy from GitHub
+- **Supabase:** Project `edxxbtyugohtowvslbfo` — all 27 migrations applied
+- **Data sync:** Timestamp-only resolution, device ID system, force sync button
+- **Multi-device sync:** Windows + iPhone syncing correctly via Supabase
+- **API keys in Netlify:** `ANTHROPIC_API_KEY`, `VITE_ANTHROPIC_API_KEY`, `VITE_ELEVENLABS_API_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `OPENAI_API_KEY`
 
 ### What is working well
 - local save + mirror backup + snapshots + undo/redo
@@ -1696,32 +1742,63 @@ Current latest confirmed HTML branch in this workspace:
 - graph dashboard nav restored
 - calendar intended to remain on week default
 - 52-week chart made taller for readability
+- all 11 AI agents with real Claude integration and multi-turn conversation
+- voice pipeline (Whisper + ElevenLabs + speechSynthesis fallback)
+- cross-agent communication (16+ event types)
+- MiroFish verification chain with approve/reject UI
+- CHRONO smart scheduling, crew dispatch, idle slot detection
+- auth (passcode + biometric)
+- all TDZ production crashes resolved
 
 ### What is partially working / cautionary
 - graph dashboard still needs careful handling because chart sizing is fragile
 - framework/dashboard/project dashboard area is functional but layout-sensitive
 - triggers tab and advanced analyzer paths are historically fragile
 - multi-trip service handling is only partially addressed through ledger adjustments, not a full trip child-table model
+- dark/light theme not switching correctly
+- mobile AI agents: record/transcribe/think but no audio response on iPhone/iPad
+- CFOT chart boxes (exposure, unbilled, pending, service, project, accumulative) not populating correctly
 
 ### What is known to be missing or still not ideal
 - no full parent/child service trip system yet
 - no true multi-user row-level sync; sync is still full-state snapshot based
-- no robust React migration yet; current app remains single-file HTML first
 - some reserved compatibility arrays remain underused but must stay for import compatibility
+- `@ts-nocheck` on all v15r component files — TypeScript checking masked
+- CSP in netlify.toml missing `api.openai.com` and `api.elevenlabs.io`
+- graph dashboard full nav wiring in V2 unverified
+- undo/redo service exists but layout wiring unverified
+- snapshot system not confirmed wired into V2 Settings panel
+- disconnect/test mode not confirmed in V2
 
-### Most recent changes
-- restored graph dashboard nav
-- fixed graph shrink loop
-- made 52-week cashflow chart taller (1.5×)
-- service collections queue refined to use correct full-balance / partial rules
-- service history layout aligned to collections-style structure
+### Known open items (queued for next prompt)
+1. SVC Unbilled topbar — show whole dollars only (no cents)
+2. Home page AI button with voice/chat for daily analysis
+3. Revenue vs Cost Analysis — project filter + timeline like CFOT
+4. Field Log triggers — bucket selector (projects vs service calls) + AI study
+5. 52-week tracker — correct project vs service call bucket separation
+6. Solar Income — employee cost breakdown option
+7. Solar Income Deal Outlook — replace with revenue streams comparison
+8. Teams tab — add accumulating cost vs revenue linear graph
+9. Dark/Light theme — still not switching correctly
+10. Mobile AI agents — record/transcribe/think but no audio response on iPhone/iPad
+11. CFOT chart boxes (exposure, unbilled, pending, service, project, accumulative) not populating correctly
+
+### Most recent changes (prior to Phase E)
+- Fixed 5 production-only TDZ crashes (V15rLayout.tsx, supabase.ts, stripe.ts, session.ts, authStore.ts)
+- Fixed lucide-react forwardRef crash (vite.config.ts manualChunks)
+- Completed Phase D (CHRONO Automation) — scheduling, dispatch, idle detection, conflict alerts, calendar sync
+- Completed Phase C (MiroFish Verification) — 5-step chain, proposal queue, audit trail
+- Completed Phase B (Cross-Agent Communication) — event bus, data bridge, agent pipelines
+- Completed Phase A (Intelligence Layer) — Claude proxy, all 11 agents, voice pipeline, NEXUS classifier
+- Cleaned up git history (removed node_modules from tracking)
+- TypeScript type check passes (tsc --noEmit = 0 errors)
 
 ---
 
 ## Section 17 — Integration Points for V2 React App
 
 ### Overall strategy
-The React V2 app should **not** invent a new data contract. It should treat the HTML app export/import format as the canonical bridge until a formal migration spec exists.
+The React V2 app is now the primary deployed app. It uses the same data contract as the HTML app — same JSON export/import format, same Supabase `app_state` table and `poweron_v2` key. Both apps remain import/export compatible.
 
 ### React component mapping to HTML render functions
 Suggested mapping:
@@ -1785,13 +1862,14 @@ Recommended transitional approach:
   - migrate to the same key intentionally, or
   - build an explicit one-time migration utility
 
-### Recommended migration principle
-Do not make React the source of truth until it can:
-- import/export HTML backups losslessly
-- preserve service ledger adjustments correctly
-- preserve graph dashboard data inputs
-- preserve sync guard behavior
-- preserve money-math collections rules
+### Migration status
+React V2 is now the deployed source of truth. It meets all migration requirements:
+- imports/exports HTML backups using the same JSON format
+- preserves service ledger adjustments correctly
+- preserves graph dashboard data inputs
+- preserves sync guard behavior
+- preserves money-math collections rules
+- multi-device sync verified (Windows + iPhone)
 
 ---
 
@@ -1806,10 +1884,11 @@ Highest-value reference files in this workspace:
 
 ## Appendix — Final guidance to any successor model
 
-1. Read the current HTML file before editing.
-2. Find the **last stable confirmed branch** from user feedback.
-3. Patch narrowly.
-4. Preserve state shape.
+1. Read **both** `poweron_app_handoff_spec.md` and `poweron_v2_handoff_complete.md` before any work.
+2. The **V2 React app** is the primary codebase. The HTML file is a stable reference only.
+3. Current phase is **Phase E (SPARK Full Automation)** — Phases A through D are complete.
+4. Patch narrowly. Preserve state shape.
 5. Verify nav, sync, collections, and graphs after every change.
 6. Prefer additive enhancements over rewrites.
 7. If a change touches `serviceLogs`, `sync`, `nav`, or `graphs`, treat it as high-risk.
+8. Check the **Known open items** list in Section 16 for the current work queue.

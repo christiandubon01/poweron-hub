@@ -51,12 +51,15 @@ The app must feel like a **contractor dashboard**, not a spreadsheet clone.
 - iPhone 16
 
 **Deployment / storage model:**
-- Static HTML app deployed via **Netlify**
-- Cloud backup / cross-device sync via **Supabase** (table: `app_state`, key: `poweron_v2`)
+- **V2 React app** (primary): auto-deployed via **Netlify** from `github.com/christiandubon01/poweron-hub`
+- **Legacy HTML app**: `poweron_v16j_cashflow_1_5x_taller.html` (stable reference, not actively deployed)
+- Cloud backup / cross-device sync via **Supabase** (table: `app_state`, key: `poweron_v2`, project: `edxxbtyugohtowvslbfo`)
+- All 27 Supabase migrations applied
+- Multi-device sync working: Windows + iPhone via Supabase with device ID system
 - Local-first — app must work offline
 
 **Architecture:**
-Single-file HTML app with embedded CSS and JS. State held in one main object (`S`). This architecture exists because it is portable, deployable instantly, works on all devices without app store approval, and the owner built it without a coding background using AI assistance.
+V2 React app (React 18 + TypeScript + Vite 5 + Tailwind CSS) with component-per-panel structure. Original single-file HTML app preserved as stable reference. State held in one main object (`S`) for backward compatibility. Claude AI proxy via `netlify/functions/claude.ts`. Export format is identical between HTML and React apps — same JSON, same keys.
 
 ---
 
@@ -529,40 +532,94 @@ These rules must never be violated under any circumstances:
 
 ---
 
-## Section 16 — Current Build Status
+## Section 16 — Current Build Status (Updated March 28, 2026)
 
-**HTML app:** `index_v15r.html` (latest stable), `index_v16.html` (in development)
+**HTML app:** `poweron_v16j_cashflow_1_5x_taller.html` (latest stable HTML branch)
 
 **V2 React app:** Located at `C:\Users\chris\Desktop\Power On Solutions APP - CoWork\`
-Running at `localhost:5173`, deployed target: Netlify
+Running at `localhost:5173`, deployed via **Netlify auto-deploy** from `github.com/christiandubon01/poweron-hub`
+Stack: React 18 + TypeScript + Vite 5 + Tailwind CSS
 
-**Working in V2:**
+**Current Phase:** Phase E (SPARK Full Automation) — NOT YET STARTED
+
+### Completed Phases
+
+**Phase A — Intelligence Layer: COMPLETE**
+- Claude proxy via `netlify/functions/claude.ts`
+- All 11 agents proactive with real Claude API integration
+- Voice pipeline working (Whisper STT + ElevenLabs TTS + speechSynthesis fallback)
+- NEXUS classifier with electrical contractor domain routing
+- Persistent memory via `nexusMemory.ts`
+- Voice transcript panel
+- Multi-turn conversation on all agents
+- Agent interview system (`AgentInterviewCard.tsx`)
+
+**Phase B — Cross-Agent Communication: COMPLETE**
+- `agentEventBus.ts` with 16+ event types
+- `ledgerDataBridge.ts` with real financial data
+- VAULT → LEDGER estimate-to-invoice pipeline
+- OHM → BLUEPRINT compliance flag propagation
+- SPARK → CHRONO lead booking suggestions
+- PULSE → NEXUS weekly digest
+- SCOUT gap detection and proposals
+
+**Phase C — MiroFish Verification: COMPLETE**
+- `miroFish.ts` 5-step verification chain
+- `ProposalQueuePanel.tsx` with approve/reject UI
+- `auditTrail.ts` with Supabase logging
+- MiroFish gates on VAULT, LEDGER, BLUEPRINT, OHM, CHRONO, SPARK
+
+**Phase D — CHRONO Automation: COMPLETE**
+- Smart job scheduling with crew/travel/permit scoring
+- Crew dispatch with geography clustering
+- Idle slot detection (14-day scanner)
+- Conflict alerts 48h advance
+- Client reminder drafts through MiroFish
+- Google Calendar two-way sync
+
+### Infrastructure Status
+- **Netlify deploy:** Working, auto-deploy from `github.com/christiandubon01/poweron-hub`
+- **Supabase:** Project `edxxbtyugohtowvslbfo` — all 27 migrations applied
+- **Data sync:** Timestamp-only resolution, device ID system, force sync button
+- **Multi-device sync:** Windows + iPhone syncing correctly via Supabase
+- **API keys in Netlify:** `ANTHROPIC_API_KEY`, `VITE_ANTHROPIC_API_KEY`, `VITE_ELEVENLABS_API_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `OPENAI_API_KEY`
+
+### Working in V2
 - Auth (passcode + biometric)
 - Top bar KPI pills
 - Sidebar navigation
-- Home panel (partial)
+- Home panel (partial — see open items below)
 - Projects panel
+- Active Project tabs: Estimate, Material Takeoff, Progress, Project Framework, RFI Tracker, Coordination
 - Leads panel
-- Field Log (partial)
+- Field Log (partial — see open items below)
 - Money panel
 - Price Book
 - Team panel
 - Settings panel
-- All 11 AI agents via Claude API
+- Income Calculator (inputs work, visualization incomplete)
+- All 11 AI agents via Claude API with multi-turn conversation
+- Voice pipeline (Whisper + ElevenLabs + speechSynthesis fallback)
+- Agent interview system
+- Cross-agent communication (16+ event types)
+- MiroFish verification chain with approve/reject UI
+- CHRONO smart scheduling, crew dispatch, idle slot detection
 - Backup import/export
+- Undo/redo service (`undoRedoService.ts` exists — wiring to layout unverified)
+- Graph Dashboard (`V15rDashboard.tsx` exists — full nav wiring unverified)
 
-**Partially working in V2:**
-- Home: missing Google Calendar embed, Service Jobs Requiring Attention
-- Field Log: missing live profit preview
-- Income Calculator: inputs work, visualization incomplete
-
-**Missing from V2:**
-- Active Project tabs: Estimate, Material Takeoff, Progress, Project Framework, RFI Tracker, Coordination
-- Graph Dashboard
-- Undo/redo (Ctrl+Z/Y)
-- Snapshot system
-- Disconnect/test mode
-- Pricing Intelligence full implementation
+### Known Open Items (Queued for Next Prompt)
+1. SVC Unbilled topbar — show whole dollars only (no cents)
+2. Home page AI button with voice/chat for daily analysis
+3. Revenue vs Cost Analysis — project filter + timeline like CFOT
+4. Field Log triggers — bucket selector (projects vs service calls) + AI study
+5. 52-week tracker — correct project vs service call bucket separation
+6. Solar Income — employee cost breakdown option
+7. Solar Income Deal Outlook — replace with revenue streams comparison
+8. Teams tab — add accumulating cost vs revenue linear graph
+9. Dark/Light theme — still not switching correctly
+10. Mobile AI agents — record/transcribe/think but no audio response on iPhone/iPad
+11. CFOT chart boxes (exposure, unbilled, pending, service, project, accumulative) not populating correctly
 
 ---
 
@@ -710,5 +767,5 @@ If a tradeoff is necessary, choose:
 
 ---
 
-*Last updated: March 27, 2026*
+*Last updated: March 28, 2026*
 *Power On Solutions LLC — C-10 #1151468 — Desert Hot Springs, CA*

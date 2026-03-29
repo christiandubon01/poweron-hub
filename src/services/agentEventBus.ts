@@ -36,6 +36,11 @@ export type AgentEventType =
   | 'SCHEDULE_CONFLICT'
   | 'AR_OVERDUE'
   | 'DATA_GAP_DETECTED'
+  | 'CREW_DISPATCHED'
+  | 'JOB_SCHEDULED'
+  | 'IDLE_SLOTS_DETECTED'
+  | 'CLIENT_REMINDER_DRAFTED'
+  | 'GCAL_SYNCED'
 
 export interface AgentEvent {
   id:        string

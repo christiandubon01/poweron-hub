@@ -98,6 +98,7 @@ export const HIGH_IMPACT_ACTIONS: Record<string, Set<string>> = {
   vault:     new Set(['approve_estimate', 'send_estimate']),
   ledger:    new Set(['send_invoice', 'send_reminder', 'void_invoice']),
   blueprint: new Set(['modify_template', 'compliance_flag', 'approve_change_order']),
+  chrono:    new Set(['book_job', 'send_crew_briefing', 'send_client_reminder', 'create_gcal_event']),
 }
 
 /**

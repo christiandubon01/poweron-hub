@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { publish } from '@/services/agentEventBus'
 
 // Types
 export type LeadStatus = 'new' | 'contacted' | 'estimate_scheduled' | 'estimate_delivered' | 'negotiating' | 'won' | 'lost'
@@ -150,4 +151,173 @@ export async function getLeadPipelineSummary(orgId: string): Promise<Record<Lead
   })
 
   return summary as Record<LeadStatus, { count: number; total_value: number }>
+}
+
+// ── Lead Scoring Pipeline ─────────────────────────────────────────────────
+
+/**
+ * Electrical job types that score higher (core competency).
+ */
+const ELECTRICAL_JOB_TYPES = new Set([
+  'panel upgrade', 'panel', 'electrical', 'wiring', 'rewire',
+  'ev charger', 'ev', 'lighting', 'outlet', 'circuit',
+  'service upgrade', 'meter', 'generator', 'solar', 'battery',
+  'commercial electrical', 'industrial', 'troubleshoot',
+])
+
+/**
+ * High-value referral sources.
+ */
+const REFERRAL_SOURCE_SCORES: Record<string, number> = {
+  gc_referral: 3,       // GC referral = highest
+  contractor_referral: 2.5,
+  past_client: 2,
+  google: 1.5,
+  yelp: 1.5,
+  facebook: 1,
+  direct: 1,
+  website: 1,
+  other: 0.5,
+}
+
+/**
+ * Desert Hot Springs lat/lon for proximity scoring.
+ */
+const DHS_LAT = 33.9611
+const DHS_LON = -116.5017
+
+/**
+ * Score a lead 1-10 based on multiple factors:
+ * - Job type match (electrical = higher)
+ * - Estimated value
+ * - Referral source (GC referral = highest)
+ * - Geographic proximity to Desert Hot Springs
+ */
+export function scoreLead(lead: {
+  project_type?: string
+  estimated_value?: number | null
+  lead_source?: string
+  address?: string
+  city?: string
+  metadata?: Record<string, unknown>
+}): { score: number; factors: Record<string, number> } {
+  const factors: Record<string, number> = {}
+
+  // 1. Job type match (0-3 points)
+  const jobType = (lead.project_type || '').toLowerCase()
+  const isElectrical = ELECTRICAL_JOB_TYPES.has(jobType) ||
+    Array.from(ELECTRICAL_JOB_TYPES).some(t => jobType.includes(t))
+  factors.jobType = isElectrical ? 3 : 1
+  if (!jobType) factors.jobType = 1.5 // Unknown
+
+  // 2. Estimated value (0-2.5 points)
+  const value = lead.estimated_value || 0
+  if (value >= 50000) factors.value = 2.5
+  else if (value >= 20000) factors.value = 2
+  else if (value >= 5000) factors.value = 1.5
+  else if (value >= 1000) factors.value = 1
+  else factors.value = 0.5
+
+  // 3. Referral source (0-3 points)
+  const source = (lead.lead_source || 'other').toLowerCase().replace(/\s+/g, '_')
+  factors.source = REFERRAL_SOURCE_SCORES[source] ?? 1
+
+  // 4. Geographic proximity (0-1.5 points)
+  const city = (lead.city || lead.address || '').toLowerCase()
+  if (city.includes('desert hot springs') || city.includes('dhs')) {
+    factors.proximity = 1.5
+  } else if (city.includes('palm springs') || city.includes('cathedral city')) {
+    factors.proximity = 1.2
+  } else if (city.includes('palm desert') || city.includes('rancho mirage') || city.includes('thousand palms')) {
+    factors.proximity = 1
+  } else if (city.includes('indio') || city.includes('la quinta') || city.includes('coachella')) {
+    factors.proximity = 0.8
+  } else if (city) {
+    factors.proximity = 0.5
+  } else {
+    factors.proximity = 0.75 // Unknown location
+  }
+
+  // Total: max theoretical = 3 + 2.5 + 3 + 1.5 = 10
+  const rawScore = factors.jobType + factors.value + factors.source + factors.proximity
+  const score = Math.min(10, Math.max(1, Math.round(rawScore)))
+
+  return { score, factors }
+}
+
+/**
+ * Score a lead from backup serviceLeads and publish LEAD_SCORED event.
+ * - Score >= 7: NEXUS alerts immediately
+ * - Score <= 3: NEXUS asks "Low priority lead — park or kill?"
+ * - Score >= 5: Auto-create follow-up task in CHRONO
+ */
+export async function scoreAndProcessLead(
+  orgId: string,
+  lead: Partial<Lead> & { id?: string; city?: string; address?: string }
+): Promise<{ score: number; factors: Record<string, number> }> {
+  const result = scoreLead(lead)
+
+  // Publish LEAD_SCORED event
+  publish(
+    'LEAD_SCORED' as any,
+    'spark',
+    {
+      leadId: lead.id || 'unknown',
+      leadName: lead.name || 'Unknown',
+      score: result.score,
+      factors: result.factors,
+      estimatedValue: lead.estimated_value || 0,
+      source: lead.lead_source || 'unknown',
+    },
+    `Lead "${lead.name}" scored ${result.score}/10 (source: ${lead.lead_source || 'unknown'})`
+  )
+
+  return result
+}
+
+/**
+ * Get lead source attribution — which channel produces the best leads.
+ */
+export async function getLeadSourceAttribution(orgId: string): Promise<Array<{
+  source: string
+  totalLeads: number
+  wonLeads: number
+  totalValue: number
+  conversionRate: number
+  avgValue: number
+}>> {
+  const { data, error } = await supabase
+    .from('leads' as never)
+    .select('lead_source, status, estimated_value')
+    .eq('org_id', orgId)
+
+  if (error) throw error
+  const leads = (data ?? []) as unknown as Array<{
+    lead_source: string
+    status: string
+    estimated_value: number | null
+  }>
+
+  const bySource: Record<string, { total: number; won: number; value: number }> = {}
+
+  leads.forEach(l => {
+    const src = l.lead_source || 'unknown'
+    if (!bySource[src]) bySource[src] = { total: 0, won: 0, value: 0 }
+    bySource[src].total += 1
+    if (l.status === 'won') {
+      bySource[src].won += 1
+      bySource[src].value += l.estimated_value ?? 0
+    }
+  })
+
+  return Object.entries(bySource)
+    .map(([source, data]) => ({
+      source,
+      totalLeads: data.total,
+      wonLeads: data.won,
+      totalValue: data.value,
+      conversionRate: data.total > 0 ? parseFloat(((data.won / data.total) * 100).toFixed(1)) : 0,
+      avgValue: data.won > 0 ? Math.round(data.value / data.won) : 0,
+    }))
+    .sort((a, b) => b.conversionRate - a.conversionRate)
 }
