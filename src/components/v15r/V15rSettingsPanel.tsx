@@ -20,6 +20,7 @@ import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Spark
 import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
 import { pushState, clear as clearHistory, setMaxHistoryDepth } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
+import { VoiceSettings } from '@/components/voice/VoiceSettings'
 
 function NoData() {
   return (
@@ -1215,6 +1216,11 @@ export default function V15rSettingsPanel() {
                 + Add Phase
               </button>
             </div>
+          </SettingCard>
+
+          {/* NEXUS VOICE */}
+          <SettingCard title="NEXUS Voice">
+            <VoiceSettings />
           </SettingCard>
 
           {/* SYSTEM INFO */}

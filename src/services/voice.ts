@@ -840,25 +840,17 @@ export class VoiceSubsystem {
   /**
    * Play audio with a tracked reference so it can be interrupted.
    * Uses direct HTMLAudioElement with playsInline for all platforms.
-   * Falls back to Web Speech API if HTMLAudioElement play() fails.
+   * Falls back to Web Speech API if fetch/decode fails.
    */
-  private async playAudioTracked(audioUrl: string): Promise<void> {
-    // Stop any previously playing audio
-    this.stopCurrentAudio()
-
-    debugPush('playAudioTracked() — using HTMLAudioElement with playsInline')
-    console.log('[Audio] Playing via HTMLAudioElement (cross-platform)')
-
+  private async playAudioTracked(url: string): Promise<void> {
+    debugPush('playAudioTracked() — starting')
     try {
-      // Fetch the audio data from the ElevenLabs object URL
-      const response = await fetch(audioUrl)
+      const response = await fetch(url)
       const arrayBuffer = await response.arrayBuffer()
       debugPush(`playAudioTracked() — fetched ${arrayBuffer.byteLength} bytes`)
-
       await this.playAudioDirect(arrayBuffer)
     } catch (err) {
-      debugPush(`playAudioDirect FAILED: ${err instanceof Error ? err.message : String(err)} — falling back to WebSpeech`)
-      console.warn('[Audio] HTMLAudioElement playback failed, using WebSpeech:', err)
+      debugPush(`playAudioTracked() — fetch failed: ${(err as Error).message}, falling back to WebSpeech`)
       await this.speakWithWebSpeech(this.lastTTSText || '')
     }
   }

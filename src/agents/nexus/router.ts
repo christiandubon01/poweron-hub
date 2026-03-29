@@ -103,6 +103,112 @@ export function getLocalPulseWeeklyContext(): string {
   return `## PULSE — Weekly Revenue (from device state)\nThis week: $${thisWeek.toLocaleString()} | Last week: $${lastWeek.toLocaleString()} | 4-week avg: $${Math.round(avg4).toLocaleString()}`
 }
 
+// ── Query-aware context scoping ─────────────────────────────────────────────
+
+interface ScopedLocalContext {
+  serviceLogs: unknown[]
+  projects: unknown[]
+  financialSummary: string
+}
+
+/**
+ * Scope local backup context to the query type.
+ * Service call queries → only serviceLogs. Project queries → only projects.
+ * Ambiguous queries → both. Always includes a financial summary.
+ */
+function scopeContextToQuery(query: string, backup: any): ScopedLocalContext {
+  const isServiceCall = /service call|service job|svc|collection|uncollected|open collection/i.test(query)
+  const isProject = /project|job|construction|estimate|active job/i.test(query)
+
+  // Build financial summary (always included)
+  const serviceLogs = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
+  const projects = Array.isArray(backup.projects) ? backup.projects : []
+
+  const totalQuoted = serviceLogs.reduce((s: number, l: any) => s + num(l.quoted), 0)
+  const totalCollected = serviceLogs.reduce((s: number, l: any) => s + num(l.collected), 0)
+  const totalUncollected = totalQuoted - totalCollected
+  const projectContract = projects.reduce((s: number, p: any) => {
+    const fin = getProjectFinancials(p, backup)
+    return s + fin.contract
+  }, 0)
+  const projectPaid = projects.reduce((s: number, p: any) => {
+    const fin = getProjectFinancials(p, backup)
+    return s + fin.paid
+  }, 0)
+
+  const financialSummary = [
+    `## Financial Summary`,
+    `Service calls: ${serviceLogs.length} total | Quoted: $${totalQuoted.toLocaleString()} | Collected: $${totalCollected.toLocaleString()} | Uncollected: $${totalUncollected.toLocaleString()}`,
+    `Projects: ${projects.length} total | Contract: $${projectContract.toLocaleString()} | Paid: $${projectPaid.toLocaleString()}`,
+  ].join('\n')
+
+  // When service call specific — filter to open/uncollected service logs only
+  const openServiceLogs = serviceLogs.filter((l: any) => {
+    const quoted = num(l.quoted)
+    const collected = num(l.collected)
+    const adjustmentIncome = Array.isArray(l.adjustments)
+      ? l.adjustments.filter((a: any) => a.kind === 'income').reduce((s: number, a: any) => s + num(a.amount), 0)
+      : 0
+    const totalBillable = quoted + adjustmentIncome
+    return collected < totalBillable || totalBillable - collected > 0
+  })
+
+  return {
+    serviceLogs: isServiceCall || (!isProject) ? openServiceLogs : [],
+    projects: isProject || (!isServiceCall) ? projects : [],
+    financialSummary,
+  }
+}
+
+/**
+ * Build a scoped local context string based on query type.
+ * Injects only the relevant data (service logs vs projects vs both).
+ */
+export function getLocalScopedContext(query: string): string {
+  const backup = getBackupData()
+  if (!backup) return ''
+
+  const scoped = scopeContextToQuery(query, backup)
+  const lines: string[] = []
+
+  if (scoped.financialSummary) lines.push(scoped.financialSummary)
+
+  if (scoped.projects.length > 0) {
+    const buckets: Record<string, { count: number; contract: number; collected: number; names: string[] }> = {
+      'ACTIVE CONSTRUCTION': { count: 0, contract: 0, collected: 0, names: [] },
+      'ESTIMATING': { count: 0, contract: 0, collected: 0, names: [] },
+      'COMPLETED': { count: 0, contract: 0, collected: 0, names: [] },
+    }
+    for (const p of scoped.projects as any[]) {
+      const bucket = resolveStatusBucket(p.status)
+      const fin = getProjectFinancials(p, backup)
+      if (!buckets[bucket]) buckets[bucket] = { count: 0, contract: 0, collected: 0, names: [] }
+      buckets[bucket].count++
+      buckets[bucket].contract += fin.contract
+      buckets[bucket].collected += fin.paid
+      if (p.name) buckets[bucket].names.push(p.name)
+    }
+    lines.push('\n## Projects')
+    for (const [label, data] of Object.entries(buckets)) {
+      if (data.count === 0) continue
+      lines.push(`**${label}:** ${data.count} | Contract: $${data.contract.toLocaleString()} | Collected: $${data.collected.toLocaleString()}`)
+      if (data.names.length) lines.push(`  ${data.names.slice(0, 8).join(', ')}`)
+    }
+  }
+
+  if (scoped.serviceLogs.length > 0) {
+    lines.push(`\n## Open Service Calls (${scoped.serviceLogs.length} uncollected)`)
+    for (const log of (scoped.serviceLogs as any[]).slice(0, 20)) {
+      const quoted = num(log.quoted)
+      const collected = num(log.collected)
+      const remaining = quoted - collected
+      lines.push(`- ${log.customer || 'Unknown'} | ${log.date || ''} | Quoted: $${quoted} | Collected: $${collected} | Remaining: $${remaining}`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface AgentResponse {
@@ -503,6 +609,9 @@ export async function routeToAgent(
   // 1. Load agent-specific context from Supabase
   const contextData = await loadAgentContext(orgId, targetAgent, intent.entities)
 
+  // 1b. Load query-scoped local context (service calls vs projects vs both)
+  const scopedLocalCtx = getLocalScopedContext(userMessage)
+
   // 2. Build the system prompt: base NEXUS + agent-specific identity + events
   const agentPromptFragment = AGENT_PROMPTS[targetAgent]
   const eventContext = getEventContext(6)
@@ -510,6 +619,7 @@ export async function routeToAgent(
     NEXUS_SYSTEM_PROMPT,
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',
     contextData ? `\n---\n\n## Live Data Context\n${contextData}` : '',
+    scopedLocalCtx ? `\n---\n\n## Local Device Data (scoped to query)\n${scopedLocalCtx}` : '',
     eventContext ? `\n---\n\n${eventContext}` : '',
     `\n---\n\n## Classification\nCategory: ${intent.category}\nConfidence: ${intent.confidence}\nImpact: ${intent.impactLevel}\nEntities: ${JSON.stringify(intent.entities)}`,
   ].join('')
