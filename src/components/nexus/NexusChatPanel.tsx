@@ -19,6 +19,7 @@ import { MessageBubble, AgentBadge } from './MessageBubble'
 import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 import { NexusPresenceOrb, type OrbState } from './NexusPresenceOrb'
 import { onOrbStateChange } from '@/services/voice'
+import { clearConversationThread } from '@/services/nexusLearnedProfile'
 import { MorningBriefingCard } from './MorningBriefingCard'
 import { useAuth } from '@/hooks/useAuth'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
@@ -332,6 +333,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     setLastMsgMode('briefing')
     setError(null)
     setPendingProposal(null)
+    clearConversationThread() // Clear Layer 1 conversation thread from localStorage
   }, [])
 
   // Trigger deep dive mode

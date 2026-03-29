@@ -19,6 +19,7 @@ import { checkInterviewTrigger, type AgentInterviewDefinition } from './intervie
 import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
 import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
 import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceConfirmation } from '@/services/nexusPreferences'
+import { buildLearnedProfilePrompt, analyzeSessionPatterns, addConversationTurn, getRecentTurns, type ConversationTurn } from '@/services/nexusLearnedProfile'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -143,6 +144,18 @@ Provide a full per-agent breakdown:
 - Each section: status, key numbers, risks, and recommended actions
 - Use concrete data — dollar amounts, project names, percentages
 - End with a consolidated priority action list
+`
+
+// ── List Query Detection ────────────────────────────────────────────────────
+
+const LIST_QUERY_RE = /tell me (all|about|the)|what agents|list (all|the)|who are|what are your|how many agents|your capabilities|what can you do/i
+
+const LIST_FORMAT_INSTRUCTION = `
+## Response Format — LIST / CAPABILITIES QUERY
+Respond in compact conversational format — complete, no truncation, no markdown headers.
+Cover every agent or capability the user is asking about in natural sentences.
+Do NOT use bullet points or headers — write it as a conversational paragraph.
+Be thorough but concise.
 `
 
 const OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION = `
@@ -302,6 +315,23 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     // Non-critical
   }
 
+  // ── Step 1g: Load learned profile (Layer 3 — implicit behavioral patterns) ─
+  try {
+    const learnedPrompt = await buildLearnedProfilePrompt(request.orgId, request.userId)
+    if (learnedPrompt) {
+      memoryContext = learnedPrompt + '\n' + memoryContext
+    }
+  } catch {
+    // Non-critical
+  }
+
+  // ── Step 1h: Persist conversation turn (Layer 1) ──────────────────────
+  addConversationTurn({
+    role: 'user',
+    content: request.message,
+    timestamp: Date.now(),
+  })
+
   // ── Step 2: Record user turn to persistent memory ───────────────────────
   try {
     addTurn('user', request.message)
@@ -327,11 +357,14 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   // ── Step 4: Route to target agent ───────────────────────────────────────
   // Inject mode-specific formatting instruction + user preferences into the message
   const isOpBriefing = isOperationalQuery(request.message)
-  const modeInstruction = isOpBriefing
-    ? OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION
-    : mode === 'deepdive'
-      ? DEEP_DIVE_FORMAT_INSTRUCTION
-      : BRIEFING_FORMAT_INSTRUCTION
+  const isListQuery = LIST_QUERY_RE.test(request.message)
+  const modeInstruction = isListQuery
+    ? LIST_FORMAT_INSTRUCTION
+    : isOpBriefing
+      ? OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION
+      : mode === 'deepdive'
+        ? DEEP_DIVE_FORMAT_INSTRUCTION
+        : BRIEFING_FORMAT_INSTRUCTION
   let enrichedMessage = `${request.message}\n\n${modeInstruction}`
 
   // Prepend user preferences so the agent respects them
@@ -406,11 +439,33 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     // Non-critical — don't block response for proposal fetch failure
   }
 
+  // ── Step 6c: Persist assistant turn to conversation thread (Layer 1) ────
+  addConversationTurn({
+    role: 'assistant',
+    content: agentResponse.content,
+    agentUsed: agentResponse.agentId,
+    timestamp: Date.now(),
+  })
+
+  // ── Step 6d: Trigger background pattern analysis (Layer 3) ────────────
+  // Only analyze after 3+ meaningful turns to avoid noise
+  const recentTurns = getRecentTurns(6)
+  if (recentTurns.length >= 3) {
+    // Fire-and-forget — don't block response delivery
+    analyzeSessionPatterns(request.orgId, request.userId, recentTurns).catch(() => {
+      // Non-critical — pattern analysis failure doesn't affect user experience
+    })
+  }
+
   // ── Return ──────────────────────────────────────────────────────────────
+
+  // CRITICAL: displayResponse is the full, never-truncated content for chat display.
+  // voiceSummary is a separate, shortened version for TTS only. They must never share a variable.
+  const displayResponse = agentResponse.content
 
   const conversationMessage: ConversationMessage = {
     role:      'assistant',
-    content:   agentResponse.content,
+    content:   displayResponse,
     agentId:   agentResponse.agentId,
     timestamp: Date.now(),
   }
@@ -419,7 +474,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   // For operational briefings via voice, strip section headers and convert to
   // natural conversational sentences under 60 seconds (~150 words).
   const voiceSummary = request.isVoiceCommand
-    ? stripToVoiceSummary(agentResponse.content)
+    ? stripToVoiceSummary(displayResponse).slice(0, 300)
     : undefined
 
   return {
