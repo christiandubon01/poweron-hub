@@ -792,14 +792,14 @@ export class VoiceSubsystem {
     this.stopCurrentAudio()
 
     if (VoiceSubsystem.IS_IOS) {
-      debugPush('playAudioTracked() — iOS detected, trying AudioContext path')
-      console.log('[iOS Audio] Attempting iOS playback path')
+      debugPush('playAudioTracked() — iOS detected, using Blob URL HTMLAudioElement path')
+      console.log('[iOS Audio] Attempting iOS Blob URL playback path')
       try {
         await this.playAudioIOS(audioUrl)
         return
       } catch (iosErr) {
-        debugPush(`iOS AudioContext FAILED: ${iosErr instanceof Error ? iosErr.message : String(iosErr)} — falling back to HTMLAudioElement`)
-        console.warn('[iOS Audio] iOS AudioContext playback failed, trying HTMLAudioElement:', iosErr)
+        debugPush(`iOS Blob URL FAILED: ${iosErr instanceof Error ? iosErr.message : String(iosErr)} — falling back to standard HTMLAudioElement`)
+        console.warn('[iOS Audio] iOS Blob URL playback failed, trying standard HTMLAudioElement:', iosErr)
       }
     }
 
@@ -841,66 +841,79 @@ export class VoiceSubsystem {
   }
 
   /**
-   * iOS-specific audio playback using AudioContext + AudioBufferSourceNode.
-   * Fetches the blob from the object URL, decodes it, and plays through
-   * the AudioContext which was warmed up during the user's tap gesture.
-   * Includes a 10-second timeout fallback in case onended never fires (iOS Safari bug).
+   * iOS-specific audio playback using HTMLAudioElement with Blob URL.
+   *
+   * decodeAudioData is unreliable on iOS Safari with MP3 (causes "Load failed").
+   * Instead we fetch the audio data, create an audio/mpeg Blob, generate an
+   * object URL, and play through a DOM-appended HTMLAudioElement.
+   *
+   * The Audio element is stored at this.currentAudio so it can be interrupted.
+   * Includes a 10-second timeout fallback in case onended never fires.
    */
   private async playAudioIOS(audioUrl: string): Promise<void> {
-    debugPush('playAudioIOS() — starting iOS path')
-    console.log('[iOS Audio] Attempting playback via AudioContext')
-    const ctx = await this.ensureAudioContext()
+    debugPush('playAudioIOS() — starting Blob URL path')
+    console.log('[iOS Audio] Attempting playback via Blob URL HTMLAudioElement')
 
-    // Fetch the audio blob from the object URL
+    // Fetch the audio data from the object URL
     const response = await fetch(audioUrl)
     const arrayBuffer = await response.arrayBuffer()
-    debugPush(`playAudioIOS() — fetched ${arrayBuffer.byteLength} bytes from blob URL`)
+    debugPush(`playAudioIOS() — fetched ${arrayBuffer.byteLength} bytes`)
 
-    // Decode the audio data
-    let audioBuffer: AudioBuffer
-    try {
-      audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-      debugPush(`decodeAudioData() — OK, duration: ${audioBuffer.duration.toFixed(2)}s, channels: ${audioBuffer.numberOfChannels}`)
-    } catch (decodeErr) {
-      debugPush(`decodeAudioData() ERROR: ${decodeErr instanceof Error ? decodeErr.message : String(decodeErr)}`)
-      throw decodeErr
-    }
+    // Create an audio/mpeg Blob and object URL
+    const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' })
+    const blobUrl = URL.createObjectURL(blob)
+    debugPush(`playAudioIOS() — Blob URL created (${blob.size} bytes)`)
 
-    // Calculate expected duration for smart timeout
-    const expectedDuration = audioBuffer.duration || 10
-
-    return new Promise((resolve) => {
-      let resolved = false
-      const safeResolve = () => {
-        if (resolved) return
-        resolved = true
-        clearTimeout(timeoutId)
-        resolve()
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const cleanup = () => {
+        this.currentAudio = null
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        URL.revokeObjectURL(blobUrl)
+        clearTimeout(hangTimeout)
       }
+      const safeResolve = () => { if (!settled) { settled = true; cleanup(); resolve() } }
+      const safeReject = (err: any) => { if (!settled) { settled = true; cleanup(); reject(err) } }
 
-      const source = ctx.createBufferSource()
-      source.buffer = audioBuffer
-      source.playbackRate.value = this.preferences.ttsSpeed
-      source.connect(ctx.destination)
+      const audio = new Audio()
+      audio.src = blobUrl
+      audio.playbackRate = this.preferences.ttsSpeed
+      audio.load() // iOS requires explicit load before play
+      document.body.appendChild(audio) // required for iOS WebView audio playback
+      this.currentAudio = audio
 
-      source.onended = () => {
-        debugPush('BufferSource onended FIRED — playback complete')
-        console.log('[iOS Audio] Playback completed via onended')
+      audio.onended = () => {
+        debugPush('iOS HTMLAudioElement onended FIRED — playback complete')
+        console.log('[iOS Audio] Blob URL playback completed via onended')
+        safeResolve()
+      }
+      audio.onerror = (err) => {
+        debugPush(`iOS HTMLAudioElement ERROR: ${err}`)
+        safeReject(err)
+      }
+      audio.onpause = () => {
+        // If paused externally (user interrupt), resolve instead of hanging
+        debugPush('iOS HTMLAudioElement onpause — resolving')
         safeResolve()
       }
 
-      // Timeout fallback: expected duration + 2s grace, minimum 10s
-      const timeoutMs = Math.max(10000, (expectedDuration / this.preferences.ttsSpeed) * 1000 + 2000)
-      const timeoutId = setTimeout(() => {
-        debugPush(`TIMEOUT after ${(timeoutMs / 1000).toFixed(1)}s — onended never fired`)
-        console.warn(`[iOS Audio] Timeout after ${timeoutMs}ms — resolving (onended never fired)`)
-        try { source.stop() } catch { /* may already be stopped */ }
+      // 10-second timeout fallback
+      const hangTimeout = setTimeout(() => {
+        debugPush('iOS audio TIMEOUT (10s) — force-resolving')
+        console.warn('[iOS Audio] Blob URL playback timeout (10s) — force-resolving')
+        try { audio.pause(); audio.src = '' } catch { /* ignore */ }
         safeResolve()
-      }, timeoutMs)
+      }, 10000)
 
-      source.start(0)
-      debugPush(`BufferSource.start(0) called — duration: ${expectedDuration.toFixed(1)}s, timeout: ${(timeoutMs / 1000).toFixed(1)}s, ctx.state: ${ctx.state}`)
-      console.log(`[iOS Audio] AudioBufferSourceNode started (duration: ${expectedDuration.toFixed(1)}s, timeout: ${(timeoutMs / 1000).toFixed(1)}s)`)
+      debugPush('iOS audio.play() — calling...')
+      audio.play().then(() => {
+        debugPush(`iOS audio.play() — OK, playing`)
+        console.log('[iOS Audio] Blob URL play() succeeded')
+      }).catch((err) => {
+        debugPush(`iOS audio.play() FAILED: ${err instanceof Error ? err.message : String(err)}`)
+        console.error('[iOS Audio] Blob URL play() failed:', err)
+        safeReject(err)
+      })
     })
   }
 
