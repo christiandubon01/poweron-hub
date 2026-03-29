@@ -254,6 +254,210 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   return <canvas ref={canvasRef} />
 }
 
+// ── LABOR COST VS REVENUE 12-WEEK CHART ──
+function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const chartRef = useRef<any>(null)
+  const chartReady = useChartJS()
+
+  useEffect(() => {
+    if (!chartReady || !canvasRef.current) return
+
+    const Chart = (window as any).Chart
+    if (!Chart) return
+
+    if (chartRef.current) {
+      chartRef.current.destroy()
+      chartRef.current = null
+    }
+
+    const ctx = canvasRef.current.getContext('2d')
+    if (!ctx) return
+
+    const today = new Date()
+    const employees = backup.employees || []
+    const logs = backup.logs || []
+    const projects = backup.projects || []
+    const serviceLogs = backup.serviceLogs || []
+
+    // Build 12 weekly buckets going back from today
+    const weeks: { start: Date; end: Date; label: string }[] = []
+    for (let i = 11; i >= 0; i--) {
+      const end = new Date(today)
+      end.setDate(end.getDate() - i * 7)
+      const start = new Date(end)
+      start.setDate(start.getDate() - 6)
+      weeks.push({
+        start,
+        end,
+        label: `W${12 - i}`
+      })
+    }
+
+    let accumCost = 0
+    let accumRevenue = 0
+    const accumCosts: number[] = []
+    const accumRevenues: number[] = []
+    const laborPcts: number[] = []
+
+    weeks.forEach(week => {
+      // Weekly labor cost from logs
+      let weekCost = 0
+      logs.forEach(log => {
+        if (log.date) {
+          const d = new Date(log.date)
+          if (d >= week.start && d <= week.end) {
+            const emp = employees.find(e => e.id === log.empId)
+            weekCost += num(log.hrs || 0) * num(emp?.costRate || 0)
+          }
+        }
+      })
+
+      // Weekly revenue: project payments + service collections in this week
+      let weekRevenue = 0
+      projects.forEach(p => {
+        if (p.payments && Array.isArray(p.payments)) {
+          p.payments.forEach((pay: any) => {
+            if (pay.date) {
+              const d = new Date(pay.date)
+              if (d >= week.start && d <= week.end) {
+                weekRevenue += num(pay.amount || 0)
+              }
+            }
+          })
+        }
+      })
+      serviceLogs.forEach((l: any) => {
+        if (l.date) {
+          const d = new Date(l.date)
+          if (d >= week.start && d <= week.end) {
+            weekRevenue += num(l.collected || 0)
+          }
+        }
+      })
+
+      accumCost += weekCost
+      accumRevenue += weekRevenue
+      accumCosts.push(accumCost)
+      accumRevenues.push(accumRevenue)
+      laborPcts.push(accumRevenue > 0 ? (accumCost / accumRevenue) * 100 : 0)
+    })
+
+    Chart.defaults.color = '#9ca3af'
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
+
+    chartRef.current = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: weeks.map(w => w.label),
+        datasets: [
+          {
+            label: 'Accum. Labor Cost',
+            data: accumCosts,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointBackgroundColor: '#ef4444',
+            yAxisID: 'y'
+          },
+          {
+            label: 'Accum. Revenue',
+            data: accumRevenues,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointBackgroundColor: '#10b981',
+            yAxisID: 'y'
+          },
+          {
+            label: 'Labor % of Revenue',
+            data: laborPcts,
+            borderColor: '#eab308',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [6, 3],
+            fill: false,
+            tension: 0.3,
+            pointRadius: 3,
+            pointBackgroundColor: '#eab308',
+            yAxisID: 'y1'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            labels: { color: '#d1d5db', font: { size: 12 }, padding: 15, usePointStyle: true }
+          },
+          tooltip: {
+            backgroundColor: '#374151',
+            titleColor: '#f0f0ff',
+            bodyColor: '#e5e7eb',
+            borderColor: '#4b5563',
+            borderWidth: 1,
+            padding: 10,
+            callbacks: {
+              label: (context: any) => {
+                if (context.datasetIndex === 2) {
+                  return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`
+                }
+                return `${context.dataset.label}: $${Number(context.parsed.y).toLocaleString()}`
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            type: 'linear',
+            position: 'left',
+            beginAtZero: true,
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: {
+              color: '#9ca3af',
+              callback: (v: any) => '$' + (Number(v) / 1000).toFixed(0) + 'k'
+            },
+            title: { display: true, text: 'Dollars', color: '#9ca3af', font: { size: 11 } }
+          },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            beginAtZero: true,
+            max: 100,
+            grid: { drawOnChartArea: false },
+            ticks: {
+              color: '#eab308',
+              callback: (v: any) => v + '%'
+            },
+            title: { display: true, text: 'Labor %', color: '#eab308', font: { size: 11 } }
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: '#9ca3af' }
+          }
+        }
+      }
+    })
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy()
+        chartRef.current = null
+      }
+    }
+  }, [chartReady, backup])
+
+  return <canvas ref={canvasRef} />
+}
+
 // ── EMPLOYEE COST STRUCTURE COMPONENT ──
 function EmployeeCostStructure({ backup }: { backup: BackupData }) {
   const settings = backup?.settings || {}
@@ -1474,6 +1678,35 @@ export default function V15rTeamPanel() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* LABOR COST VS REVENUE — 12 WEEK TREND */}
+      <div className="mt-10">
+        <h2 className="text-2xl font-bold text-gray-100 mb-4">Labor Cost vs Revenue — 12 Week Trend</h2>
+        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4">
+          <div style={{ height: '350px' }}>
+            <ChartErrorBoundary>
+              <LaborCostVsRevenueChart backup={backup} />
+            </ChartErrorBoundary>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <div className="bg-[#1e2130] rounded p-2 text-center">
+              <p className="text-[10px] text-gray-400 uppercase">Labor Cost</p>
+              <div className="w-3 h-0.5 bg-red-500 mx-auto mt-1 mb-1 rounded" />
+              <p className="text-xs text-gray-300">Accumulative</p>
+            </div>
+            <div className="bg-[#1e2130] rounded p-2 text-center">
+              <p className="text-[10px] text-gray-400 uppercase">Revenue</p>
+              <div className="w-3 h-0.5 bg-emerald-500 mx-auto mt-1 mb-1 rounded" />
+              <p className="text-xs text-gray-300">Accumulative</p>
+            </div>
+            <div className="bg-[#1e2130] rounded p-2 text-center">
+              <p className="text-[10px] text-gray-400 uppercase">Labor %</p>
+              <div className="w-3 h-0.5 bg-yellow-500 mx-auto mt-1 mb-1 rounded border-dashed" />
+              <p className="text-xs text-gray-300">of Revenue</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

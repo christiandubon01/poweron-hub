@@ -14,8 +14,9 @@
  *  - AI Analysis (SCOUT) button
  */
 
-import { useMemo, useState, useRef, useEffect } from 'react'
-import { AlertCircle, TrendingUp, Sparkles, Zap } from 'lucide-react'
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
+import { AlertCircle, TrendingUp, Sparkles, Zap, ChevronDown, ChevronRight, Users } from 'lucide-react'
+import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -70,6 +71,17 @@ export default function V15rIncomeCalc() {
   const rmoVisitMilesRT = num(calcRefs.rmoVisitMilesRT)
   const rmoVisitCostPerMile = num(calcRefs.rmoVisitCostPerMile)
   const rmoVisitFlatCost = num(calcRefs.rmoVisitFlatCost)
+
+  // ── EMPLOYEE COST ANALYSIS STATE ──
+  const [empCostOpen, setEmpCostOpen] = useState(!!calcRefs.empCostEnabled)
+  const empCostEnabled = !!calcRefs.empCostEnabled
+  const empCount = num(calcRefs.empCount) || 1
+  const empHourlyRate = num(calcRefs.empHourlyRate) || 25
+  const empHoursPerWeek = num(calcRefs.empHoursPerWeek) || 40
+  const empPayrollTax = num(calcRefs.empPayrollTax) || 15.3
+  const empWorkersComp = num(calcRefs.empWorkersComp) || 4
+  const empGenLiability = num(calcRefs.empGenLiability) || 1.5
+  const empBenefitsPerMonth = num(calcRefs.empBenefitsPerMonth) || 0
 
   const updateField = (key: string, value: any) => {
     pushState()
@@ -132,6 +144,15 @@ export default function V15rIncomeCalc() {
   const totalNetMonthly = totalMonthly - totalLabor
   const totalAnnual = totalMonthly * 12
 
+  // ── EMPLOYEE COST CALCULATIONS ──
+  const empGrossMonthlyPerEmp = empHourlyRate * empHoursPerWeek * 4.33
+  const empPayrollCostPerEmp = empGrossMonthlyPerEmp * (empPayrollTax / 100)
+  const empWcCostPerEmp = empGrossMonthlyPerEmp * (empWorkersComp / 100)
+  const empGlCostPerEmp = empGrossMonthlyPerEmp * (empGenLiability / 100)
+  const empTotalPerEmp = empGrossMonthlyPerEmp + empPayrollCostPerEmp + empWcCostPerEmp + empGlCostPerEmp + empBenefitsPerMonth
+  const empTotalMonthly = empCostEnabled ? empTotalPerEmp * empCount : 0
+  const trueNetMonthly = totalNetMonthly - empTotalMonthly
+
   // Project buckets
   const projects = backup.projects || []
   const dealOutlook = useMemo(() => {
@@ -149,6 +170,31 @@ export default function V15rIncomeCalc() {
   // Revenue Stream Data (12-month breakdown)
   const activeProjects = projects.filter(p => resolveProjectBucket(p) === 'active')
   const electricalPipelineTotal = activeProjects.reduce((s, p) => s + num(p.contract), 0)
+  const serviceLogs = backup.serviceLogs || []
+
+  // Revenue Streams — last 3 months actuals
+  const revenueStreams = useMemo(() => {
+    const now = new Date()
+    const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1)
+    const recentProjects = projects.filter(p => {
+      const d = p.completedDate || p.endDate || p.startDate
+      return d && new Date(d) >= threeMonthsAgo
+    })
+    const recentSvc = serviceLogs.filter((l: any) => {
+      const d = l.date || l.completedDate
+      return d && new Date(d) >= threeMonthsAgo
+    })
+    const projRevenue3mo = recentProjects.reduce((s, p) => s + num(p.paid || p.collected), 0)
+    const svcRevenue3mo = recentSvc.reduce((s: number, l: any) => s + num(l.collected), 0)
+    const projMonthlyNet = projRevenue3mo / 3
+    const svcMonthlyNet = svcRevenue3mo / 3
+    const rmoNet = rmoMonthly - (totalLabor / Math.max(1, totalMonthly) * rmoMonthly)
+    return { rmoNet, projMonthlyNet, svcMonthlyNet }
+  }, [projects, serviceLogs, rmoMonthly, totalLabor, totalMonthly])
+
+  // AI analysis state for revenue streams
+  const [revenueAiResponse, setRevenueAiResponse] = useState('')
+  const [revenueAiLoading, setRevenueAiLoading] = useState(false)
 
   const revenueStreamData = useMemo(() => {
     const months = Array.from({ length: 12 }, (_, i) => {
@@ -158,11 +204,12 @@ export default function V15rIncomeCalc() {
         electrical: electricalPipelineTotal / 12,
         rmo: rmoMonthly,
         installLabor: installMonthly,
+        employeeCost: empTotalMonthly,
         total: (electricalPipelineTotal / 12) + rmoMonthly + installMonthly
       }
     })
     return months
-  }, [electricalPipelineTotal, rmoMonthly, installMonthly])
+  }, [electricalPipelineTotal, rmoMonthly, installMonthly, empTotalMonthly])
 
   return (
     <div className="space-y-6 p-5 min-h-screen bg-[#1a1d27]">
@@ -202,6 +249,84 @@ export default function V15rIncomeCalc() {
             <h3 className="text-sm font-semibold text-gray-200 uppercase">Contract Adders</h3>
             <InputField label="Battery Fee Add-On $" value={batteryFeePerSystem} onChange={(v) => updateField('batteryFeePerSystem', v)} />
             <InputField label="Panel Upgrade Fee $" value={panelUpgradeFeePerSystem} onChange={(v) => updateField('panelUpgradeFeePerSystem', v)} />
+          </div>
+
+          {/* Employee Cost Analysis — Collapsible */}
+          <div className="bg-[#232738] rounded-lg p-4 space-y-3">
+            <button
+              onClick={() => setEmpCostOpen(!empCostOpen)}
+              className="flex items-center justify-between w-full text-left"
+            >
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-purple-400" />
+                <h3 className="text-sm font-semibold text-gray-200 uppercase">Employee Cost Analysis</h3>
+              </div>
+              {empCostOpen ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+            </button>
+            {empCostOpen && (
+              <div className="space-y-3 pt-2 border-t border-gray-600/50">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={empCostEnabled}
+                    onChange={(e) => updateField('empCostEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded accent-purple-500"
+                  />
+                  <label className="text-sm text-gray-300">Include Employee Costs</label>
+                </div>
+                {empCostEnabled && (
+                  <div className="space-y-3">
+                    <InputField label="Number of W-2 Employees" value={empCount} onChange={(v) => updateField('empCount', v)} />
+                    <InputField label="Average Hourly Rate $" value={empHourlyRate} onChange={(v) => updateField('empHourlyRate', v)} step="0.50" />
+                    <InputField label="Average Hours/Week" value={empHoursPerWeek} onChange={(v) => updateField('empHoursPerWeek', v)} />
+                    <InputField label="Payroll Tax Burden %" value={empPayrollTax} onChange={(v) => updateField('empPayrollTax', v)} step="0.1" />
+                    <InputField label="Workers Comp Rate %" value={empWorkersComp} onChange={(v) => updateField('empWorkersComp', v)} step="0.1" />
+                    <InputField label="General Liability %" value={empGenLiability} onChange={(v) => updateField('empGenLiability', v)} step="0.1" />
+                    <InputField label="Benefits/Employee/Month $" value={empBenefitsPerMonth} onChange={(v) => updateField('empBenefitsPerMonth', v)} />
+
+                    {/* Cost Breakdown */}
+                    <div className="bg-[#1a1d27] rounded p-3 space-y-2 mt-2">
+                      <p className="text-xs font-semibold text-purple-300 uppercase mb-2">Monthly Cost Breakdown</p>
+                      <MetricLine label="Gross Wages" value={`$${Math.round(empGrossMonthlyPerEmp * empCount).toLocaleString()}`} />
+                      <MetricLine label="Payroll Tax" value={`$${Math.round(empPayrollCostPerEmp * empCount).toLocaleString()}`} red />
+                      <MetricLine label="Workers Comp" value={`$${Math.round(empWcCostPerEmp * empCount).toLocaleString()}`} red />
+                      <MetricLine label="General Liability" value={`$${Math.round(empGlCostPerEmp * empCount).toLocaleString()}`} red />
+                      <MetricLine label="Benefits" value={`$${Math.round(empBenefitsPerMonth * empCount).toLocaleString()}`} red />
+                      <div className="border-t border-gray-600 pt-2 mt-2">
+                        <MetricLine label="Total Employee Cost" value={`$${Math.round(empTotalMonthly).toLocaleString()}/mo`} red bold />
+                      </div>
+                    </div>
+
+                    {/* Breakdown Bar: Gross RMO | Employee Cost | True Net */}
+                    <div className="bg-[#1a1d27] rounded p-3">
+                      <p className="text-xs font-semibold text-gray-400 uppercase mb-2">True Net Breakdown</p>
+                      <div className="flex h-6 rounded overflow-hidden mb-2">
+                        {totalNetMonthly > 0 && (
+                          <>
+                            <div
+                              className="bg-emerald-500/70 flex items-center justify-center text-[9px] font-bold text-white"
+                              style={{ width: `${Math.max(5, (trueNetMonthly / totalNetMonthly) * 100)}%` }}
+                            >
+                              Net
+                            </div>
+                            <div
+                              className="bg-red-500/70 flex items-center justify-center text-[9px] font-bold text-white"
+                              style={{ width: `${Math.max(5, (empTotalMonthly / totalNetMonthly) * 100)}%` }}
+                            >
+                              Emp
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-400">RMO Net: <span className="text-emerald-400 font-semibold">{fmtK(totalNetMonthly)}</span></span>
+                        <span className="text-gray-400">True Net: <span className={`font-semibold ${trueNetMonthly >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtK(trueNetMonthly)}</span></span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Job Mix Sliders */}
@@ -315,14 +440,83 @@ export default function V15rIncomeCalc() {
             batteryPanelProj={totalMonthly * (batteryPanelNorm / 100)}
           />
 
-          {/* Deal Outlook */}
+          {/* Revenue Streams (replaces Deal Outlook) */}
           <div className="bg-[#232738] rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Deal Outlook</h3>
-            <div className="grid grid-cols-3 gap-4">
-              <OutlookCard label="Pipeline" emoji="🚀" count={dealOutlook.coming.count} value={dealOutlook.coming.total} />
-              <OutlookCard label="Active" emoji="⚡" count={dealOutlook.active.count} value={dealOutlook.active.total} />
-              <OutlookCard label="Closed" emoji="✓" count={dealOutlook.completed.count} value={dealOutlook.completed.total} green />
-            </div>
+            <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Revenue Streams</h3>
+            {(() => {
+              const streams = [
+                { label: 'RMO Monthly Net', value: revenueStreams.rmoNet, color: '#10b981' },
+                { label: 'Electrical Projects (3mo avg)', value: revenueStreams.projMonthlyNet, color: '#3b82f6' },
+                { label: 'Service Calls (3mo avg)', value: revenueStreams.svcMonthlyNet, color: '#eab308' },
+              ]
+              const maxVal = Math.max(...streams.map(s => s.value), 1)
+              const combined = streams.reduce((s, st) => s + st.value, 0)
+              const largest = streams.reduce((best, s) => s.value > best.value ? s : best, streams[0])
+              return (
+                <div className="space-y-4">
+                  {/* Stream Cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {streams.map(s => (
+                      <div
+                        key={s.label}
+                        className={`bg-[#1e2130] rounded p-3 text-center ${s.label === largest.label ? 'ring-1 ring-emerald-500/50' : ''}`}
+                      >
+                        <p className="text-xs text-gray-400 mb-2">{s.label}</p>
+                        <p className="text-lg font-bold" style={{ color: s.color }}>{fmtK(s.value)}</p>
+                        {s.label === largest.label && <p className="text-[10px] text-emerald-400 mt-1 font-semibold">TOP STREAM</p>}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Combined Total */}
+                  <div className="bg-[#1e2130] rounded p-3 flex justify-between items-center">
+                    <span className="text-sm text-gray-400">Combined Monthly Revenue</span>
+                    <span className="text-lg font-bold text-emerald-400">{fmtK(combined)}</span>
+                  </div>
+
+                  {/* Horizontal Bar Chart */}
+                  <div className="space-y-2">
+                    {streams.map(s => (
+                      <div key={s.label} className="flex items-center gap-3">
+                        <span className="text-xs text-gray-400 w-28 shrink-0 truncate">{s.label.split('(')[0].trim()}</span>
+                        <div className="flex-1 h-5 bg-[#1a1d27] rounded overflow-hidden">
+                          <div
+                            className="h-full rounded transition-all duration-500"
+                            style={{ width: `${Math.max(2, (s.value / maxVal) * 100)}%`, backgroundColor: s.color }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono text-gray-300 w-16 text-right">{fmtK(s.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* AI Analysis Button */}
+                  <button
+                    onClick={async () => {
+                      setRevenueAiLoading(true)
+                      try {
+                        const resp = await callClaude({
+                          messages: [{ role: 'user', content: `Analyze these revenue streams for Power On Solutions (electrical contractor):\n- RMO Monthly Net: $${Math.round(revenueStreams.rmoNet)}\n- Electrical Projects (3mo avg): $${Math.round(revenueStreams.projMonthlyNet)}\n- Service Calls (3mo avg): $${Math.round(revenueStreams.svcMonthlyNet)}\nCombined: $${Math.round(combined)}\n${empCostEnabled ? `Employee costs: $${Math.round(empTotalMonthly)}/mo` : ''}\nGive 2-3 bullet insights on diversification, growth opportunities, and risk. Be concise.` }],
+                          system: 'You are SCOUT, Power On Solutions\' financial analyst AI. Be direct, data-driven, concise. Use plain language.',
+                          max_tokens: 300
+                        })
+                        setRevenueAiResponse(extractText(resp))
+                      } catch { setRevenueAiResponse('Analysis unavailable') }
+                      setRevenueAiLoading(false)
+                    }}
+                    disabled={revenueAiLoading}
+                    className="w-full px-3 py-2 bg-purple-600/20 border border-purple-500/50 hover:border-purple-500 rounded text-sm text-purple-300 font-semibold transition-colors disabled:opacity-50"
+                  >
+                    {revenueAiLoading ? 'Analyzing...' : 'AI Stream Analysis'}
+                  </button>
+                  {revenueAiResponse && (
+                    <div className="bg-purple-900/20 border border-purple-500/30 rounded p-3 text-xs text-gray-300 whitespace-pre-wrap">
+                      {revenueAiResponse}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Revenue Stream Stacked Area Chart */}
@@ -624,6 +818,18 @@ function RevenueStreamChart({ data }) {
             pointRadius: 4,
             pointBackgroundColor: '#eab308'
           },
+          ...(data[0]?.employeeCost > 0 ? [{
+            label: 'Employee Cost',
+            data: data.map(d => d.employeeCost),
+            backgroundColor: 'rgba(239, 68, 68, 0.3)',
+            borderColor: '#ef4444',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 4,
+            pointBackgroundColor: '#ef4444',
+            borderDash: [5, 5]
+          }] : []),
           {
             label: 'Combined Total',
             data: data.map(d => d.total),

@@ -32,6 +32,7 @@ import {
   type BackupTriggerRule,
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { callClaude, extractText } from '@/services/claudeProxy'
 import QuickBooksImportModal from './QuickBooksImportModal'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -225,6 +226,12 @@ export default function V15rFieldLogPanel() {
   const [editSvcId, setEditSvcId] = useState<string | null>(null)
   const [showQBImport, setShowQBImport] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+
+  // Trigger bucket selector state
+  const [triggerBucket, setTriggerBucket] = useState<'all' | 'projects' | 'service'>('all')
+  const [triggerJobId, setTriggerJobId] = useState<string>('all')
+  const [triggerAiResponse, setTriggerAiResponse] = useState<string>('')
+  const [triggerAiLoading, setTriggerAiLoading] = useState(false)
 
   // Project log form state
   const [flProj, setFlProj] = useState('')
@@ -1913,6 +1920,41 @@ export default function V15rFieldLogPanel() {
 
   function renderTriggers() {
     const kpis = getKPIs(backup)
+    const allProjects = backup.projects || []
+    const allSvcLogs = backup.serviceLogs || []
+
+    // Filter trigger rules by selected bucket/job
+    const filteredRules = triggerRules.filter(rule => {
+      if (triggerBucket === 'all' && triggerJobId === 'all') return true
+      // If a specific job is selected, filter by triggersAtSave containing the job
+      if (triggerJobId !== 'all') {
+        // Rules are global, show all rules but this filter is for context
+        return true
+      }
+      return true
+    })
+
+    // Build job dropdown options based on bucket
+    const jobOptions = triggerBucket === 'projects'
+      ? allProjects.filter(p => p.status === 'active').map(p => ({ id: p.id, name: p.name || 'Unknown' }))
+      : triggerBucket === 'service'
+        ? allSvcLogs.slice(-20).map(l => ({ id: l.id, name: `${l.customer || 'Unknown'} — ${l.date || ''}` }))
+        : []
+
+    const handleAskAI = () => {
+      setTriggerAiLoading(true)
+      const rulesSummary = filteredRules.map(r => `${r.name} (${r.type}): ${r.situation || ''} → ${r.solution || ''}`).join('\n')
+      const bucketLabel = triggerBucket === 'all' ? 'all jobs' : triggerBucket === 'projects' ? 'projects' : 'service calls'
+      callClaude({
+        system: 'You are NEXUS, the AI operations manager for Power On Solutions, an electrical contractor. Analyze trigger patterns and provide actionable priority recommendations. Be concise.',
+        messages: [{ role: 'user', content: `Analyze these ${filteredRules.length} trigger rules for ${bucketLabel}. What are the recurring issues and what should I address first?\n\nRules:\n${rulesSummary}` }],
+        max_tokens: 1024,
+      }).then(res => {
+        setTriggerAiResponse(extractText(res))
+      }).catch(() => {
+        setTriggerAiResponse('Could not reach AI service. Review your trigger patterns manually — focus on the highest-frequency rules first.')
+      }).finally(() => setTriggerAiLoading(false))
+    }
 
     return (
       <div className="space-y-4">
@@ -1940,11 +1982,57 @@ export default function V15rFieldLogPanel() {
           </div>
         </div>
 
+        {/* Bucket selector tabs + job dropdown + AI buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          {(['all', 'projects', 'service'] as const).map(bucket => (
+            <button
+              key={bucket}
+              onClick={() => { setTriggerBucket(bucket); setTriggerJobId('all'); setTriggerAiResponse('') }}
+              className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
+                triggerBucket === bucket
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[#232738] text-gray-400 hover:text-gray-200 border border-gray-700'
+              }`}
+            >
+              {bucket === 'all' ? 'All' : bucket === 'projects' ? 'Projects' : 'Service Calls'}
+            </button>
+          ))}
+          {jobOptions.length > 0 && (
+            <select
+              value={triggerJobId}
+              onChange={e => setTriggerJobId(e.target.value)}
+              className="bg-[#232738] border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none"
+            >
+              <option value="all">All {triggerBucket === 'projects' ? 'Projects' : 'Service Calls'}</option>
+              {jobOptions.map(j => (
+                <option key={j.id} value={j.id}>{j.name.substring(0, 40)}</option>
+              ))}
+            </select>
+          )}
+          <div className="ml-auto flex gap-2">
+            <button
+              onClick={handleAskAI}
+              disabled={triggerAiLoading}
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-purple-600/20 text-purple-400 border border-purple-600/30 hover:bg-purple-600/30 transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              <Sparkles size={12} /> {triggerAiLoading ? 'Analyzing...' : 'Ask AI'}
+            </button>
+          </div>
+        </div>
+
+        {/* AI Response */}
+        {triggerAiResponse && (
+          <div className="bg-purple-900/20 border border-purple-700/40 rounded-lg p-4 text-xs text-purple-200 leading-relaxed whitespace-pre-wrap">
+            <div className="text-[9px] uppercase font-bold text-purple-400 mb-2">NEXUS Analysis</div>
+            {triggerAiResponse}
+          </div>
+        )}
+
         {/* Trigger rules */}
         <div className="space-y-2">
-          <div className="text-xs font-bold text-gray-400 uppercase">Trigger Rules</div>
-          {triggerRules.length > 0 ? (
-            triggerRules.map(rule => (
+          <div className="text-xs font-bold text-gray-400 uppercase">Trigger Rules ({filteredRules.length})</div>
+          {filteredRules.length > 0 ? (
+            filteredRules.map(rule => (
               <div key={rule.id} className="bg-[var(--bg-card)] border border-gray-700 rounded-lg p-3" style={{ borderLeft: `3px solid ${rule.color || '#f97316'}` }}>
                 <div className="flex items-center justify-between gap-3 mb-2">
                   <div>

@@ -14,7 +14,7 @@
  * 8. Recent Logs (last 4-6 entries)
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Plus,
   Trash2,
@@ -24,6 +24,10 @@ import {
   X,
   Sparkles,
   Edit3,
+  Brain,
+  Send,
+  Mic,
+  MicOff,
 } from 'lucide-react'
 import {
   getBackupData,
@@ -44,6 +48,7 @@ import {
   type BackupProject,
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 // ── Greeting helper ──────────────────────────────────────────────────────────
 
@@ -109,6 +114,15 @@ export default function V15rHome() {
   const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}>({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
   const [addingAlert, setAddingAlert] = useState(false)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+
+  // ── AI Daily Assistant state ──
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [aiMessages, setAiMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([])
+  const [aiInput, setAiInput] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiRecording, setAiRecording] = useState(false)
+  const aiScrollRef = useRef<HTMLDivElement>(null)
+  const aiInitRef = useRef(false)
 
   const backup = getBackupData()
 
@@ -943,6 +957,123 @@ export default function V15rHome() {
           </div>
         )}
       </div>
+
+      {/* ── AI Daily Assistant Floating Button ── */}
+      <button
+        onClick={() => {
+          setAiPanelOpen(true)
+          if (!aiInitRef.current && kpis) {
+            aiInitRef.current = true
+            // Auto-load daily analysis on first open
+            const activeProjs = projects.filter(p => resolveProjectBucket(p) === 'active')
+            const healthScores = activeProjs.map(p => ({ name: p.name, score: health(p, backup).score, completion: getOverallCompletion(p) }))
+            const svcNeedingAttention = serviceLogs.filter(sl => getServiceBalanceDue(sl) > 0)
+            const context = `Today's business snapshot for Power On Solutions:
+- Total Pipeline: ${fmtK(kpis.pipeline)}
+- Cash Received (Paid): ${fmtK(kpis.paid)}
+- Open RFIs: ${kpis.openRfis}
+- Total Hours Logged: ${kpis.totalHours.toFixed(0)}
+- Active Projects: ${kpis.activeProjects}
+- Service Jobs Needing Attention: ${svcNeedingAttention.length} (total due: ${fmtK(svcNeedingAttention.reduce((s, l) => s + getServiceBalanceDue(l), 0))})
+- Project Health: ${healthScores.map(h => `${h.name}: ${h.score}/100 (${h.completion}% complete)`).join(', ') || 'none'}
+- SVC Unbilled: ${fmtK(kpis.svcUnbilled)}
+- Exposure: ${fmtK(kpis.exposure)}`
+            setAiLoading(true)
+            callClaude({
+              system: `You are NEXUS, the AI operations manager for Power On Solutions, an electrical contractor in Coachella Valley, CA. Christian is the owner. Greet him warmly. Analyze the daily snapshot and present priority-scored items using these icons: CRITICAL for urgent issues, ATTENTION for items needing review, GOOD for healthy metrics. Be concise, actionable, and speak like a trusted operations partner.`,
+              messages: [{ role: 'user', content: `Good ${getGreeting()} analysis:\n${context}` }],
+              max_tokens: 1024,
+            }).then(res => {
+              const text = extractText(res)
+              setAiMessages([{ role: 'assistant', content: text }])
+            }).catch(() => {
+              setAiMessages([{ role: 'assistant', content: `Good ${getGreeting()}, Christian. I couldn't reach the AI service right now. Your dashboard data is above — check the service jobs needing attention first.` }])
+            }).finally(() => setAiLoading(false))
+          }
+        }}
+        className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-xl flex items-center justify-center transition-all hover:scale-110"
+        title="AI Daily Assistant"
+      >
+        <Brain size={24} />
+      </button>
+
+      {/* ── AI Slide-in Panel ── */}
+      {aiPanelOpen && (
+        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full bg-[#1a1d2e] border-l border-gray-700 shadow-2xl flex flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#151827]">
+            <div>
+              <h3 className="text-sm font-bold text-gray-100">Good {getGreeting()}, Christian</h3>
+              <p className="text-[10px] text-gray-500">{formatDate()}</p>
+            </div>
+            <button onClick={() => { setAiPanelOpen(false); aiInitRef.current = false; setAiMessages([]) }} className="text-gray-400 hover:text-white"><X size={18} /></button>
+          </div>
+          {/* Messages */}
+          <div ref={aiScrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+            {aiLoading && aiMessages.length === 0 && (
+              <div className="text-center py-8">
+                <div className="animate-pulse text-blue-400 text-sm">Analyzing your day...</div>
+              </div>
+            )}
+            {aiMessages.map((msg, i) => (
+              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[#232738] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
+                {msg.content}
+              </div>
+            ))}
+          </div>
+          {/* Input */}
+          <div className="border-t border-gray-700 p-3 flex gap-2">
+            <input
+              type="text"
+              value={aiInput}
+              onChange={e => setAiInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && aiInput.trim() && !aiLoading) {
+                  const userMsg = aiInput.trim()
+                  setAiInput('')
+                  const updated = [...aiMessages, { role: 'user' as const, content: userMsg }]
+                  setAiMessages(updated)
+                  setAiLoading(true)
+                  callClaude({
+                    system: `You are NEXUS, the AI operations manager for Power On Solutions, an electrical contractor in Coachella Valley, CA. Be concise and actionable.`,
+                    messages: updated.map(m => ({ role: m.role, content: m.content })),
+                    max_tokens: 1024,
+                  }).then(res => {
+                    setAiMessages(prev => [...prev, { role: 'assistant', content: extractText(res) }])
+                  }).catch(() => {
+                    setAiMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I couldn\'t process that. Try again.' }])
+                  }).finally(() => setAiLoading(false))
+                }
+              }}
+              placeholder="Ask about your day..."
+              className="flex-1 bg-[#232738] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
+            />
+            <button
+              onClick={() => {
+                if (!aiInput.trim() || aiLoading) return
+                const userMsg = aiInput.trim()
+                setAiInput('')
+                const updated = [...aiMessages, { role: 'user' as const, content: userMsg }]
+                setAiMessages(updated)
+                setAiLoading(true)
+                callClaude({
+                  system: `You are NEXUS, the AI operations manager for Power On Solutions, an electrical contractor in Coachella Valley, CA. Be concise and actionable.`,
+                  messages: updated.map(m => ({ role: m.role, content: m.content })),
+                  max_tokens: 1024,
+                }).then(res => {
+                  setAiMessages(prev => [...prev, { role: 'assistant', content: extractText(res) }])
+                }).catch(() => {
+                  setAiMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I couldn\'t process that. Try again.' }])
+                }).finally(() => setAiLoading(false))
+              }}
+              disabled={aiLoading}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white disabled:opacity-50"
+            >
+              <Send size={14} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

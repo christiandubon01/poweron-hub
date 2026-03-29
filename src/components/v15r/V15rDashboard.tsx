@@ -1087,10 +1087,14 @@ function V15rDashboardInner() {
   const scpLogs = serviceLogs.slice(-8)
 
   // ── RCA: Revenue vs Cost Analysis (Active Projects) ──
-  const rcaProjects = projects
+  const [rcaSelectedProject, setRcaSelectedProject] = useState<string>('all')
+  const allRcaProjects = projects
     .filter(p => p.status === 'active' && (p.contract || 0) > 0)
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
+  const rcaProjects = rcaSelectedProject === 'all'
+    ? allRcaProjects
+    : allRcaProjects.filter(p => p.id === rcaSelectedProject)
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
@@ -1193,9 +1197,21 @@ function V15rDashboardInner() {
 
         {/* RCA: Revenue vs Cost Analysis — Active Projects */}
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-          <div className="mb-4">
-            <h2 className="text-[26px] font-bold text-gray-100 leading-tight">Revenue vs Cost Analysis — Active Projects</h2>
-            <p className="text-sm text-gray-400 italic mt-1">Collected Revenue, Labor/Material/Mileage Costs, AR Exposure &amp; Break-even — with shaded profit zones</p>
+          <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-[26px] font-bold text-gray-100 leading-tight">Revenue vs Cost Analysis — Active Projects</h2>
+              <p className="text-sm text-gray-400 italic mt-1">Collected Revenue, Labor/Material/Mileage Costs, AR Exposure &amp; Break-even — with shaded profit zones</p>
+            </div>
+            <select
+              value={rcaSelectedProject}
+              onChange={e => setRcaSelectedProject(e.target.value)}
+              className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
+            >
+              <option value="all">All Projects</option>
+              {allRcaProjects.map(p => (
+                <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
+              ))}
+            </select>
           </div>
           <div className="relative w-full h-[420px]">
             <ChartErrorBoundary>
