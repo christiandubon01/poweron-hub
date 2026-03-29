@@ -22,7 +22,37 @@
 
 const STORAGE_KEY = 'poweron_backup_data'
 
-// ── ISSUE 5: Sync infrastructure ─────────────────────────────────────────────
+// ── Device ID System ─────────────────────────────────────────────────────────
+const DEVICE_ID_KEY = 'poweron_device_id'
+
+function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY)
+    if (id) return id
+    // Auto-detect device name from user agent
+    const ua = navigator.userAgent || ''
+    let label = 'Unknown'
+    if (/iPhone/.test(ua)) label = 'iPhone'
+    else if (/iPad/.test(ua)) label = 'iPad'
+    else if (/Android/.test(ua)) label = 'Android'
+    else if (/Windows/.test(ua)) label = 'Windows'
+    else if (/Mac/.test(ua)) label = 'Mac'
+    else if (/Linux/.test(ua)) label = 'Linux'
+    id = `${label}_${Date.now().toString(36)}`
+    localStorage.setItem(DEVICE_ID_KEY, id)
+    return id
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** Last sync metadata from Supabase (set during loadFromSupabase) */
+let _lastSyncMeta: { savedBy: string; savedAt: string } | null = null
+export function getLastSyncMeta(): { savedBy: string; savedAt: string } | null {
+  return _lastSyncMeta
+}
+
+// ── Sync infrastructure ──────────────────────────────────────────────────────
 
 let _saveDebounceTimer: any = null
 let _dataChanged = false
@@ -215,6 +245,8 @@ export interface BackupData {
   gcalUrl?: string
   _lastSavedAt: string
   _schemaVersion: number
+  /** Cross-device sync metadata — embedded by syncToSupabase() */
+  _syncMeta?: { savedBy: string; savedAt: string }
 }
 
 // ── Supabase check ───────────────────────────────────────────────────────────
@@ -687,7 +719,8 @@ export function exportBackup(d?: BackupData): void {
 
 const SUPABASE_STATE_KEY = 'poweron_v2'
 
-/** Sync current localStorage data to Supabase app_state table */
+/** Sync current localStorage data to Supabase app_state table.
+ *  Includes device ID metadata so we know which device last saved. */
 export async function syncToSupabase(): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, error: 'Supabase not configured' }
 
@@ -696,36 +729,50 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     const data = getBackupData()
     if (!data) return { success: false, error: 'No local data to sync' }
 
-    // Update timestamp
-    data._lastSavedAt = new Date().toISOString()
+    const now = new Date().toISOString()
+    const deviceId = getDeviceId()
 
+    // Embed device metadata + update timestamp
+    data._lastSavedAt = now
+    data._syncMeta = { savedBy: deviceId, savedAt: now }
+    saveBackupData(data) // persist locally with metadata
+
+    // Single upsert to Supabase with all metadata embedded
     const { error } = await supabase
       .from('app_state')
       .upsert({
         state_key: SUPABASE_STATE_KEY,
         data: data,
-        updated_at: data._lastSavedAt,
+        updated_at: now,
       }, { onConflict: 'state_key' })
 
     if (error) {
-      console.error('[sync] Supabase write failed:', error.message)
+      console.error('[Sync] Supabase write failed:', error.message)
       return { success: false, error: error.message }
     }
 
-    console.log('[sync] Synced to Supabase at', data._lastSavedAt)
+    _lastSyncMeta = { savedBy: deviceId, savedAt: now }
+    console.log(`[Sync] Synced to Supabase at ${now} by ${deviceId}`)
     return { success: true }
   } catch (err: any) {
-    console.error('[sync] Supabase sync error:', err)
+    console.error('[Sync] Supabase sync error:', err)
     return { success: false, error: err?.message || 'Unknown error' }
   }
 }
 
-/** Load backup from Supabase and merge with local using richness guard */
-export async function loadFromSupabase(): Promise<{ success: boolean; merged: boolean; error?: string }> {
+/**
+ * Load backup from Supabase — TIMESTAMP-ONLY resolution.
+ * Remote newer = remote wins. No "richness guard".
+ * This ensures cross-device sync always uses the latest save.
+ *
+ * Returns { merged: true, fromDevice } when remote data was loaded.
+ */
+export async function loadFromSupabase(): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, merged: false, error: 'Supabase not configured' }
 
   try {
     const { supabase } = await import('@/lib/supabase')
+    const thisDevice = getDeviceId()
 
     const { data: row, error } = await supabase
       .from('app_state')
@@ -734,59 +781,65 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
       .single()
 
     if (error) {
-      console.warn('[sync] Supabase read failed:', error.message)
+      console.warn('[Sync] Supabase read failed:', error.message)
       return { success: false, merged: false, error: error.message }
     }
 
     if (!row || !row.data) {
-      console.log('[sync] No remote data found')
+      console.log('[Sync] No remote data found — using local')
+      // If we have local data, push it to seed Supabase
+      const local = getBackupData()
+      if (local) {
+        console.log('[Sync] Seeding Supabase with local data')
+        await syncToSupabase()
+      }
       return { success: true, merged: false }
     }
 
     const remote = row.data as BackupData
     const local = getBackupData()
 
-    // ── ISSUE 2 Fix 5: Diagnostic logging on every load ───────────────
+    // Extract device metadata from remote
+    const remoteMeta = (remote as any)._syncMeta as { savedBy?: string; savedAt?: string } | undefined
+    const remoteDevice = remoteMeta?.savedBy || 'unknown'
+
+    // Diagnostic logging
     const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
     const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
-    const remoteSL = (remote.serviceLogs || []).length
-    const localSL = local ? (local.serviceLogs || []).length : 0
-    const remoteP = (remote.projects || []).length
-    const localP = local ? (local.projects || []).length : 0
-    const remoteL = (remote.logs || []).length
-    const localL = local ? (local.logs || []).length : 0
 
-    console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime}), Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime})`)
-    console.log(`[Sync] Local counts — SL:${localSL} P:${localP} L:${localL} | Remote counts — SL:${remoteSL} P:${remoteP} L:${remoteL}`)
+    console.log(`[Sync] This device: ${thisDevice}`)
+    console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
+    console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
 
-    // If no local data, just use remote
+    // Store sync metadata for UI display
+    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || '' }
+
+    // ── Case 1: No local data — use remote ──────────────────────────
     if (!local) {
       saveBackupData(remote)
       console.log('[Sync] No local data — Loading: remote')
-      return { success: true, merged: true }
+      return { success: true, merged: true, fromDevice: remoteDevice }
     }
 
-    // ── ISSUE 2 Fix 4: If local is newer, push to Supabase FIRST ─────
-    if (localTime > remoteTime) {
-      console.log('[Sync] Local is newer — pushing local to Supabase FIRST, Loading: local')
-      await syncToSupabase() // AWAIT, not fire-and-forget, to ensure cloud is updated
-      return { success: true, merged: false }
-    }
-
-    // Remote is newer — apply richness guard
-    if (remoteSL >= localSL && remoteP >= localP && remoteL >= localL) {
-      // Remote is newer AND richer — use remote
+    // ── Case 2: Remote is newer — ALWAYS use remote (no richness guard) ──
+    if (remoteTime > localTime) {
       saveBackupData(remote)
-      console.log('[Sync] Remote is newer + richer — Loading: remote')
-      return { success: true, merged: true }
-    } else {
-      // Remote is newer but THINNER — keep local, push local to remote
-      console.warn(`[Sync] Remote is newer but thinner — Loading: local (pushing back to cloud)`)
-      await syncToSupabase() // AWAIT to ensure cloud gets the richer data
+      console.log(`[Sync] Remote is newer — Loading: remote (saved by ${remoteDevice})`)
+      return { success: true, merged: true, fromDevice: remoteDevice }
+    }
+
+    // ── Case 3: Local is newer — push to Supabase ───────────────────
+    if (localTime > remoteTime) {
+      console.log('[Sync] Local is newer — pushing to Supabase, Loading: local')
+      await syncToSupabase()
       return { success: true, merged: false }
     }
+
+    // ── Case 4: Same timestamp — no action needed ───────────────────
+    console.log('[Sync] Timestamps match — no sync needed')
+    return { success: true, merged: false }
   } catch (err: any) {
-    console.error('[sync] Supabase load error:', err)
+    console.error('[Sync] Supabase load error:', err)
     return { success: false, merged: false, error: err?.message || 'Unknown error' }
   }
 }

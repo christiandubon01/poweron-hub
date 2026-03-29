@@ -21,7 +21,7 @@ import {
   Menu,
   X,
 } from 'lucide-react'
-import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
 import { initEventBus } from '@/services/agentEventBus'
 import { subscribeNexusToEvents } from '@/agents/nexus'
@@ -50,6 +50,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   })
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
+  const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
   // CRITICAL: These MUST be declared before any useEffect that references them.
@@ -94,13 +95,20 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       if (result.success) {
         setSyncStatus('synced')
         setLastSyncTime(new Date().toLocaleTimeString())
+        // Update device info from sync metadata
+        const meta = getLastSyncMeta()
+        if (meta?.savedBy) {
+          const deviceLabel = meta.savedBy.split('_')[0] || meta.savedBy
+          setLastSyncDevice(deviceLabel)
+        }
         if (result.merged) {
-          // Refresh local state after merge
+          // Remote was newer — refresh local state
           const data = getBackupData()
           setBackupData(data)
           if (data) setKpis(getKPIs(data))
-          setToastMessage('Synced from cloud — data loaded')
-          setTimeout(() => setToastMessage(null), 4000)
+          const deviceLabel = result.fromDevice ? result.fromDevice.split('_')[0] : 'cloud'
+          setToastMessage(`Loaded latest from cloud (saved by ${deviceLabel})`)
+          setTimeout(() => setToastMessage(null), 5000)
         }
       } else {
         setSyncStatus('failed')
@@ -122,6 +130,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         if (result.success) {
           setSyncStatus('synced')
           setLastSyncTime(new Date().toLocaleTimeString())
+          const meta = getLastSyncMeta()
+          if (meta?.savedBy) setLastSyncDevice(meta.savedBy.split('_')[0] || '')
         } else {
           setSyncStatus('failed')
         }
@@ -675,10 +685,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   'bg-gray-500'
                 }`} />
                 <span className={`text-xs ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
-                  {syncStatus === 'synced' && lastSyncTime ? `Synced ${lastSyncTime}` :
-                   syncStatus === 'syncing' ? 'Pending sync...' :
-                   syncStatus === 'failed' ? 'Sync failed — tap to retry' :
-                   `Saved ${getRelativeTime(lastSaved)}`}
+                  {syncStatus === 'synced' && lastSyncTime
+                    ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
+                    : syncStatus === 'syncing' ? 'Pending sync...'
+                    : syncStatus === 'failed' ? 'Sync failed — tap to retry'
+                    : `Saved ${getRelativeTime(lastSaved)}`}
                 </span>
               </button>
 
