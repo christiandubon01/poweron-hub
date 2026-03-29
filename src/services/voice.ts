@@ -833,16 +833,26 @@ export class VoiceSubsystem {
 
   /**
    * Play audio with a tracked reference so it can be interrupted.
-   * Uses Howler.js for ALL platforms — handles iOS Safari autoplay restrictions
-   * natively via its internal Web Audio API unlock and html5 audio fallback.
+   * iOS: skips Howler entirely and uses Web Speech API directly (no autoplay issues).
+   * Non-iOS: uses Howler.js for ElevenLabs audio playback.
    */
   private async playAudioTracked(audioUrl: string): Promise<void> {
     // Stop any previously playing audio
     this.stopCurrentAudio()
     this.stopCurrentHowl()
 
+    // iOS Safari: Howler consistently fails with TypeError {}.
+    // Web Speech API has zero autoplay restrictions on iOS — use it directly.
+    if (VoiceSubsystem.IS_IOS) {
+      debugPush('iOS detected — using Web Speech directly, skipping Howler')
+      console.log('[iOS Audio] Bypassing Howler — using Web Speech API')
+      await this.speakWithWebSpeech(this.lastTTSText || '')
+      return
+    }
+
+    // Non-iOS: use Howler.js for ElevenLabs audio
     debugPush('playAudioTracked() — using Howler.js for playback')
-    console.log('[Audio] Playing via Howler.js (cross-platform)')
+    console.log('[Audio] Playing via Howler.js (desktop)')
 
     try {
       await this.playAudioWithHowler(audioUrl)

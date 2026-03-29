@@ -143,13 +143,13 @@ export async function searchMemory(params: SearchMemoryParams): Promise<MemoryRe
     })
 
     if (error) {
-      console.error('[Memory] searchMemory error:', error)
+      console.warn('[Memory] searchMemory unavailable, continuing without memory context:', error.message || error)
       return []
     }
 
     return (data as MemoryRecord[]) ?? []
   } catch (err) {
-    console.error('[Memory] searchMemory failed:', err)
+    console.warn('[Memory] searchMemory unavailable, continuing without memory context:', err instanceof Error ? err.message : String(err))
     return []
   }
 }
