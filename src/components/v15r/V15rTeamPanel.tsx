@@ -965,6 +965,20 @@ function formatCurrency(value: number | undefined): string {
   return `$${Math.round(value).toLocaleString()}`
 }
 
+function calcEmployeeCost(emp: any, backup: any) {
+  const hourlyRate = num(emp.costRate || emp.rate || 0)
+  const hrsPerWeek = num(emp.hoursPerWeek || 40)
+  const baseMonthlyCost = hourlyRate * hrsPerWeek * 4.33
+  const payrollTax = baseMonthlyCost * 0.153
+  const workersComp = baseMonthlyCost * 0.04
+  const glInsurance = baseMonthlyCost * 0.015
+  const loadedMonthlyCost = baseMonthlyCost + payrollTax + workersComp + glInsurance
+  const sixMonthCost = loadedMonthlyCost * 6
+  const targetMargin = num(backup?.settings?.markup || 35) / 100
+  const targetRevenue = targetMargin > 0 ? loadedMonthlyCost / targetMargin : 0
+  return { baseMonthlyCost, loadedMonthlyCost, sixMonthCost, targetRevenue, hourlyRate, hrsPerWeek }
+}
+
 function NoData() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-[var(--bg-secondary)]">
@@ -982,12 +996,14 @@ function EmployeeCard({
   jobCount,
   monthlyHours,
   onToggleMultiplier,
+  backup,
 }: {
   employee: EnhancedEmployee
   totalHours: number
   jobCount: number
   monthlyHours: number
   onToggleMultiplier: (empId: string) => void
+  backup?: any
 }) {
   const billRate = num(employee.billRate)
   const costRate = num(employee.costRate)
@@ -1002,6 +1018,8 @@ function EmployeeCard({
   const billAmount = totalHours * billRate
   const costAmount = totalHours * costRate
   const margin = billAmount - costAmount
+
+  const cost = backup ? calcEmployeeCost(employee, backup) : null
 
   return (
     <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4">
@@ -1074,6 +1092,23 @@ function EmployeeCard({
           <span className={marginPerHour > 0 ? 'text-emerald-400 font-semibold' : 'text-red-400 font-semibold'}>{formatCurrency(marginPerHour)}</span>
         </div>
       </div>
+
+      {cost && (
+        <div className="mt-4 pt-4 border-t border-gray-700 space-y-1 text-xs">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Monthly (loaded)</span>
+            <span className="text-white font-medium">{formatCurrency(cost.loadedMonthlyCost)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">6-Month Cost</span>
+            <span className="text-yellow-400">{formatCurrency(cost.sixMonthCost)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Revenue needed to cover</span>
+            <span className="text-cyan-400 font-medium">{formatCurrency(cost.targetRevenue)}/mo</span>
+          </div>
+        </div>
+      )}
 
       <div className="pt-4 border-t border-gray-700">
         <div className="flex justify-between items-baseline mb-2 text-sm">
@@ -1414,14 +1449,21 @@ export default function V15rTeamPanel() {
           <h2 className="text-lg font-bold text-gray-100 mb-4">Hypothetical Position Analysis ✨</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {hypotheticals.map((hyp) => {
-              const monthlyLabor = hyp.projectedHoursMonth * hyp.costRate
-              const mult = 1.20
-              const workersComp = hyp.costRate * 0.08
-              const loadedCost = hyp.costRate * mult + workersComp
-              const monthlyLoadedCost = hyp.projectedHoursMonth * loadedCost
+              // New formula: monthly cost = hourly rate × hours per week × 4.33 weeks
+              // Add payroll taxes (15.3%), workers comp (4%), GL (1.5%)
+              // Total loaded cost = base × 1.208
+              const baseMonthlyCost = hyp.costRate * hyp.projectedHoursMonth
+              const payrollTax = baseMonthlyCost * 0.153
+              const workersComp = baseMonthlyCost * 0.04
+              const glInsurance = baseMonthlyCost * 0.015
+              const monthlyLoadedCost = baseMonthlyCost + payrollTax + workersComp + glInsurance
               const monthlyBilled = hyp.projectedHoursMonth * hyp.billRate
               const monthlyContribution = monthlyBilled - monthlyLoadedCost
-              const breakEvenUtilization = hyp.billRate > 0 ? Math.round((loadedCost / hyp.billRate) * 100) : 0
+              const targetMargin = num(backup.settings?.markup || 35) / 100
+              const targetRevenue = targetMargin > 0 ? monthlyLoadedCost / targetMargin : 0
+              const sixMonthCost = monthlyLoadedCost * 6
+              const loadedCostPerHour = monthlyLoadedCost / hyp.projectedHoursMonth
+              const breakEvenUtilization = hyp.billRate > 0 ? Math.round((loadedCostPerHour / hyp.billRate) * 100) : 0
 
               return (
                 <div key={hyp.id} className="bg-[var(--bg-input)] rounded-lg border border-purple-600/40 p-4">
@@ -1456,6 +1498,14 @@ export default function V15rTeamPanel() {
                     <div className="flex justify-between">
                       <span className="text-gray-400">Monthly Loaded Cost</span>
                       <span className="text-orange-400 font-semibold">{formatCurrency(monthlyLoadedCost)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">6-Month Cost</span>
+                      <span className="text-yellow-400 font-semibold">{formatCurrency(sixMonthCost)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Revenue needed to cover</span>
+                      <span className="text-cyan-400 font-semibold">{formatCurrency(targetRevenue)}/mo</span>
                     </div>
                     <div className="flex justify-between pt-2 border-t border-purple-600/30">
                       <span className="text-gray-300 font-semibold">Net Contribution/month</span>
@@ -1505,29 +1555,31 @@ export default function V15rTeamPanel() {
 
                   {costAnalysisVisible[hyp.id] && (
                     <div className="bg-[var(--bg-secondary)] border border-gray-700/30 rounded-lg p-4 mt-3 space-y-4">
-                      {/* Chart 1: Cost Breakdown */}
+                      {/* Chart 1: Cost Breakdown (Loaded Costs) */}
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-400 uppercase mb-3">Cost Breakdown</h4>
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase mb-3">Loaded Cost Breakdown</h4>
                         <div className="space-y-2">
                           {(() => {
-                            const hoursPerWeek = 40
-                            const weeklyCost = hyp.costRate * hoursPerWeek
-                            const monthlyCost = weeklyCost * 4.33
-                            const annualCost = monthlyCost * 12
-                            const maxValue = annualCost
+                            const baseMonthlyCost = hyp.costRate * hyp.projectedHoursMonth
+                            const payrollTax = baseMonthlyCost * 0.153
+                            const workersComp = baseMonthlyCost * 0.04
+                            const glInsurance = baseMonthlyCost * 0.015
+                            const totalMonthly = baseMonthlyCost + payrollTax + workersComp + glInsurance
+                            const totalAnnual = totalMonthly * 12
 
                             return [
-                              { label: 'Weekly', value: weeklyCost, color: '#3b82f6' },
-                              { label: 'Monthly', value: monthlyCost, color: '#10b981' },
-                              { label: 'Annual', value: annualCost, color: '#f59e0b' },
+                              { label: 'Base Cost', value: baseMonthlyCost, color: '#f87171' },
+                              { label: 'Payroll Tax (15.3%)', value: payrollTax, color: '#fbbf24' },
+                              { label: 'Workers Comp (4%)', value: workersComp, color: '#34d399' },
+                              { label: 'GL Insurance (1.5%)', value: glInsurance, color: '#60a5fa' },
                             ].map(bar => (
                               <div key={bar.label} className="flex items-center gap-2">
-                                <span className="text-xs text-gray-400 w-16">{bar.label}</span>
+                                <span className="text-xs text-gray-400 w-24">{bar.label}</span>
                                 <div className="flex-1 h-4 bg-[var(--bg-input)] rounded overflow-hidden">
                                   <div
                                     className="h-full rounded"
                                     style={{
-                                      width: `${(bar.value / maxValue) * 100}%`,
+                                      width: `${(bar.value / totalMonthly) * 100}%`,
                                       backgroundColor: bar.color
                                     }}
                                   />
@@ -1536,6 +1588,16 @@ export default function V15rTeamPanel() {
                               </div>
                             ))
                           })()}
+                          <div className="pt-2 border-t border-gray-700 text-xs">
+                            <div className="flex justify-between font-semibold">
+                              <span className="text-gray-300">Total Monthly (Loaded)</span>
+                              <span className="text-white">{formatCurrency(monthlyLoadedCost)}</span>
+                            </div>
+                            <div className="flex justify-between font-semibold text-yellow-400">
+                              <span className="text-gray-300">Total Annual (Loaded)</span>
+                              <span>{formatCurrency(monthlyLoadedCost * 12)}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
@@ -1612,6 +1674,7 @@ export default function V15rTeamPanel() {
                     monthlyHours={stats.monthlyHours}
                     jobCount={stats.jobCount}
                     onToggleMultiplier={toggleMultiplier}
+                    backup={backup}
                   />
                   <div className="mt-2 flex gap-2 justify-end">
                     <button className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 flex items-center gap-1">
@@ -1628,6 +1691,38 @@ export default function V15rTeamPanel() {
               )
             })}
           </div>
+
+          {/* TEAM TOTALS SUMMARY */}
+          {employees.length > 0 && (
+            <div className="mt-6 bg-gradient-to-r from-blue-900/20 to-cyan-900/20 rounded-lg border border-blue-600/30 p-4">
+              <h3 className="text-sm font-bold text-gray-200 mb-4">Team Cost Summary</h3>
+              {(() => {
+                const teamTotals = (backup.employees || []).reduce((acc: any, emp: any) => {
+                  const c = calcEmployeeCost(emp, backup)
+                  acc.monthly += c.loadedMonthlyCost
+                  acc.sixMonth += c.sixMonthCost
+                  acc.revenue += c.targetRevenue
+                  return acc
+                }, { monthly: 0, sixMonth: 0, revenue: 0 })
+                return (
+                  <div className="grid grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <div className="text-gray-400 mb-1">Total Monthly (Loaded)</div>
+                      <div className="text-lg font-bold text-white">{formatCurrency(teamTotals.monthly)}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-400 mb-1">6-Month Cost</div>
+                      <div className="text-lg font-bold text-yellow-400">{formatCurrency(teamTotals.sixMonth)}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-400 mb-1">Revenue to Cover (monthly)</div>
+                      <div className="text-lg font-bold text-cyan-400">{formatCurrency(teamTotals.revenue)}</div>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
         </div>
       )}
 

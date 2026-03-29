@@ -16,6 +16,7 @@ import {
 import { pushState } from '@/services/undoRedoService'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 interface BenchmarkRow {
   name: string
@@ -46,6 +47,8 @@ export default function V15rPricingIntelligencePanel() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAIInsight, setShowAIInsight] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
+  const [scoutAnalysis, setScoutAnalysis] = useState<string | null>(null)
+  const [scoutLoading, setScoutLoading] = useState(false)
 
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
@@ -237,7 +240,21 @@ export default function V15rPricingIntelligencePanel() {
   }
 
   const handleScoutAnalysis = () => {
-    alert('AI Insight (SCOUT) coming soon.')
+    setScoutLoading(true)
+    const executeAnalysis = async () => {
+      try {
+        const archived = backup.completedArchive || []
+        const summary = archived.slice(0, 10).map((j: any) => `${j.projectName || j.name}: $${num(j.soldPrice || j.contract || 0)} (${j.jobType || j.type || 'General'})`).join('\n')
+        const response = await callClaude({
+          system: 'You are SCOUT, the pattern analysis agent for Power On Solutions, a C-10 electrical contractor. Analyze pricing patterns and suggest adjustments.',
+          messages: [{ role: 'user', content: `Analyze these completed jobs:\n${summary}\n\nAnalyze pricing patterns, suggest adjustments, identify profitable vs unprofitable job types. Keep under 250 words.` }],
+          max_tokens: 640,
+        })
+        setScoutAnalysis(extractText(response))
+      } catch { setScoutAnalysis('Analysis unavailable') }
+      setScoutLoading(false)
+    }
+    executeAnalysis()
   }
 
   const dismissAI = () => {
@@ -390,6 +407,7 @@ export default function V15rPricingIntelligencePanel() {
                     <th className="px-4 py-2 text-right">Gross Profit</th>
                     <th className="px-4 py-2 text-right">Margin</th>
                     <th className="px-4 py-2 text-left">Labor</th>
+                    <th className="px-4 py-2 text-left">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
@@ -412,6 +430,24 @@ export default function V15rPricingIntelligencePanel() {
                           <td className="px-4 py-3 text-gray-300 text-xs">
                             {num(r.actualLaborHrs).toFixed(1)}h{' '}
                             <span className="text-gray-500">vs {num(r.estimatedLaborHrs).toFixed(1)}h</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => {
+                                pushState(backup)
+                                const archive = backup.completedArchive || []
+                                const job = archive[archive.length - 1 - i]
+                                if (job) {
+                                  const updatedArchive = archive.filter((_, idx) => idx !== archive.length - 1 - i)
+                                  const updatedProjects = [...(backup.projects || []), { ...job, status: 'active', studied: true }]
+                                  saveBackupData({ ...backup, completedArchive: updatedArchive, projects: updatedProjects })
+                                  forceUpdate()
+                                }
+                              }}
+                              className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                            >
+                              ↩ Return to Queue
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -443,7 +479,10 @@ export default function V15rPricingIntelligencePanel() {
                     <div key={c.project.id} className="p-3 hover:bg-[#1e2130] transition">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1">
-                          <div className="font-medium text-sm">{c.project.name}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-medium text-sm">{c.project.name}</div>
+                            {c.project.studied && <span className="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">Studied</span>}
+                          </div>
                           <div className="text-xs text-gray-500 mt-1">
                             {c.project.type} · {c.progress}% complete
                           </div>
@@ -551,13 +590,28 @@ export default function V15rPricingIntelligencePanel() {
           {/* SCOUT AI Button */}
           <button
             onClick={handleScoutAnalysis}
-            className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium text-sm flex items-center justify-center gap-2"
+            disabled={scoutLoading}
+            className="w-full px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            <AlertCircle size={16} />
-            SCOUT Analysis
+            <Sparkles size={16} />
+            {scoutLoading ? 'Analyzing...' : 'Scout AI Analysis'}
           </button>
         </div>
       </div>
+
+      {/* SCOUT Analysis Display */}
+      {scoutAnalysis && (
+        <div className="mt-6 bg-[#232738] rounded-lg border border-gray-700 p-4">
+          <div className="flex justify-between items-start mb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-purple-400" />
+              <span className="text-purple-400 text-sm font-medium">SCOUT Analysis</span>
+            </div>
+            <button onClick={() => setScoutAnalysis(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+          </div>
+          <p className="text-gray-300 text-sm whitespace-pre-wrap">{scoutAnalysis}</p>
+        </div>
+      )}
 
       {/* AI Insight Modal */}
       {showAIInsight && (

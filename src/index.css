@@ -133,3 +133,194 @@
     border-color: var(--border-secondary);
   }
 }
+
+/* ── Light Theme Overrides ─────────────────────────────────────── */
+[data-theme="light"] {
+  /* Darken bright accent colors for readability on light backgrounds */
+  --color-red: #be123c;           /* red-700 from bright #FF5060 */
+  --color-green: #15803d;         /* green-700 from bright #2EE89A */
+  --color-blue: #1e40af;          /* blue-800 from bright #3A8EFF */
+  --color-gold: #b45309;          /* amber-700 from bright #FFD24A */
+  --color-orange: #c2410c;        /* orange-700 from bright #FF9040 */
+  --color-purple: #6d28d9;        /* purple-700 from bright #AA6EFF */
+  --color-teal: #0d9488;          /* teal-600 from bright #40D4FF */
+  --color-lime: #65a30d;          /* lime-700 from bright #A8FF3E */
+  --color-spark: #be185d;         /* pink-700 from bright #FF5FA0 */
+}
+
+/* Override Tailwind color utilities for light theme */
+[data-theme="light"] .text-red-400,
+[data-theme="light"] .text-red-500 {
+  color: #be123c !important;
+}
+
+[data-theme="light"] .text-green-400,
+[data-theme="light"] .text-emerald-400,
+[data-theme="light"] .text-green-500 {
+  color: #15803d !important;
+}
+
+[data-theme="light"] .text-blue-400,
+[data-theme="light"] .text-blue-500 {
+  color: #1e40af !important;
+}
+
+[data-theme="light"] .text-yellow-400,
+[data-theme="light"] .text-amber-400,
+[data-theme="light"] .text-yellow-500,
+[data-theme="light"] .text-amber-500 {
+  color: #b45309 !important;
+}
+
+[data-theme="light"] .text-orange-400,
+[data-theme="light"] .text-orange-500 {
+  color: #c2410c !important;
+}
+
+[data-theme="light"] .text-purple-400,
+[data-theme="light"] .text-purple-500 {
+  color: #6d28d9 !important;
+}
+
+[data-theme="light"] .text-cyan-400,
+[data-theme="light"] .text-teal-400,
+[data-theme="light"] .text-cyan-500,
+[data-theme="light"] .text-teal-500 {
+  color: #0d9488 !important;
+}
+
+[data-theme="light"] .text-lime-400,
+[data-theme="light"] .text-lime-500 {
+  color: #65a30d !important;
+}
+
+[data-theme="light"] .text-pink-400,
+[data-theme="light"] .text-pink-500 {
+  color: #be185d !important;
+}
+
+/* Override custom brand colors for light theme */
+[data-theme="light"] .text-red {
+  color: #be123c !important;
+}
+
+[data-theme="light"] .text-green {
+  color: #15803d !important;
+}
+
+[data-theme="light"] .text-blue {
+  color: #1e40af !important;
+}
+
+[data-theme="light"] .text-gold {
+  color: #b45309 !important;
+}
+
+[data-theme="light"] .text-orange {
+  color: #c2410c !important;
+}
+
+[data-theme="light"] .text-purple {
+  color: #6d28d9 !important;
+}
+
+[data-theme="light"] .text-teal {
+  color: #0d9488 !important;
+}
+
+[data-theme="light"] .text-lime {
+  color: #65a30d !important;
+}
+
+/* Darken text grays that are too light for light backgrounds */
+[data-theme="light"] .text-gray-300,
+[data-theme="light"] .text-gray-400 {
+  color: #4b5563 !important;
+}
+
+[data-theme="light"] .text-gray-500 {
+  color: #6b7280 !important;
+}
+
+[data-theme="light"] .text-text-2,
+[data-theme="light"] .text-text-3 {
+  color: #4b5563 !important;
+}
+
+/* Background colors for light theme */
+[data-theme="light"] .bg-bg-1,
+[data-theme="light"] .bg-bg-2,
+[data-theme="light"] .bg-bg-3 {
+  background-color: #f8fafc !important;
+}
+
+[data-theme="light"] .bg-bg-4,
+[data-theme="light"] .bg-bg-5 {
+  background-color: #e2e8f0 !important;
+}
+
+/* Border colors for light theme */
+[data-theme="light"] .border-bg-3,
+[data-theme="light"] .border-bg-4,
+[data-theme="light"] .border-bg-5 {
+  border-color: #cbd5e1 !important;
+}
+
+/* Subtle color backgrounds for badges/pills in light theme */
+[data-theme="light"] .bg-red-subtle {
+  background-color: #fee2e2 !important;
+  color: #991b1b !important;
+}
+
+[data-theme="light"] .bg-green-subtle {
+  background-color: #dcfce7 !important;
+  color: #166534 !important;
+}
+
+[data-theme="light"] .bg-blue-subtle {
+  background-color: #dbeafe !important;
+  color: #1e40af !important;
+}
+
+[data-theme="light"] .bg-gold-subtle {
+  background-color: #fef3c7 !important;
+  color: #92400e !important;
+}
+
+[data-theme="light"] .bg-orange-subtle {
+  background-color: #fed7aa !important;
+  color: #9a3412 !important;
+}
+
+[data-theme="light"] .bg-purple-subtle {
+  background-color: #f3e8ff !important;
+  color: #6d28d9 !important;
+}
+
+[data-theme="light"] .bg-teal-subtle {
+  background-color: #ccfbf1 !important;
+  color: #0d9488 !important;
+}
+
+/* Input fields */
+[data-theme="light"] .theme-input {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+[data-theme="light"] .theme-input::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Card styling */
+[data-theme="light"] .theme-card {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Selection color for light theme */
+[data-theme="light"]::selection {
+  background: rgba(46, 232, 154, 0.15);
+  color: #0f172a;
+}

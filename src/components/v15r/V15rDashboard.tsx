@@ -782,6 +782,15 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
 
+  // Helper to filter logs by project ID (case-insensitive, handles both projId and projectId)
+  const filterLogsByProject = (logs: any[], projectId: string) => {
+    return logs.filter(l => {
+      const logProj = (l.projId || l.projectId || '').toString().trim().toLowerCase()
+      const selected = projectId.toString().trim().toLowerCase()
+      return logProj === selected
+    })
+  }
+
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
@@ -812,7 +821,7 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
     if (isSingleProject) {
       // Single project: group by date and show date labels
       const p = projects[0]
-      const projLogs = logs.filter(l => l.projId === p.id)
+      const projLogs = filterLogsByProject(logs, p.id)
 
       // Group logs by date
       const byDate: { [key: string]: any[] } = {}
@@ -862,7 +871,7 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
       // All projects: show project names (one per project)
       projects.forEach(p => {
         const fin = getProjectFinancials(p, backup)
-        const projLogs = logs.filter(l => l.projId === p.id)
+        const projLogs = filterLogsByProject(logs, p.id)
 
         const totalHrs = projLogs.reduce((s, l) => s + num(l.hrs), 0)
         const totalMiles = projLogs.reduce((s, l) => s + num(l.miles), 0)
@@ -1071,6 +1080,25 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
     }
   }, [chartReady, projects, backup])
 
+  // Check if selected project has no logs
+  const hasData = (() => {
+    const logs = backup.logs || []
+    if (projects.length === 0) return false
+    if (projects.length === 1) {
+      const projLogs = filterLogsByProject(logs, projects[0].id)
+      return projLogs.length > 0
+    }
+    return true
+  })()
+
+  if (!hasData && projects.length === 1) {
+    return (
+      <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+        No field log data yet for this project
+      </div>
+    )
+  }
+
   return <canvas ref={canvasRef} />
 }
 
@@ -1271,6 +1299,7 @@ function V15rDashboardInner() {
     .filter(p => p.status === 'active' && (p.contract || 0) > 0)
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
+  const rcaDropdownProjects = backup.projects || []
   const rcaProjects = rcaSelectedProject === 'all'
     ? allRcaProjects
     : allRcaProjects.filter(p => p.id === rcaSelectedProject)
@@ -1387,7 +1416,7 @@ function V15rDashboardInner() {
               className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
             >
               <option value="all">All Projects</option>
-              {allRcaProjects.map(p => (
+              {rcaDropdownProjects.map(p => (
                 <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
               ))}
             </select>

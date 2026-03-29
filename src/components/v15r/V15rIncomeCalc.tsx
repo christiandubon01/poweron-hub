@@ -15,7 +15,7 @@
  */
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
-import { AlertCircle, TrendingUp, Sparkles, Zap, ChevronDown, ChevronRight, Users } from 'lucide-react'
+import { AlertCircle, TrendingUp, Sparkles, Zap, ChevronDown, ChevronRight, Users, X } from 'lucide-react'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
@@ -195,6 +195,11 @@ export default function V15rIncomeCalc() {
   // AI analysis state for revenue streams
   const [revenueAiResponse, setRevenueAiResponse] = useState('')
   const [revenueAiLoading, setRevenueAiLoading] = useState(false)
+
+  // Deep Analysis modal state
+  const [deepAnalysisOpen, setDeepAnalysisOpen] = useState(false)
+  const [deepAnalysis, setDeepAnalysis] = useState<string | null>(null)
+  const [deepAnalysisLoading, setDeepAnalysisLoading] = useState(false)
 
   const revenueStreamData = useMemo(() => {
     const months = Array.from({ length: 12 }, (_, i) => {
@@ -440,83 +445,51 @@ export default function V15rIncomeCalc() {
             batteryPanelProj={totalMonthly * (batteryPanelNorm / 100)}
           />
 
-          {/* Revenue Streams (replaces Deal Outlook) */}
+          {/* Revenue Streams — Separated by source */}
           <div className="bg-[#232738] rounded-lg p-4">
             <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Revenue Streams</h3>
-            {(() => {
-              const streams = [
-                { label: 'RMO Monthly Net', value: revenueStreams.rmoNet, color: '#10b981' },
-                { label: 'Electrical Projects (3mo avg)', value: revenueStreams.projMonthlyNet, color: '#3b82f6' },
-                { label: 'Service Calls (3mo avg)', value: revenueStreams.svcMonthlyNet, color: '#eab308' },
-              ]
-              const maxVal = Math.max(...streams.map(s => s.value), 1)
-              const combined = streams.reduce((s, st) => s + st.value, 0)
-              const largest = streams.reduce((best, s) => s.value > best.value ? s : best, streams[0])
-              return (
-                <div className="space-y-4">
-                  {/* Stream Cards */}
-                  <div className="grid grid-cols-3 gap-3">
-                    {streams.map(s => (
-                      <div
-                        key={s.label}
-                        className={`bg-[#1e2130] rounded p-3 text-center ${s.label === largest.label ? 'ring-1 ring-emerald-500/50' : ''}`}
-                      >
-                        <p className="text-xs text-gray-400 mb-2">{s.label}</p>
-                        <p className="text-lg font-bold" style={{ color: s.color }}>{fmtK(s.value)}</p>
-                        {s.label === largest.label && <p className="text-[10px] text-emerald-400 mt-1 font-semibold">TOP STREAM</p>}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Combined Total */}
-                  <div className="bg-[#1e2130] rounded p-3 flex justify-between items-center">
-                    <span className="text-sm text-gray-400">Combined Monthly Revenue</span>
-                    <span className="text-lg font-bold text-emerald-400">{fmtK(combined)}</span>
-                  </div>
-
-                  {/* Horizontal Bar Chart */}
-                  <div className="space-y-2">
-                    {streams.map(s => (
-                      <div key={s.label} className="flex items-center gap-3">
-                        <span className="text-xs text-gray-400 w-28 shrink-0 truncate">{s.label.split('(')[0].trim()}</span>
-                        <div className="flex-1 h-5 bg-[#1a1d27] rounded overflow-hidden">
-                          <div
-                            className="h-full rounded transition-all duration-500"
-                            style={{ width: `${Math.max(2, (s.value / maxVal) * 100)}%`, backgroundColor: s.color }}
-                          />
-                        </div>
-                        <span className="text-xs font-mono text-gray-300 w-16 text-right">{fmtK(s.value)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* AI Analysis Button */}
-                  <button
-                    onClick={async () => {
-                      setRevenueAiLoading(true)
-                      try {
-                        const resp = await callClaude({
-                          messages: [{ role: 'user', content: `Analyze these revenue streams for Power On Solutions (electrical contractor):\n- RMO Monthly Net: $${Math.round(revenueStreams.rmoNet)}\n- Electrical Projects (3mo avg): $${Math.round(revenueStreams.projMonthlyNet)}\n- Service Calls (3mo avg): $${Math.round(revenueStreams.svcMonthlyNet)}\nCombined: $${Math.round(combined)}\n${empCostEnabled ? `Employee costs: $${Math.round(empTotalMonthly)}/mo` : ''}\nGive 2-3 bullet insights on diversification, growth opportunities, and risk. Be concise.` }],
-                          system: 'You are SCOUT, Power On Solutions\' financial analyst AI. Be direct, data-driven, concise. Use plain language.',
-                          max_tokens: 300
-                        })
-                        setRevenueAiResponse(extractText(resp))
-                      } catch { setRevenueAiResponse('Analysis unavailable') }
-                      setRevenueAiLoading(false)
-                    }}
-                    disabled={revenueAiLoading}
-                    className="w-full px-3 py-2 bg-purple-600/20 border border-purple-500/50 hover:border-purple-500 rounded text-sm text-purple-300 font-semibold transition-colors disabled:opacity-50"
-                  >
-                    {revenueAiLoading ? 'Analyzing...' : 'AI Stream Analysis'}
-                  </button>
-                  {revenueAiResponse && (
-                    <div className="bg-purple-900/20 border border-purple-500/30 rounded p-3 text-xs text-gray-300 whitespace-pre-wrap">
-                      {revenueAiResponse}
-                    </div>
-                  )}
+            <div className="space-y-4">
+              {/* Card 1: RMO — Power On Solutions LLC */}
+              <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
+                <h4 className="text-sm font-medium text-cyan-400">RMO — Power On Solutions LLC</h4>
+                <p className="text-2xl font-bold text-white">{fmtK(rmoMonthly)}</p>
+                <p className="text-xs text-gray-400">RMO oversight fee income</p>
+                <div className="text-xs text-gray-500 space-y-1 mt-3 pt-2 border-t border-gray-700">
+                  <div>Fee per system: {fmtK(rmoPerSys)} × {totalProjectsPerMonth} systems = {fmtK(rmoPerSys * totalProjectsPerMonth)}</div>
+                  <div>Monthly base: {fmtK(monthlyBaseFee)}</div>
+                  <div>RMO visits: {fmtK(rmoVisitCost)} × {visitsPerMonth} = {fmtK(rmoVisitCost * visitsPerMonth)}</div>
                 </div>
-              )
-            })()}
+              </div>
+
+              {/* Card 2: Installation — Subcontractor */}
+              <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
+                <h4 className="text-sm font-medium text-blue-400">Installation — Subcontractor</h4>
+                <p className="text-2xl font-bold text-white">{fmtK(installNetMonthly)}</p>
+                <p className="text-xs text-gray-400">Installation monthly net income</p>
+                <div className="text-xs text-gray-500 space-y-1 mt-3 pt-2 border-t border-gray-700">
+                  <div>Fee per system: {fmtK(installPerSys)} × {selfInstallProjectsPerMonth} projects = {fmtK(installMonthly)}</div>
+                  <div>Labor cost: -{fmtK(installLabor)}</div>
+                  <div>Net: {fmtK(installNetMonthly)}</div>
+                </div>
+              </div>
+
+              {/* Card 3: Electrical Projects — Monthly Net */}
+              <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
+                <h4 className="text-sm font-medium text-emerald-400">Electrical Projects — Monthly Net</h4>
+                <p className="text-2xl font-bold text-white">{fmtK(revenueStreams.projMonthlyNet)}</p>
+                <p className="text-xs text-gray-400">Paid electrical projects (3mo average)</p>
+                <div className="text-xs text-gray-500 space-y-1 mt-3 pt-2 border-t border-gray-700">
+                  <div>Pipeline total: {fmtK(electricalPipelineTotal)}</div>
+                  <div>Active projects: {activeProjects.length}</div>
+                </div>
+              </div>
+
+              {/* Combined Total */}
+              <div className="bg-gray-800/50 border border-emerald-500/30 rounded-xl p-4 flex justify-between items-center">
+                <span className="text-sm font-medium text-gray-300">Combined Monthly Revenue</span>
+                <span className="text-2xl font-bold text-emerald-400">{fmtK(rmoMonthly + installNetMonthly + revenueStreams.projMonthlyNet)}</span>
+              </div>
+            </div>
           </div>
 
           {/* Revenue Stream Stacked Area Chart */}
@@ -582,8 +555,18 @@ export default function V15rIncomeCalc() {
             totalNetMonthly={totalNetMonthly}
             electricalPipelineTotal={electricalPipelineTotal}
             visitsPerMonth={visitsPerMonth}
-            onDeepAnalysis={() => {
-              alert(`Deep Analysis:\n\nBreak-even: ${totalProjectsPerMonth > 0 ? Math.round(totalLabor / rmoPerSys) : 0} systems/month\nPipeline Coverage: ${electricalPipelineTotal > 0 ? (electricalPipelineTotal / Math.max(1, totalLabor * 12)).toFixed(1) : 0} months\nRMO Profitability: ${rmoMonthly > 0 ? 'ON TRACK' : 'NEEDS REVIEW'}`)
+            onDeepAnalysis={async () => {
+              setDeepAnalysisOpen(true)
+              setDeepAnalysisLoading(true)
+              try {
+                const response = await callClaude({
+                  system: 'You are a financial analyst for Power On Solutions, a C-10 electrical contractor. Provide concise, actionable analysis.',
+                  messages: [{ role: 'user', content: `Analyze this income data:\nRMO Monthly: $${Math.round(rmoMonthly)}\nInstall Monthly: $${Math.round(installNetMonthly)}\nElectrical Monthly: $${Math.round(revenueStreams.projMonthlyNet)}\nTotal Monthly: $${Math.round(rmoMonthly + installNetMonthly + revenueStreams.projMonthlyNet)}\nMonthly Overhead: $${Math.round(totalLabor)}\n\nProvide: 1) Break-even analysis 2) Pipeline coverage months 3) Profitability assessment 4) Revenue stream comparison. Keep under 300 words.` }],
+                  max_tokens: 768,
+                })
+                setDeepAnalysis(extractText(response))
+              } catch { setDeepAnalysis('Analysis unavailable. Check connection.') }
+              setDeepAnalysisLoading(false)
             }}
           />
 
@@ -595,6 +578,29 @@ export default function V15rIncomeCalc() {
           </div>
         </div>
       </div>
+
+      {/* Deep Analysis Modal */}
+      {deepAnalysisOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setDeepAnalysisOpen(false)} />
+          <div className="relative w-full max-w-md bg-gray-900 border-l border-gray-700 p-6 overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-white font-semibold text-lg">Deep Analysis</h3>
+              <div className="flex gap-2">
+                {deepAnalysis && (
+                  <button onClick={() => navigator.clipboard.writeText(deepAnalysis)} className="px-3 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600">Copy</button>
+                )}
+                <button onClick={() => setDeepAnalysisOpen(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+            </div>
+            {deepAnalysisLoading ? (
+              <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" /></div>
+            ) : (
+              <div className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">{deepAnalysis}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -63,6 +63,9 @@ export default function V15rLeadsPanel() {
   const [openLogFormId, setOpenLogFormId] = useState<string | null>(null)
   const [logFormData, setLogFormData] = useState({ method: 'Call', notes: '' })
   const [aiOpen, setAiOpen] = useState(false)
+  const [loggingContactId, setLoggingContactId] = useState<string | null>(null)
+  const [logType, setLogType] = useState('Call')
+  const [logNotes, setLogNotes] = useState('')
 
   const backup = getBackupData()
   if (!backup) {
@@ -347,6 +350,9 @@ export default function V15rLeadsPanel() {
                         <td className="py-2 px-2">
                           <div className="font-semibold text-gray-200">{c.company}</div>
                           <div className="text-gray-500">{c.contact}</div>
+                          {c.lastContact && (
+                            <span className="text-xs text-gray-500">Last contact: {c.lastContact}</span>
+                          )}
                         </td>
                         <td className="py-2 px-2 text-gray-400">{c.role}</td>
                         <td className="py-2 px-2 text-gray-400">{c.phone}</td>
@@ -401,21 +407,82 @@ export default function V15rLeadsPanel() {
                                 </button>
                               </div>
 
-                              {/* Contact Activity Timeline */}
-                              <div className="bg-[#1a1d27] rounded p-3 border border-gray-700">
-                                <div className="text-xs font-bold text-gray-400 mb-2">Contact Activity Timeline</div>
-                                {(c.contactLog && c.contactLog.length > 0) ? (
-                                  <div className="space-y-2">
-                                    {[...(c.contactLog || [])].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((log, idx) => (
-                                      <div key={idx} className="flex gap-2 text-xs text-gray-400 border-l border-gray-700 pl-2">
-                                        <div className="text-gray-500">{new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                                        <div className="text-cyan-400 font-semibold">{log.method}</div>
-                                        <div className="text-gray-300">{log.notes}</div>
-                                      </div>
-                                    ))}
+                              {/* Contact Log Timeline */}
+                              <div className="mt-3 space-y-2">
+                                <div className="flex justify-between items-center">
+                                  <h5 className="text-xs font-medium text-gray-400">Contact Log</h5>
+                                  <button
+                                    onClick={() => {
+                                      setLoggingContactId(c.id)
+                                      setLogType('Call')
+                                      setLogNotes('')
+                                    }}
+                                    className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                                  >
+                                    <Plus className="w-3 h-3" /> Log Interaction
+                                  </button>
+                                </div>
+
+                                {/* Add interaction form */}
+                                {loggingContactId === c.id && (
+                                  <div className="p-3 bg-gray-900/50 border border-gray-700/50 rounded-lg space-y-2">
+                                    <select
+                                      value={logType}
+                                      onChange={(e) => setLogType(e.target.value)}
+                                      className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs"
+                                    >
+                                      <option>Call</option>
+                                      <option>Email</option>
+                                      <option>Meeting</option>
+                                      <option>Site Visit</option>
+                                      <option>Bid Submitted</option>
+                                    </select>
+                                    <textarea
+                                      value={logNotes}
+                                      onChange={(e) => setLogNotes(e.target.value)}
+                                      placeholder="Notes..."
+                                      className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs h-16"
+                                    />
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => {
+                                          const logEntry = {
+                                            id: `cl_${Date.now()}`,
+                                            date: new Date().toISOString().slice(0, 10),
+                                            type: logType,
+                                            notes: logNotes,
+                                          }
+                                          const updatedContacts = (backup.gcContacts || []).map(gc =>
+                                            gc.id === c.id
+                                              ? { ...gc, contactLog: [...(gc.contactLog || []), logEntry], lastContact: logEntry.date }
+                                              : gc
+                                          )
+                                          saveBackupData({ ...backup, gcContacts: updatedContacts })
+                                          setLoggingContactId(null)
+                                          forceUpdate()
+                                        }}
+                                        className="px-3 py-1 bg-cyan-600/20 text-cyan-400 rounded text-xs"
+                                      >
+                                        Save
+                                      </button>
+                                      <button onClick={() => setLoggingContactId(null)} className="px-3 py-1 bg-gray-700 text-gray-400 rounded text-xs">Cancel</button>
+                                    </div>
                                   </div>
-                                ) : (
-                                  <div className="text-xs text-gray-500">No contact logs yet</div>
+                                )}
+
+                                {/* Log entries */}
+                                {(c.contactLog || []).slice().reverse().map((log: any) => (
+                                  <div key={log.id || log.date} className="flex items-start gap-2 pl-3 border-l-2 border-gray-700">
+                                    <div>
+                                      <span className="text-xs text-gray-300">{log.date}</span>
+                                      <span className="text-xs text-cyan-400 ml-2">{log.type}</span>
+                                      {log.notes && <p className="text-xs text-gray-400 mt-0.5">{log.notes}</p>}
+                                    </div>
+                                  </div>
+                                ))}
+
+                                {(c.contactLog || []).length === 0 && (
+                                  <p className="text-gray-600 text-xs">No interactions logged yet</p>
                                 )}
                               </div>
 

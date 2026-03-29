@@ -17,9 +17,10 @@
  */
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check } from 'lucide-react'
+import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download } from 'lucide-react'
 import { getBackupData, saveBackupData, syncToSupabase, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 // ── CDN LOADERS ──────────────────────────────────────────────────────────────
 
@@ -395,6 +396,27 @@ function ColumnMappingModal({
   )
 }
 
+// ── CATEGORY RESOLUTION ─────────────────────────────────────────────────────
+
+function resolveCategory(item: any): string {
+  if (item.cat && item.cat !== 'PDF Imported') return item.cat
+  const name = (item.name || '').toLowerCase()
+  if (/romex|thhn|mc cable|awg|stranded|nm-b|uf-b/.test(name)) return 'Wire'
+  if (/emt|pvc|flex|conduit|rigid|liquidtight/.test(name)) return 'Conduit'
+  if (/\bbox\b|enclosure|junction/.test(name)) return 'Boxes'
+  if (/breaker|panel|disconnect|loadcenter|load center/.test(name)) return 'Panels & Disconnects'
+  if (/receptacle|switch|gfci|dimmer|outlet|toggle/.test(name)) return 'Devices'
+  if (/fitting|connector|coupling|strap|clamp|bushing/.test(name)) return 'Conduit Fittings'
+  return item.cat || 'Uncategorized'
+}
+
+// ── UTILITY FUNCTION ────────────────────────────────────────────────────────
+
+function num(val: any): number {
+  const n = parseFloat(val)
+  return isNaN(n) ? 0 : n
+}
+
 /**
  * getPriceBookSource — Reads price book data from localStorage.
  * The old HTML app stores data under key 'poweron_v2' (with data.priceBook as a flat array).
@@ -458,6 +480,11 @@ export default function V15rPriceBookPanel() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editNotes, setEditNotes] = useState('')
+  const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
+  const [editingPrice, setEditingPrice] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
 
   // ── Import state ──────────────────────────────────────────────────────────
   const pdfInputRef = useRef<HTMLInputElement>(null)
@@ -632,11 +659,11 @@ export default function V15rPriceBookPanel() {
     })
   }, [priceBookItems, searchQuery])
 
-  // Group filtered items by category
+  // Group filtered items by category using resolveCategory
   const groupedItems = useMemo(() => {
     const grouped: Record<string, BackupPriceBookItem[]> = {}
     filteredItems.forEach((item) => {
-      const cat = item.cat || 'Uncategorized'
+      const cat = resolveCategory(item)
       if (!grouped[cat]) grouped[cat] = []
       grouped[cat].push(item)
     })
@@ -799,6 +826,21 @@ export default function V15rPriceBookPanel() {
             <FileSpreadsheet className="w-4 h-4" />
             Import CSV / Excel
           </button>
+          <button
+            onClick={() => {
+              const data = JSON.stringify({ priceBook: backup.priceBook || [] }, null, 2)
+              const blob = new Blob([data], { type: 'application/json' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `pricebook_backup_${new Date().toISOString().slice(0, 10)}.json`
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+            className="px-3 py-2 bg-gray-700/50 text-gray-300 rounded-lg text-xs hover:bg-gray-600/50 flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" /> Export
+          </button>
         </div>
         <p className="text-xs text-gray-400">
           Showing {filteredItems.length} of {priceBookItems.length} items
@@ -836,6 +878,17 @@ export default function V15rPriceBookPanel() {
         />
       )}
 
+      {/* AI SUGGESTION DISPLAY */}
+      {aiSuggestion && (
+        <div className="mt-3 p-3 bg-purple-900/20 border border-purple-500/20 rounded-lg">
+          <div className="flex justify-between items-start mb-2">
+            <span className="text-purple-400 text-xs font-medium">AI Price Analysis</span>
+            <button onClick={() => setAiSuggestion(null)} className="text-gray-500 hover:text-gray-300"><X className="w-3.5 h-3.5" /></button>
+          </div>
+          <p className="text-gray-300 text-sm whitespace-pre-wrap">{aiSuggestion}</p>
+        </div>
+      )}
+
       {/* CATEGORIES */}
       <div className="space-y-3">
         {categories.length === 0 ? (
@@ -864,12 +917,29 @@ export default function V15rPriceBookPanel() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        alert('AI Suggest: SCOUT will analyze this category and suggest optimizations')
+                        setSelectedCategory(cat)
+                        setAiLoading(true)
+                        ;(async () => {
+                          try {
+                            const categoryItems = items
+                            const itemSummary = categoryItems.slice(0, 20).map(i => `${i.name}: $${num(i.cost)}`).join(', ')
+                            const response = await callClaude({
+                              system: 'You are a pricing advisor for Power On Solutions, a C-10 electrical contractor in Coachella Valley, CA. Give concise, actionable advice.',
+                              messages: [{ role: 'user', content: `Category: ${cat}\nItems: ${itemSummary}\n\nSuggest price optimizations, identify missing items for this category, and flag items that may be outdated in price. Keep response under 200 words.` }],
+                              max_tokens: 512,
+                            })
+                            setAiSuggestion(extractText(response))
+                          } catch {
+                            setAiSuggestion('Analysis unavailable')
+                          }
+                          setAiLoading(false)
+                        })()
                       }}
-                      className="px-2 py-1 bg-cyan-600/30 text-cyan-300 text-xs rounded font-semibold hover:bg-cyan-600/40 flex items-center gap-1"
+                      disabled={aiLoading}
+                      className="px-2 py-1 bg-purple-600/20 text-purple-400 text-xs rounded font-semibold hover:bg-purple-600/30 flex items-center gap-1 disabled:opacity-50"
                     >
                       <Sparkles className="w-3 h-3" />
-                      AI Suggest
+                      {aiLoading ? 'Analyzing...' : 'AI Suggest'}
                     </button>
                   </div>
                 </button>
@@ -904,7 +974,11 @@ export default function V15rPriceBookPanel() {
                           </div>
                           <div className="col-span-0.75 text-gray-300 text-xs">{item.unit || 'ea'}</div>
                           <div className="col-span-0.75">
-                            <div className="text-blue-400 font-medium text-xs">${clientPrice.toFixed(2)}</div>
+                            {num(item.cost) === 0 ? (
+                              <span className="text-xs px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">No price</span>
+                            ) : (
+                              <div className="text-blue-400 font-medium text-xs">${clientPrice.toFixed(2)}</div>
+                            )}
                           </div>
                           <div className="col-span-3">
                             {isEditing ? (
@@ -933,6 +1007,37 @@ export default function V15rPriceBookPanel() {
                           </div>
                           <div className="col-span-1.5 text-gray-400 font-mono text-xs break-all">{pidDisplay}</div>
                           <div className="col-span-2.25 flex items-center gap-1.5">
+                            {num(item.cost) === 0 && !editingPriceId && (
+                              <button
+                                onClick={() => {
+                                  setEditingPriceId(item.id)
+                                  setEditingPrice('')
+                                }}
+                                className="text-xs text-cyan-400 hover:text-cyan-300 ml-2"
+                              >
+                                Set Price
+                              </button>
+                            )}
+                            {editingPriceId === item.id && (
+                              <input
+                                autoFocus
+                                type="number"
+                                value={editingPrice}
+                                onChange={(e) => setEditingPrice(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && editingPrice) {
+                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, cost: num(editingPrice) } : pb)
+                                    saveBackupData({ ...backup, priceBook: updated })
+                                    setEditingPriceId(null)
+                                    refreshBackup()
+                                  }
+                                  if (e.key === 'Escape') setEditingPriceId(null)
+                                }}
+                                onBlur={() => setEditingPriceId(null)}
+                                className="w-20 px-2 py-0.5 bg-gray-900 border border-cyan-500/50 rounded text-gray-200 text-xs"
+                                placeholder="$0.00"
+                              />
+                            )}
                             <button
                               onClick={() => handleSupplierLink(item)}
                               className="p-1.5 hover:bg-[var(--bg-secondary)] rounded transition text-gray-400 hover:text-blue-400"

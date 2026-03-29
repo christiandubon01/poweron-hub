@@ -226,6 +226,8 @@ export default function V15rFieldLogPanel() {
   const [editSvcId, setEditSvcId] = useState<string | null>(null)
   const [showQBImport, setShowQBImport] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+  const [aiProfitAnalysis, setAiProfitAnalysis] = useState<string | null>(null)
+  const [aiProfitLoading, setAiProfitLoading] = useState(false)
 
   // Trigger bucket selector state
   const [triggerBucket, setTriggerBucket] = useState<'all' | 'projects' | 'service'>('all')
@@ -727,10 +729,42 @@ export default function V15rFieldLogPanel() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => alert('AI Profit Analysis coming soon.')}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700"
+              onClick={async () => {
+                setAiProfitLoading(true)
+                try {
+                  // Determine which tab is active
+                  const isServiceTab = activeTab === 'svc'
+
+                  let dataContext = ''
+                  if (isServiceTab) {
+                    const logs = (backup.serviceLogs || []).slice(-20)
+                    const totalCollected = logs.reduce((s, l) => s + num(l.collected || 0), 0)
+                    const totalQuoted = logs.reduce((s, l) => s + num(l.quoted || 0), 0)
+                    const totalMat = logs.reduce((s, l) => s + num(l.mat || 0), 0)
+                    const totalHrs = logs.reduce((s, l) => s + num(l.hrs || 0), 0)
+                    const avgTicket = logs.length > 0 ? totalQuoted / logs.length : 0
+                    const collectionRate = totalQuoted > 0 ? (totalCollected / totalQuoted * 100) : 0
+                    dataContext = `Service Log Analysis (${logs.length} recent calls):\nAvg Ticket: $${avgTicket.toFixed(0)}\nCollection Rate: ${collectionRate.toFixed(1)}%\nTotal Quoted: $${totalQuoted}\nTotal Collected: $${totalCollected}\nTotal Materials: $${totalMat}\nTotal Hours: ${totalHrs}\n\nAnalyze: avg ticket value, collection rate, job type profitability, material cost efficiency.`
+                  } else {
+                    const logs = (backup.logs || []).slice(-20)
+                    const totalHrs = logs.reduce((s, l) => s + num(l.hours || l.hrs || 0), 0)
+                    const totalMat = logs.reduce((s, l) => s + num(l.materialCost || l.mat || 0), 0)
+                    dataContext = `Project Field Log Analysis (${logs.length} recent logs):\nTotal Hours: ${totalHrs}\nTotal Material Cost: $${totalMat}\n\nAnalyze: labor efficiency, cost vs budget trends, phase progress patterns.`
+                  }
+
+                  const response = await callClaude({
+                    system: 'You are PULSE, the analytics agent for Power On Solutions, a C-10 electrical contractor in Coachella Valley, CA. Give concise, data-driven analysis.',
+                    messages: [{ role: 'user', content: dataContext + ' Keep under 200 words.' }],
+                    max_tokens: 512,
+                  })
+                  setAiProfitAnalysis(extractText(response))
+                } catch { setAiProfitAnalysis('Analysis unavailable') }
+                setAiProfitLoading(false)
+              }}
+              disabled={aiProfitLoading}
+              className="px-3 py-1.5 bg-purple-600/20 text-purple-400 rounded-lg text-xs hover:bg-purple-600/30 flex items-center gap-1.5 disabled:opacity-50"
             >
-              <Sparkles size={12} /> AI Analysis
+              <Sparkles size={12} /> {aiProfitLoading ? 'Analyzing...' : 'AI Profit Analysis'}
             </button>
             <button
               onClick={() => { resetProjForm(); setShowProjForm(true) }}
@@ -807,6 +841,17 @@ export default function V15rFieldLogPanel() {
               <button onClick={saveProjEntry} className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs font-semibold">{editLogId ? 'Update' : 'Save'}</button>
               <button onClick={resetProjForm} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-xs">Cancel</button>
             </div>
+          </div>
+        )}
+
+        {/* AI Profit Analysis Results */}
+        {aiProfitAnalysis && (
+          <div className="mt-3 p-4 bg-purple-900/20 border border-purple-500/20 rounded-lg">
+            <div className="flex justify-between items-start mb-2">
+              <span className="text-purple-400 text-xs font-medium">PULSE Profit Analysis</span>
+              <button onClick={() => setAiProfitAnalysis(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+            </div>
+            <p className="text-gray-300 text-sm whitespace-pre-wrap">{aiProfitAnalysis}</p>
           </div>
         )}
 

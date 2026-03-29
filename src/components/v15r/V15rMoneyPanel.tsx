@@ -228,6 +228,10 @@ export default function V15rMoneyPanel() {
     const allSvcLogs = backup.serviceLogs || []
     const allProjects = backup.projects || []
 
+    // Validation cap: total of ALL serviceLogs.collected
+    const totalServiceCollected = allSvcLogs.reduce((s, l) => s + num(l.collected), 0)
+    const today = new Date()
+
     let accum = 0
     for (const w of wdArr) {
       // Skip manually overridden weeks
@@ -250,21 +254,43 @@ export default function V15rMoneyPanel() {
 
       // svc: SUM of collected from serviceLogs ONLY (backup.serviceLogs)
       // These are same-day/2-day service calls — never from project logs
-      const svcCollected = allSvcLogs.reduce((s, l) => {
+      let svcCollected = allSvcLogs.reduce((s, l) => {
         const ld = l.date ? new Date(l.date) : null
         if (ld && ld >= weekStart && ld < weekEnd) return s + num(l.collected)
         return s
       }, 0)
+
+      // Validation 1: Skip future dates (dates after today)
+      if (weekStart > today) {
+        svcCollected = 0
+      }
+
+      // Validation 2: Cap individual week to total service collected (no phantom entries)
+      if (svcCollected > totalServiceCollected) {
+        svcCollected = 0
+      }
+
+      // Validation 3: Verify against actual logs in week (clear phantom entries)
+      const logsInWeek = allSvcLogs.filter(l => {
+        const d = l.date ? new Date(l.date) : null
+        return d && d >= weekStart && d < weekEnd
+      })
+      if (logsInWeek.length === 0 && svcCollected > 0) {
+        svcCollected = 0
+      }
 
       w.proj = projCollected
       w.svc = svcCollected
       accum += projCollected + svcCollected
       w.accum = accum
 
-      // unbilled: SUM of active project contracts minus paid
-      const activeUnbilled = allProjects
-        .filter(p => p.status === 'active')
-        .reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
+      // unbilled: SUM of ACTIVE projects only (not completed, not cancelled)
+      const activeProjects = allProjects.filter(p =>
+        p.status === 'active' || p.status === 'in_progress'
+      )
+      const activeUnbilled = activeProjects.reduce((s, p) =>
+        s + Math.max(0, num(p.contract) - num(p.billed)), 0
+      )
       w.unbilled = activeUnbilled
 
       // pendingInv: SUM of serviceLogs where collected=0 and quoted>0

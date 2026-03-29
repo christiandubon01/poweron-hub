@@ -852,6 +852,8 @@ export function saveBackupDataAndSync(data: BackupData, changedKey?: string): vo
   saveBackupData(data)
   // Fire and forget — sync to Supabase in background
   syncToSupabase().catch(err => console.warn('[sync] Background sync failed:', err))
+  // Create snapshot if interval elapsed
+  maybeAutoSnapshot('Data saved')
 }
 
 // ── ISSUE 2 Fix: Critical change keys that bypass debounce ──────────────────
@@ -869,6 +871,8 @@ export function saveAndImmediateSync(data: BackupData, changedKey?: string): voi
   // Immediate sync — no debounce for critical data
   console.log(`[sync] Immediate sync triggered for key: ${changedKey || 'unknown'}`)
   syncToSupabase().catch(err => console.warn('[sync] Immediate sync failed:', err))
+  // Create snapshot if interval elapsed
+  maybeAutoSnapshot(`Critical update: ${changedKey || 'data'}`)
 }
 
 /**
@@ -932,6 +936,21 @@ export interface DataSnapshot {
 
 const SNAPSHOT_KEY = 'poweron_snapshots'
 const MAX_SNAPSHOTS = 30
+
+// ── Snapshot rate limiter for auto-snapshots ────────────────────────────────
+let _lastSnapshotTime = 0
+const SNAPSHOT_INTERVAL = 5 * 60 * 1000 // 5 minutes minimum between auto-snapshots
+
+function maybeAutoSnapshot(changeSummary: string): void {
+  const now = Date.now()
+  if (now - _lastSnapshotTime < SNAPSHOT_INTERVAL) return
+  _lastSnapshotTime = now
+  try {
+    createSnapshot(`Auto: ${changeSummary}`)
+  } catch {
+    // Non-critical
+  }
+}
 
 function getDeviceIdForSnapshot(): string {
   const ua = navigator.userAgent
