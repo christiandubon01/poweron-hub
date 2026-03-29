@@ -45,9 +45,55 @@ export interface NexusResponse {
   pendingProposals?: MiroFishProposal[]
   /** Current response mode */
   mode: NexusMode
+  /** Conversational plain-text summary for TTS (max ~150 words). Only set for voice commands. */
+  voiceSummary?: string
 }
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
+
+// ── Voice Summary ───────────────────────────────────────────────────────────
+
+const MAX_VOICE_WORDS = 150
+
+/**
+ * Strip markdown formatting and truncate to a conversational plain-text
+ * summary suitable for TTS playback (max ~150 words).
+ */
+function stripToVoiceSummary(markdown: string): string {
+  let text = markdown
+    // Remove markdown headers
+    .replace(/^#{1,6}\s+/gm, '')
+    // Remove bold/italic markers
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+    // Remove emoji bullets (🔴 🟡 🟢 📋 ⚡ etc.)
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]\s*/gu, '')
+    // Remove markdown links — keep text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Remove horizontal rules
+    .replace(/^---+$/gm, '')
+    // Remove code blocks
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    // Collapse bullet points into sentences
+    .replace(/^\s*[-*]\s+/gm, '')
+    // Collapse numbered lists
+    .replace(/^\s*\d+\.\s+/gm, '')
+    // Collapse multiple newlines
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, '. ')
+    // Clean up double periods
+    .replace(/\.\s*\./g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  // Truncate to MAX_VOICE_WORDS
+  const words = text.split(/\s+/)
+  if (words.length > MAX_VOICE_WORDS) {
+    text = words.slice(0, MAX_VOICE_WORDS).join(' ') + '.'
+  }
+
+  return text
+}
 
 // ── Deep Dive Detection ─────────────────────────────────────────────────────
 
@@ -243,6 +289,11 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     timestamp: Date.now(),
   }
 
+  // ── Generate voice summary for TTS when this is a voice command ──────────
+  const voiceSummary = request.isVoiceCommand
+    ? stripToVoiceSummary(agentResponse.content)
+    : undefined
+
   return {
     intent,
     agent: agentResponse,
@@ -251,6 +302,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     interviewTrigger: (interviewDef && !request.isVoiceCommand) ? interviewDef : undefined,
     pendingProposals,
     mode,
+    voiceSummary,
   }
 }
 

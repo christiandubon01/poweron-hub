@@ -534,15 +534,20 @@ export class VoiceSubsystem {
         isVoiceCommand: true,
       })
 
-      // Extract the real Claude response
-      responseText = nexusResult?.agent?.content || ''
+      // Use voiceSummary for TTS (conversational, max 150 words)
+      // Keep full agent.content for display in transcript panel
+      const voiceText = nexusResult?.voiceSummary || ''
+      const fullDisplayText = nexusResult?.agent?.content || ''
+      responseText = voiceText || fullDisplayText
 
       if (this.currentSession) {
         this.currentSession.detectedIntent = nexusResult?.intent?.category || 'general'
         this.currentSession.targetAgent = nexusResult?.intent?.targetAgent || 'nexus'
+        // Store full display text for transcript panel (agentResponse = display version)
+        this.currentSession.agentResponse = fullDisplayText
       }
 
-      console.log('[Voice] NEXUS response received via', nexusResult?.intent?.targetAgent, '— text:', responseText?.substring(0, 100))
+      console.log('[Voice] NEXUS response received via', nexusResult?.intent?.targetAgent, '— voice:', responseText?.substring(0, 100))
     } catch (routeErr) {
       console.warn('[Voice] NEXUS processMessage failed, falling back to direct Claude:', routeErr)
 
@@ -570,12 +575,14 @@ export class VoiceSubsystem {
 
     console.log('[Voice] Speaking:', responseText?.substring(0, 100))
 
-    if (this.currentSession) {
+    // agentResponse may already be set to fullDisplayText by NEXUS path above
+    if (this.currentSession && !this.currentSession.agentResponse) {
       this.currentSession.agentResponse = responseText
     }
 
-    // Add transcript entry for voice session
-    addTranscriptEntry(transcript, responseText, this.currentSession?.targetAgent)
+    // Add transcript entry — show full display text in panel, speak the voice summary
+    const displayText = this.currentSession?.agentResponse || responseText
+    addTranscriptEntry(transcript, displayText, this.currentSession?.targetAgent)
 
     // ── SPEAKING state: mic OFF, wake word OFF ─────────────────────────
     // Completely disable microphone and audio input before playing response
@@ -714,7 +721,17 @@ export class VoiceSubsystem {
     }
 
     // Standard path: HTMLAudioElement with iOS-safe load() + DOM append pattern
+    // Includes 10-second timeout fallback to prevent speaking state from hanging
     return new Promise((resolve, reject) => {
+      let settled = false
+      const cleanup = () => {
+        this.currentAudio = null
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        clearTimeout(hangTimeout)
+      }
+      const safeResolve = () => { if (!settled) { settled = true; cleanup(); resolve() } }
+      const safeReject = (err: any) => { if (!settled) { settled = true; cleanup(); reject(err) } }
+
       const audio = new Audio()
       audio.src = audioUrl
       audio.playbackRate = this.preferences.ttsSpeed
@@ -722,27 +739,20 @@ export class VoiceSubsystem {
       document.body.appendChild(audio) // required for iOS WebView audio
       this.currentAudio = audio
 
-      audio.onended = () => {
-        this.currentAudio = null
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
-        resolve()
-      }
-      audio.onerror = (err) => {
-        this.currentAudio = null
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
-        reject(err)
-      }
-      audio.onpause = () => {
-        // If paused externally (interrupt), resolve instead of hanging
-        this.currentAudio = null
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
-        resolve()
-      }
+      audio.onended = () => safeResolve()
+      audio.onerror = (err) => safeReject(err)
+      audio.onpause = () => safeResolve() // interrupt → resolve instead of hanging
+
+      // 10-second timeout: if onended/onerror/onpause never fire, force-resolve
+      const hangTimeout = setTimeout(() => {
+        console.warn('[Voice] Audio playback timeout (10s) — force-resolving speaking state')
+        try { audio.pause(); audio.src = '' } catch { /* ignore */ }
+        safeResolve()
+      }, 10000)
+
       audio.play().catch((err) => {
-        console.error('[iOS] playAudioTracked play() failed:', err)
-        this.currentAudio = null
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
-        reject(err)
+        console.error('[Voice] playAudioTracked play() failed:', err)
+        safeReject(err)
       })
     })
   }
@@ -751,6 +761,7 @@ export class VoiceSubsystem {
    * iOS-specific audio playback using AudioContext + AudioBufferSourceNode.
    * Fetches the blob from the object URL, decodes it, and plays through
    * the AudioContext which was warmed up during the user's tap gesture.
+   * Includes a 10-second timeout fallback in case onended never fires (iOS Safari bug).
    */
   private async playAudioIOS(audioUrl: string): Promise<void> {
     console.log('[iOS Audio] Attempting playback via AudioContext')
@@ -763,19 +774,38 @@ export class VoiceSubsystem {
     // Decode the audio data
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
 
+    // Calculate expected duration for smart timeout
+    const expectedDuration = audioBuffer.duration || 10
+
     return new Promise((resolve) => {
+      let resolved = false
+      const safeResolve = () => {
+        if (resolved) return
+        resolved = true
+        clearTimeout(timeoutId)
+        resolve()
+      }
+
       const source = ctx.createBufferSource()
       source.buffer = audioBuffer
       source.playbackRate.value = this.preferences.ttsSpeed
       source.connect(ctx.destination)
 
       source.onended = () => {
-        console.log('[iOS Audio] Playback completed')
-        resolve()
+        console.log('[iOS Audio] Playback completed via onended')
+        safeResolve()
       }
 
+      // Timeout fallback: expected duration + 2s grace, minimum 10s
+      const timeoutMs = Math.max(10000, (expectedDuration / this.preferences.ttsSpeed) * 1000 + 2000)
+      const timeoutId = setTimeout(() => {
+        console.warn(`[iOS Audio] Timeout after ${timeoutMs}ms — resolving (onended never fired)`)
+        try { source.stop() } catch { /* may already be stopped */ }
+        safeResolve()
+      }, timeoutMs)
+
       source.start(0)
-      console.log('[iOS Audio] AudioBufferSourceNode started')
+      console.log(`[iOS Audio] AudioBufferSourceNode started (duration: ${expectedDuration.toFixed(1)}s, timeout: ${(timeoutMs / 1000).toFixed(1)}s)`)
     })
   }
 

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronDown, X, Copy, Save } from 'lucide-react'
+import { ChevronDown, ChevronRight, X, Copy, Save } from 'lucide-react'
 import { addLearnedPattern } from '@/services/nexusMemory'
 
 // Types
@@ -175,6 +175,116 @@ function generateSessionSummary(entries: TranscriptEntry[]): string {
   summary += ` Exchanges: ${entries.length}.`
 
   return summary
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Detect if text contains markdown formatting (headers, bullets, bold, etc.) */
+function hasMarkdown(text: string): boolean {
+  return /^#{1,6}\s|^\s*[-*]\s|\*\*[^*]+\*\*|^\d+\.\s/m.test(text)
+}
+
+/** Strip markdown to a short voice-friendly preview (first ~2 sentences) */
+function voicePreview(text: string): string {
+  const stripped = text
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]\s*/gu, '')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, '. ')
+    .replace(/\.\s*\./g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  // First ~2 sentences
+  const sentences = stripped.split(/(?<=[.!?])\s+/)
+  return sentences.slice(0, 2).join(' ')
+}
+
+// ── NexusResponseBlock — shows voice summary + expandable Full Report ────────
+
+function NexusResponseBlock({ entry }: { entry: TranscriptEntry }) {
+  const [expanded, setExpanded] = useState(false)
+  const isRichReport = hasMarkdown(entry.nexusText) && entry.nexusText.length > 300
+  const preview = isRichReport ? voicePreview(entry.nexusText) : entry.nexusText
+
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+      <span style={{ fontSize: '12px', fontWeight: 700, color: '#06b6d4', whiteSpace: 'nowrap' }}>
+        NEXUS:
+      </span>
+      <div style={{ flex: 1 }}>
+        {/* Voice-friendly preview (always shown) */}
+        <div style={{ fontSize: '12px', color: '#d1d5db', marginBottom: '6px', lineHeight: '1.5' }}>
+          {isRichReport ? preview + (preview.endsWith('.') ? '' : '...') : entry.nexusText}
+        </div>
+
+        {/* Full Report accordion for rich markdown responses */}
+        {isRichReport && (
+          <div style={{ marginBottom: '6px' }}>
+            <button
+              onClick={() => setExpanded(prev => !prev)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'rgba(139,92,246,0.12)',
+                border: '1px solid rgba(139,92,246,0.25)',
+                borderRadius: '6px',
+                padding: '4px 10px',
+                color: '#a78bfa',
+                fontSize: '10px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                transition: 'background 0.2s',
+              }}
+            >
+              {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+              Full Report
+            </button>
+            {expanded && (
+              <div style={{
+                marginTop: '8px',
+                padding: '10px 12px',
+                backgroundColor: 'rgba(255,255,255,0.03)',
+                borderRadius: '6px',
+                border: '1px solid rgba(255,255,255,0.05)',
+                fontSize: '11px',
+                color: '#d1d5db',
+                lineHeight: '1.6',
+                whiteSpace: 'pre-wrap',
+                maxHeight: '300px',
+                overflowY: 'auto',
+              }}>
+                {entry.nexusText}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Agent badge */}
+        {entry.agent && (
+          <div
+            style={{
+              display: 'inline-block',
+              background: AGENT_COLORS[entry.agent.toLowerCase()] || '#8b5cf6',
+              color: 'white',
+              fontSize: '10px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '999px',
+              opacity: 0.8,
+            }}
+          >
+            {entry.agent}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // Component
@@ -476,42 +586,8 @@ export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
                 </span>
               </div>
 
-              {/* NEXUS response */}
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                <span
-                  style={{
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    color: '#06b6d4',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  NEXUS:
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '12px', color: '#d1d5db', marginBottom: '6px' }}>
-                    {entry.nexusText}
-                  </div>
-
-                  {/* Agent badge */}
-                  {entry.agent && (
-                    <div
-                      style={{
-                        display: 'inline-block',
-                        background: AGENT_COLORS[entry.agent.toLowerCase()] || '#8b5cf6',
-                        color: 'white',
-                        fontSize: '10px',
-                        fontWeight: 700,
-                        padding: '2px 8px',
-                        borderRadius: '999px',
-                        opacity: 0.8,
-                      }}
-                    >
-                      {entry.agent}
-                    </div>
-                  )}
-                </div>
-              </div>
+              {/* NEXUS response — with Full Report accordion for markdown responses */}
+              <NexusResponseBlock entry={entry} />
             </div>
           ))
         ) : (
