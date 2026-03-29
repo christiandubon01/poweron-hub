@@ -213,10 +213,11 @@ const AGENT_KEYWORDS: Record<TargetAgent, AgentKeywords> = {
     multi: [
       'weekly overview', 'operations flow', 'what needs my attention',
       'morning briefing', 'daily summary', 'status update', 'how\'s business',
-      'what\'s going on',
+      'what\'s going on', 'moving forward', 'from now on', 'remember that',
+      'i prefer', 'i want you to', 'going forward', 'keep in mind',
     ],
     single: [
-      'hi', 'hello', 'help', 'general',
+      'hi', 'hello', 'help', 'general', 'preference',
     ],
   },
 }

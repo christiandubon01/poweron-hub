@@ -202,6 +202,55 @@ export function getVoiceById(voiceId: string): ElevenLabsVoice | undefined {
   return AVAILABLE_VOICES.find(v => v.voice_id === voiceId)
 }
 
+// ── Fetch voices from API ───────────────────────────────────────────────────
+
+export interface ElevenLabsAPIVoice {
+  voice_id: string
+  name: string
+  category: string
+  labels?: Record<string, string>
+  preview_url?: string
+}
+
+/**
+ * Fetch all available voices from the ElevenLabs API.
+ * Falls back to AVAILABLE_VOICES if API key is missing or request fails.
+ */
+export async function fetchElevenLabsVoices(): Promise<ElevenLabsAPIVoice[]> {
+  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY
+  if (!apiKey) {
+    console.warn('[ElevenLabs] No API key — returning hardcoded voices')
+    return AVAILABLE_VOICES.map(v => ({
+      voice_id: v.voice_id,
+      name: v.name,
+      category: v.category,
+      labels: { gender: v.gender },
+    }))
+  }
+
+  try {
+    const response = await fetch(`${ELEVEN_LABS_BASE_URL}/voices`, {
+      headers: { 'xi-api-key': apiKey },
+    })
+
+    if (!response.ok) {
+      throw new Error(`API error ${response.status}`)
+    }
+
+    const json = await response.json() as { voices: ElevenLabsAPIVoice[] }
+    console.log(`[ElevenLabs] Fetched ${json.voices.length} voices from API`)
+    return json.voices
+  } catch (err) {
+    console.warn('[ElevenLabs] Failed to fetch voices, using hardcoded fallback:', err)
+    return AVAILABLE_VOICES.map(v => ({
+      voice_id: v.voice_id,
+      name: v.name,
+      category: v.category,
+      labels: { gender: v.gender },
+    }))
+  }
+}
+
 /**
  * Revoke an audio object URL to free memory.
  */

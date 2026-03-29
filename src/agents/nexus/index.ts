@@ -18,6 +18,7 @@ import { addTurn, getContext, getCompactContext, updateProjectContext, getMemory
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
 import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
 import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
+import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceConfirmation } from '@/services/nexusPreferences'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -191,6 +192,64 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     // Non-critical
   }
 
+  // ── Step 1e: Detect and save user preferences ───────────────────────────
+  const detectedPref = detectPreference(request.message)
+  if (detectedPref) {
+    try {
+      const savedPref = await savePreference(request.orgId, request.userId, detectedPref)
+      if (savedPref) {
+        console.log(`[NEXUS] Preference saved: "${detectedPref.slice(0, 60)}..."`)
+        // Return early with confirmation if this is ONLY a preference instruction
+        // (no substantial question embedded)
+        const wordCount = request.message.trim().split(/\s+/).length
+        if (wordCount < 20) {
+          const confirmation = getPreferenceConfirmation(savedPref)
+          const confirmMsg: ConversationMessage = {
+            role: 'assistant',
+            content: confirmation,
+            agentId: 'nexus',
+            timestamp: Date.now(),
+          }
+          try { addTurn('user', request.message) } catch { /* non-critical */ }
+          try { addTurn('assistant', confirmation, 'nexus') } catch { /* non-critical */ }
+          return {
+            intent: {
+              category: 'general',
+              targetAgent: 'nexus',
+              confidence: 1.0,
+              entities: [],
+              requiresConfirmation: false,
+              impactLevel: 'LOW',
+              reasoning: 'User preference instruction detected and saved',
+            },
+            agent: {
+              content: confirmation,
+              agentId: 'nexus',
+              agentName: 'NEXUS',
+              confidence: 1.0,
+            },
+            needsConfirmation: false,
+            conversationMessage: confirmMsg,
+            mode,
+            voiceSummary: request.isVoiceCommand ? confirmation : undefined,
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[NEXUS] Preference detection error:', err)
+    }
+  }
+
+  // ── Step 1f: Load stored preferences into memory context ───────────────
+  try {
+    const prefPrompt = await buildPreferencePrompt(request.orgId, request.userId)
+    if (prefPrompt) {
+      memoryContext = prefPrompt + '\n' + memoryContext
+    }
+  } catch {
+    // Non-critical
+  }
+
   // ── Step 2: Record user turn to persistent memory ───────────────────────
   try {
     addTurn('user', request.message)
@@ -214,9 +273,19 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   }
 
   // ── Step 4: Route to target agent ───────────────────────────────────────
-  // Inject mode-specific formatting instruction into the message
+  // Inject mode-specific formatting instruction + user preferences into the message
   const modeInstruction = mode === 'deepdive' ? DEEP_DIVE_FORMAT_INSTRUCTION : BRIEFING_FORMAT_INSTRUCTION
-  const enrichedMessage = `${request.message}\n\n${modeInstruction}`
+  let enrichedMessage = `${request.message}\n\n${modeInstruction}`
+
+  // Prepend user preferences so the agent respects them
+  try {
+    const agentPrefPrompt = await buildPreferencePrompt(request.orgId, request.userId, intent.targetAgent)
+    if (agentPrefPrompt) {
+      enrichedMessage = `${agentPrefPrompt}\n${enrichedMessage}`
+    }
+  } catch {
+    // Non-critical
+  }
 
   let agentResponse = await routeToAgent(
     intent,

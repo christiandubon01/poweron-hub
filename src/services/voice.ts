@@ -873,6 +873,7 @@ export class VoiceSubsystem {
    * Includes 35-second timeout fallback.
    */
   private playAudioDirect(audioData: ArrayBuffer): Promise<void> {
+    debugPush('playAudioDirect() — entering')
     const blob = new Blob([audioData], { type: 'audio/mpeg' })
     const url = URL.createObjectURL(blob)
     debugPush(`playAudioDirect() — Blob URL created (${blob.size} bytes)`)

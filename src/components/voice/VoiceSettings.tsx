@@ -11,12 +11,12 @@
  *   - Set noise suppression strength for field mode
  */
 
-import { useState, useEffect } from 'react'
-import { Volume2, Mic, Radio, Shield, Save, Loader2, Check } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Volume2, Mic, Radio, Shield, Save, Loader2, Check, Play, Square } from 'lucide-react'
 import { clsx } from 'clsx'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
-import { AVAILABLE_VOICES, type ElevenLabsVoice } from '@/api/voice/elevenLabs'
+import { AVAILABLE_VOICES, type ElevenLabsVoice, fetchElevenLabsVoices, type ElevenLabsAPIVoice } from '@/api/voice/elevenLabs'
 
 interface VoicePrefs {
   enabled: boolean
@@ -51,8 +51,61 @@ export function VoiceSettings() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
+  // API-fetched voices
+  const [apiVoices, setApiVoices] = useState<ElevenLabsAPIVoice[]>([])
+  const [voicesLoading, setVoicesLoading] = useState(true)
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null)
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null)
+
   const orgId = profile?.org_id
   const userId = user?.id
+
+  // Fetch ElevenLabs voices from API
+  useEffect(() => {
+    let cancelled = false
+    fetchElevenLabsVoices().then(voices => {
+      if (!cancelled) {
+        setApiVoices(voices)
+        setVoicesLoading(false)
+      }
+    }).catch(() => {
+      if (!cancelled) setVoicesLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Preview voice playback
+  const handlePreview = (voice: ElevenLabsAPIVoice) => {
+    // Stop any current preview
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause()
+      previewAudioRef.current = null
+    }
+
+    if (previewingVoice === voice.voice_id) {
+      setPreviewingVoice(null)
+      return
+    }
+
+    if (voice.preview_url) {
+      setPreviewingVoice(voice.voice_id)
+      const audio = new Audio(voice.preview_url)
+      audio.onended = () => setPreviewingVoice(null)
+      audio.onerror = () => setPreviewingVoice(null)
+      audio.play().catch(() => setPreviewingVoice(null))
+      previewAudioRef.current = audio
+    }
+  }
+
+  // Cleanup preview on unmount
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause()
+        previewAudioRef.current = null
+      }
+    }
+  }, [])
 
   // Load preferences
   useEffect(() => {
@@ -120,7 +173,8 @@ export function VoiceSettings() {
     setSaved(false)
   }
 
-  const selectedVoice = AVAILABLE_VOICES.find(v => v.voice_id === prefs.tts_voice_id)
+  const selectedVoice = apiVoices.find(v => v.voice_id === prefs.tts_voice_id)
+    || AVAILABLE_VOICES.find(v => v.voice_id === prefs.tts_voice_id)
 
   if (loading) {
     return (
@@ -155,18 +209,26 @@ export function VoiceSettings() {
       </Section>
 
       {/* Voice Selection */}
-      <Section title="Voice" icon={<Volume2 className="w-4 h-4" />}>
+      <Section title="NEXUS Voice" icon={<Volume2 className="w-4 h-4" />}>
         <p className="text-sm text-gray-400 mb-3">Choose the voice for spoken responses</p>
-        <div className="grid grid-cols-2 gap-3">
-          {AVAILABLE_VOICES.map((voice) => (
-            <VoiceCard
-              key={voice.voice_id}
-              voice={voice}
-              selected={prefs.tts_voice_id === voice.voice_id}
-              onClick={() => update('tts_voice_id', voice.voice_id)}
-            />
-          ))}
-        </div>
+        {voicesLoading ? (
+          <div className="flex items-center gap-2 text-gray-500 text-sm py-4">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading voices...
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[320px] overflow-y-auto pr-1">
+            {apiVoices.map((voice) => (
+              <APIVoiceCard
+                key={voice.voice_id}
+                voice={voice}
+                selected={prefs.tts_voice_id === voice.voice_id}
+                previewing={previewingVoice === voice.voice_id}
+                onClick={() => update('tts_voice_id', voice.voice_id)}
+                onPreview={() => handlePreview(voice)}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Speed slider */}
         <div className="mt-5">
@@ -374,5 +436,62 @@ function VoiceCard({ voice, selected, onClick }: {
         <Check className="w-4 h-4 text-emerald-400 ml-auto" />
       )}
     </button>
+  )
+}
+
+function APIVoiceCard({ voice, selected, previewing, onClick, onPreview }: {
+  voice: ElevenLabsAPIVoice
+  selected: boolean
+  previewing: boolean
+  onClick: () => void
+  onPreview: () => void
+}) {
+  const gender = voice.labels?.gender || voice.labels?.accent || voice.category || ''
+  return (
+    <div
+      className={clsx(
+        'flex items-center gap-3 p-3 rounded-lg border transition-all',
+        selected
+          ? 'border-emerald-500/50 bg-emerald-500/10'
+          : 'border-gray-700 bg-gray-800/30 hover:border-gray-600',
+      )}
+    >
+      <button onClick={onClick} className="flex items-center gap-3 flex-1 text-left min-w-0">
+        <div
+          className={clsx(
+            'w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0',
+            selected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400',
+          )}
+        >
+          {voice.name[0]}
+        </div>
+        <div className="min-w-0">
+          <span className={clsx(
+            'text-sm font-medium block truncate',
+            selected ? 'text-emerald-400' : 'text-gray-300',
+          )}>
+            {voice.name}
+          </span>
+          <p className="text-xs text-gray-500 capitalize truncate">{gender}</p>
+        </div>
+        {selected && (
+          <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+        )}
+      </button>
+      {voice.preview_url && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onPreview() }}
+          className={clsx(
+            'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors',
+            previewing
+              ? 'bg-cyan-600 text-white'
+              : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200',
+          )}
+          title={previewing ? 'Stop preview' : 'Preview voice'}
+        >
+          {previewing ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3 ml-0.5" />}
+        </button>
+      )}
+    </div>
   )
 }
