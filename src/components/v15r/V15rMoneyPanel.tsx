@@ -237,14 +237,19 @@ export default function V15rMoneyPanel() {
       if (!weekStart) continue
       const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
 
-      // proj: SUM of collected from project logs where date falls within week
+      // proj: SUM of payments from project field logs ONLY (backup.logs)
+      // Project logs may use 'collected' or 'paymentsCollected' field
+      // These are multi-day jobs with phases, RFIs, blueprints — never from serviceLogs
       const projCollected = allLogs.reduce((s, l) => {
         const ld = l.date ? new Date(l.date) : null
-        if (ld && ld >= weekStart && ld < weekEnd) return s + num(l.collected)
+        if (ld && ld >= weekStart && ld < weekEnd) {
+          return s + num(l.paymentsCollected || l.collected || 0)
+        }
         return s
       }, 0)
 
-      // svc: SUM of serviceLogs.collected where date falls within week
+      // svc: SUM of collected from serviceLogs ONLY (backup.serviceLogs)
+      // These are same-day/2-day service calls — never from project logs
       const svcCollected = allSvcLogs.reduce((s, l) => {
         const ld = l.date ? new Date(l.date) : null
         if (ld && ld >= weekStart && ld < weekEnd) return s + num(l.collected)

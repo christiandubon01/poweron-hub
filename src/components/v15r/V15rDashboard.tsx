@@ -1042,6 +1042,28 @@ function V15rDashboardInner() {
     start: w.start
   }))
 
+  // ── CFOT Summary Boxes — computed directly from backup data ──
+  const serviceLogs = backup.serviceLogs || []
+  const projectLogs = backup.logs || []
+  const cfotSummary = (() => {
+    const activeProjects = projects.filter(p => p.status === 'active')
+    // Exposure: active project contract value not yet collected
+    const exposure = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
+    // Unbilled: completed work not yet invoiced (field logs with no corresponding payment)
+    const unbilled = activeProjects.reduce((s, p) => s + Math.max(0, num(p.billed ? p.contract - p.billed : 0)), 0)
+    // Pending: service calls quoted but not yet collected
+    const pending = serviceLogs
+      .filter((l: any) => num(l.quoted) > 0 && num(l.collected) < num(l.quoted))
+      .reduce((s: number, l: any) => s + Math.max(0, num(l.quoted) - num(l.collected)), 0)
+    // Service: total collected from serviceLogs all time
+    const svcTotal = serviceLogs.reduce((s: number, l: any) => s + num(l.collected), 0)
+    // Project: total collected (paid) from projects all time
+    const projTotal = projects.reduce((s: number, p: any) => s + num(p.paid), 0)
+    // Accumulative: combined
+    const accumTotal = svcTotal + projTotal
+    return { exposure, unbilled, pending, svcTotal, projTotal, accumTotal }
+  })()
+
   // ── OPP: Active projects by contract value ──
   const oppProjects = projects
     .filter(p => p.status === 'active' || p.status === 'coming')
@@ -1098,27 +1120,27 @@ function V15rDashboardInner() {
           <div className="mt-4 grid grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
             <div className="bg-[var(--bg-input)] p-2 rounded">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#ef4444'}}></div><span className="text-gray-500">Exposure</span></div>
-              <p className="font-bold font-mono text-red-400 mt-1">${(cfotData[cfotData.length - 1]?.totalExposure || (num(cfotData[cfotData.length - 1]?.unbilled || 0) + num(cfotData[cfotData.length - 1]?.pendingInv || 0))).toLocaleString()}</p>
+              <p className="font-bold font-mono text-red-400 mt-1">${cfotSummary.exposure.toLocaleString()}</p>
             </div>
             <div className="bg-[var(--bg-input)] p-2 rounded">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f87171'}}></div><span className="text-gray-500">Unbilled</span></div>
-              <p className="font-bold font-mono text-red-300 mt-1">${(cfotData[cfotData.length - 1]?.unbilled || 0).toLocaleString()}</p>
+              <p className="font-bold font-mono text-red-300 mt-1">${cfotSummary.unbilled.toLocaleString()}</p>
             </div>
             <div className="bg-[var(--bg-input)] p-2 rounded">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f59e0b'}}></div><span className="text-gray-500">Pending</span></div>
-              <p className="font-bold font-mono text-amber-400 mt-1">${(cfotData[cfotData.length - 1]?.pendingInv || 0).toLocaleString()}</p>
+              <p className="font-bold font-mono text-amber-400 mt-1">${cfotSummary.pending.toLocaleString()}</p>
             </div>
             <div className="bg-[var(--bg-input)] p-2 rounded">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#86efac'}}></div><span className="text-gray-500">Service $</span></div>
-              <p className="font-bold font-mono text-green-300 mt-1">${(cfotData[cfotData.length - 1]?.svc || 0).toLocaleString()}</p>
+              <p className="font-bold font-mono text-green-300 mt-1">${cfotSummary.svcTotal.toLocaleString()}</p>
             </div>
             <div className="bg-[var(--bg-input)] p-2 rounded">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#16a34a'}}></div><span className="text-gray-500">Project $</span></div>
-              <p className="font-bold font-mono text-green-500 mt-1">${(cfotData[cfotData.length - 1]?.proj || 0).toLocaleString()}</p>
+              <p className="font-bold font-mono text-green-500 mt-1">${cfotSummary.projTotal.toLocaleString()}</p>
             </div>
             <div className="bg-[var(--bg-input)] p-2 rounded">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#14532d'}}></div><span className="text-gray-500">Accum</span></div>
-              <p className="font-bold font-mono text-green-900 mt-1">${(cfotData[cfotData.length - 1]?.accum || 0).toLocaleString()}</p>
+              <p className="font-bold font-mono text-green-900 mt-1">${cfotSummary.accumTotal.toLocaleString()}</p>
             </div>
           </div>
         </div>

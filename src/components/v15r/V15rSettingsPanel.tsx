@@ -206,8 +206,24 @@ export default function V15rSettingsPanel() {
     const data = getBackupData()
     if (data) {
       pushState(data)
-      data.settings.theme = currentTheme === 'dark' ? 'light' : 'dark'
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark'
+      data.settings.theme = newTheme
       saveBackupData(data)
+      // Apply theme class to document root for Tailwind dark: utilities
+      const root = document.documentElement
+      if (newTheme === 'dark') {
+        root.classList.add('dark')
+        root.classList.remove('light')
+        root.setAttribute('data-theme', 'dark')
+        document.body.classList.remove('lt')
+      } else {
+        root.classList.remove('dark')
+        root.classList.add('light')
+        root.setAttribute('data-theme', 'light')
+        document.body.classList.add('lt')
+      }
+      // Save to dedicated key for fast inline-script access on next load
+      localStorage.setItem('poweron_theme', newTheme)
       forceUpdate()
     }
   }, [currentTheme, forceUpdate])

@@ -22,19 +22,22 @@
     <script>
       (function() {
         try {
-          var raw = localStorage.getItem('poweron_backup_data');
-          if (raw) {
-            var data = JSON.parse(raw);
-            var theme = data && data.settings && data.settings.theme;
-            if (theme === 'light') {
-              document.documentElement.setAttribute('data-theme', 'light');
-              document.documentElement.classList.add('light');
-              document.body && document.body.classList.add('lt');
-            } else {
-              document.documentElement.setAttribute('data-theme', 'dark');
-              document.documentElement.classList.add('dark');
+          // Fast path: check dedicated theme key first (set by Settings toggle)
+          var theme = localStorage.getItem('poweron_theme');
+          // Fallback: parse from backup data if dedicated key not set
+          if (!theme) {
+            var raw = localStorage.getItem('poweron_backup_data');
+            if (raw) {
+              var data = JSON.parse(raw);
+              theme = data && data.settings && data.settings.theme;
             }
+          }
+          if (theme === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+            document.documentElement.classList.add('light');
+            document.body && document.body.classList.add('lt');
           } else {
+            document.documentElement.setAttribute('data-theme', 'dark');
             document.documentElement.classList.add('dark');
           }
         } catch(e) {

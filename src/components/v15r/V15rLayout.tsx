@@ -591,12 +591,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* SVC UNBILLED */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Svc Unbilled' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-yellow-400">${(safeKpis.svcUnbilled / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-yellow-400">${Math.round(safeKpis.svcUnbilled / 1000)}k</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
                       <span className="text-base font-bold text-yellow-400">
-                        ${(safeKpis.svcUnbilled / 1000).toFixed(0)}k
+                        ${Math.round(safeKpis.svcUnbilled / 1000)}k
                       </span>
                     </>
                   )}
