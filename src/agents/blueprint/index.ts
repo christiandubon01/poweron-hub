@@ -17,6 +17,7 @@ import * as projectManager from './projectManager'
 import * as rfiManager from './rfiManager'
 import * as changeOrderManager from './changeOrderManager'
 import * as coordinationTracker from './coordinationTracker'
+import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export async function processBlueprintRequest(request: BlueprintRequest): Promis
       case 'change_order_submit':
         return await handleCOSubmit(request)
       case 'change_order_approve':
-        return await handleCOApprove(request)
+        return await miroFishGateBlueprint(request, 'approve_change_order', handleCOApprove)
       case 'change_order_reject':
         return await handleCOReject(request)
 
@@ -639,6 +640,59 @@ async function handleCoordinationUpdate(req: BlueprintRequest): Promise<Blueprin
       action: 'coordination_update',
       error: err instanceof Error ? err.message : String(err),
     }
+  }
+}
+
+// ── Natural Language Query Handler ──────────────────────────────────────────
+
+// ── MiroFish Gate ───────────────────────────────────────────────────────────
+
+/**
+ * MiroFish gate for high-impact BLUEPRINT actions.
+ * Submits a proposal for approval before executing change order approvals, etc.
+ */
+async function miroFishGateBlueprint(
+  request: BlueprintRequest,
+  actionType: string,
+  handler: (req: BlueprintRequest) => Promise<BlueprintResponse>
+): Promise<BlueprintResponse> {
+  // Allow bypass for post-approval execution
+  if (request.payload?.skipMiroFish) {
+    return handler(request)
+  }
+
+  if (!requiresMiroFish('blueprint', actionType)) {
+    return handler(request)
+  }
+
+  try {
+    const coId = request.payload?.coId as string | undefined
+    const projectId = request.payload?.projectId as string | undefined
+
+    const proposal = await submitProposal({
+      orgId:          request.orgId,
+      proposingAgent: 'blueprint',
+      title:          `Approve Change Order ${coId ?? ''}`,
+      description:    `BLUEPRINT requests to approve change order ${coId ?? 'unknown'}${projectId ? ` for project ${projectId}` : ''}. This will update the project budget and scope.`,
+      category:       'operations',
+      impactLevel:    'high',
+      actionType,
+      actionPayload:  { coId, projectId, ...request.payload },
+      sourceData:     { coId, projectId },
+    })
+
+    // Run automated steps 2+3
+    await runAutomatedReview(proposal.id!)
+
+    return {
+      success: true,
+      action: request.action,
+      data: { proposalId: proposal.id, requiresApproval: true },
+      metadata: { mirofish: true },
+    }
+  } catch (err) {
+    console.error('[BLUEPRINT] MiroFish gate error:', err)
+    return handler(request)
   }
 }
 

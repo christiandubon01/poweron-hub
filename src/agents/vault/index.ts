@@ -24,6 +24,7 @@ import { analyzeEstimateMargin as analyzeMarginInsights } from './marginAnalyzer
 import { supabase } from '@/lib/supabase'
 import { logAudit } from '@/lib/memory/audit'
 import { publish } from '@/services/agentEventBus'
+import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,13 +69,13 @@ export async function processVaultRequest(request: VaultRequest): Promise<VaultR
         return await handleFindSimilar(request)
 
       case 'send':
-        return await handleSendEstimate(request)
+        return await miroFishGateVault(request, 'send_estimate', handleSendEstimate)
 
       case 'expire_check':
         return await handleExpireCheck(request)
 
       case 'approve':
-        return await handleApproveEstimate(request)
+        return await miroFishGateVault(request, 'approve_estimate', handleApproveEstimate)
 
       default:
         return {
@@ -487,6 +488,57 @@ async function handleApproveEstimate(request: VaultRequest): Promise<VaultRespon
   } catch (err) {
     console.error('[VAULT] Approve estimate error:', err)
     return { success: false, message: `Error approving estimate: ${String(err).slice(0, 200)}` }
+  }
+}
+
+// ── MiroFish Gate ───────────────────────────────────────────────────────────
+
+/**
+ * MiroFish gate for high-impact VAULT actions.
+ * If the action requires approval, submits a proposal instead of executing.
+ * If skipMiroFish is set in payload, executes directly (for post-approval execution).
+ */
+async function miroFishGateVault(
+  request: VaultRequest,
+  actionType: string,
+  handler: (req: VaultRequest) => Promise<VaultResponse>
+): Promise<VaultResponse> {
+  // Allow bypass for post-approval execution
+  if (request.payload?.skipMiroFish) {
+    return handler(request)
+  }
+
+  // Check if this action requires MiroFish
+  if (!requiresMiroFish('vault', actionType)) {
+    return handler(request)
+  }
+
+  try {
+    const proposal = await submitProposal({
+      orgId:          request.orgId,
+      proposingAgent: 'vault',
+      title:          `${actionType === 'approve_estimate' ? 'Approve' : 'Send'} Estimate ${request.estimateId ?? ''}`,
+      description:    `VAULT requests to ${actionType.replace('_', ' ')} for estimate ${request.estimateId ?? 'unknown'}`,
+      category:       'financial',
+      impactLevel:    'high',
+      actionType,
+      actionPayload:  { estimateId: request.estimateId, ...request.payload },
+      sourceData:     { estimateId: request.estimateId },
+    })
+
+    // Run automated steps 2+3
+    await runAutomatedReview(proposal.id!)
+
+    return {
+      success: true,
+      message: `Proposal submitted for approval: ${proposal.title}. Awaiting confirmation in Proposal Queue.`,
+      data: { proposalId: proposal.id, requiresApproval: true },
+      requiresConfirmation: true,
+    }
+  } catch (err) {
+    console.error('[VAULT] MiroFish gate error:', err)
+    // On MiroFish failure, fall through to direct execution
+    return handler(request)
   }
 }
 

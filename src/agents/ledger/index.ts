@@ -20,6 +20,7 @@ import { LEDGER_SYSTEM_PROMPT } from './systemPrompt'
 import * as invoiceManager from './invoiceManager'
 import * as cashFlowAnalyzer from './cashFlowAnalyzer'
 import { subscribe, publish, type AgentEvent } from '@/services/agentEventBus'
+import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -64,7 +65,7 @@ export async function processLedgerRequest(request: LedgerRequest): Promise<Ledg
         return await handleCreateFromEstimate(request)
 
       case 'send':
-        return await handleSendInvoice(request)
+        return await miroFishGateLedger(request, 'send_invoice', handleSendInvoice)
 
       case 'record_payment':
         return await handleRecordPayment(request)
@@ -409,6 +410,56 @@ export function subscribeLedgerToEvents(): () => void {
   }))
 
   return () => unsubs.forEach(fn => fn())
+}
+
+// ── MiroFish Gate ───────────────────────────────────────────────────────────
+
+/**
+ * MiroFish gate for high-impact LEDGER actions.
+ * Submits a proposal for approval before executing send/reminder actions.
+ */
+async function miroFishGateLedger(
+  request: LedgerRequest,
+  actionType: string,
+  handler: (req: LedgerRequest) => Promise<LedgerResponse>
+): Promise<LedgerResponse> {
+  // Allow bypass for post-approval execution
+  if (request.payload?.skipMiroFish) {
+    return handler(request)
+  }
+
+  if (!requiresMiroFish('ledger', actionType)) {
+    return handler(request)
+  }
+
+  try {
+    const invoiceId = request.payload?.invoiceId as string | undefined
+
+    const proposal = await submitProposal({
+      orgId:          request.orgId,
+      proposingAgent: 'ledger',
+      title:          `Send Invoice ${invoiceId ?? ''}`,
+      description:    `LEDGER requests to send invoice ${invoiceId ?? 'unknown'} to client. This will set the due date and transition status to sent.`,
+      category:       'financial',
+      impactLevel:    'high',
+      actionType,
+      actionPayload:  { invoiceId, ...request.payload },
+      sourceData:     { invoiceId },
+    })
+
+    // Run automated steps 2+3
+    await runAutomatedReview(proposal.id!)
+
+    return {
+      success: true,
+      action: request.action,
+      data: { proposalId: proposal.id, requiresApproval: true },
+      metadata: { mirofish: true },
+    }
+  } catch (err) {
+    console.error('[LEDGER] MiroFish gate error:', err)
+    return handler(request)
+  }
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────

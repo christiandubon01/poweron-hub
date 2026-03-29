@@ -17,6 +17,7 @@ import { routeToAgent, type AgentResponse } from './router'
 import { addTurn, getContext, updateProjectContext, getMemory } from '@/services/nexusMemory'
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
 import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
+import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,8 @@ export interface NexusResponse {
   conversationMessage: ConversationMessage
   /** If set, the UI should show an interview card instead of a chat response */
   interviewTrigger?: AgentInterviewDefinition
+  /** Pending MiroFish proposals awaiting human confirmation */
+  pendingProposals?: MiroFishProposal[]
 }
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -131,6 +134,21 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     // Non-critical
   }
 
+  // ── Step 7: Check for pending MiroFish proposals ───────────────────────
+  let pendingProposals: MiroFishProposal[] | undefined
+  try {
+    const proposals = await getPendingProposals(request.orgId)
+    if (proposals.length > 0) {
+      pendingProposals = proposals.slice(0, 5) // Cap at 5 for the response
+
+      // Append a note to the agent response if there are pending proposals
+      const proposalNote = `\n\n📋 **${proposals.length} pending proposal${proposals.length !== 1 ? 's' : ''}** awaiting your approval in the Proposal Queue.`
+      agentResponse = { ...agentResponse, content: agentResponse.content + proposalNote }
+    }
+  } catch {
+    // Non-critical — don't block response for proposal fetch failure
+  }
+
   // ── Return ──────────────────────────────────────────────────────────────
 
   const conversationMessage: ConversationMessage = {
@@ -146,6 +164,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     needsConfirmation,
     conversationMessage,
     interviewTrigger: (interviewDef && !request.isVoiceCommand) ? interviewDef : undefined,
+    pendingProposals,
   }
 }
 
