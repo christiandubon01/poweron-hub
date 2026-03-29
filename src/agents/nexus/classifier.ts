@@ -140,9 +140,12 @@ const AGENT_KEYWORDS: Record<TargetAgent, AgentKeywords> = {
       'cash flow', 'how much have i collected', 'pipeline', 'what\'s my exposure',
       'revenue this week', 'profit margin', 'financial overview', 'money situation',
       'what do i have coming in', 'weekly tracker', 'performance', 'margin analysis',
+      'visual representation', 'data visualization', 'show me numbers',
     ],
     single: [
       'dashboard', 'kpi', 'metric', 'trend', 'revenue', 'margin',
+      'visual', 'visualization', 'chart', 'graph', 'numbers',
+      'analytics', 'metrics', 'data',
     ],
   },
   ohm: {
@@ -266,7 +269,7 @@ const GUARANTEED_ROUTES: GuaranteedRoute[] = [
   { keywords: ['estimate', 'quote', 'mto', 'material', 'takeoff', 'price', 'bid', 'pricing', 'cost', 'markup', 'price book'], agent: 'vault', minScore: 0.5 },
   { keywords: ['schedule', 'crew', 'calendar', 'book', 'dispatch', 'appointment', 'agenda', 'reminder', 'tomorrow', 'next week'], agent: 'chrono', minScore: 0.5 },
   { keywords: ['lead', 'gc', 'contact', 'marketing', 'outreach', 'prospect', 'referral', 'campaign', 'review', 'yelp'], agent: 'spark', minScore: 0.5 },
-  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker'], agent: 'pulse', minScore: 0.5 },
+  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker', 'visual', 'visualization', 'chart', 'graph', 'numbers', 'analytics', 'data', 'metrics'], agent: 'pulse', minScore: 0.5 },
   { keywords: ['research', 'analyze', 'pattern', 'optimization', 'improvement', 'scout'], agent: 'scout', minScore: 0.5 },
 ]
 
