@@ -712,19 +712,26 @@ export class VoiceSubsystem {
       const ttsText = responseText.slice(0, 300)
       debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
       debugPush('ElevenLabs TTS — requesting synthesis...')
-      // Read voice ID at CALL TIME — priority: localStorage → Supabase pref → default
+      // Read voice ID fresh at CALL TIME — never cache it
       const activeVoiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
         || this.preferences.ttsVoiceId
         || DEFAULT_VOICE_ID
-      debugPush(`TTS voice ID: ${activeVoiceId}`)
+      // Read speech rate fresh at CALL TIME
+      const speechRate = typeof window !== 'undefined'
+        ? parseFloat(localStorage.getItem('nexus_speech_rate') || '1.0')
+        : 1.0
+      console.log('[ElevenLabs] Using voice ID:', activeVoiceId)
+      console.log('[ElevenLabs] Using speech rate:', speechRate)
+      debugPush(`TTS voice ID: ${activeVoiceId}, rate: ${speechRate}`)
 
       const ttsResult = await synthesizeWithElevenLabs({
         text: ttsText,
         voice_id: activeVoiceId,
         voice_settings: {
-          stability: 0.75,
+          stability: 0.5,
           similarity_boost: 0.75,
         },
+        speed: speechRate,
       })
 
       debugPush(`ElevenLabs TTS — received blob ${ttsResult.audioBlob.size} bytes, ~${ttsResult.durationSeconds}s`)

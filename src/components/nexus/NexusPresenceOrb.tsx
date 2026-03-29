@@ -1,29 +1,23 @@
 // @ts-nocheck
 /**
- * NexusPresenceOrb — Visual presence indicator for NEXUS AI agent.
+ * NexusPresenceOrb — Canvas-based particle network sphere (Jarvis-style)
  *
- * Pure visual component — zero business logic, no transcript state,
- * no data queries, no protected-core modifications.
- *
- * Accepts a `state` prop matching VoiceSessionStatus and renders
- * a glowing orb with layered ring/sphere effects and smooth CSS
- * transitions between states.
+ * Pure visual component — zero business logic, no transcript state.
+ * Renders a 3D rotating particle network sphere on <canvas>.
+ * Particles are connected by proximity lines, colors shift per voice state.
  *
  * Visual states:
- *   inactive    — dim glow, low idle breathing, subtle ambient movement
- *   listening   — soft pulse ring, responsive halo, low-frequency motion
- *   recording   — stronger pulse, brighter core, intense shell vibration
- *   transcribing — scanning effect, tighter ring motion, inward/outward ripple
- *   processing  — orbiting particles, rotating shell, visible thinking energy
- *   responding  — waveform expansion, speech-linked pulsing, brighter rhythmic motion
- *   complete    — settle-down animation, soft glow stabilization
- *   error       — short warning flicker, red/orange accent, calm reset
- *
- * Mount point: VoiceActivationButton.tsx (next session wiring).
- * The orb renders as a fixed-position overlay, sized to wrap the mic button area.
+ *   inactive    — slow rotation, dim green/teal nodes
+ *   listening   — medium rotation, brighter cyan
+ *   recording   — faster, red-tinted, intense glow
+ *   transcribing — scanning yellow, medium speed
+ *   processing  — purple orbit, fast rotation
+ *   responding  — bright green/teal waveform pulsing
+ *   complete    — settling back to dim green
+ *   error       — orange flicker
  */
 
-import React, { useMemo, useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,197 +32,67 @@ export type OrbState =
   | 'error'
 
 export interface NexusPresenceOrbProps {
-  /** Current visual state — maps to VoiceSessionStatus */
-  state: OrbState
-  /** Orb diameter in px (default 80) */
+  state?: OrbState
   size?: number
-  /** Optional CSS class for positioning overrides */
   className?: string
 }
 
-// ── State-driven visual config ──────────────────────────────────────────────
+// ── Particle type ──────────────────────────────────────────────────────────
 
-interface OrbVisuals {
-  coreColor: string
-  coreGlow: string
-  ringColor: string
-  ringScale: number
-  ringOpacity: number
-  coreAnimation: string
-  ringAnimation: string
-  particleAnimation: string
-  outerRingAnimation: string
+interface Particle {
+  x: number
+  y: number
+  z: number
+  vx: number
+  vy: number
+  vz: number
+  size: number
 }
 
-function getVisuals(state: OrbState): OrbVisuals {
-  switch (state) {
-    case 'inactive':
-      return {
-        coreColor: 'rgba(46, 232, 154, 0.25)',
-        coreGlow: '0 0 20px rgba(46, 232, 154, 0.15), 0 0 40px rgba(46, 232, 154, 0.05)',
-        ringColor: 'rgba(46, 232, 154, 0.08)',
-        ringScale: 1,
-        ringOpacity: 0.3,
-        coreAnimation: 'orbBreathe 4s ease-in-out infinite',
-        ringAnimation: 'orbDrift 6s ease-in-out infinite',
-        particleAnimation: 'none',
-        outerRingAnimation: 'orbDrift 8s ease-in-out infinite reverse',
-      }
-    case 'listening':
-      return {
-        coreColor: 'rgba(46, 232, 154, 0.4)',
-        coreGlow: '0 0 30px rgba(46, 232, 154, 0.25), 0 0 60px rgba(46, 232, 154, 0.1)',
-        ringColor: 'rgba(46, 232, 154, 0.15)',
-        ringScale: 1.1,
-        ringOpacity: 0.5,
-        coreAnimation: 'orbBreathe 3s ease-in-out infinite',
-        ringAnimation: 'orbPulse 2.5s ease-in-out infinite',
-        particleAnimation: 'none',
-        outerRingAnimation: 'orbPulse 3.5s ease-in-out infinite reverse',
-      }
-    case 'recording':
-      return {
-        coreColor: 'rgba(239, 68, 68, 0.6)',
-        coreGlow: '0 0 40px rgba(239, 68, 68, 0.35), 0 0 80px rgba(239, 68, 68, 0.15)',
-        ringColor: 'rgba(239, 68, 68, 0.25)',
-        ringScale: 1.15,
-        ringOpacity: 0.7,
-        coreAnimation: 'orbPulseIntense 1.2s ease-in-out infinite',
-        ringAnimation: 'orbVibrate 0.3s ease-in-out infinite',
-        particleAnimation: 'orbSpin 3s linear infinite',
-        outerRingAnimation: 'orbPulseIntense 1.8s ease-in-out infinite reverse',
-      }
-    case 'transcribing':
-      return {
-        coreColor: 'rgba(234, 179, 8, 0.5)',
-        coreGlow: '0 0 35px rgba(234, 179, 8, 0.3), 0 0 60px rgba(234, 179, 8, 0.1)',
-        ringColor: 'rgba(234, 179, 8, 0.2)',
-        ringScale: 1.05,
-        ringOpacity: 0.6,
-        coreAnimation: 'orbScan 2s ease-in-out infinite',
-        ringAnimation: 'orbRipple 1.5s ease-in-out infinite',
-        particleAnimation: 'orbSpin 2s linear infinite',
-        outerRingAnimation: 'orbRipple 2s ease-in-out infinite reverse',
-      }
-    case 'processing':
-      return {
-        coreColor: 'rgba(139, 92, 246, 0.55)',
-        coreGlow: '0 0 40px rgba(139, 92, 246, 0.35), 0 0 80px rgba(139, 92, 246, 0.15)',
-        ringColor: 'rgba(139, 92, 246, 0.2)',
-        ringScale: 1.2,
-        ringOpacity: 0.7,
-        coreAnimation: 'orbBreathe 2s ease-in-out infinite',
-        ringAnimation: 'orbSpin 3s linear infinite',
-        particleAnimation: 'orbOrbit 2s linear infinite',
-        outerRingAnimation: 'orbSpin 4s linear infinite reverse',
-      }
-    case 'responding':
-      return {
-        coreColor: 'rgba(6, 182, 212, 0.6)',
-        coreGlow: '0 0 45px rgba(6, 182, 212, 0.4), 0 0 90px rgba(6, 182, 212, 0.15)',
-        ringColor: 'rgba(6, 182, 212, 0.25)',
-        ringScale: 1.25,
-        ringOpacity: 0.75,
-        coreAnimation: 'orbWaveform 0.8s ease-in-out infinite',
-        ringAnimation: 'orbPulse 1s ease-in-out infinite',
-        particleAnimation: 'orbSpin 2s linear infinite',
-        outerRingAnimation: 'orbWaveform 1.2s ease-in-out infinite reverse',
-      }
-    case 'complete':
-      return {
-        coreColor: 'rgba(46, 232, 154, 0.35)',
-        coreGlow: '0 0 25px rgba(46, 232, 154, 0.2), 0 0 50px rgba(46, 232, 154, 0.08)',
-        ringColor: 'rgba(46, 232, 154, 0.1)',
-        ringScale: 1,
-        ringOpacity: 0.4,
-        coreAnimation: 'orbSettle 1.5s ease-out forwards',
-        ringAnimation: 'orbSettle 2s ease-out forwards',
-        particleAnimation: 'none',
-        outerRingAnimation: 'orbSettle 2.5s ease-out forwards',
-      }
-    case 'error':
-      return {
-        coreColor: 'rgba(255, 80, 96, 0.55)',
-        coreGlow: '0 0 35px rgba(255, 80, 96, 0.3), 0 0 60px rgba(255, 144, 64, 0.1)',
-        ringColor: 'rgba(255, 80, 96, 0.2)',
-        ringScale: 1.05,
-        ringOpacity: 0.6,
-        coreAnimation: 'orbFlicker 0.4s ease-in-out 3',
-        ringAnimation: 'orbFlicker 0.6s ease-in-out 2',
-        particleAnimation: 'none',
-        outerRingAnimation: 'none',
-      }
-    default:
-      return getVisuals('inactive')
-  }
+// ── State-driven color palette ─────────────────────────────────────────────
+
+const STATE_COLORS: Record<OrbState, { primary: string; secondary: string; glow: string }> = {
+  inactive:     { primary: '#2EE89A', secondary: '#1a8f60', glow: 'rgba(46,232,154,0.15)' },
+  listening:    { primary: '#40D4FF', secondary: '#1a8fa0', glow: 'rgba(64,212,255,0.25)' },
+  recording:    { primary: '#FF5060', secondary: '#a01a20', glow: 'rgba(255,80,96,0.35)' },
+  transcribing: { primary: '#FFD24A', secondary: '#a08010', glow: 'rgba(255,210,74,0.25)' },
+  processing:   { primary: '#AA6EFF', secondary: '#6030c0', glow: 'rgba(170,110,255,0.35)' },
+  responding:   { primary: '#2EE89A', secondary: '#1a8f60', glow: 'rgba(46,232,154,0.5)' },
+  complete:     { primary: '#2EE89A', secondary: '#1a8f60', glow: 'rgba(46,232,154,0.2)' },
+  error:        { primary: '#FF9040', secondary: '#a04010', glow: 'rgba(255,144,64,0.3)' },
 }
 
-// ── Keyframes (injected once) ───────────────────────────────────────────────
+// ── Speed per state ────────────────────────────────────────────────────────
 
-const ORB_KEYFRAMES = `
-@keyframes orbBreathe {
-  0%, 100% { transform: scale(1); opacity: 0.85; }
-  50% { transform: scale(1.06); opacity: 1; }
+const SPEED_MAP: Record<OrbState, number> = {
+  inactive:     0.003,
+  listening:    0.006,
+  recording:    0.012,
+  transcribing: 0.008,
+  processing:   0.015,
+  responding:   0.01,
+  complete:     0.003,
+  error:        0.008,
 }
-@keyframes orbPulse {
-  0%, 100% { transform: scale(1); opacity: 0.5; }
-  50% { transform: scale(1.12); opacity: 0.8; }
-}
-@keyframes orbPulseIntense {
-  0%, 100% { transform: scale(1); opacity: 0.7; }
-  50% { transform: scale(1.18); opacity: 1; }
-}
-@keyframes orbDrift {
-  0%, 100% { transform: scale(1) rotate(0deg); }
-  33% { transform: scale(1.03) rotate(2deg); }
-  66% { transform: scale(0.97) rotate(-2deg); }
-}
-@keyframes orbVibrate {
-  0%, 100% { transform: translate(0, 0); }
-  25% { transform: translate(-1px, 1px); }
-  50% { transform: translate(1px, -1px); }
-  75% { transform: translate(-1px, -1px); }
-}
-@keyframes orbScan {
-  0%, 100% { transform: scale(1); filter: brightness(1); }
-  50% { transform: scale(1.04); filter: brightness(1.3); }
-}
-@keyframes orbRipple {
-  0% { transform: scale(0.95); opacity: 0.6; }
-  50% { transform: scale(1.15); opacity: 0.3; }
-  100% { transform: scale(0.95); opacity: 0.6; }
-}
-@keyframes orbSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-@keyframes orbOrbit {
-  from { transform: rotate(0deg) translateX(30%) rotate(0deg); }
-  to { transform: rotate(360deg) translateX(30%) rotate(-360deg); }
-}
-@keyframes orbWaveform {
-  0%, 100% { transform: scale(1) scaleY(1); }
-  25% { transform: scale(1.08) scaleY(0.94); }
-  50% { transform: scale(0.95) scaleY(1.08); }
-  75% { transform: scale(1.06) scaleY(0.96); }
-}
-@keyframes orbSettle {
-  0% { transform: scale(1.1); opacity: 0.8; }
-  100% { transform: scale(1); opacity: 0.5; }
-}
-@keyframes orbFlicker {
-  0%, 100% { opacity: 0.9; }
-  50% { opacity: 0.3; }
-}
-`
 
-// ── Component ───────────────────────────────────────────────────────────────
+// ── Component ──────────────────────────────────────────────────────────────
 
 export function NexusPresenceOrb({
-  state,
-  size = 80,
+  state = 'inactive',
+  size: sizeProp,
   className = '',
 }: NexusPresenceOrbProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<number>(0)
+  const particlesRef = useRef<Particle[]>([])
+  const rotationRef = useRef(0)
+  const stateRef = useRef<OrbState>(state)
+
+  // Keep stateRef in sync so the animation loop sees the latest value
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
   console.log('[Orb] Rendering with state:', state)
 
   useEffect(() => {
@@ -239,126 +103,144 @@ export function NexusPresenceOrb({
     console.log('[Orb] State changed:', state)
   }, [state])
 
-  const v = useMemo(() => getVisuals(state), [state])
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
 
-  const half = size / 2
-  const coreSize = size * 0.4
-  const ringSize = size * 0.7
-  const outerSize = size * 0.9
-  const particleSize = size * 0.08
+    // Use 2x resolution for Retina
+    const dpr = window.devicePixelRatio || 1
+    const canvasSize = sizeProp || 200
+    canvas.width = canvasSize * dpr
+    canvas.height = canvasSize * dpr
+    canvas.style.width = '100%'
+    canvas.style.height = '100%'
+    ctx.scale(dpr, dpr)
+
+    const sz = canvasSize
+    const cx = sz / 2
+    const cy = sz / 2
+    const radius = sz * 0.35
+    const numParticles = 80
+
+    // Generate particles on sphere surface (once)
+    if (particlesRef.current.length === 0) {
+      for (let i = 0; i < numParticles; i++) {
+        const theta = Math.acos(2 * Math.random() - 1)
+        const phi = Math.random() * Math.PI * 2
+        particlesRef.current.push({
+          x: Math.sin(theta) * Math.cos(phi),
+          y: Math.sin(theta) * Math.sin(phi),
+          z: Math.cos(theta),
+          vx: (Math.random() - 0.5) * 0.002,
+          vy: (Math.random() - 0.5) * 0.002,
+          vz: (Math.random() - 0.5) * 0.002,
+          size: Math.random() * 2 + 1,
+        })
+      }
+    }
+
+    const draw = () => {
+      const currentState = stateRef.current
+      const colors = STATE_COLORS[currentState]
+      const speed = SPEED_MAP[currentState]
+      rotationRef.current += speed
+
+      ctx.clearRect(0, 0, sz, sz)
+
+      // Background radial glow
+      const glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.4)
+      glowGrad.addColorStop(0, colors.glow)
+      glowGrad.addColorStop(1, 'transparent')
+      ctx.fillStyle = glowGrad
+      ctx.fillRect(0, 0, sz, sz)
+
+      // Core inner glow
+      const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.3)
+      coreGrad.addColorStop(0, colors.primary + '40')
+      coreGrad.addColorStop(1, 'transparent')
+      ctx.fillStyle = coreGrad
+      ctx.beginPath()
+      ctx.arc(cx, cy, radius * 0.3, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Project 3D particles to 2D with Y-axis rotation
+      const cosR = Math.cos(rotationRef.current)
+      const sinR = Math.sin(rotationRef.current)
+
+      const projected = particlesRef.current.map(p => {
+        // Rotate around Y axis
+        const rx = p.x * cosR - p.z * sinR
+        const rz = p.x * sinR + p.z * cosR
+        const scale = (rz + 2) / 3 // depth factor [0.33 .. 1.0]
+        return {
+          sx: cx + rx * radius,
+          sy: cy + p.y * radius,
+          scale,
+          size: p.size,
+          visible: rz > -0.5,
+        }
+      })
+
+      // Draw connection lines between nearby visible particles
+      ctx.lineWidth = 0.4
+      const connDist = radius * 0.55
+      for (let i = 0; i < projected.length; i++) {
+        if (!projected[i].visible) continue
+        for (let j = i + 1; j < projected.length; j++) {
+          if (!projected[j].visible) continue
+          const dx = projected[i].sx - projected[j].sx
+          const dy = projected[i].sy - projected[j].sy
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist < connDist) {
+            const opacity = (1 - dist / connDist) * 0.4 * projected[i].scale * projected[j].scale
+            const alpha = Math.min(255, Math.floor(opacity * 255))
+            ctx.strokeStyle = colors.primary + alpha.toString(16).padStart(2, '0')
+            ctx.beginPath()
+            ctx.moveTo(projected[i].sx, projected[i].sy)
+            ctx.lineTo(projected[j].sx, projected[j].sy)
+            ctx.stroke()
+          }
+        }
+      }
+
+      // Draw particle nodes with glow
+      projected.forEach(p => {
+        if (!p.visible) return
+        const nodeSize = p.size * p.scale
+
+        // Node glow halo
+        const nodeGlow = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, nodeSize * 3)
+        nodeGlow.addColorStop(0, colors.primary)
+        nodeGlow.addColorStop(0.4, colors.primary + '80')
+        nodeGlow.addColorStop(1, 'transparent')
+        ctx.fillStyle = nodeGlow
+        ctx.beginPath()
+        ctx.arc(p.sx, p.sy, nodeSize * 3, 0, Math.PI * 2)
+        ctx.fill()
+
+        // Solid node center
+        ctx.fillStyle = colors.primary
+        ctx.beginPath()
+        ctx.arc(p.sx, p.sy, nodeSize, 0, Math.PI * 2)
+        ctx.fill()
+      })
+
+      animRef.current = requestAnimationFrame(draw)
+    }
+
+    draw()
+    return () => cancelAnimationFrame(animRef.current)
+  }, [sizeProp])
 
   return (
-    <div
+    <canvas
+      ref={canvasRef}
       className={className}
-      style={{
-        position: 'relative',
-        width: size,
-        height: size,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        pointerEvents: 'none',
-        transition: 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
+      style={{ width: '100%', height: '100%', display: 'block' }}
       aria-hidden="true"
-    >
-      {/* Inject keyframes */}
-      <style>{ORB_KEYFRAMES}</style>
-
-      {/* Outer ring — ambient boundary */}
-      <div
-        style={{
-          position: 'absolute',
-          width: outerSize,
-          height: outerSize,
-          borderRadius: '50%',
-          border: `1px solid ${v.ringColor}`,
-          opacity: v.ringOpacity * 0.5,
-          animation: v.outerRingAnimation,
-          transition: 'all 0.6s ease',
-        }}
-      />
-
-      {/* Middle ring — primary pulse ring */}
-      <div
-        style={{
-          position: 'absolute',
-          width: ringSize,
-          height: ringSize,
-          borderRadius: '50%',
-          border: `1.5px solid ${v.ringColor}`,
-          boxShadow: `0 0 15px ${v.ringColor}`,
-          opacity: v.ringOpacity,
-          transform: `scale(${v.ringScale})`,
-          animation: v.ringAnimation,
-          transition: 'all 0.5s ease',
-        }}
-      />
-
-      {/* Core glow — main orb body */}
-      <div
-        style={{
-          position: 'absolute',
-          width: coreSize,
-          height: coreSize,
-          borderRadius: '50%',
-          background: `radial-gradient(circle at 40% 35%, ${v.coreColor}, transparent 70%)`,
-          boxShadow: v.coreGlow,
-          animation: v.coreAnimation,
-          transition: 'background 0.5s ease, box-shadow 0.5s ease',
-        }}
-      />
-
-      {/* Inner bright spot — specular highlight */}
-      <div
-        style={{
-          position: 'absolute',
-          width: coreSize * 0.35,
-          height: coreSize * 0.35,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(255,255,255,0.4) 0%, transparent 70%)',
-          transform: 'translate(-20%, -20%)',
-          opacity: state === 'inactive' || state === 'complete' ? 0.3 : 0.6,
-          transition: 'opacity 0.5s ease',
-        }}
-      />
-
-      {/* Orbiting particles — only active in processing/recording/responding/transcribing */}
-      {v.particleAnimation !== 'none' && (
-        <>
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              style={{
-                position: 'absolute',
-                width: particleSize,
-                height: particleSize,
-                borderRadius: '50%',
-                backgroundColor: v.coreColor,
-                boxShadow: `0 0 6px ${v.coreColor}`,
-                opacity: 0.7,
-                animation: v.particleAnimation,
-                animationDelay: `${i * 0.67}s`,
-                transformOrigin: `${half}px ${half}px`,
-              }}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Fallback pulsing circle — visible baseline if CSS animations fail */}
-      <div
-        style={{
-          position: 'absolute',
-          width: size,
-          height: size,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(46,232,154,0.12) 0%, transparent 70%)',
-          animation: 'orbBreathe 4s ease-in-out infinite',
-          zIndex: -1,
-        }}
-      />
-    </div>
+    />
   )
 }
 

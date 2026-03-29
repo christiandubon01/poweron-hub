@@ -586,8 +586,15 @@ export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         background: 'rgba(0,0,0,0.2)',
       }}>
-        <div style={{ width: '120px', height: '120px', flexShrink: 0 }}>
-          <NexusPresenceOrb state={orbState} size={120} />
+        <div style={{
+          width: typeof window !== 'undefined' && window.innerWidth > 768 ? '200px' : '120px',
+          height: typeof window !== 'undefined' && window.innerWidth > 768 ? '200px' : '120px',
+          flexShrink: 0,
+        }}>
+          <NexusPresenceOrb
+            state={orbState}
+            size={typeof window !== 'undefined' && window.innerWidth > 768 ? 200 : 120}
+          />
         </div>
       </div>
 

@@ -104,6 +104,7 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
 
   const voiceId = request.voice_id || DEFAULT_VOICE_ID
 
+  console.log('[ElevenLabs] Using voice ID:', voiceId)
   console.log(`[ElevenLabs] Synthesizing ${text.length} chars with voice ${voiceId}...`)
 
   const response = await fetch(
@@ -118,12 +119,14 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
       body: JSON.stringify({
         text,
         model_id: request.model_id || 'eleven_turbo_v2_5',
-        voice_settings: request.voice_settings || {
-          stability: 0.75,
+        voice_settings: {
+          stability: 0.5,
           similarity_boost: 0.75,
           style: 0.5,
           use_speaker_boost: true,
+          ...(request.voice_settings || {}),
         },
+        ...(request.speed && request.speed !== 1.0 ? { speaking_rate: request.speed } : {}),
       }),
     }
   )

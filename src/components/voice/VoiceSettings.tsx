@@ -252,12 +252,24 @@ export function VoiceSettings() {
     }
   }
 
+  // Voice update confirmation state
+  const [voiceUpdated, setVoiceUpdated] = useState(false)
+
   const update = (key: keyof VoicePrefs, value: unknown) => {
     setPrefs(prev => ({ ...prev, [key]: value }))
     setSaved(false)
     // Persist voice ID to localStorage immediately so TTS picks it up at call time
     if (key === 'tts_voice_id' && typeof value === 'string') {
       localStorage.setItem('nexus_voice_id', value)
+      const voiceName = apiVoices.find(v => v.voice_id === value)?.name || value
+      console.log('[VoiceSettings] Selected voice:', voiceName, value)
+      setVoiceUpdated(true)
+      setTimeout(() => setVoiceUpdated(false), 3000)
+    }
+    // Persist speech rate to localStorage immediately
+    if (key === 'tts_speed' && typeof value === 'number') {
+      localStorage.setItem('nexus_speech_rate', String(value))
+      console.log('[VoiceSettings] Speech rate updated:', value)
     }
   }
 
@@ -320,6 +332,14 @@ export function VoiceSettings() {
           </div>
         )}
 
+        {/* Voice updated confirmation */}
+        {voiceUpdated && (
+          <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium animate-fade-in">
+            <Check className="w-3.5 h-3.5 flex-shrink-0" />
+            Voice updated — tap mic to test
+          </div>
+        )}
+
         {/* Speed slider */}
         <div className="mt-5">
           <label className="flex items-center justify-between text-sm">
@@ -328,17 +348,17 @@ export function VoiceSettings() {
           </label>
           <input
             type="range"
-            min={0.5}
-            max={2.0}
-            step={0.1}
+            min={0.7}
+            max={1.3}
+            step={0.05}
             value={prefs.tts_speed}
             onChange={e => update('tts_speed', parseFloat(e.target.value))}
             className="w-full mt-2 accent-emerald-500"
           />
           <div className="flex justify-between text-xs text-gray-600 mt-1">
-            <span>0.5x Slow</span>
+            <span>0.7x Slow</span>
             <span>1.0x Normal</span>
-            <span>2.0x Fast</span>
+            <span>1.3x Fast</span>
           </div>
         </div>
       </Section>

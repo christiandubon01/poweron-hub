@@ -17,8 +17,7 @@ import { clsx } from 'clsx'
 import { processMessage, detectMode, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
 import { MessageBubble, AgentBadge } from './MessageBubble'
 import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
-import { NexusPresenceOrb, type OrbState } from './NexusPresenceOrb'
-import { onOrbStateChange } from '@/services/voice'
+// NexusPresenceOrb moved to VoiceTranscriptPanel
 import { clearConversationThread } from '@/services/nexusLearnedProfile'
 import { MorningBriefingCard } from './MorningBriefingCard'
 import { useAuth } from '@/hooks/useAuth'
@@ -145,12 +144,6 @@ export function NexusChatPanel() {
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
   const [mode, setMode]                     = useState<NexusMode>('briefing')
   const [lastMsgMode, setLastMsgMode]       = useState<NexusMode>('briefing')
-
-  // Orb state — subscribes to real-time voice subsystem status
-  const [orbState, setOrbState] = useState<OrbState>('inactive')
-  useEffect(() => {
-    return onOrbStateChange((status) => setOrbState(status as OrbState))
-  }, [])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
