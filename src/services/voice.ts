@@ -686,10 +686,10 @@ export class VoiceSubsystem {
 
     let ttsPlayed = false
     try {
-      // Hard safety guard — truncate TTS text to 800 characters max.
-      // Prevents sending full markdown reports to ElevenLabs (which produces
-      // 60+ second audio blobs that choke mobile playback).
-      const ttsText = responseText.slice(0, 800)
+      // Hard safety guard — truncate TTS text to 300 characters max.
+      // 300 chars ≈ 20-25 seconds of audio, safe for iOS blob playback.
+      // 800 chars still produced 46s audio which choked Howler on mobile.
+      const ttsText = responseText.slice(0, 300)
       debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
       debugPush('ElevenLabs TTS — requesting synthesis...')
       const ttsResult = await synthesizeWithElevenLabs({
@@ -820,10 +820,12 @@ export class VoiceSubsystem {
   /**
    * Cross-platform audio playback using Howler.js.
    *
-   * Howler.js handles iOS Safari's autoplay restrictions internally by using
-   * the Web Audio API with automatic unlock on user interaction. The html5:true
-   * flag enables HTML5 Audio mode which streams audio instead of loading it all
-   * into memory — important for longer TTS responses.
+   * Howler.js handles iOS Safari's autoplay restrictions internally.
+   * Key iOS fixes:
+   *  - html5: true + preload: true — forces HTML5 Audio mode with preloading
+   *  - setTimeout(play, 100) — slight delay required on iOS before calling play
+   *  - JSON.stringify on errors — iOS TypeError {} is empty without serialization
+   *  - Howler.unload() on play error — resets the audio engine for next attempt
    *
    * The audioUrl (an object URL from ElevenLabs synthesis) is fetched, converted
    * to a Blob URL, and played through Howler. Includes a 30-second timeout.
@@ -857,28 +859,42 @@ export class VoiceSubsystem {
         src: [blobUrl],
         format: ['mp3'],
         html5: true,
+        preload: true,
         rate: this.preferences.ttsSpeed,
+        onplay: () => {
+          debugPush('Howler.js — playback started')
+          console.log('[Audio] Howler.js playback started')
+        },
         onend: () => {
           debugPush('Howler onend — playback complete')
           console.log('[Audio] Howler.js playback completed')
           safeResolve()
         },
         onloaderror: (_id: number, err: unknown) => {
-          debugPush(`Howler load error: ${err}`)
+          debugPush(`Howler load error: ${JSON.stringify(err)}`)
           console.error('[Audio] Howler load error:', err)
+          URL.revokeObjectURL(blobUrl)
           safeResolve()
         },
         onplayerror: (_id: number, err: unknown) => {
-          debugPush(`Howler play error: ${err}`)
+          debugPush(`Howler play error: ${JSON.stringify(err)}`)
           console.error('[Audio] Howler play error:', err)
+          // iOS play error — reset the audio engine for next attempt
+          try { (Howl as any).unload?.() } catch { /* ignore */ }
+          URL.revokeObjectURL(blobUrl)
           safeResolve()
         },
       })
 
       this.currentHowl = sound
 
-      debugPush('Howler.play() — calling...')
-      sound.play()
+      // Must call play() after a slight delay on iOS — immediate play()
+      // after Howl construction triggers TypeError on Safari
+      debugPush('Howler — scheduling play() with 100ms delay for iOS...')
+      setTimeout(() => {
+        debugPush('Howler.play() — calling...')
+        sound.play()
+      }, 100)
 
       // 30-second timeout fallback
       const hangTimeout = setTimeout(() => {
