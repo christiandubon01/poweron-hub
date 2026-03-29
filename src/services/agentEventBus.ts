@@ -47,6 +47,7 @@ export type AgentEventType =
   | 'LEAD_SCORED'
   | 'CAMPAIGN_RESULT'
   | 'SOCIAL_POST_PUBLISHED'
+  | 'PATTERN_LEARNED'
 
 export interface AgentEvent {
   id:        string
@@ -243,4 +244,71 @@ export function getEventCount(type: AgentEventType, since?: number): number {
 export function clearEvents(): void {
   _events = []
   saveToStorage()
+}
+
+/**
+ * Wire cross-entity embeddings — auto-embed event payloads into vector memory.
+ * Call once on app startup after initEventBus().
+ * Returns an unsubscribe function.
+ */
+export function initCrossEntityEmbeddings(orgId: string): () => void {
+  // Event types that should auto-embed their content
+  const EMBED_EVENTS: AgentEventType[] = [
+    'PROJECT_UPDATED',
+    'SERVICE_LOG_ADDED',
+    'FIELD_LOG_ADDED',
+    'ESTIMATE_APPROVED',
+    'COMPLIANCE_FLAG',
+    'PATTERN_LEARNED',
+  ]
+
+  return subscribe('*', (event: AgentEvent) => {
+    if (!EMBED_EVENTS.includes(event.type)) return
+
+    // Fire-and-forget embedding — use setTimeout to avoid blocking event loop
+    setTimeout(async () => {
+      try {
+        const { embedAndStore } = await import('@/services/vectorMemory')
+
+        // Map event type to entity type
+        const entityTypeMap: Record<string, string> = {
+          'PROJECT_UPDATED': 'project',
+          'SERVICE_LOG_ADDED': 'service_call',
+          'FIELD_LOG_ADDED': 'field_log',
+          'ESTIMATE_APPROVED': 'estimate',
+          'COMPLIANCE_FLAG': 'compliance',
+          'PATTERN_LEARNED': 'pattern',
+        }
+
+        const entityType = entityTypeMap[event.type] || 'general'
+        const entityId = (event.payload?.projectId || event.payload?.entityId || event.payload?.patternId || event.id) as string
+
+        // Build rich content from event summary + payload
+        const contentParts = [event.summary]
+        if (event.payload?.description) contentParts.push(String(event.payload.description))
+        if (event.payload?.notes) contentParts.push(String(event.payload.notes))
+        if (event.payload?.pattern) contentParts.push(String(event.payload.pattern))
+        if (event.payload?.actionable) contentParts.push(String(event.payload.actionable))
+
+        const content = contentParts.join('. ')
+
+        await embedAndStore(
+          orgId,
+          entityType as any,
+          content,
+          entityId,
+          event.source,
+          {
+            eventType: event.type,
+            eventId: event.id,
+            timestamp: event.timestamp,
+          }
+        )
+
+        console.log(`[EventBus] Auto-embedded ${event.type} event: ${event.id}`)
+      } catch (err) {
+        console.warn(`[EventBus] Auto-embed failed for ${event.type}:`, err)
+      }
+    }, 100) // Small delay to not block event processing
+  })
 }

@@ -17,6 +17,7 @@ interface UserProfile {
   communicationStyle: string
   frequentTopics: string[]
   preferredAgents: Record<string, number>
+  interactionTimes?: Record<string, number>
 }
 
 interface ProjectContext {
@@ -480,6 +481,198 @@ export function generateMemorySeed(): void {
  */
 export function getMemory(): NexusMemory {
   return memory
+}
+
+/**
+ * Compact old conversations into domain insights.
+ * Called automatically when conversation history exceeds 20 turns.
+ */
+export function compactConversations(): void {
+  if (memory.conversationHistory.length <= 20) return
+
+  // Take the oldest 15 turns to compact
+  const toCompact = memory.conversationHistory.slice(0, 15)
+
+  // Extract key topics from compacted turns
+  const topics = new Set<string>()
+  const agents = new Set<string>()
+
+  toCompact.forEach(turn => {
+    if (turn.role === 'user') {
+      const keywords = extractKeywords(turn.content)
+      keywords.forEach(kw => topics.add(kw))
+    }
+    if (turn.agent) agents.add(turn.agent)
+  })
+
+  // Create compact insight
+  const topicList = Array.from(topics).slice(0, 5).join(', ')
+  const agentList = Array.from(agents).slice(0, 3).join(', ')
+  const timeRange = new Date(toCompact[0].timestamp).toLocaleDateString()
+
+  const insight = `Session ${timeRange}: Discussed ${topicList}${agentList ? ` via ${agentList.toUpperCase()}` : ''} (${toCompact.length} turns compacted)`
+
+  // Add to domain insights (max 20)
+  memory.seedKnowledge.domainInsights.unshift(insight)
+  if (memory.seedKnowledge.domainInsights.length > 20) {
+    memory.seedKnowledge.domainInsights = memory.seedKnowledge.domainInsights.slice(0, 20)
+  }
+
+  // Remove compacted turns
+  memory.conversationHistory = memory.conversationHistory.slice(15)
+
+  saveToLocalStorage()
+  console.log('[NexusMemory] Compacted 15 turns into domain insight')
+}
+
+/**
+ * Extract key facts from text content.
+ * Looks for dollar amounts, dates, percentages, and domain terms.
+ */
+export function extractKeyFacts(content: string): string[] {
+  const facts: string[] = []
+
+  // Dollar amounts
+  const dollarMatches = content.match(/\$[\d,]+(?:\.\d{2})?/g)
+  if (dollarMatches) {
+    dollarMatches.slice(0, 3).forEach(m => facts.push(`Amount: ${m}`))
+  }
+
+  // Percentages
+  const pctMatches = content.match(/\d+(?:\.\d+)?%/g)
+  if (pctMatches) {
+    pctMatches.slice(0, 2).forEach(m => facts.push(`Rate: ${m}`))
+  }
+
+  // Dates (various formats)
+  const dateMatches = content.match(/\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}/g)
+  if (dateMatches) {
+    dateMatches.slice(0, 2).forEach(m => facts.push(`Date: ${m}`))
+  }
+
+  // Electrical terms
+  const electricalTerms = ['panel', 'circuit', 'amp', 'wire', 'conduit', 'breaker', 'outlet', 'switch', 'meter', 'generator', 'transformer', 'NEC', 'permit']
+  const contentLower = content.toLowerCase()
+  electricalTerms.forEach(term => {
+    if (contentLower.includes(term)) facts.push(`Domain: ${term}`)
+  })
+
+  return [...new Set(facts)].slice(0, 8)
+}
+
+/**
+ * Seed memory from a completed job.
+ * Creates a domain insight capturing the job outcome.
+ */
+export function seedFromJobCompletion(project: {
+  name: string
+  type?: string
+  contract_value?: number
+  status: string
+}): void {
+  if (project.status !== 'completed' && project.status !== 'closed') return
+
+  const valueStr = project.contract_value
+    ? ` ($${project.contract_value.toLocaleString()})`
+    : ''
+  const typeStr = project.type ? `${project.type} ` : ''
+
+  const insight = `Completed ${typeStr}job "${project.name}"${valueStr} on ${new Date().toLocaleDateString()}`
+
+  // Add to domain insights
+  memory.seedKnowledge.domainInsights.unshift(insight)
+  if (memory.seedKnowledge.domainInsights.length > 20) {
+    memory.seedKnowledge.domainInsights = memory.seedKnowledge.domainInsights.slice(0, 20)
+  }
+
+  // Also add as learned pattern
+  if (project.type && project.contract_value) {
+    addLearnedPattern(`${project.type} jobs: completed "${project.name}" at $${project.contract_value.toLocaleString()}`)
+  }
+
+  saveToLocalStorage()
+  console.log(`[NexusMemory] Seeded from job completion: ${project.name}`)
+}
+
+/**
+ * Enhanced context getter that includes compacted insights.
+ * Calls compactConversations() first to ensure fresh window.
+ */
+export function getCompactContext(maxTurns: number = 10): string {
+  // Auto-compact if needed
+  compactConversations()
+
+  // Get base context
+  const baseContext = getContext(maxTurns)
+
+  // Add domain insights
+  const insights = memory.seedKnowledge.domainInsights
+  if (insights.length === 0) return baseContext
+
+  const insightLines = insights.slice(0, 5).map(i => `  - ${i}`).join('\n')
+
+  return `${baseContext}\n\n## Domain Insights (from past sessions)\n${insightLines}`
+}
+
+/**
+ * Track interaction patterns — which agents, what times, what topics.
+ * Call after each NEXUS response to build user behavioral profile.
+ */
+export function trackInteractionPatterns(agentId: string, category: string): void {
+  // Track preferred agents
+  memory.userProfile.preferredAgents[agentId] =
+    (memory.userProfile.preferredAgents[agentId] || 0) + 1
+
+  // Track interaction time patterns (hour of day)
+  const hour = new Date().getHours()
+  const timeSlot = hour < 6 ? 'early_morning' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night'
+
+  if (!memory.userProfile.interactionTimes) {
+    memory.userProfile.interactionTimes = {}
+  }
+  memory.userProfile.interactionTimes[timeSlot] =
+    (memory.userProfile.interactionTimes[timeSlot] || 0) + 1
+
+  saveToLocalStorage()
+}
+
+/**
+ * Build a profile-aware prompt fragment for NEXUS.
+ * Returns a string to inject into the system prompt.
+ */
+export function applyProfileToPrompt(): string {
+  const profile = memory.userProfile
+  const lines: string[] = []
+
+  lines.push(`User: ${profile.name} (${profile.role})`)
+  lines.push(`Location: ${profile.location}`)
+  lines.push(`Style: ${profile.communicationStyle}`)
+
+  // Most used agents
+  const agentEntries = Object.entries(profile.preferredAgents)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
+    .slice(0, 3)
+
+  if (agentEntries.length > 0) {
+    const agentStr = agentEntries.map(([agent, count]) => `${agent.toUpperCase()}(${count})`).join(', ')
+    lines.push(`Most used agents: ${agentStr}`)
+  }
+
+  // Frequent topics
+  if (profile.frequentTopics.length > 0) {
+    lines.push(`Recent topics: ${profile.frequentTopics.join(', ')}`)
+  }
+
+  // Time patterns
+  if (profile.interactionTimes) {
+    const peakTime = Object.entries(profile.interactionTimes)
+      .sort(([, a], [, b]) => (b as number) - (a as number))[0]
+    if (peakTime) {
+      lines.push(`Peak usage: ${peakTime[0].replace('_', ' ')}`)
+    }
+  }
+
+  return `## User Profile\n${lines.join('\n')}`
 }
 
 /**

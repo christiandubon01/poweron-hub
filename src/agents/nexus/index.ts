@@ -14,7 +14,7 @@
 
 import { classifyIntent, type ClassifiedIntent, type ConversationMessage } from './classifier'
 import { routeToAgent, type AgentResponse } from './router'
-import { addTurn, getContext, updateProjectContext, getMemory } from '@/services/nexusMemory'
+import { addTurn, getContext, getCompactContext, updateProjectContext, getMemory, trackInteractionPatterns, applyProfileToPrompt } from '@/services/nexusMemory'
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
 import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
 import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
@@ -54,7 +54,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   let memoryContext = ''
 
   try {
-    memoryContext = getContext(10)
+    memoryContext = getCompactContext(10)
   } catch (err) {
     console.warn('[NEXUS] Memory context loading failed, continuing:', err)
   }
@@ -66,6 +66,44 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       memoryContext = memoryContext
         ? `${memoryContext}\n\n${eventContext}`
         : eventContext
+    }
+  } catch {
+    // Non-critical
+  }
+
+  // ── Step 1b: Enrich with vector memory (semantic search) ─────────────
+  try {
+    const { getRelatedMemories } = await import('@/services/vectorMemory')
+    const relatedMemories = await getRelatedMemories(request.orgId, request.message, {
+      limit: 3,
+      threshold: 0.65,
+    })
+    if (relatedMemories.length > 0) {
+      const memoryLines = relatedMemories.map(m =>
+        `- [${m.entity_type}] ${m.content.substring(0, 150)} (${Math.round(m.similarity * 100)}% match)`
+      )
+      memoryContext += `\n\n## Related Memories (vector search)\n${memoryLines.join('\n')}`
+    }
+  } catch {
+    // Vector memory not available — non-critical
+  }
+
+  // ── Step 1c: Add learned patterns context ────────────────────────────
+  try {
+    const { getPatternContext } = await import('@/services/patternLearning')
+    const patternCtx = getPatternContext(3)
+    if (patternCtx) {
+      memoryContext += `\n\n${patternCtx}`
+    }
+  } catch {
+    // Non-critical
+  }
+
+  // ── Step 1d: Add user profile context ────────────────────────────────
+  try {
+    const profileCtx = applyProfileToPrompt()
+    if (profileCtx) {
+      memoryContext += `\n\n${profileCtx}`
     }
   } catch {
     // Non-critical
@@ -130,6 +168,13 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
         })
       }
     }
+  } catch {
+    // Non-critical
+  }
+
+  // ── Step 6b: Track interaction patterns ──────────────────────────────
+  try {
+    trackInteractionPatterns(agentResponse.agentId, intent.category)
   } catch {
     // Non-critical
   }
