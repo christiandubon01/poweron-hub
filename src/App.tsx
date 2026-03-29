@@ -10,16 +10,6 @@
  * Phase 02: react-router routes will be added here for each agent view.
  */
 
-// ── Eruda Mobile Debugger ──────────────────────────────────────────────────
-// Inject Eruda mobile dev tools when ?debug=1 is in the URL.
-// Loads from CDN, initializes after script loads. No-op in production.
-if (typeof window !== 'undefined' && window.location.search.includes('debug=1')) {
-  const script = document.createElement('script')
-  script.src = 'https://cdn.jsdelivr.net/npm/eruda'
-  script.onload = () => (window as any).eruda?.init()
-  document.head.appendChild(script)
-}
-
 import { useEffect } from 'react'
 import { LoginFlow } from '@/components/auth/LoginFlow'
 import { AppShell } from '@/components/layout/AppShell'

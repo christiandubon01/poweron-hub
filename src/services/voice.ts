@@ -686,9 +686,14 @@ export class VoiceSubsystem {
 
     let ttsPlayed = false
     try {
+      // Hard safety guard — truncate TTS text to 800 characters max.
+      // Prevents sending full markdown reports to ElevenLabs (which produces
+      // 60+ second audio blobs that choke mobile playback).
+      const ttsText = responseText.slice(0, 800)
+      debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
       debugPush('ElevenLabs TTS — requesting synthesis...')
       const ttsResult = await synthesizeWithElevenLabs({
-        text: responseText,
+        text: ttsText,
         voice_id: this.preferences.ttsVoiceId,
         voice_settings: {
           stability: 0.75,
