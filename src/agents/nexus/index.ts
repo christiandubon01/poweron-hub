@@ -75,6 +75,10 @@ function stripToVoiceSummary(markdown: string): string {
     // Remove code blocks
     .replace(/```[\s\S]*?```/g, '')
     .replace(/`([^`]+)`/g, '$1')
+    // Remove operational briefing section headers (PROJECTS BUCKET:, etc.)
+    .replace(/^[A-Z][A-Z\s/]+(?:\([^)]*\))?:\s*$/gm, '')
+    // Remove inline label prefixes like "Current phase status:" → keep the value
+    .replace(/^[-*]\s*[A-Za-z ]+:\s*/gm, '')
     // Collapse bullet points into sentences
     .replace(/^\s*[-*]\s+/gm, '')
     // Collapse numbered lists
@@ -100,6 +104,21 @@ function stripToVoiceSummary(markdown: string): string {
 
 const DEEP_DIVE_TRIGGERS = ['go deeper', 'deep dive', 'deepdive', 'full report', 'full breakdown', 'more detail', 'expand']
 
+const OPERATIONAL_BRIEFING_TRIGGERS = [
+  'how are my jobs', 'how is the business', 'give me an overview', 'how are things',
+  'operations', 'status update', 'how\'s business', 'what\'s going on',
+  'morning briefing', 'daily summary', 'weekly overview', 'how we doing',
+  'how are we doing', 'what needs my attention', 'operational',
+]
+
+/**
+ * Detect if a message is requesting a broad operational overview.
+ */
+function isOperationalQuery(message: string): boolean {
+  const lower = message.toLowerCase()
+  return OPERATIONAL_BRIEFING_TRIGGERS.some(t => lower.includes(t))
+}
+
 export function detectMode(message: string, requestedMode?: NexusMode): NexusMode {
   if (requestedMode === 'deepdive') return 'deepdive'
   const lower = message.toLowerCase()
@@ -124,6 +143,39 @@ Provide a full per-agent breakdown:
 - Each section: status, key numbers, risks, and recommended actions
 - Use concrete data — dollar amounts, project names, percentages
 - End with a consolidated priority action list
+`
+
+const OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION = `
+## Response Format — OPERATIONAL BRIEFING
+You are generating a full operational briefing. Pull data from ALL agent domains and respond in this EXACT structure:
+
+OPENING (1 sentence):
+Start with: "I've pulled from [list agent names used] — here's your full operational picture across projects and service calls."
+
+PROJECTS BUCKET:
+- Current phase status: [X projects active, Y stuck in estimating, Z completed]
+- Cash flow exposure: [top 2-3 projects by outstanding AR with dollar amounts]
+- Ghost time eaters: [coordination gaps, RFI items, phase mismatches — be specific]
+- Critical insight: [one specific pattern you detected in the data]
+- Action: [one specific thing to do this week]
+
+SERVICE CALLS BUCKET (default: last 30 days):
+- Collection rate: [X% collected, $Y outstanding]
+- Top overdue: [customer name, dollar amount, days overdue]
+- Overhead flag: [any pattern in gas/material/labor costs]
+- Action: [one specific follow-up]
+
+MILESTONE:
+"At your current trajectory, closing [gap 1], [gap 2], and [gap 3] puts you at 30% operational improvement by approximately [calculated month based on data]. Keep close eye on: follow-up cadence, audit logging, entry consistency."
+
+HANDOFF:
+"Tell me what you want to dive deeper into — projects, collections, overhead breakdown, or milestone plan."
+
+CRITICAL RULES:
+- Use real project names, real customer names, real dollar amounts from the data provided.
+- Never use placeholder text — if data is missing, say "no data available for this section."
+- Keep each section tight — 2-4 lines max per section.
+- Format with clean section headers for chat display.
 `
 
 /**
@@ -274,7 +326,12 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
 
   // ── Step 4: Route to target agent ───────────────────────────────────────
   // Inject mode-specific formatting instruction + user preferences into the message
-  const modeInstruction = mode === 'deepdive' ? DEEP_DIVE_FORMAT_INSTRUCTION : BRIEFING_FORMAT_INSTRUCTION
+  const isOpBriefing = isOperationalQuery(request.message)
+  const modeInstruction = isOpBriefing
+    ? OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION
+    : mode === 'deepdive'
+      ? DEEP_DIVE_FORMAT_INSTRUCTION
+      : BRIEFING_FORMAT_INSTRUCTION
   let enrichedMessage = `${request.message}\n\n${modeInstruction}`
 
   // Prepend user preferences so the agent respects them
@@ -359,6 +416,8 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   }
 
   // ── Generate voice summary for TTS when this is a voice command ──────────
+  // For operational briefings via voice, strip section headers and convert to
+  // natural conversational sentences under 60 seconds (~150 words).
   const voiceSummary = request.isVoiceCommand
     ? stripToVoiceSummary(agentResponse.content)
     : undefined

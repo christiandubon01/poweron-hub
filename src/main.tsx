@@ -1,8 +1,8 @@
 // ── Eruda Mobile Debugger ──────────────────────────────────────────────────
-// Lazy-load Eruda when ?debug=1 is present. Uses npm package (not CDN) to
-// avoid Netlify CSP header blocks. Tree-shaken out of production builds
-// unless the dynamic import is triggered.
-if (import.meta.env.DEV || (typeof window !== 'undefined' && window.location.search.includes('debug=1'))) {
+// Lazy-load Eruda ONLY when ?debug=1 is present. Uses npm package (not CDN)
+// to avoid Netlify CSP header blocks. Never loads on the production URL
+// without the debug flag — zero debug UI visible to end users.
+if (typeof window !== 'undefined' && window.location.search.includes('debug=1')) {
   import('eruda').then(({ default: eruda }) => eruda.init())
 }
 

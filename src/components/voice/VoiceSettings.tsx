@@ -11,8 +11,8 @@
  *   - Set noise suppression strength for field mode
  */
 
-import { useState, useEffect, useRef } from 'react'
-import { Volume2, Mic, Radio, Shield, Save, Loader2, Check, Play, Square } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Volume2, Mic, Radio, Shield, Save, Loader2, Check, Play, Square, AlertCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
@@ -55,6 +55,8 @@ export function VoiceSettings() {
   const [apiVoices, setApiVoices] = useState<ElevenLabsAPIVoice[]>([])
   const [voicesLoading, setVoicesLoading] = useState(true)
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const previewAudioRef = useRef<HTMLAudioElement | null>(null)
 
   const orgId = profile?.org_id
@@ -74,28 +76,80 @@ export function VoiceSettings() {
     return () => { cancelled = true }
   }, [])
 
-  // Preview voice playback
-  const handlePreview = (voice: ElevenLabsAPIVoice) => {
+  // Preview voice playback — uses HTMLAudioElement with playsInline for iOS
+  const handlePreview = useCallback((voice: ElevenLabsAPIVoice) => {
     // Stop any current preview
     if (previewAudioRef.current) {
       previewAudioRef.current.pause()
+      previewAudioRef.current.removeAttribute('src')
       previewAudioRef.current = null
     }
 
+    // Toggle off if already previewing this voice
     if (previewingVoice === voice.voice_id) {
       setPreviewingVoice(null)
+      setPreviewLoading(null)
       return
     }
 
-    if (voice.preview_url) {
-      setPreviewingVoice(voice.voice_id)
-      const audio = new Audio(voice.preview_url)
-      audio.onended = () => setPreviewingVoice(null)
-      audio.onerror = () => setPreviewingVoice(null)
-      audio.play().catch(() => setPreviewingVoice(null))
-      previewAudioRef.current = audio
+    if (!voice.preview_url) {
+      setPreviewError(voice.voice_id)
+      setTimeout(() => setPreviewError(null), 3000)
+      return
     }
-  }
+
+    // Show loading state
+    setPreviewLoading(voice.voice_id)
+    setPreviewError(null)
+
+    // Fetch audio data, then play via HTMLAudioElement with playsInline
+    fetch(voice.preview_url)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.arrayBuffer()
+      })
+      .then(buffer => {
+        const blob = new Blob([buffer], { type: 'audio/mpeg' })
+        const url = URL.createObjectURL(blob)
+
+        const audio = document.createElement('audio')
+        audio.playsInline = true
+        audio.preload = 'auto'
+        audio.src = url
+
+        audio.oncanplaythrough = () => {
+          setPreviewLoading(null)
+          setPreviewingVoice(voice.voice_id)
+          audio.play().catch(() => {
+            setPreviewingVoice(null)
+            setPreviewError(voice.voice_id)
+            setTimeout(() => setPreviewError(null), 3000)
+            URL.revokeObjectURL(url)
+          })
+        }
+
+        audio.onended = () => {
+          setPreviewingVoice(null)
+          URL.revokeObjectURL(url)
+        }
+
+        audio.onerror = () => {
+          setPreviewLoading(null)
+          setPreviewingVoice(null)
+          setPreviewError(voice.voice_id)
+          setTimeout(() => setPreviewError(null), 3000)
+          URL.revokeObjectURL(url)
+        }
+
+        audio.load()
+        previewAudioRef.current = audio
+      })
+      .catch(() => {
+        setPreviewLoading(null)
+        setPreviewError(voice.voice_id)
+        setTimeout(() => setPreviewError(null), 3000)
+      })
+  }, [previewingVoice])
 
   // Cleanup preview on unmount
   useEffect(() => {
@@ -223,6 +277,8 @@ export function VoiceSettings() {
                 voice={voice}
                 selected={prefs.tts_voice_id === voice.voice_id}
                 previewing={previewingVoice === voice.voice_id}
+                previewLoading={previewLoading === voice.voice_id}
+                previewFailed={previewError === voice.voice_id}
                 onClick={() => update('tts_voice_id', voice.voice_id)}
                 onPreview={() => handlePreview(voice)}
               />
@@ -439,10 +495,12 @@ function VoiceCard({ voice, selected, onClick }: {
   )
 }
 
-function APIVoiceCard({ voice, selected, previewing, onClick, onPreview }: {
+function APIVoiceCard({ voice, selected, previewing, previewLoading, previewFailed, onClick, onPreview }: {
   voice: ElevenLabsAPIVoice
   selected: boolean
   previewing: boolean
+  previewLoading?: boolean
+  previewFailed?: boolean
   onClick: () => void
   onPreview: () => void
 }) {
@@ -472,26 +530,44 @@ function APIVoiceCard({ voice, selected, previewing, onClick, onPreview }: {
           )}>
             {voice.name}
           </span>
-          <p className="text-xs text-gray-500 capitalize truncate">{gender}</p>
+          <p className={clsx(
+            'text-xs capitalize truncate',
+            previewFailed ? 'text-red-400' : 'text-gray-500',
+          )}>
+            {previewFailed ? 'Preview unavailable' : gender}
+          </p>
         </div>
         {selected && (
           <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
         )}
       </button>
-      {voice.preview_url && (
+      {voice.preview_url ? (
         <button
           onClick={(e) => { e.stopPropagation(); onPreview() }}
+          disabled={previewLoading}
           className={clsx(
             'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors',
-            previewing
-              ? 'bg-cyan-600 text-white'
-              : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200',
+            previewLoading
+              ? 'bg-gray-700 text-gray-500 cursor-wait'
+              : previewing
+                ? 'bg-cyan-600 text-white'
+                : previewFailed
+                  ? 'bg-red-900/50 text-red-400'
+                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200',
           )}
-          title={previewing ? 'Stop preview' : 'Preview voice'}
+          title={previewLoading ? 'Loading...' : previewing ? 'Stop preview' : previewFailed ? 'Preview failed' : 'Preview voice'}
         >
-          {previewing ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3 ml-0.5" />}
+          {previewLoading ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : previewing ? (
+            <Square className="w-3 h-3" />
+          ) : previewFailed ? (
+            <AlertCircle className="w-3 h-3" />
+          ) : (
+            <Play className="w-3 h-3 ml-0.5" />
+          )}
         </button>
-      )}
+      ) : null}
     </div>
   )
 }
