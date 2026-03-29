@@ -12,9 +12,9 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Zap, AlertTriangle, Shield, X, Check } from 'lucide-react'
+import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
-import { processMessage, type NexusResponse, type ConversationMessage, type ClassifiedIntent } from '@/agents/nexus'
+import { processMessage, detectMode, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
 import { MessageBubble, AgentBadge } from './MessageBubble'
 import { MorningBriefingCard } from './MorningBriefingCard'
 import { useAuth } from '@/hooks/useAuth'
@@ -51,6 +51,8 @@ export function NexusChatPanel() {
   const [error, setError]                   = useState<string | null>(null)
   const [pendingProposal, setPendingProposal] = useState<PendingProposal | null>(null)
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
+  const [mode, setMode]                     = useState<NexusMode>('briefing')
+  const [lastMsgMode, setLastMsgMode]       = useState<NexusMode>('briefing')
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
@@ -119,6 +121,10 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
 
     setIsProcessing(true)
 
+    // Detect if this message triggers deep dive
+    const effectiveMode = detectMode(trimmed, mode)
+    if (effectiveMode !== mode) setMode(effectiveMode)
+
     try {
       const response = await processMessage({
         message:     trimmed,
@@ -126,6 +132,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         userId:      profile.id,
         userName:    profile.full_name,
         conversationHistory: [...conversationHistory, userConvMsg],
+        mode:        effectiveMode,
       })
 
       // If HIGH/CRITICAL impact — show proposal card instead of direct response
@@ -157,9 +164,11 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           timestamp:   Date.now(),
           agentId:     response.agent.agentId,
           impactLevel: response.intent.impactLevel,
+          metadata:    { mode: response.mode },
         }
         setMessages(prev => [...prev, assistantMsg])
         setConversationHistory(prev => [...prev, response.conversationMessage])
+        setLastMsgMode(response.mode)
       }
 
     } catch (err) {
@@ -218,6 +227,23 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     setPendingProposal(null)
   }, [pendingProposal])
 
+  // Reset to briefing mode and clear conversation
+  const resetToNewAnalysis = useCallback(() => {
+    setMessages([])
+    setConversationHistory([])
+    setMode('briefing')
+    setLastMsgMode('briefing')
+    setError(null)
+    setPendingProposal(null)
+  }, [])
+
+  // Trigger deep dive mode
+  const triggerDeepDive = useCallback(() => {
+    setMode('deepdive')
+    setInput('deep dive')
+    setTimeout(() => inputRef.current?.focus(), 50)
+  }, [])
+
   // ── Key handler ─────────────────────────────────────────────────────────
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -239,12 +265,25 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           </div>
           <div>
             <div className="text-sm font-bold text-text-1">NEXUS</div>
-            <div className="text-[10px] text-text-3 font-mono">Manager Agent</div>
+            <div className="text-[10px] text-text-3 font-mono">
+              {mode === 'deepdive' ? 'Deep Dive Mode' : 'Manager Agent'}
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-subtle border border-green-border">
-          <span className="w-1.5 h-1.5 bg-green rounded-full animate-pulse" />
-          <span className="text-[10px] font-mono font-bold text-green">ONLINE</span>
+        <div className="flex items-center gap-2">
+          {mode === 'deepdive' && (
+            <button
+              onClick={resetToNewAnalysis}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-3 border border-bg-5 text-text-2 text-[10px] font-bold hover:bg-bg-4 transition-colors"
+            >
+              <RotateCcw size={11} />
+              New Analysis
+            </button>
+          )}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-subtle border border-green-border">
+            <span className="w-1.5 h-1.5 bg-green rounded-full animate-pulse" />
+            <span className="text-[10px] font-mono font-bold text-green">ONLINE</span>
+          </div>
         </div>
       </div>
 
@@ -295,7 +334,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         )}
 
         {/* Message thread */}
-        {messages.map(msg => {
+        {messages.map((msg, idx) => {
           // Render daily briefing as a special card
           if (msg.metadata?.type === 'daily_briefing' && msg.metadata?.stats) {
             return (
@@ -304,15 +343,32 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
               </div>
             )
           }
+
+          const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
+          const isBriefingMsg = msg.metadata?.mode === 'briefing' || (!msg.metadata?.mode && msg.role === 'assistant')
+
           return (
-            <MessageBubble
-              key={msg.id}
-              role={msg.role}
-              content={msg.content}
-              timestamp={msg.timestamp}
-              agentId={msg.agentId}
-              impactLevel={msg.impactLevel}
-            />
+            <div key={msg.id}>
+              <MessageBubble
+                role={msg.role}
+                content={msg.content}
+                timestamp={msg.timestamp}
+                agentId={msg.agentId}
+                impactLevel={msg.impactLevel}
+              />
+              {/* Show "Deep Dive" button below latest briefing response */}
+              {isLastAssistant && isBriefingMsg && mode === 'briefing' && !isProcessing && (
+                <div className="flex justify-end mt-1 pr-1">
+                  <button
+                    onClick={triggerDeepDive}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-2 border border-bg-4 text-[10px] font-bold text-text-2 hover:bg-bg-3 hover:text-text-1 transition-colors"
+                  >
+                    <ChevronDown size={11} />
+                    Deep Dive
+                  </button>
+                </div>
+              )}
+            </div>
           )
         })}
 

@@ -11,7 +11,97 @@ import { NEXUS_SYSTEM_PROMPT } from './systemPrompt'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getEventContext } from '@/services/agentEventBus'
 import { getLedgerContext } from '@/services/ledgerDataBridge'
+import { getBackupData, getProjectFinancials, num } from '@/services/backupDataService'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
+
+// ── Status Bucket Helpers ───────────────────────────────────────────────────
+
+function resolveStatusBucket(status: string): 'ACTIVE CONSTRUCTION' | 'ESTIMATING' | 'COMPLETED' | 'OTHER' {
+  const s = (status || '').toLowerCase().trim()
+  if (s === 'active' || s === 'in_progress' || s === 'construction') return 'ACTIVE CONSTRUCTION'
+  if (s === 'estimate' || s === 'estimating' || s === 'coming') return 'ESTIMATING'
+  if (s === 'complete' || s === 'completed') return 'COMPLETED'
+  return 'OTHER'
+}
+
+/**
+ * Build a project status/financials summary from local backup data.
+ * Returns a formatted context string for injection into the Claude prompt.
+ */
+function getLocalProjectContext(): string {
+  const backup = getBackupData()
+  if (!backup) return ''
+
+  const projects = Array.isArray(backup.projects) ? backup.projects : []
+  if (projects.length === 0) return ''
+
+  const buckets: Record<string, { count: number; contract: number; collected: number; names: string[] }> = {
+    'ACTIVE CONSTRUCTION': { count: 0, contract: 0, collected: 0, names: [] },
+    'ESTIMATING': { count: 0, contract: 0, collected: 0, names: [] },
+    'COMPLETED': { count: 0, contract: 0, collected: 0, names: [] },
+    'OTHER': { count: 0, contract: 0, collected: 0, names: [] },
+  }
+
+  for (const p of projects) {
+    const bucket = resolveStatusBucket(p.status)
+    const fin = getProjectFinancials(p, backup)
+    buckets[bucket].count++
+    buckets[bucket].contract += fin.contract
+    buckets[bucket].collected += fin.paid
+    if (p.name) buckets[bucket].names.push(p.name)
+  }
+
+  const lines: string[] = ['## Local Project Status (from device state)']
+  for (const [label, data] of Object.entries(buckets)) {
+    if (data.count === 0) continue
+    lines.push(`**${label}:** ${data.count} project${data.count !== 1 ? 's' : ''} | Contract: $${data.contract.toLocaleString()} | Collected: $${data.collected.toLocaleString()}`)
+    if (data.names.length) lines.push(`  Projects: ${data.names.slice(0, 5).join(', ')}`)
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * Build a weekly revenue context from local backup data (logs).
+ * Groups logs by ISO week, returns this week / last week / 4-week avg.
+ */
+export function getLocalPulseWeeklyContext(): string {
+  const backup = getBackupData()
+  if (!backup) return ''
+
+  const allLogs = [
+    ...(Array.isArray(backup.logs) ? backup.logs : []),
+    ...(Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []),
+  ]
+  if (allLogs.length === 0) return ''
+
+  // Get ISO week number
+  function isoWeek(dateStr: string): string {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return ''
+    const jan1 = new Date(d.getFullYear(), 0, 1)
+    const week = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7)
+    return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`
+  }
+
+  const weekBuckets = new Map<string, number>()
+  for (const log of allLogs) {
+    const dateStr: string = (log as any).date || ''
+    if (!dateStr) continue
+    const wk = isoWeek(dateStr)
+    if (!wk) continue
+    const collected = num((log as any).collected)
+    weekBuckets.set(wk, (weekBuckets.get(wk) || 0) + collected)
+  }
+
+  const sortedWeeks = Array.from(weekBuckets.entries()).sort((a, b) => b[0].localeCompare(a[0]))
+  const thisWeek = sortedWeeks[0]?.[1] ?? 0
+  const lastWeek = sortedWeeks[1]?.[1] ?? 0
+  const last4 = sortedWeeks.slice(0, 4).map(([, v]) => v)
+  const avg4 = last4.length ? last4.reduce((s, v) => s + v, 0) / last4.length : 0
+
+  return `## PULSE — Weekly Revenue (from device state)\nThis week: $${thisWeek.toLocaleString()} | Last week: $${lastWeek.toLocaleString()} | 4-week avg: $${Math.round(avg4).toLocaleString()}`
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,16 +176,31 @@ async function loadAgentContext(
 
   try {
     // ── Shared: always load active projects summary ──────────────────────
+    // Include all known status variants from both Supabase and local backup
     const { data: projects } = await supabase
       .from('projects')
       .select('id, name, status, type, priority, estimated_value, contract_value, phase')
       .eq('org_id', orgId)
-      .in('status', ['in_progress', 'approved', 'estimate', 'pending', 'punch_list'])
+      .in('status', [
+        'in_progress', 'approved', 'estimate', 'pending', 'punch_list',
+        'active', 'construction', 'estimating', 'coming', 'complete', 'completed',
+      ])
       .order('updated_at', { ascending: false })
       .limit(20)
 
     if (projects?.length) {
-      slices.push({ label: 'Active Projects', data: projects, count: projects.length })
+      // Annotate each project with its resolved bucket for Claude clarity
+      const annotated = (projects as Array<Record<string, unknown>>).map(p => ({
+        ...p,
+        _bucket: resolveStatusBucket(String(p['status'] ?? '')),
+      }))
+      slices.push({ label: 'Active Projects', data: annotated, count: annotated.length })
+    }
+
+    // ── Always inject local device project context (source of truth) ─────
+    const localProjectCtx = getLocalProjectContext()
+    if (localProjectCtx) {
+      slices.push({ label: 'Local Project Summary', data: [localProjectCtx], count: 1 })
     }
 
     // ── Agent-specific context loading ──────────────────────────────────
@@ -140,7 +245,13 @@ async function loadAgentContext(
       }
 
       case 'pulse': {
-        // 52-week tracker — current fiscal year
+        // ── Local device weekly revenue data (ground truth) ─────────────
+        const localPulseCtx = getLocalPulseWeeklyContext()
+        if (localPulseCtx) {
+          slices.push({ label: 'Local Weekly Revenue', data: [localPulseCtx], count: 1 })
+        }
+
+        // 52-week tracker — current fiscal year (Supabase cloud data)
         const { data: weekly } = await supabase
           .from('weekly_tracker' as never)
           .select('week_number, active_projects, service_revenue, project_revenue, unbilled_amount, ytd_revenue')

@@ -21,6 +21,8 @@ import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export type NexusMode = 'briefing' | 'deepdive'
+
 export interface NexusRequest {
   message:     string
   orgId:       string
@@ -28,6 +30,7 @@ export interface NexusRequest {
   userName?:   string
   conversationHistory: ConversationMessage[]
   isVoiceCommand?: boolean
+  mode?: NexusMode
 }
 
 export interface NexusResponse {
@@ -40,15 +43,48 @@ export interface NexusResponse {
   interviewTrigger?: AgentInterviewDefinition
   /** Pending MiroFish proposals awaiting human confirmation */
   pendingProposals?: MiroFishProposal[]
+  /** Current response mode */
+  mode: NexusMode
 }
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
+
+// ── Deep Dive Detection ─────────────────────────────────────────────────────
+
+const DEEP_DIVE_TRIGGERS = ['go deeper', 'deep dive', 'deepdive', 'full report', 'full breakdown', 'more detail', 'expand']
+
+export function detectMode(message: string, requestedMode?: NexusMode): NexusMode {
+  if (requestedMode === 'deepdive') return 'deepdive'
+  const lower = message.toLowerCase()
+  if (DEEP_DIVE_TRIGGERS.some(t => lower.includes(t))) return 'deepdive'
+  return requestedMode ?? 'briefing'
+}
+
+const BRIEFING_FORMAT_INSTRUCTION = `
+## Response Format — BRIEFING MODE
+Format your response as a concise briefing:
+- Max 5 bullet points using 🔴 (critical/urgent), 🟡 (needs attention), 🟢 (on track)
+- Each bullet: [Emoji] [Agent domain] — [one line max]
+- Priority score: HIGH / MEDIUM / LOW
+- Top 3 action items numbered (1. 2. 3.)
+- Be direct, specific with dollar amounts and names.
+`
+
+const DEEP_DIVE_FORMAT_INSTRUCTION = `
+## Response Format — DEEP DIVE MODE
+Provide a full per-agent breakdown:
+- Organize by agent domain (LEDGER, PULSE, BLUEPRINT, etc.) with clear headers
+- Each section: status, key numbers, risks, and recommended actions
+- Use concrete data — dollar amounts, project names, percentages
+- End with a consolidated priority action list
+`
 
 /**
  * Main NEXUS pipeline. Call this for every user message.
  */
 export async function processMessage(request: NexusRequest): Promise<NexusResponse> {
   const startTime = Date.now()
+  const mode = detectMode(request.message, request.mode)
 
   // ── Step 1: Load memory context + event bus context ─────────────────────
   let memoryContext = ''
@@ -132,9 +168,13 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   }
 
   // ── Step 4: Route to target agent ───────────────────────────────────────
+  // Inject mode-specific formatting instruction into the message
+  const modeInstruction = mode === 'deepdive' ? DEEP_DIVE_FORMAT_INSTRUCTION : BRIEFING_FORMAT_INSTRUCTION
+  const enrichedMessage = `${request.message}\n\n${modeInstruction}`
+
   const agentResponse = await routeToAgent(
     intent,
-    request.message,
+    enrichedMessage,
     request.orgId,
     request.conversationHistory
   )
@@ -210,6 +250,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     conversationMessage,
     interviewTrigger: (interviewDef && !request.isVoiceCommand) ? interviewDef : undefined,
     pendingProposals,
+    mode,
   }
 }
 

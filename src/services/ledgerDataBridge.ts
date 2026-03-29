@@ -262,17 +262,26 @@ export function getCollectionRate(): CollectionRate {
 /**
  * Get a complete LEDGER summary from local state.
  * This is the primary data source for the LEDGER agent's Claude context.
+ * Reads from BOTH backup.serviceLogs[].collected AND backup.logs[].collected.
  */
 export function getLedgerSummary(): LedgerSummary {
   const monthlyCollections = getMonthlyCollections(6)
   const outstandingAR = getOutstandingAR()
   const collectionRate = getCollectionRate()
 
-  // Total revenue from all service logs
   const backup = getBackupData()
-  const logs = Array.isArray(backup?.serviceLogs) ? backup!.serviceLogs : []
-  const totalRevenue = logs.reduce((sum, l) => sum + num(l.quoted), 0)
-  const totalCollected = logs.reduce((sum, l) => sum + num(l.collected), 0)
+
+  // Total revenue + collected from service logs
+  const serviceLogs = Array.isArray(backup?.serviceLogs) ? backup!.serviceLogs : []
+  const svcRevenue = serviceLogs.reduce((sum, l) => sum + num(l.quoted), 0)
+  const svcCollected = serviceLogs.reduce((sum, l) => sum + num(l.collected), 0)
+
+  // Total collected from project field logs (backup.logs[].collected)
+  const fieldLogs = Array.isArray(backup?.logs) ? backup!.logs : []
+  const projCollected = fieldLogs.reduce((sum, l) => sum + num((l as any).collected), 0)
+
+  const totalRevenue = svcRevenue
+  const totalCollected = svcCollected + projCollected
 
   return {
     monthlyCollections,
@@ -375,9 +384,10 @@ export function getLedgerContext(): string {
     }
   }
 
-  // Revenue summary
+  // Revenue summary — canonical one-liner for agent context
   lines.push('')
-  lines.push(`**Total Revenue:** $${summary.totalRevenue.toLocaleString()} | **Collected:** $${summary.totalCollected.toLocaleString()}`)
+  lines.push(`**Total collected all time: $${summary.totalCollected.toLocaleString()} | This month: $${(summary.monthlyCollections[0]?.collected ?? 0).toLocaleString()} | Outstanding AR: $${ar.totalAR.toLocaleString()}**`)
+  lines.push(`Total Revenue Quoted: $${summary.totalRevenue.toLocaleString()}`)
 
   return lines.join('\n')
 }
