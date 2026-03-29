@@ -774,31 +774,39 @@ export class VoiceSubsystem {
         return
       }
 
-      window.speechSynthesis.cancel()
+      const speak = () => {
+        window.speechSynthesis.cancel()
 
-      const utterance = new SpeechSynthesisUtterance(text.slice(0, 300))
-      utterance.rate = 0.95
-      utterance.pitch = 1.0
-      utterance.volume = 1.0
+        const utterance = new SpeechSynthesisUtterance(text.slice(0, 300))
+        utterance.rate = 0.95
+        utterance.pitch = 1.0
+        utterance.volume = 1.0
+        utterance.lang = 'en-US'
 
-      // Pick best available local English voice
+        const voices = window.speechSynthesis.getVoices()
+        debugPush(`WebSpeech — ${voices.length} voices available`)
+        const preferred = voices.find(v => v.lang.startsWith('en') && v.localService)
+        if (preferred) {
+          utterance.voice = preferred
+          debugPush(`WebSpeech — using voice: ${preferred.name}`)
+        }
+
+        utterance.onstart = () => debugPush('WebSpeech — started speaking')
+        utterance.onend = () => { debugPush('WebSpeech — done'); resolve() }
+        utterance.onerror = (e) => { debugPush(`WebSpeech error: ${e.error}`); resolve() }
+
+        window.speechSynthesis.speak(utterance)
+        debugPush('WebSpeech — speak() called')
+      }
+
+      // iOS sometimes needs voices to load first
       const voices = window.speechSynthesis.getVoices()
-      const preferred = voices.find(v =>
-        v.lang.startsWith('en') && v.localService
-      )
-      if (preferred) utterance.voice = preferred
-
-      utterance.onstart = () => debugPush('WebSpeech — started')
-      utterance.onend = () => {
-        debugPush('WebSpeech — complete')
-        resolve()
+      if (voices.length === 0) {
+        debugPush('WebSpeech — waiting for voices to load')
+        window.speechSynthesis.onvoiceschanged = () => { speak() }
+      } else {
+        speak()
       }
-      utterance.onerror = (e) => {
-        debugPush(`WebSpeech error: ${e.error}`)
-        resolve()
-      }
-
-      window.speechSynthesis.speak(utterance)
 
       // 30-second timeout fallback
       setTimeout(() => resolve(), 30000)

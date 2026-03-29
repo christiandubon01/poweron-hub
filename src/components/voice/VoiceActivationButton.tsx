@@ -149,6 +149,15 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
     // This MUST happen before any awaits or the gesture chain breaks.
     unlockAudioContext()
 
+    // Pre-unlock Web Speech on gesture — iOS requires a speechSynthesis.speak()
+    // call within the user gesture stack before it allows later async speak() calls.
+    if (window.speechSynthesis) {
+      const unlock = new SpeechSynthesisUtterance('')
+      unlock.volume = 0
+      window.speechSynthesis.speak(unlock)
+      window.speechSynthesis.cancel()
+    }
+
     const voice = getVoiceSubsystem()
 
     switch (status) {
