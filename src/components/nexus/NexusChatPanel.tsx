@@ -12,7 +12,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, RotateCcw } from 'lucide-react'
+import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
 import { processMessage, detectMode, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
 import { MessageBubble, AgentBadge } from './MessageBubble'
@@ -39,6 +39,93 @@ interface PendingProposal {
   intent:         ClassifiedIntent
   agentResponse:  NexusResponse['agent']
   message:        string
+}
+
+// ── DeepDiveSections — Collapsible per-agent breakdown for deep dive responses ──
+
+/**
+ * Parses a deep dive markdown response (with ## Agent headers) into
+ * collapsible accordion sections. Each ## section is independently expandable.
+ */
+function DeepDiveSections({ content, agentId }: { content: string; agentId?: string }) {
+  // Split on ## headers to get sections
+  const sectionRegex = /^(##\s+.+)$/gm
+  const parts = content.split(sectionRegex)
+  // parts[0] = text before first ##, then alternating [header, body, header, body, ...]
+
+  const sections: Array<{ title: string; body: string }> = []
+  let preamble = ''
+
+  if (parts.length <= 1) {
+    // No ## sections found — fall back to plain render
+    preamble = content
+  } else {
+    preamble = parts[0].trim()
+    for (let i = 1; i < parts.length; i += 2) {
+      const title = parts[i].replace(/^##\s*/, '').trim()
+      const body = (parts[i + 1] || '').trim()
+      if (title) sections.push({ title, body })
+    }
+  }
+
+  const [openSections, setOpenSections] = useState<Record<number, boolean>>(() => {
+    // First section open by default
+    const init: Record<number, boolean> = {}
+    if (sections.length > 0) init[0] = true
+    return init
+  })
+
+  const toggle = (idx: number) => {
+    setOpenSections(prev => ({ ...prev, [idx]: !prev[idx] }))
+  }
+
+  const agentColor = agentId
+    ? { nexus: '#2ee89a', vault: '#ffd24a', pulse: '#3a8eff', ledger: '#40d4ff',
+        spark: '#ff5fa0', blueprint: '#aa6eff', ohm: '#a8ff3e', chrono: '#ff9040', scout: '#ff5060' }[agentId] ?? '#2ee89a'
+    : '#2ee89a'
+
+  return (
+    <div className="text-sm text-text-2 leading-relaxed">
+      {/* Preamble text before first ## */}
+      {preamble && (
+        <div className="whitespace-pre-wrap mb-3">{preamble}</div>
+      )}
+
+      {/* Collapsible sections */}
+      {sections.map((section, idx) => (
+        <div
+          key={idx}
+          className="mb-2 rounded-lg border border-bg-4 overflow-hidden"
+          style={{ borderColor: openSections[idx] ? `${agentColor}33` : undefined }}
+        >
+          {/* Section header — clickable */}
+          <button
+            onClick={() => toggle(idx)}
+            className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-bg-3 transition-colors"
+            style={{ backgroundColor: openSections[idx] ? `${agentColor}0d` : undefined }}
+          >
+            <span
+              className="text-xs font-bold uppercase tracking-wider"
+              style={{ color: openSections[idx] ? agentColor : '#9ca3af' }}
+            >
+              {section.title}
+            </span>
+            {openSections[idx]
+              ? <ChevronDown size={12} style={{ color: agentColor }} />
+              : <ChevronRight size={12} className="text-text-4" />
+            }
+          </button>
+
+          {/* Section body */}
+          {openSections[idx] && (
+            <div className="px-3 pb-3 pt-1 whitespace-pre-wrap text-text-2 text-xs leading-relaxed bg-bg-1/30">
+              {section.body}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -346,16 +433,45 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
 
           const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
           const isBriefingMsg = msg.metadata?.mode === 'briefing' || (!msg.metadata?.mode && msg.role === 'assistant')
+          const isDeepDiveMsg = msg.metadata?.mode === 'deepdive' && msg.role === 'assistant'
 
           return (
             <div key={msg.id}>
-              <MessageBubble
-                role={msg.role}
-                content={msg.content}
-                timestamp={msg.timestamp}
-                agentId={msg.agentId}
-                impactLevel={msg.impactLevel}
-              />
+              {/* Deep dive: render collapsible sections instead of plain MessageBubble */}
+              {isDeepDiveMsg ? (
+                <div className="flex gap-3 animate-fade-in">
+                  {/* Avatar */}
+                  <div className={clsx(
+                    'w-7 h-7 rounded-lg border flex items-center justify-center flex-shrink-0 mt-1',
+                    'bg-[rgba(46,232,154,0.10)] border-[rgba(46,232,154,0.25)]'
+                  )}>
+                    <span className="text-[9px] font-mono font-bold text-nexus">
+                      {(msg.agentId ?? 'N').charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  {/* Bubble */}
+                  <div className="max-w-[90%] w-full rounded-2xl px-4 py-3 bg-bg-2 border border-bg-4">
+                    {/* Badge */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase tracking-wider border bg-[rgba(46,232,154,0.10)] border-[rgba(46,232,154,0.25)] text-nexus">
+                        DEEP DIVE — {(msg.agentId ?? 'nexus').toUpperCase()}
+                      </span>
+                      <span className="text-[9px] font-mono text-text-4">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <DeepDiveSections content={msg.content} agentId={msg.agentId} />
+                  </div>
+                </div>
+              ) : (
+                <MessageBubble
+                  role={msg.role}
+                  content={msg.content}
+                  timestamp={msg.timestamp}
+                  agentId={msg.agentId}
+                  impactLevel={msg.impactLevel}
+                />
+              )}
               {/* Show "Deep Dive" button below latest briefing response */}
               {isLastAssistant && isBriefingMsg && mode === 'briefing' && !isProcessing && (
                 <div className="flex justify-end mt-1 pr-1">

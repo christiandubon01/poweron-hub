@@ -172,7 +172,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   const modeInstruction = mode === 'deepdive' ? DEEP_DIVE_FORMAT_INSTRUCTION : BRIEFING_FORMAT_INSTRUCTION
   const enrichedMessage = `${request.message}\n\n${modeInstruction}`
 
-  const agentResponse = await routeToAgent(
+  let agentResponse = await routeToAgent(
     intent,
     enrichedMessage,
     request.orgId,
