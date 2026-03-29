@@ -16,6 +16,9 @@ import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, 
 import { clsx } from 'clsx'
 import { processMessage, detectMode, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
 import { MessageBubble, AgentBadge } from './MessageBubble'
+import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
+import { NexusPresenceOrb, type OrbState } from './NexusPresenceOrb'
+import { onOrbStateChange } from '@/services/voice'
 import { MorningBriefingCard } from './MorningBriefingCard'
 import { useAuth } from '@/hooks/useAuth'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
@@ -88,7 +91,7 @@ function DeepDiveSections({ content, agentId }: { content: string; agentId?: str
     <div className="text-sm text-text-2 leading-relaxed">
       {/* Preamble text before first ## */}
       {preamble && (
-        <div className="whitespace-pre-wrap mb-3">{preamble}</div>
+        <div className="mb-3" dangerouslySetInnerHTML={{ __html: renderMarkdown(preamble) }} />
       )}
 
       {/* Collapsible sections */}
@@ -118,9 +121,10 @@ function DeepDiveSections({ content, agentId }: { content: string; agentId?: str
 
           {/* Section body */}
           {openSections[idx] && (
-            <div className="px-3 pb-3 pt-1 whitespace-pre-wrap text-text-2 text-xs leading-relaxed bg-bg-1/30">
-              {section.body}
-            </div>
+            <div
+              className="px-3 pb-3 pt-1 text-text-2 text-xs leading-relaxed bg-bg-1/30"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(section.body) }}
+            />
           )}
         </div>
       ))}
@@ -140,6 +144,12 @@ export function NexusChatPanel() {
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
   const [mode, setMode]                     = useState<NexusMode>('briefing')
   const [lastMsgMode, setLastMsgMode]       = useState<NexusMode>('briefing')
+
+  // Orb state — subscribes to real-time voice subsystem status
+  const [orbState, setOrbState] = useState<OrbState>('inactive')
+  useEffect(() => {
+    return onOrbStateChange((status) => setOrbState(status as OrbState))
+  }, [])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
@@ -372,6 +382,11 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
             <span className="text-[10px] font-mono font-bold text-green">ONLINE</span>
           </div>
         </div>
+      </div>
+
+      {/* NEXUS Presence Orb — centered above transcript */}
+      <div className="flex justify-center py-4 flex-shrink-0">
+        <NexusPresenceOrb state={orbState} size={180} />
       </div>
 
       {/* Messages */}

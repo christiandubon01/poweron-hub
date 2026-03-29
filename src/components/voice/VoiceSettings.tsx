@@ -76,13 +76,45 @@ export function VoiceSettings() {
     return () => { cancelled = true }
   }, [])
 
-  // Preview voice playback — uses HTMLAudioElement with playsInline for iOS
+  // Web Speech API fallback for preview when HTMLAudioElement fails (iPhone Chrome/Safari)
+  const speakPreviewFallback = useCallback((voiceName: string, voiceId: string) => {
+    if (!window.speechSynthesis) {
+      setPreviewingVoice(null)
+      setPreviewError(voiceId)
+      setTimeout(() => setPreviewError(null), 3000)
+      return
+    }
+    const utterance = new SpeechSynthesisUtterance(
+      `This is ${voiceName}. I am your NEXUS voice assistant for Power On Solutions.`
+    )
+    utterance.rate = 1.0
+    utterance.pitch = 1.0
+    utterance.volume = 1.0
+    utterance.onstart = () => {
+      setPreviewLoading(null)
+      setPreviewingVoice(voiceId)
+    }
+    utterance.onend = () => setPreviewingVoice(null)
+    utterance.onerror = () => {
+      setPreviewingVoice(null)
+      setPreviewError(voiceId)
+      setTimeout(() => setPreviewError(null), 3000)
+    }
+    window.speechSynthesis.speak(utterance)
+  }, [])
+
+  // Preview voice playback — uses HTMLAudioElement with playsInline for iOS,
+  // falls back to Web Speech API if audio playback fails (iPhone Chrome/Safari)
   const handlePreview = useCallback((voice: ElevenLabsAPIVoice) => {
     // Stop any current preview
     if (previewAudioRef.current) {
       previewAudioRef.current.pause()
       previewAudioRef.current.removeAttribute('src')
       previewAudioRef.current = null
+    }
+    // Cancel any ongoing Web Speech
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel()
     }
 
     // Toggle off if already previewing this voice
@@ -93,8 +125,8 @@ export function VoiceSettings() {
     }
 
     if (!voice.preview_url) {
-      setPreviewError(voice.voice_id)
-      setTimeout(() => setPreviewError(null), 3000)
+      // No preview URL — try Web Speech fallback directly
+      speakPreviewFallback(voice.name, voice.voice_id)
       return
     }
 
@@ -121,10 +153,9 @@ export function VoiceSettings() {
           setPreviewLoading(null)
           setPreviewingVoice(voice.voice_id)
           audio.play().catch(() => {
-            setPreviewingVoice(null)
-            setPreviewError(voice.voice_id)
-            setTimeout(() => setPreviewError(null), 3000)
+            // HTMLAudioElement failed — fall back to Web Speech API
             URL.revokeObjectURL(url)
+            speakPreviewFallback(voice.name, voice.voice_id)
           })
         }
 
@@ -135,10 +166,9 @@ export function VoiceSettings() {
 
         audio.onerror = () => {
           setPreviewLoading(null)
-          setPreviewingVoice(null)
-          setPreviewError(voice.voice_id)
-          setTimeout(() => setPreviewError(null), 3000)
           URL.revokeObjectURL(url)
+          // Fall back to Web Speech instead of showing error
+          speakPreviewFallback(voice.name, voice.voice_id)
         }
 
         audio.load()
@@ -146,10 +176,10 @@ export function VoiceSettings() {
       })
       .catch(() => {
         setPreviewLoading(null)
-        setPreviewError(voice.voice_id)
-        setTimeout(() => setPreviewError(null), 3000)
+        // Fetch failed — fall back to Web Speech
+        speakPreviewFallback(voice.name, voice.voice_id)
       })
-  }, [previewingVoice])
+  }, [previewingVoice, speakPreviewFallback])
 
   // Cleanup preview on unmount
   useEffect(() => {
@@ -225,6 +255,10 @@ export function VoiceSettings() {
   const update = (key: keyof VoicePrefs, value: unknown) => {
     setPrefs(prev => ({ ...prev, [key]: value }))
     setSaved(false)
+    // Persist voice ID to localStorage immediately so TTS picks it up at call time
+    if (key === 'tts_voice_id' && typeof value === 'string') {
+      localStorage.setItem('nexus_voice_id', value)
+    }
   }
 
   const selectedVoice = apiVoices.find(v => v.voice_id === prefs.tts_voice_id)

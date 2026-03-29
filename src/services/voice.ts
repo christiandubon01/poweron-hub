@@ -113,6 +113,27 @@ export function onDebugUpdate(fn: () => void): () => void {
   return () => _debugListeners.delete(fn)
 }
 
+// ── Orb State Emitter ──────────────────────────────────────────────────────
+// Allows NexusPresenceOrb to subscribe to real-time voice state changes.
+
+type OrbStateListener = (status: VoiceSessionStatus) => void
+let _orbListeners: Set<OrbStateListener> = new Set()
+let _lastOrbState: VoiceSessionStatus = 'inactive'
+
+/** Subscribe to orb state changes. Returns unsubscribe function. */
+export function onOrbStateChange(fn: OrbStateListener): () => void {
+  _orbListeners.add(fn)
+  // Immediately fire with current state so subscriber syncs on mount
+  fn(_lastOrbState)
+  return () => _orbListeners.delete(fn)
+}
+
+/** Emit orb state to all listeners. Called internally at every setStatus() transition. */
+function emitOrbState(status: VoiceSessionStatus): void {
+  _lastOrbState = status
+  _orbListeners.forEach(fn => { try { fn(status) } catch { /* ignore */ } })
+}
+
 // ── iOS AudioContext Singleton ───────────────────────────────────────────────
 // iOS Safari only allows AudioContext creation and resume during a user gesture.
 // This module-level singleton is unlocked on the first mic-button tap and reused
@@ -691,9 +712,15 @@ export class VoiceSubsystem {
       const ttsText = responseText.slice(0, 300)
       debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
       debugPush('ElevenLabs TTS — requesting synthesis...')
+      // Read voice ID at CALL TIME — priority: localStorage → Supabase pref → default
+      const activeVoiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
+        || this.preferences.ttsVoiceId
+        || DEFAULT_VOICE_ID
+      debugPush(`TTS voice ID: ${activeVoiceId}`)
+
       const ttsResult = await synthesizeWithElevenLabs({
         text: ttsText,
-        voice_id: this.preferences.ttsVoiceId,
+        voice_id: activeVoiceId,
         voice_settings: {
           stability: 0.75,
           similarity_boost: 0.75,
@@ -704,7 +731,7 @@ export class VoiceSubsystem {
 
       if (this.currentSession) {
         this.currentSession.responseAudioUrl = ttsResult.audioUrl
-        this.currentSession.responseVoiceId = this.preferences.ttsVoiceId
+        this.currentSession.responseVoiceId = activeVoiceId
         this.currentSession.responseDurationSeconds = ttsResult.durationSeconds
       }
 
@@ -943,6 +970,7 @@ export class VoiceSubsystem {
       this.currentSession.status = status
     }
     this.emit('status_changed', { status })
+    emitOrbState(status)
   }
 
   private emit(type: VoiceEventType, data?: unknown): void {

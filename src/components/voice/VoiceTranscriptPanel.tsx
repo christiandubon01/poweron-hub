@@ -177,6 +177,39 @@ function generateSessionSummary(entries: TranscriptEntry[]): string {
   return summary
 }
 
+// ── Markdown Renderer ────────────────────────────────────────────────────────
+
+/**
+ * Lightweight markdown-to-HTML converter for agent responses.
+ * Handles: ## headers, **bold**, *italic*, bullet lists (- / *), numbered lists,
+ * inline `code`, and paragraph breaks. No external dependencies.
+ */
+export function renderMarkdown(md: string): string {
+  return md
+    // Escape HTML entities first
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Headers: ## → <div> styled heading (supports h2-h4)
+    .replace(/^####\s+(.+)$/gm, '<div style="font-size:12px;font-weight:700;color:#d1d5db;margin:10px 0 4px">$1</div>')
+    .replace(/^###\s+(.+)$/gm, '<div style="font-size:13px;font-weight:700;color:#e5e7eb;margin:12px 0 4px">$1</div>')
+    .replace(/^##\s+(.+)$/gm, '<div style="font-size:14px;font-weight:700;color:#f3f4f6;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.08)">$1</div>')
+    // Bold: **text** → <strong>
+    .replace(/\*\*([^*]+)\*\*/g, '<strong style="color:#f3f4f6;font-weight:600">$1</strong>')
+    // Italic: *text* → <em>
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    // Inline code: `text` → <code>
+    .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;font-size:10px;font-family:monospace">$1</code>')
+    // Numbered list items: "1. text" → styled div
+    .replace(/^\s*(\d+)\.\s+(.+)$/gm, '<div style="padding-left:16px;margin:2px 0;position:relative"><span style="position:absolute;left:0;color:#9ca3af;font-size:10px;font-weight:600">$1.</span>$2</div>')
+    // Bullet list items: "- text" or "* text" → styled div with dot
+    .replace(/^\s*[-*]\s+(.+)$/gm, '<div style="padding-left:14px;margin:2px 0;position:relative"><span style="position:absolute;left:2px;top:6px;width:4px;height:4px;border-radius:50%;background:#6b7280"></span>$1</div>')
+    // Double newlines → paragraph break
+    .replace(/\n\n/g, '<div style="margin:8px 0"></div>')
+    // Single newlines → line break
+    .replace(/\n/g, '<br/>')
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Detect if text contains markdown formatting (headers, bullets, bold, etc.) */
@@ -246,21 +279,21 @@ function NexusResponseBlock({ entry }: { entry: TranscriptEntry }) {
               Full Report
             </button>
             {expanded && (
-              <div style={{
-                marginTop: '8px',
-                padding: '10px 12px',
-                backgroundColor: 'rgba(255,255,255,0.03)',
-                borderRadius: '6px',
-                border: '1px solid rgba(255,255,255,0.05)',
-                fontSize: '11px',
-                color: '#d1d5db',
-                lineHeight: '1.6',
-                whiteSpace: 'pre-wrap',
-                maxHeight: '300px',
-                overflowY: 'auto',
-              }}>
-                {entry.nexusText}
-              </div>
+              <div
+                style={{
+                  marginTop: '8px',
+                  padding: '10px 12px',
+                  backgroundColor: 'rgba(255,255,255,0.03)',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(255,255,255,0.05)',
+                  fontSize: '11px',
+                  color: '#d1d5db',
+                  lineHeight: '1.6',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                }}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(entry.nexusText) }}
+              />
             )}
           </div>
         )}
