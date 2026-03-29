@@ -9,6 +9,7 @@
  * Backend wiring only — UI components will be added in a later phase.
  */
 
+import { Howl } from 'howler'
 import { transcribeWithWhisper, estimateConfidence } from '@/api/voice/whisper'
 import { synthesizeWithElevenLabs, revokeAudioUrl, DEFAULT_VOICE_ID } from '@/api/voice/elevenLabs'
 import { getAudioPreprocessor } from './audioPreprocessing'
@@ -121,29 +122,14 @@ export function onDebugUpdate(fn: () => void): () => void {
 
 let unlockedAudioContext: AudioContext | null = null
 
-// ── iOS HTMLAudioElement Singleton ──────────────────────────────────────────
-// iOS Safari only allows audio.play() within ~1 second of a user gesture.
-// The voice pipeline (STT → Claude → ElevenLabs) takes many seconds, breaking
-// the gesture context. Solution: pre-create and pre-unlock an Audio element on
-// the gesture itself (play a silent WAV), then reuse it at playback time by
-// swapping its src to the real Blob URL.
-
-let iosAudioElement: HTMLAudioElement | null = null
-
-// Minimal silent WAV — 44-byte header, 1 sample of silence
-const SILENT_WAV_BASE64 = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
-
 /**
- * Get the pre-unlocked iOS Audio element (or null if not yet created).
- */
-export function getIOSAudioElement(): HTMLAudioElement | null {
-  return iosAudioElement
-}
-
-/**
- * Pre-unlock the AudioContext AND HTMLAudioElement on a user gesture (tap/click).
+ * Pre-unlock the AudioContext on a user gesture (tap/click).
  * MUST be called synchronously in the same call stack as the gesture event.
  * Plays a silent buffer to fully satisfy iOS autoplay policy.
+ *
+ * Note: TTS playback now uses Howler.js which handles iOS Safari autoplay
+ * restrictions internally. This AudioContext unlock is retained for
+ * getUserMedia / recording warm-up on iOS.
  */
 export function unlockAudioContext(): void {
   if (!unlockedAudioContext) {
@@ -157,7 +143,7 @@ export function unlockAudioContext(): void {
     console.log('[iOS Audio] Shared AudioContext resumed')
   }
   debugPush(`unlockAudioContext() called — state: ${unlockedAudioContext.state}`)
-  // Silent buffer unlock — fully satisfies iOS autoplay gate
+  // Silent buffer unlock — fully satisfies iOS autoplay gate for AudioContext
   try {
     const silentBuffer = unlockedAudioContext.createBuffer(1, 1, 22050)
     const source = unlockedAudioContext.createBufferSource()
@@ -168,37 +154,6 @@ export function unlockAudioContext(): void {
     console.log('[iOS Audio] Silent buffer played — context fully unlocked')
   } catch (e) {
     debugPush(`Silent buffer ERROR: ${e instanceof Error ? e.message : String(e)}`)
-  }
-
-  // ── Pre-unlock HTMLAudioElement for iOS ────────────────────────────────
-  // Create once, play silent WAV on gesture, then reuse for real audio later.
-  // This keeps the Audio element "gesture-blessed" so .play() works even after
-  // the long async pipeline completes.
-  if (!iosAudioElement) {
-    try {
-      iosAudioElement = new Audio()
-      iosAudioElement.src = SILENT_WAV_BASE64
-      iosAudioElement.load()
-      document.body.appendChild(iosAudioElement)
-      iosAudioElement.play().then(() => {
-        debugPush('iOS Audio element pre-unlocked — silent WAV played OK')
-        console.log('[iOS Audio] HTMLAudioElement pre-unlocked with silent WAV')
-      }).catch((e) => {
-        debugPush(`iOS Audio element pre-unlock play() failed: ${e instanceof Error ? e.message : String(e)}`)
-        console.warn('[iOS Audio] HTMLAudioElement silent WAV play() failed:', e)
-      })
-    } catch (e) {
-      debugPush(`iOS Audio element creation ERROR: ${e instanceof Error ? e.message : String(e)}`)
-      console.warn('[iOS Audio] Failed to create HTMLAudioElement singleton:', e)
-    }
-  } else {
-    // Already exists — just re-play silent WAV to keep it gesture-blessed
-    try {
-      iosAudioElement.src = SILENT_WAV_BASE64
-      iosAudioElement.load()
-      iosAudioElement.play().catch(() => { /* ignore re-unlock failures */ })
-      debugPush('iOS Audio element RE-unlocked on gesture')
-    } catch { /* ignore */ }
   }
 }
 
@@ -241,6 +196,7 @@ export class VoiceSubsystem {
 
   // Speaking state — mic suppression during TTS playback
   private currentAudio: HTMLAudioElement | null = null
+  private currentHowl: Howl | null = null
   private speakingStartTime: number = 0
   private static readonly MIN_SPEAKING_DISPLAY_MS = 2000
 
@@ -316,6 +272,7 @@ export class VoiceSubsystem {
   async stopAll(): Promise<void> {
     // Stop any playing audio
     this.stopCurrentAudio()
+    this.stopCurrentHowl()
 
     // Cancel browser speechSynthesis if active
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -340,6 +297,7 @@ export class VoiceSubsystem {
   async stopSpeaking(): Promise<void> {
     console.log('[Voice] Stopping speech (user interrupt)')
     this.stopCurrentAudio()
+    this.stopCurrentHowl()
 
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel()
@@ -835,145 +793,109 @@ export class VoiceSubsystem {
 
   /**
    * Play audio with a tracked reference so it can be interrupted.
-   * Uses iOS-specific playback path when needed.
+   * Uses Howler.js for ALL platforms — handles iOS Safari autoplay restrictions
+   * natively via its internal Web Audio API unlock and html5 audio fallback.
    */
   private async playAudioTracked(audioUrl: string): Promise<void> {
     // Stop any previously playing audio
     this.stopCurrentAudio()
+    this.stopCurrentHowl()
 
-    if (VoiceSubsystem.IS_IOS) {
-      debugPush('playAudioTracked() — iOS detected, using Blob URL HTMLAudioElement path')
-      console.log('[iOS Audio] Attempting iOS Blob URL playback path')
-      try {
-        await this.playAudioIOS(audioUrl)
-        return
-      } catch (iosErr) {
-        debugPush(`iOS Blob URL FAILED: ${iosErr instanceof Error ? iosErr.message : String(iosErr)} — falling back to standard HTMLAudioElement`)
-        console.warn('[iOS Audio] iOS Blob URL playback failed, trying standard HTMLAudioElement:', iosErr)
-      }
+    debugPush('playAudioTracked() — using Howler.js for playback')
+    console.log('[Audio] Playing via Howler.js (cross-platform)')
+
+    try {
+      await this.playAudioWithHowler(audioUrl)
+    } catch (howlErr) {
+      debugPush(`Howler.js FAILED: ${howlErr instanceof Error ? howlErr.message : String(howlErr)}`)
+      console.warn('[Audio] Howler.js playback failed:', howlErr)
     }
-
-    // Standard path: HTMLAudioElement with iOS-safe load() + DOM append pattern
-    // Includes 10-second timeout fallback to prevent speaking state from hanging
-    return new Promise((resolve, reject) => {
-      let settled = false
-      const cleanup = () => {
-        this.currentAudio = null
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
-        clearTimeout(hangTimeout)
-      }
-      const safeResolve = () => { if (!settled) { settled = true; cleanup(); resolve() } }
-      const safeReject = (err: any) => { if (!settled) { settled = true; cleanup(); reject(err) } }
-
-      const audio = new Audio()
-      audio.src = audioUrl
-      audio.playbackRate = this.preferences.ttsSpeed
-      audio.load() // critical for iOS — forces buffering
-      document.body.appendChild(audio) // required for iOS WebView audio
-      this.currentAudio = audio
-
-      audio.onended = () => safeResolve()
-      audio.onerror = (err) => safeReject(err)
-      audio.onpause = () => safeResolve() // interrupt → resolve instead of hanging
-
-      // 10-second timeout: if onended/onerror/onpause never fire, force-resolve
-      const hangTimeout = setTimeout(() => {
-        console.warn('[Voice] Audio playback timeout (10s) — force-resolving speaking state')
-        try { audio.pause(); audio.src = '' } catch { /* ignore */ }
-        safeResolve()
-      }, 10000)
-
-      audio.play().catch((err) => {
-        console.error('[Voice] playAudioTracked play() failed:', err)
-        safeReject(err)
-      })
-    })
   }
 
   /**
-   * iOS-specific audio playback — reuses the pre-unlocked HTMLAudioElement singleton.
+   * Cross-platform audio playback using Howler.js.
    *
-   * The iosAudioElement was created and "gesture-blessed" by unlockAudioContext()
-   * on the user's mic tap. Because it already called .play() on the gesture stack,
-   * iOS allows subsequent .play() calls on the SAME element even after long async
-   * chains. We simply swap its src to the real Blob URL and call .play() again.
+   * Howler.js handles iOS Safari's autoplay restrictions internally by using
+   * the Web Audio API with automatic unlock on user interaction. The html5:true
+   * flag enables HTML5 Audio mode which streams audio instead of loading it all
+   * into memory — important for longer TTS responses.
    *
-   * Falls back to creating a new Audio element if the singleton is missing.
-   * Includes a 10-second timeout fallback in case onended never fires.
+   * The audioUrl (an object URL from ElevenLabs synthesis) is fetched, converted
+   * to a Blob URL, and played through Howler. Includes a 30-second timeout.
    */
-  private async playAudioIOS(audioUrl: string): Promise<void> {
-    debugPush('playAudioIOS() — starting pre-unlocked singleton path')
-    console.log('[iOS Audio] Attempting playback via pre-unlocked HTMLAudioElement singleton')
+  private async playAudioWithHowler(audioUrl: string): Promise<void> {
+    debugPush('playAudioWithHowler() — fetching audio data...')
 
     // Fetch the audio data from the object URL
     const response = await fetch(audioUrl)
     const arrayBuffer = await response.arrayBuffer()
-    debugPush(`playAudioIOS() — fetched ${arrayBuffer.byteLength} bytes`)
+    debugPush(`playAudioWithHowler() — fetched ${arrayBuffer.byteLength} bytes`)
 
-    // Create an audio/mpeg Blob and object URL
+    // Create an audio/mpeg Blob and object URL for Howler
     const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' })
     const blobUrl = URL.createObjectURL(blob)
-    debugPush(`playAudioIOS() — Blob URL created (${blob.size} bytes)`)
+    debugPush(`playAudioWithHowler() — Blob URL created (${blob.size} bytes)`)
 
-    // Reuse the pre-unlocked singleton, or fall back to a new element
-    const audio = getIOSAudioElement() || (() => {
-      debugPush('playAudioIOS() — WARNING: no pre-unlocked singleton, creating new Audio()')
-      console.warn('[iOS Audio] No pre-unlocked singleton — creating new Audio element (may fail)')
-      const el = new Audio()
-      document.body.appendChild(el)
-      return el
-    })()
-
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve) => {
       let settled = false
-      const cleanup = () => {
-        this.currentAudio = null
-        // Do NOT remove the singleton from DOM — we reuse it for future playback
-        URL.revokeObjectURL(blobUrl)
-        clearTimeout(hangTimeout)
-      }
-      const safeResolve = () => { if (!settled) { settled = true; cleanup(); resolve() } }
-      const safeReject = (err: any) => { if (!settled) { settled = true; cleanup(); reject(err) } }
-
-      // Swap src to the real audio Blob URL
-      audio.src = blobUrl
-      audio.playbackRate = this.preferences.ttsSpeed
-      audio.load() // iOS requires explicit load before play
-      this.currentAudio = audio
-
-      audio.onended = () => {
-        debugPush('iOS HTMLAudioElement onended FIRED — playback complete')
-        console.log('[iOS Audio] Pre-unlocked singleton playback completed via onended')
-        safeResolve()
-      }
-      audio.onerror = (err) => {
-        debugPush(`iOS HTMLAudioElement ERROR: ${err}`)
-        safeReject(err)
-      }
-      audio.onpause = () => {
-        // If paused externally (user interrupt), resolve instead of hanging
-        debugPush('iOS HTMLAudioElement onpause — resolving')
-        safeResolve()
+      const safeResolve = () => {
+        if (!settled) {
+          settled = true
+          URL.revokeObjectURL(blobUrl)
+          this.currentHowl = null
+          clearTimeout(hangTimeout)
+          resolve()
+        }
       }
 
-      // 10-second timeout fallback
-      const hangTimeout = setTimeout(() => {
-        debugPush('iOS audio TIMEOUT (10s) — force-resolving')
-        console.warn('[iOS Audio] Pre-unlocked singleton playback timeout (10s) — force-resolving')
-        try { audio.pause(); audio.src = '' } catch { /* ignore */ }
-        safeResolve()
-      }, 10000)
-
-      debugPush('iOS audio.play() — calling on pre-unlocked singleton...')
-      audio.play().then(() => {
-        debugPush(`iOS audio.play() — OK, playing via pre-unlocked singleton`)
-        console.log('[iOS Audio] Pre-unlocked singleton play() succeeded')
-      }).catch((err) => {
-        debugPush(`iOS audio.play() FAILED: ${err instanceof Error ? err.message : String(err)}`)
-        console.error('[iOS Audio] Pre-unlocked singleton play() failed:', err)
-        safeReject(err)
+      const sound = new Howl({
+        src: [blobUrl],
+        format: ['mp3'],
+        html5: true,
+        rate: this.preferences.ttsSpeed,
+        onend: () => {
+          debugPush('Howler onend — playback complete')
+          console.log('[Audio] Howler.js playback completed')
+          safeResolve()
+        },
+        onloaderror: (_id: number, err: unknown) => {
+          debugPush(`Howler load error: ${err}`)
+          console.error('[Audio] Howler load error:', err)
+          safeResolve()
+        },
+        onplayerror: (_id: number, err: unknown) => {
+          debugPush(`Howler play error: ${err}`)
+          console.error('[Audio] Howler play error:', err)
+          safeResolve()
+        },
       })
+
+      this.currentHowl = sound
+
+      debugPush('Howler.play() — calling...')
+      sound.play()
+
+      // 30-second timeout fallback
+      const hangTimeout = setTimeout(() => {
+        debugPush('Howler TIMEOUT (30s) — force-resolving')
+        console.warn('[Audio] Howler.js playback timeout (30s) — force-resolving')
+        try { sound.stop() } catch { /* ignore */ }
+        safeResolve()
+      }, 30000)
     })
+  }
+
+  /**
+   * Stop the current Howl instance if playing.
+   */
+  private stopCurrentHowl(): void {
+    if (this.currentHowl) {
+      try {
+        this.currentHowl.stop()
+        this.currentHowl.unload()
+      } catch { /* ignore cleanup errors */ }
+      this.currentHowl = null
+    }
   }
 
   // ── Private: Events ───────────────────────────────────────────────────────
