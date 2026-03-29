@@ -224,6 +224,34 @@ export function ReviewManager() {
                   className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-gray-100 text-sm resize-none focus:outline-none focus:border-emerald-500"
                   rows={3}
                 />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    className="flex-1 px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-xs font-medium transition-colors"
+                    onClick={() => {
+                      // MiroFish gate — mark as approved, would post after MiroFish verification
+                      console.log('[SPARK] Review response approved for MiroFish review:', review.id)
+                      setDraftResponse(prev => {
+                        const updated = { ...prev }
+                        delete updated[review.id]
+                        return updated
+                      })
+                    }}
+                  >
+                    Approve & Post
+                  </button>
+                  <button
+                    className="px-3 py-1.5 bg-gray-700/50 text-gray-300 hover:bg-gray-700 rounded text-xs font-medium transition-colors"
+                    onClick={() => {
+                      setDraftResponse(prev => {
+                        const updated = { ...prev }
+                        delete updated[review.id]
+                        return updated
+                      })
+                    }}
+                  >
+                    Discard
+                  </button>
+                </div>
               </div>
             )}
 

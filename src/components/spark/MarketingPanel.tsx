@@ -11,9 +11,10 @@ import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { getBackupData, num } from '@/services/backupDataService'
 
-type TabKey = 'leads' | 'gc_relationships' | 'campaigns' | 'reviews'
+type TabKey = 'overview' | 'leads' | 'gc_relationships' | 'campaigns' | 'reviews'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: 'overview', label: 'Overview' },
   { key: 'leads', label: 'Leads' },
   { key: 'gc_relationships', label: 'GC Relationships' },
   { key: 'campaigns', label: 'Campaigns' },
@@ -21,7 +22,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 ]
 
 export function MarketingPanel() {
-  const [activeTab, setActiveTab] = useState<TabKey>('leads')
+  const [activeTab, setActiveTab] = useState<TabKey>('overview')
 
   const backup = getBackupData()
   const gcContacts = backup?.gcContacts || []
@@ -73,6 +74,75 @@ export function MarketingPanel() {
 
       {/* Tab Content */}
       <div className="pt-2">
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            {/* KPI Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                <div className="text-gray-500 text-xs mb-1">Leads This Week</div>
+                <div className="text-2xl font-bold text-cyan-400">{serviceLeads.filter(l => l.createdAt && new Date(l.createdAt) > new Date(Date.now() - 7 * 86400000)).length}</div>
+              </div>
+              <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                <div className="text-gray-500 text-xs mb-1">Avg Rating</div>
+                <div className="text-2xl font-bold text-yellow-400">—</div>
+                <div className="text-gray-500 text-[10px]">Connect Google</div>
+              </div>
+              <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                <div className="text-gray-500 text-xs mb-1">GC Contacts</div>
+                <div className="text-2xl font-bold text-emerald-400">{gcContacts.length}</div>
+              </div>
+              <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                <div className="text-gray-500 text-xs mb-1">Stale Leads</div>
+                <div className="text-2xl font-bold text-red-400">{staleLeads.length}</div>
+                <div className="text-gray-500 text-[10px]">No contact 14+ days</div>
+              </div>
+            </div>
+
+            {/* Lead Source Distribution */}
+            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+              <h4 className="text-gray-300 text-sm font-semibold mb-3">Lead Pipeline by Source</h4>
+              {(() => {
+                const sources: Record<string, number> = {}
+                serviceLeads.forEach((l: any) => {
+                  const src = l.source || l.lead_source || 'Direct'
+                  sources[src] = (sources[src] || 0) + 1
+                })
+                const maxCount = Math.max(...Object.values(sources), 1)
+                return Object.entries(sources).length > 0 ? (
+                  <div className="space-y-2">
+                    {Object.entries(sources).sort((a, b) => b[1] - a[1]).map(([source, count]) => (
+                      <div key={source} className="flex items-center gap-3">
+                        <span className="text-gray-400 text-xs w-24 truncate">{source}</span>
+                        <div className="flex-1 bg-gray-700 rounded-full h-2 overflow-hidden">
+                          <div className="h-full bg-pink-500 rounded-full transition-all" style={{ width: `${(count / maxCount) * 100}%` }} />
+                        </div>
+                        <span className="text-gray-300 text-xs font-medium w-6 text-right">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-500 text-sm">No leads yet</p>
+                )
+              })()}
+            </div>
+
+            {/* Top Channel */}
+            {(() => {
+              const sources: Record<string, number> = {}
+              serviceLeads.forEach((l: any) => {
+                const src = l.source || l.lead_source || 'Direct'
+                sources[src] = (sources[src] || 0) + 1
+              })
+              const topSource = Object.entries(sources).sort((a, b) => b[1] - a[1])[0]
+              return topSource ? (
+                <div className="bg-pink-500/10 border border-pink-500/20 rounded-lg p-3">
+                  <span className="text-pink-400 text-xs font-medium">Top Channel:</span>
+                  <span className="text-gray-200 text-sm ml-2">{topSource[0]} ({topSource[1]} leads)</span>
+                </div>
+              ) : null
+            })()}
+          </div>
+        )}
         {activeTab === 'leads' && <LeadPipeline />}
         {activeTab === 'gc_relationships' && <GCDashboard />}
         {activeTab === 'campaigns' && <CampaignTracker />}

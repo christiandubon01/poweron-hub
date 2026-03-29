@@ -127,6 +127,13 @@ export class VoiceSubsystem {
   private speakingStartTime: number = 0
   private static readonly MIN_SPEAKING_DISPLAY_MS = 2000
 
+  // iOS detection
+  private static readonly IS_IOS = typeof navigator !== 'undefined' &&
+    /iPhone|iPad|iPod/.test(navigator.userAgent)
+
+  // Shared AudioContext for iOS — created on first user tap
+  private audioContext: AudioContext | null = null
+
   // Context
   private orgId: string = ''
   private userId: string = ''
@@ -239,6 +246,22 @@ export class VoiceSubsystem {
   }
 
   /**
+   * Ensure AudioContext exists and is in 'running' state.
+   * Must be called within a user gesture call stack on iOS.
+   */
+  private async ensureAudioContext(): Promise<AudioContext> {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      console.log('[iOS Audio] AudioContext created, state:', this.audioContext.state)
+    }
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume()
+      console.log('[iOS Audio] AudioContext resumed')
+    }
+    return this.audioContext
+  }
+
+  /**
    * Start recording audio (triggered by wake word or push-to-talk).
    */
   async startRecording(mode: VoiceMode = 'normal'): Promise<void> {
@@ -271,6 +294,14 @@ export class VoiceSubsystem {
           sampleRate: 16000,
         },
       })
+
+      // Warm up AudioContext on user gesture (critical for iOS)
+      if (VoiceSubsystem.IS_IOS) {
+        try {
+          await this.ensureAudioContext()
+          console.log('[iOS Audio] AudioContext warmed on recording start')
+        } catch { /* ignore */ }
+      }
 
       this.audioChunks = []
       this.mediaRecorder = new MediaRecorder(this.mediaStream, {
@@ -585,10 +616,10 @@ export class VoiceSubsystem {
       console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
     }
 
-    // Fallback: browser speechSynthesis
+    // Fallback: browser speechSynthesis (especially important for iOS)
     if (!ttsPlayed && typeof window !== 'undefined' && window.speechSynthesis) {
       try {
-        console.log('[Voice] Using speechSynthesis fallback')
+        console.log(VoiceSubsystem.IS_IOS ? '[iOS Audio] Falling back to speechSynthesis' : '[Voice] Using speechSynthesis fallback')
         await this.speakWithSynthesis(responseText)
       } catch (synthErr) {
         console.warn('[Voice] speechSynthesis also failed:', synthErr)
@@ -648,13 +679,24 @@ export class VoiceSubsystem {
 
   /**
    * Play audio with a tracked reference so it can be interrupted.
-   * Resolves when audio finishes or is stopped externally.
+   * Uses iOS-specific playback path when needed.
    */
-  private playAudioTracked(audioUrl: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Stop any previously playing audio
-      this.stopCurrentAudio()
+  private async playAudioTracked(audioUrl: string): Promise<void> {
+    // Stop any previously playing audio
+    this.stopCurrentAudio()
 
+    if (VoiceSubsystem.IS_IOS) {
+      console.log('[iOS Audio] Attempting iOS playback path')
+      try {
+        await this.playAudioIOS(audioUrl)
+        return
+      } catch (iosErr) {
+        console.warn('[iOS Audio] iOS AudioContext playback failed, trying HTMLAudioElement:', iosErr)
+      }
+    }
+
+    // Standard path: HTMLAudioElement
+    return new Promise((resolve, reject) => {
       const audio = new Audio(audioUrl)
       audio.playbackRate = this.preferences.ttsSpeed
       this.currentAudio = audio
@@ -676,6 +718,38 @@ export class VoiceSubsystem {
         this.currentAudio = null
         reject(err)
       })
+    })
+  }
+
+  /**
+   * iOS-specific audio playback using AudioContext + AudioBufferSourceNode.
+   * Fetches the blob from the object URL, decodes it, and plays through
+   * the AudioContext which was warmed up during the user's tap gesture.
+   */
+  private async playAudioIOS(audioUrl: string): Promise<void> {
+    console.log('[iOS Audio] Attempting playback via AudioContext')
+    const ctx = await this.ensureAudioContext()
+
+    // Fetch the audio blob from the object URL
+    const response = await fetch(audioUrl)
+    const arrayBuffer = await response.arrayBuffer()
+
+    // Decode the audio data
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+
+    return new Promise((resolve) => {
+      const source = ctx.createBufferSource()
+      source.buffer = audioBuffer
+      source.playbackRate.value = this.preferences.ttsSpeed
+      source.connect(ctx.destination)
+
+      source.onended = () => {
+        console.log('[iOS Audio] Playback completed')
+        resolve()
+      }
+
+      source.start(0)
+      console.log('[iOS Audio] AudioBufferSourceNode started')
     })
   }
 

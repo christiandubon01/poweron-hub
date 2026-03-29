@@ -41,6 +41,12 @@ export type AgentEventType =
   | 'IDLE_SLOTS_DETECTED'
   | 'CLIENT_REMINDER_DRAFTED'
   | 'GCAL_SYNCED'
+  | 'REVIEW_RECEIVED'
+  | 'HIGH_VALUE_LEAD'
+  | 'LOW_VALUE_LEAD'
+  | 'LEAD_SCORED'
+  | 'CAMPAIGN_RESULT'
+  | 'SOCIAL_POST_PUBLISHED'
 
 export interface AgentEvent {
   id:        string

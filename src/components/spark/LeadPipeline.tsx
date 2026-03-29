@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Plus, Loader2, AlertCircle, ChevronDown, ChevronUp, Phone, Mail, MapPin } from 'lucide-react'
 import clsx from 'clsx'
+import { scoreLead } from '@/agents/spark/leadManager'
 
 interface Lead {
   id: string
@@ -303,6 +304,11 @@ export function LeadPipeline() {
                     <div className="flex items-center gap-2">
                       <h4 className="text-gray-100 font-semibold truncate">{lead.name}</h4>
                       {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />}
+                      {(() => {
+                        const { score } = scoreLead({ project_type: lead.project_type, estimated_value: lead.estimated_value, lead_source: lead.lead_source, address: lead.address })
+                        const scoreColor = score >= 7 ? 'bg-emerald-500/20 text-emerald-400' : score >= 4 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'
+                        return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${scoreColor}`}>{score}</span>
+                      })()}
                     </div>
                     <p className="text-gray-400 text-sm">{lead.lead_source || '-'}{lead.source_detail ? ` · ${lead.source_detail}` : ''}</p>
                   </div>

@@ -1083,7 +1083,6 @@ function V15rDashboardInner() {
     .slice(0, 6)
 
   // ── SCP: Service Calls Performance (last 8) ──
-  const serviceLogs = backup.serviceLogs || []
   const scpLogs = serviceLogs.slice(-8)
 
   // ── RCA: Revenue vs Cost Analysis (Active Projects) ──

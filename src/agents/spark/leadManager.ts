@@ -272,6 +272,63 @@ export async function scoreAndProcessLead(
     `Lead "${lead.name}" scored ${result.score}/10 (source: ${lead.lead_source || 'unknown'})`
   )
 
+  // High-value lead alert
+  if (result.score >= 7) {
+    publish(
+      'HIGH_VALUE_LEAD' as any,
+      'spark',
+      {
+        leadId: lead.id || 'unknown',
+        leadName: lead.name || 'Unknown',
+        score: result.score,
+        estimatedValue: lead.estimated_value || 0,
+        source: lead.lead_source || 'unknown',
+      },
+      `HIGH VALUE: "${lead.name}" scored ${result.score}/10 — $${lead.estimated_value || 0} (${lead.lead_source})`
+    )
+  }
+
+  // Low-value lead flag
+  if (result.score < 4) {
+    publish(
+      'LOW_VALUE_LEAD' as any,
+      'spark',
+      {
+        leadId: lead.id || 'unknown',
+        leadName: lead.name || 'Unknown',
+        score: result.score,
+      },
+      `Low priority: "${lead.name}" scored ${result.score}/10 — consider parking`
+    )
+  }
+
+  // Auto-create CHRONO follow-up for score >= 5
+  if (result.score >= 5) {
+    try {
+      const { getBackupData, saveBackupData } = await import('@/services/backupDataService')
+      const backup = getBackupData()
+      if (backup) {
+        const tasks = backup.taskSchedule || []
+        tasks.push({
+          id: `task_lead_${lead.id || Date.now()}`,
+          title: `Follow up: ${lead.name} (Score: ${result.score}/10)`,
+          description: `Lead scored ${result.score}/10. Source: ${lead.lead_source}. Value: $${lead.estimated_value || 0}. Auto-created by SPARK.`,
+          dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 2 days from now
+          status: 'pending',
+          priority: result.score >= 7 ? 'high' : 'medium',
+          assignedAgent: 'chrono',
+          createdBy: 'spark',
+          createdAt: new Date().toISOString(),
+        })
+        backup.taskSchedule = tasks
+        saveBackupData(backup)
+        console.log(`[SPARK] Auto-created CHRONO follow-up for "${lead.name}" (score: ${result.score})`)
+      }
+    } catch (err) {
+      console.warn('[SPARK] Failed to create CHRONO follow-up:', err)
+    }
+  }
+
   return result
 }
 

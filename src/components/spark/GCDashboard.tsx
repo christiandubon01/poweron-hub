@@ -180,6 +180,27 @@ export function GCDashboard() {
                 <p className="text-gray-300 font-medium">{formatCurrency(contact.total_revenue)}</p>
               </div>
             </div>
+
+            {/* Quick Actions */}
+            <div className="flex gap-2 pt-2 border-t border-gray-700">
+              <button
+                className="flex-1 px-3 py-1.5 bg-pink-600/20 text-pink-400 hover:bg-pink-600/30 rounded text-xs font-medium transition-colors"
+                onClick={() => {
+                  console.log('[SPARK] Draft outreach for GC:', contact.name)
+                  // Would trigger SPARK interview for outreach message → MiroFish
+                }}
+              >
+                Draft Outreach
+              </button>
+              <button
+                className="px-3 py-1.5 bg-gray-700/50 text-gray-300 hover:bg-gray-700 rounded text-xs font-medium transition-colors"
+                onClick={() => {
+                  console.log('[SPARK] Log activity for GC:', contact.name)
+                }}
+              >
+                Log Activity
+              </button>
+            </div>
           </div>
         ))}
       </div>

@@ -308,3 +308,55 @@ Be insightful and forward-looking.`
     return 'Unable to generate summary at this time.'
   }
 }
+
+// ── SPARK → PULSE Integration ──────────────────────────────────────────────
+
+/**
+ * Subscribe to SPARK campaign results and add to financial dashboard.
+ * Called once at app startup.
+ */
+export function initPulseSparkSubscription(): void {
+  try {
+    const { subscribe } = require('@/services/agentEventBus')
+
+    subscribe('CAMPAIGN_RESULT' as any, (event: any) => {
+      console.log('[PULSE] Received CAMPAIGN_RESULT from SPARK:', event.summary)
+
+      // Store campaign metrics for dashboard access
+      try {
+        const raw = localStorage.getItem('pulse_campaign_metrics') || '[]'
+        const metrics = JSON.parse(raw)
+        metrics.push({
+          timestamp: event.timestamp,
+          channel: event.payload?.channel || 'unknown',
+          leadsGenerated: event.payload?.leadsGenerated || 0,
+          revenueAttributed: event.payload?.revenueAttributed || 0,
+          recipients: event.payload?.recipients || 0,
+        })
+        // Keep last 100 entries
+        if (metrics.length > 100) metrics.splice(0, metrics.length - 100)
+        localStorage.setItem('pulse_campaign_metrics', JSON.stringify(metrics))
+      } catch { /* ignore */ }
+    })
+
+    console.log('[PULSE] Subscribed to SPARK CAMPAIGN_RESULT events')
+  } catch (err) {
+    console.warn('[PULSE] Failed to subscribe to SPARK events:', err)
+  }
+}
+
+/**
+ * Get campaign metrics for dashboard display.
+ */
+export function getCampaignMetrics(): Array<{
+  timestamp: number
+  channel: string
+  leadsGenerated: number
+  revenueAttributed: number
+  recipients: number
+}> {
+  try {
+    const raw = localStorage.getItem('pulse_campaign_metrics') || '[]'
+    return JSON.parse(raw)
+  } catch { return [] }
+}
