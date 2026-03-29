@@ -93,6 +93,46 @@ export type VoiceEventCallback = (event: {
   data?: unknown
 }) => void
 
+// ── iOS AudioContext Singleton ───────────────────────────────────────────────
+// iOS Safari only allows AudioContext creation and resume during a user gesture.
+// This module-level singleton is unlocked on the first mic-button tap and reused
+// for all subsequent TTS playback. Creating a new context at playback time is
+// too late — the async pipeline between tap and playback breaks the gesture chain.
+
+let unlockedAudioContext: AudioContext | null = null
+
+/**
+ * Pre-unlock the AudioContext on a user gesture (tap/click).
+ * MUST be called synchronously in the same call stack as the gesture event.
+ * Plays a silent buffer to fully satisfy iOS autoplay policy.
+ */
+export function unlockAudioContext(): void {
+  if (!unlockedAudioContext) {
+    unlockedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    console.log('[iOS Audio] Shared AudioContext created, state:', unlockedAudioContext.state)
+  }
+  if (unlockedAudioContext.state === 'suspended') {
+    unlockedAudioContext.resume()
+    console.log('[iOS Audio] Shared AudioContext resumed')
+  }
+  // Silent buffer unlock — fully satisfies iOS autoplay gate
+  try {
+    const silentBuffer = unlockedAudioContext.createBuffer(1, 1, 22050)
+    const source = unlockedAudioContext.createBufferSource()
+    source.buffer = silentBuffer
+    source.connect(unlockedAudioContext.destination)
+    source.start(0)
+    console.log('[iOS Audio] Silent buffer played — context fully unlocked')
+  } catch { /* ignore — context may already be unlocked */ }
+}
+
+/**
+ * Get the shared pre-unlocked AudioContext (or null if not yet unlocked).
+ */
+export function getUnlockedAudioContext(): AudioContext | null {
+  return unlockedAudioContext
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_RECORDING_SECONDS = 30
@@ -132,8 +172,8 @@ export class VoiceSubsystem {
   private static readonly IS_IOS = typeof navigator !== 'undefined' &&
     /iPhone|iPad|iPod/.test(navigator.userAgent)
 
-  // Shared AudioContext for iOS — created on first user tap
-  private audioContext: AudioContext | null = null
+  // AudioContext is now managed by the module-level singleton (unlockedAudioContext)
+  // to ensure it's created on the user gesture call stack for iOS Safari.
 
   // Context
   private orgId: string = ''
@@ -247,19 +287,23 @@ export class VoiceSubsystem {
   }
 
   /**
-   * Ensure AudioContext exists and is in 'running' state.
-   * Must be called within a user gesture call stack on iOS.
+   * Get the shared pre-unlocked AudioContext, or create a fallback.
+   * Prefers the module-level singleton that was unlocked on user gesture.
    */
   private async ensureAudioContext(): Promise<AudioContext> {
-    if (!this.audioContext) {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
-      console.log('[iOS Audio] AudioContext created, state:', this.audioContext.state)
+    // Prefer the module-level singleton (unlocked on user tap)
+    const shared = getUnlockedAudioContext()
+    if (shared) {
+      if (shared.state === 'suspended') {
+        await shared.resume()
+        console.log('[iOS Audio] Shared AudioContext resumed at playback time')
+      }
+      return shared
     }
-    if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume()
-      console.log('[iOS Audio] AudioContext resumed')
-    }
-    return this.audioContext
+    // Fallback: create one now (may fail on iOS if not in gesture stack)
+    console.warn('[iOS Audio] No pre-unlocked AudioContext — creating fallback (may fail on iOS)')
+    unlockAudioContext()
+    return getUnlockedAudioContext()!
   }
 
   /**
@@ -297,10 +341,12 @@ export class VoiceSubsystem {
       })
 
       // Warm up AudioContext on user gesture (critical for iOS)
-      if (VoiceSubsystem.IS_IOS) {
+      // Note: The primary unlock happens synchronously in VoiceActivationButton's
+      // tap handler via unlockAudioContext(). This is a secondary safety net.
+      if (VoiceSubsystem.IS_IOS && !getUnlockedAudioContext()) {
         try {
-          await this.ensureAudioContext()
-          console.log('[iOS Audio] AudioContext warmed on recording start')
+          unlockAudioContext()
+          console.log('[iOS Audio] AudioContext warmed on recording start (fallback)')
         } catch { /* ignore */ }
       }
 

@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Mic, MicOff, Loader2, Volume2, AlertCircle } from 'lucide-react'
 import { clsx } from 'clsx'
-import { getVoiceSubsystem, type VoiceSessionStatus } from '@/services/voice'
+import { getVoiceSubsystem, unlockAudioContext, type VoiceSessionStatus } from '@/services/voice'
 import { useAuth } from '@/hooks/useAuth'
 import { VoiceTranscriptPanel, addTranscriptEntry } from './VoiceTranscriptPanel'
 
@@ -41,21 +41,16 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   // Detect iOS Safari for platform-specific guidance
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
-  // iOS Safari: Unlock AudioContext on first user gesture
+  // iOS Safari: Unlock shared AudioContext on first user gesture.
+  // Uses the module-level singleton from voice.ts so the SAME context
+  // is reused for TTS playback later (iOS rejects new contexts outside gestures).
   useEffect(() => {
     if (audioUnlocked) return
     const unlock = () => {
       try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const buf = ctx.createBuffer(1, 1, 22050)
-        const src = ctx.createBufferSource()
-        src.buffer = buf
-        src.connect(ctx.destination)
-        src.start(0)
-        ctx.resume().then(() => {
-          setAudioUnlocked(true)
-          console.log('[Voice] AudioContext unlocked for iOS')
-        })
+        unlockAudioContext()
+        setAudioUnlocked(true)
+        console.log('[Voice] Shared AudioContext unlocked for iOS via document gesture')
       } catch { /* ignore */ }
     }
     document.addEventListener('touchstart', unlock, { once: true })
@@ -132,6 +127,11 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   }, [user?.id, profile?.org_id, isIOS])
 
   const handlePress = useCallback(async () => {
+    // CRITICAL: Unlock AudioContext synchronously on the user gesture call stack.
+    // iOS Safari only allows AudioContext creation/resume during an active user tap.
+    // This MUST happen before any awaits or the gesture chain breaks.
+    unlockAudioContext()
+
     const voice = getVoiceSubsystem()
 
     switch (status) {
