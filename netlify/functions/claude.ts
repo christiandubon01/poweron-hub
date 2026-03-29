@@ -46,7 +46,7 @@ exports.handler = async (event: any, _context: any) => {
 
   try {
     const body = JSON.parse(event.body || '{}')
-    const { messages, system, max_tokens, model } = body
+    const { messages, system, max_tokens, model, tools } = body
 
     if (!messages || !Array.isArray(messages)) {
       return {
@@ -62,6 +62,7 @@ exports.handler = async (event: any, _context: any) => {
       messages,
     }
     if (system) payload.system = system
+    if (tools && Array.isArray(tools)) payload.tools = tools
 
     const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',

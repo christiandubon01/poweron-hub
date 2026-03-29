@@ -17,6 +17,7 @@ export interface ClaudeRequest {
   max_tokens?: number
   model?: string
   signal?: AbortSignal
+  tools?: Array<{ type: string; name: string; [key: string]: unknown }>
 }
 
 export interface ClaudeResponse {
@@ -29,14 +30,17 @@ export interface ClaudeResponse {
  * Call Claude via Netlify proxy (preferred) or direct API (fallback).
  */
 export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
-  const { messages, system, max_tokens = 1024, model = DEFAULT_MODEL, signal } = req
+  const { messages, system, max_tokens = 1024, model = DEFAULT_MODEL, signal, tools } = req
 
   // Try proxy first
   try {
+    const proxyPayload: Record<string, unknown> = { messages, system, max_tokens, model }
+    if (tools && tools.length > 0) proxyPayload.tools = tools
+
     const response = await fetch(PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, system, max_tokens, model }),
+      body: JSON.stringify(proxyPayload),
       signal,
     })
 
@@ -72,7 +76,7 @@ export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify({ model, max_tokens, messages, ...(system ? { system } : {}) }),
+    body: JSON.stringify({ model, max_tokens, messages, ...(system ? { system } : {}), ...(tools?.length ? { tools } : {}) }),
     signal,
   })
 

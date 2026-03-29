@@ -602,7 +602,7 @@ export async function routeToAgent(
   userMessage:  string,
   orgId:        string,
   conversationHistory: ConversationMessage[],
-  options?: { isListQuery?: boolean }
+  options?: { isListQuery?: boolean; isResearchQuery?: boolean }
 ): Promise<AgentResponse> {
   const targetAgent = intent.targetAgent
   const agentName   = AGENT_DISPLAY_NAMES[targetAgent]
@@ -649,11 +649,20 @@ export async function routeToAgent(
     }
   }
 
-  // 4. Call Claude via proxy — list queries get higher token limit for completeness
+  // 4. Call Claude via proxy — token limit varies by query type
+  const maxTokens = options?.isListQuery ? 1200 : options?.isResearchQuery ? 1500 : 2048
+
+  // Web search tool — enabled for research queries so Claude can look up
+  // NEC codes, industry benchmarks, pricing data, installation methods, etc.
+  const tools = options?.isResearchQuery
+    ? [{ type: 'web_search_20250305', name: 'web_search' }]
+    : undefined
+
   const claudeResponse = await callClaude({
     system: systemPrompt,
     messages,
-    max_tokens: options?.isListQuery ? 1200 : 2048,
+    max_tokens: maxTokens,
+    ...(tools ? { tools } : {}),
   })
 
   const content = extractText(claudeResponse) || 'No response generated.'

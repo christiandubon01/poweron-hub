@@ -444,6 +444,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   // Inject mode-specific formatting instruction + user preferences into the message
   const isOpBriefing = isOperationalQuery(request.message)
   const isListQuery = LIST_QUERY_RE.test(request.message)
+  const isResearchQuery = /research|look up|find out|what does.*code|NEC|CEC|title 24|CBC|industry|benchmark|compare|best practice|how do.*install|installation method|market rate|pricing data|code requirement/i.test(request.message)
   const modeInstruction = isListQuery
     ? LIST_FORMAT_INSTRUCTION
     : isOpBriefing
@@ -509,12 +510,28 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     }
   }
 
+  // ── Step 4c: Inject research instruction for research-intent queries ────
+  if (isResearchQuery) {
+    const researchInstruction = `\nRESEARCH INSTRUCTION: You have access to web search. Use it when:
+- Comparing Christian's business metrics against electrical contractor industry benchmarks
+- Researching NEC, CEC, Title 24, CBC code requirements for specific installation types
+- Looking up best practices for electrical contractors at $100K-$500K annual revenue stage
+- Finding market data on pricing, lead acquisition, customer acquisition costs for Southern California electrical contractors
+- Researching specific electrical devices, appliances, or installation methods mentioned in the query
+- Any time the user says "research", "look up", "find out", or "what does the code say about"
+
+When you search, cite your sources briefly and integrate the findings naturally into your response alongside the operational data you already have. Format: "Based on your data [X] and industry research [Y], my recommendation is [Z]."
+
+Always combine external research WITH the user's actual operational data — never give generic advice when specific data is available.`
+    enrichedMessage = enrichedMessage + researchInstruction
+  }
+
   let agentResponse = await routeToAgent(
     intent,
     enrichedMessage,
     request.orgId,
     request.conversationHistory,
-    { isListQuery }
+    { isListQuery, isResearchQuery }
   )
 
   // ── Step 5: Determine if confirmation is needed ─────────────────────────
