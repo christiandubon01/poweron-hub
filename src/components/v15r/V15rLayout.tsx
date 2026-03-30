@@ -20,6 +20,7 @@ import {
   Redo2,
   Menu,
   X,
+  Activity,
 } from 'lucide-react'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
@@ -392,6 +393,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
     { label: 'Team', icon: Users, view: 'team' },
     { label: 'Settings', icon: Settings, view: 'settings' },
+    { label: 'Activity', icon: Activity, view: 'activity' },
   ]
 
   // Toggle and close helpers
