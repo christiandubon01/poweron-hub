@@ -21,6 +21,7 @@ import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
 import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceConfirmation, hasCompletedInterview, isInterviewInProgress, getCurrentInterviewQuestion, startInterview, processInterviewAnswer, resetInterview, getSessionCount, incrementSessionCount } from '@/services/nexusPreferences'
 import { buildLearnedProfilePrompt, analyzeSessionPatterns, addConversationTurn, getRecentTurns, type ConversationTurn } from '@/services/nexusLearnedProfile'
 import { createBucket, addEntry, addPassiveCapture, getBucket, listBuckets, autoTag } from '@/services/memoryBuckets'
+import { getCapabilityAnswer } from '@/services/appCapabilityMap'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -401,6 +402,37 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
 
   // ── BRANCH QUERY — intercept before classifier ────────────────────────────
   const isBranchQuery = /how is my business|what should I focus|ways to (?:grow|improve|make more|increase)|opportunities|what can I do|how do I (?:scale|expand|grow)|revenue ideas|business strategy|overcome|struggling with/i.test(query)
+
+  // ── CAPABILITY QUERY — intercept before classifier ────────────────────────
+  const isCapabilityQuery = /(?:can you|do you|does the app|is there|do I have|can I|able to|feature|capability|currently|support|check if|look for|find.*feature|anywhere in the app)/i.test(query) &&
+    /(?:schedule|calendar|auto|automatically|voice command.*(?:create|add|log|schedule)|feature|skill|task|do this|handle this|manage this)/i.test(query)
+
+  if (isCapabilityQuery) {
+    const capabilityAnswer = getCapabilityAnswer(query)
+    const baseAnswer = capabilityAnswer ||
+      "I don't have a specific record of that capability. It may not be built yet."
+    const isMissingFeature = !capabilityAnswer ||
+      (capabilityAnswer.includes('Manual only') ||
+       capabilityAnswer.includes('not yet') ||
+       capabilityAnswer.includes('Planned'))
+    const suggestion = isMissingFeature
+      ? `\n\nWant to track this? Say "save this into March Improvements: [describe the feature you want]" and I'll capture it for your next development session.`
+      : ''
+    const chatContent = baseAnswer + suggestion
+    const voiceContent = capabilityAnswer
+      ? `Here's what I found about that capability. Check the chat for the full details.`
+      : `That feature isn't built yet. I can save it to your improvement bucket if you want.`
+    const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+    try { addTurn('user', query) } catch { /* non-critical */ }
+    try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+    addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+    return {
+      intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Capability query answered from map' },
+      agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+      needsConfirmation: false, conversationMessage: msg, mode,
+      voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+    }
+  }
 
   // ── Step 1: Load memory context + event bus context ─────────────────────
   let memoryContext = ''

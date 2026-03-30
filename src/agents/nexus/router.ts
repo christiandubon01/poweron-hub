@@ -616,8 +616,27 @@ export async function routeToAgent(
   // 2. Build the system prompt: base NEXUS + agent-specific identity + events
   const agentPromptFragment = AGENT_PROMPTS[targetAgent]
   const eventContext = getEventContext(6)
+
+  const capabilitySummary = `
+APP CAPABILITY AWARENESS:
+You know what this app can and cannot do. Key limitations right now:
+- Calendar is display-only — no auto-scheduling from voice commands yet (Phase D)
+- Service call creation is manual — no voice-to-log yet
+- Leads tab has no auto-scoring or market research yet (V3)
+- Estimates require manual entry — no voice-to-estimate yet
+- Google Calendar sync not built yet (Phase D)
+- Push notifications not built yet (Phase H)
+
+When a user asks if the app can do something:
+1. Check your knowledge of current capabilities
+2. If it can do it — tell them exactly how
+3. If it cannot — tell them directly and suggest saving the idea to their improvement bucket
+4. Never make up capabilities that don't exist
+`
+
   const systemPrompt = [
     NEXUS_SYSTEM_PROMPT,
+    `\n---\n\n${capabilitySummary}`,
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',
     contextData ? `\n---\n\n## Live Data Context\n${contextData}` : '',
     scopedLocalCtx ? `\n---\n\n## Local Device Data (scoped to query)\n${scopedLocalCtx}` : '',
