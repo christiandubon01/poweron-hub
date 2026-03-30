@@ -20,7 +20,6 @@ import { supabase } from '@/lib/supabase'
 import { logAudit } from '@/lib/memory/audit'
 import { publish } from './agentEventBus'
 import { autoSnapshot } from './snapshotService'
-import { logActivity } from './activityLog'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -497,17 +496,6 @@ export async function confirmProposal(
     },
     `MiroFish — proposal approved — ${proposal.title} — ${now}`
   )
-
-  // Activity log (fire-and-forget)
-  logActivity({
-    agentName:   'MIROFISH',
-    actionType:  'proposal_approved',
-    entityType:  'proposal',
-    entityId:    proposalId,
-    entityLabel: proposal.title,
-    summary:     `MiroFish approved: "${proposal.title}"`,
-    details:     { proposalId, proposingAgent: proposal.proposingAgent, actionType: proposal.actionType },
-  })
 
   return { success: true, detail: 'Proposal confirmed — ready for execution' }
 }

@@ -10,10 +10,31 @@ import { storeMemory, searchMemory, chunkText, type MemoryRecord, type EntityTyp
 // Extended entity types for Phase F
 export type ExtendedEntityType = BaseEntityType | 'service_call' | 'field_log' | 'code_question' | 'agent_proposal' | 'conversation' | 'pattern'
 
+const EMBED_PROXY_URL = '/.netlify/functions/embed'
+
 /**
- * Generate embedding via Netlify proxy (routed through lib/memory/embeddings).
+ * Generate embedding via Netlify proxy (server-side key), fallback to direct.
  */
 export async function embedText(text: string): Promise<number[]> {
+  // Try server-side proxy first
+  try {
+    const res = await fetch(EMBED_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: text.slice(0, 8000) }),
+    })
+
+    if (res.ok) {
+      const json = await res.json()
+      if (json.data?.[0]?.embedding) {
+        return json.data[0].embedding
+      }
+    }
+  } catch {
+    // Proxy unavailable, fall through
+  }
+
+  // Fallback: direct OpenAI call via existing embeddings.ts
   const { createEmbedding } = await import('@/lib/memory/embeddings')
   return createEmbedding(text)
 }

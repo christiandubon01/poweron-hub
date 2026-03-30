@@ -12,9 +12,9 @@
 
 import { supabase } from '@/lib/supabase'
 
+const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY as string | undefined
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 const EMBEDDING_DIMS  = 1536
-const EMBED_PROXY_URL = '/.netlify/functions/embed'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -56,19 +56,30 @@ export interface SearchMemoryParams {
 
 /**
  * Generate a 1536-dimensional embedding vector for the given text.
- * Routes through the Netlify serverless proxy at /.netlify/functions/embed
- * to keep the OPENAI_API_KEY server-side and avoid browser CORS issues.
+ * Throws if OPENAI_API_KEY is not set.
  */
 export async function createEmbedding(text: string): Promise<number[]> {
-  const response = await fetch(EMBED_PROXY_URL, {
+  if (!OPENAI_API_KEY) {
+    throw new Error(
+      'VITE_OPENAI_API_KEY is not set. Add it to .env.local to enable memory embeddings.'
+    )
+  }
+
+  const response = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input: text.slice(0, 8000) }),
+    headers: {
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL,
+      input: text.slice(0, 8000),  // max token limit safety
+    }),
   })
 
   if (!response.ok) {
     const err = await response.text()
-    throw new Error(`Embedding proxy failed: ${response.status} ${err}`)
+    throw new Error(`OpenAI embedding failed: ${response.status} ${err}`)
   }
 
   const json = await response.json() as {
