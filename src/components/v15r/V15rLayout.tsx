@@ -26,6 +26,8 @@ import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
 import { initEventBus } from '@/services/agentEventBus'
 import { subscribeNexusToEvents } from '@/agents/nexus'
 import { subscribeLedgerToEvents } from '@/agents/ledger'
+import { initPulseBusSubscriptions } from '@/agents/pulse'
+import { initSparkBusListeners } from '@/agents/spark'
 
 interface V15rLayoutProps {
   activeView: string
@@ -51,6 +53,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
+  // H3: online/offline state
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true)
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
   // CRITICAL: These MUST be declared before any useEffect that references them.
@@ -144,10 +148,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Initialize Phase B event bus + agent subscriptions
   useEffect(() => {
     initEventBus()
-    const unsubNexus = subscribeNexusToEvents()
+    const unsubNexus  = subscribeNexusToEvents()
     const unsubLedger = subscribeLedgerToEvents()
-    console.log('[Layout] Event bus initialized, NEXUS + LEDGER subscribed')
-    return () => { unsubNexus(); unsubLedger() }
+    const unsubPulse  = initPulseBusSubscriptions()
+    const unsubSpark  = initSparkBusListeners()
+    console.log('[Layout] Event bus initialized, NEXUS + LEDGER + PULSE + SPARK subscribed')
+    return () => { unsubNexus(); unsubLedger(); unsubPulse(); unsubSpark() }
   }, [])
 
   // Track window width for responsive breakpoints
@@ -237,6 +243,32 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
+
+  // H3: online/offline listeners
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  // poweron:show-proposals — navigate to Settings (Proposals section)
+  useEffect(() => {
+    const handleShowProposals = () => {
+      onNav('settings')
+      // Brief delay to let the settings panel mount, then scroll to Proposals card
+      setTimeout(() => {
+        const el = document.querySelector('[data-section="proposals"]')
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 300)
+    }
+    document.addEventListener('poweron:show-proposals', handleShowProposals)
+    return () => document.removeEventListener('poweron:show-proposals', handleShowProposals)
+  }, [onNav])
 
   // Relative time formatter for "Saved"
   const getRelativeTime = (isoString: string): string => {
@@ -372,6 +404,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   return (
     <div className="flex h-screen text-white overflow-hidden" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+      {/* H3: Offline banner */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center gap-2 px-4 py-2 bg-yellow-500/90 text-yellow-900 text-xs font-semibold backdrop-blur-sm">
+          <span>⚠</span>
+          <span>Offline — changes will sync when connection returns</span>
+        </div>
+      )}
       {/* MOBILE/TABLET OVERLAY BACKDROP */}
       {isOverlay && sidebarOpen && (
         <div

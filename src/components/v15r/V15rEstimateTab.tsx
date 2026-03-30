@@ -383,8 +383,87 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return insights
   }
 
+  // G7: Estimate pipeline — compute Won / Pending / Lost from data
+  const pipelineWon = (() => {
+    const svcLogs = backup.serviceLogs || []
+    return {
+      count: svcLogs.filter(l => l.payStatus === 'paid').length,
+      value: svcLogs.filter(l => l.payStatus === 'paid').reduce((s, l) => s + num(l.quoted || 0), 0)
+    }
+  })()
+  const pipelinePending = (() => {
+    const estimates = backup.serviceEstimates || []
+    const activeCalls = backup.activeServiceCalls || []
+    const partialSvc = (backup.serviceLogs || []).filter(l => l.payStatus === 'pending' || l.payStatus === 'partial')
+    const all = [...estimates, ...activeCalls, ...partialSvc]
+    return {
+      count: all.length,
+      value: all.reduce((s, l) => s + num(l.quoted || 0), 0)
+    }
+  })()
+  const pipelineLost = (() => {
+    // Unpaid service logs with quoted > 0 (no activity, assumed lost)
+    const svcLogs = (backup.serviceLogs || []).filter(l => l.payStatus === 'unpaid' && num(l.quoted) > 0)
+    return {
+      count: svcLogs.length,
+      value: svcLogs.reduce((s, l) => s + num(l.quoted || 0), 0)
+    }
+  })()
+  const pipelineTotal = pipelineWon.value + pipelinePending.value + pipelineLost.value
+
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
+
+      {/* G7: Deal Overview Pipeline Chart */}
+      <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ fontWeight: '700', fontSize: '13px', color: '#9ca3af', textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '0.05em' }}>
+          📊 Estimate Pipeline Overview
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '12px' }}>
+          {/* Won */}
+          <div style={{ backgroundColor: 'rgba(16,185,129,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #10b981' }}>
+            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>✅ Won</div>
+            <div style={{ fontSize: '18px', fontWeight: '800', color: '#10b981', fontFamily: 'monospace' }}>{fmt(pipelineWon.value)}</div>
+            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} jobs</div>
+          </div>
+          {/* Pending */}
+          <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
+            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>⏳ Pending</div>
+            <div style={{ fontSize: '18px', fontWeight: '800', color: '#eab308', fontFamily: 'monospace' }}>{fmt(pipelinePending.value)}</div>
+            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelinePending.count} estimates</div>
+          </div>
+          {/* Lost */}
+          <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
+            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost/Unpaid</div>
+            <div style={{ fontSize: '18px', fontWeight: '800', color: '#ef4444', fontFamily: 'monospace' }}>{fmt(pipelineLost.value)}</div>
+            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineLost.count} jobs</div>
+          </div>
+        </div>
+        {/* Pipeline bar visualization */}
+        {pipelineTotal > 0 && (
+          <div>
+            <div style={{ height: '12px', borderRadius: '6px', overflow: 'hidden', display: 'flex', gap: '1px', backgroundColor: '#1e2130' }}>
+              {pipelineWon.value > 0 && (
+                <div style={{ flex: pipelineWon.value / pipelineTotal, backgroundColor: '#10b981', minWidth: '2px' }}
+                     title={`Won: ${fmt(pipelineWon.value)}`} />
+              )}
+              {pipelinePending.value > 0 && (
+                <div style={{ flex: pipelinePending.value / pipelineTotal, backgroundColor: '#eab308', minWidth: '2px' }}
+                     title={`Pending: ${fmt(pipelinePending.value)}`} />
+              )}
+              {pipelineLost.value > 0 && (
+                <div style={{ flex: pipelineLost.value / pipelineTotal, backgroundColor: '#ef4444', minWidth: '2px' }}
+                     title={`Lost: ${fmt(pipelineLost.value)}`} />
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#4b5563', marginTop: '4px' }}>
+              <span>Total Pipeline: {fmt(pipelineTotal)}</span>
+              <span>Win Rate: {pipelineTotal > 0 ? ((pipelineWon.value / pipelineTotal) * 100).toFixed(0) : 0}%</span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* SUBTAB BAR */}
       <div style={{ display: 'flex', gap: '2px', marginBottom: '16px', backgroundColor: '#0f1117', borderRadius: '8px', padding: '3px', alignItems: 'center' }}>
         <button

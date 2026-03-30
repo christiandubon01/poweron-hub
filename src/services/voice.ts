@@ -924,12 +924,16 @@ export class VoiceSubsystem {
       this.currentAudio = audio
 
       audio.onended = () => {
-        debugPush('HTMLAudio — playback complete')
-        console.log('[Audio] HTMLAudioElement playback completed')
-        URL.revokeObjectURL(url)
-        try { document.body.removeChild(audio) } catch { /* already removed */ }
-        this.currentAudio = null
-        safeResolve()
+        // AUDIO FIX: add 300ms delay before cleanup to ensure full audio drains
+        // before the promise resolves and the next operation starts.
+        setTimeout(() => {
+          debugPush('HTMLAudio — playback complete (+ 300ms drain)')
+          console.log('[Audio] HTMLAudioElement playback completed')
+          URL.revokeObjectURL(url)
+          try { document.body.removeChild(audio) } catch { /* already removed */ }
+          this.currentAudio = null
+          safeResolve()
+        }, 300)
       }
 
       audio.onerror = () => {
@@ -1019,12 +1023,15 @@ export class VoiceSubsystem {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const { data } = await supabase
+      // FIX 2: Remove .eq('org_id') — RLS policy uses user_id = auth.uid(), filter by user_id only
+      // Use .limit(1) instead of .single() to avoid 406 when no row exists yet
+      const { data: rows } = await supabase
         .from('voice_preferences' as never)
         .select('*')
-        .eq('org_id', this.orgId)
         .eq('user_id', this.userId)
-        .single()
+        .limit(1)
+
+      const data = (rows as any[])?.[0] || null
 
       if (data) {
         const prefs = data as any

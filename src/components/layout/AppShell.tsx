@@ -79,6 +79,15 @@ export function AppShell({ children }: AppShellProps) {
     }
   }, [profile])
 
+  // NEXUS command "show snapshots" → navigate to settings panel
+  useEffect(() => {
+    function handleSnapshotCommand() {
+      setActiveView('settings')
+    }
+    window.addEventListener('poweron:show-snapshots', handleSnapshotCommand)
+    return () => window.removeEventListener('poweron:show-snapshots', handleSnapshotCommand)
+  }, [])
+
   // Handle navigation
   function handleNav(view: string) {
     // Project tab views that should NOT clear activeProjectId

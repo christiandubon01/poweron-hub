@@ -17,6 +17,14 @@ import { OHM_SYSTEM_PROMPT } from './systemPrompt'
 import * as codeSearch from './codeSearch'
 import * as complianceChecker from './complianceChecker'
 import * as calculators from './calculators'
+import { storeEmbedding } from '@/services/embeddingService'
+import { analyzeAfterWrite } from '@/services/patternService'
+
+// ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
+function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
+  storeEmbedding(entityType as any, entityId, content, metadata, orgId).catch(() => { /* non-critical */ })
+  analyzeAfterWrite(entityType, { ...metadata, id: entityId }, orgId).catch(() => { /* non-critical */ })
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -214,6 +222,21 @@ async function handleComplianceCheck(req: OhmRequest): Promise<OhmResponse> {
         jurisdiction,
       },
     })
+
+    // Phase F: store compliance flag embedding + trigger pattern learning (fire-and-forget)
+    if (!result.compliant && result.flags?.length > 0) {
+      const topFlag = result.flags[0]
+      const content = `Compliance flag: project ${projectId} in ${jurisdiction}. ${topFlag?.code || ''}: ${topFlag?.description || ''}. ${result.severityCount?.error || 0} errors, ${result.severityCount?.warning || 0} warnings.`
+      fireAndForgetMemory(req.orgId, 'compliance_flag', `${projectId}_compliance`, content, {
+        project_id: projectId,
+        jurisdiction,
+        compliant: result.compliant,
+        error_count: result.severityCount?.error,
+        warning_count: result.severityCount?.warning,
+        nec_code: topFlag?.code,
+        code: topFlag?.code,
+      })
+    }
 
     return {
       success: true,

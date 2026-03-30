@@ -52,6 +52,11 @@ export function CashFlowChart({ data: externalData }: CashFlowChartProps) {
     [externalData]
   )
 
+  // G1 debug: log dataset before render to confirm data is reaching chart
+  if (data && data.length > 0) {
+    console.log('[CashFlowChart] dataset sample (first 3):', data.slice(0, 3))
+  }
+
   // Show empty state when no real data
   if (!externalData || externalData.length === 0) {
     return (
@@ -110,13 +115,17 @@ export function CashFlowChart({ data: externalData }: CashFlowChartProps) {
         />
         <XAxis
           dataKey={(item) => {
-            const date = new Date(item.week_start)
-            return `W${date.getDate() / 7 + 1}`
+            // G1 fix: use proper month/day label instead of broken division formula
+            if (!item.week_start) return '—'
+            const date = new Date(item.week_start + 'T00:00:00')
+            if (isNaN(date.getTime())) return '—'
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
           }}
           stroke="#9CA3AF"
-          style={{ fontSize: '12px' }}
+          style={{ fontSize: '11px' }}
           axisLine={{ stroke: '#4B5563' }}
           tickLine={{ stroke: '#4B5563' }}
+          interval="preserveStartEnd"
         />
         <YAxis
           stroke="#9CA3AF"
@@ -124,7 +133,13 @@ export function CashFlowChart({ data: externalData }: CashFlowChartProps) {
           axisLine={{ stroke: '#4B5563' }}
           tickLine={{ stroke: '#4B5563' }}
           domain={[0, yAxisMax]}
-          tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+          tickFormatter={(value) => {
+            // G1 fix: toFixed(0) for whole dollars, toLocaleString for large numbers
+            const n = Number(value)
+            if (isNaN(n)) return '$0'
+            if (n >= 1000) return `$${(n / 1000).toFixed(0)}k`
+            return `$${n.toFixed(0)}`
+          }}
         />
         <Tooltip content={<CustomTooltip />} />
         <Legend

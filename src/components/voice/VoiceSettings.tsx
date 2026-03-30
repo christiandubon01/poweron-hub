@@ -197,12 +197,15 @@ export function VoiceSettings() {
 
     const load = async () => {
       try {
-        const { data } = await supabase
+        // FIX 2: Remove .eq('org_id') — RLS uses user_id = auth.uid(), filter by user_id only
+        // Use .limit(1) instead of .single() to avoid 406 when no row exists yet
+        const { data: rows } = await supabase
           .from('voice_preferences' as never)
           .select('*')
-          .eq('org_id', orgId)
           .eq('user_id', userId)
-          .single()
+          .limit(1)
+
+        const data = (rows as any[])?.[0] || null
 
         if (data) {
           const d = data as any

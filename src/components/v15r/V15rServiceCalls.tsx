@@ -13,9 +13,12 @@
  */
 
 import { useState, useMemo } from 'react'
-import { Filter, AlertTriangle, CheckCircle, Clock, Zap } from 'lucide-react'
+import { Filter, AlertTriangle, CheckCircle, Clock, Zap, FileText } from 'lucide-react'
 import { getBackupData, type BackupServiceLog } from '@/services/backupDataService'
 import ImportBackupButton from '@/components/ImportBackupButton'
+
+// G8: key used to pass pre-fill data to the Estimate tab
+const SVC_ESTIMATE_PREFILL_KEY = 'svc_estimate_prefill'
 
 const PAY_STATUS_COLORS: Record<string, string> = {
   paid: 'bg-emerald-500/20 text-emerald-400',
@@ -173,6 +176,31 @@ export default function V15rServiceCalls() {
                   Est. comparison: <span className="text-gray-300">{l.estimateComparison}</span>
                 </div>
               )}
+
+              {/* G8: Convert to Estimate button */}
+              <div className="mt-2 pt-2 border-t border-gray-700/50 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    // Store pre-fill data in localStorage for Estimate tab to pick up
+                    const prefill = {
+                      customer: l.customer || '',
+                      address: l.address || l.addr || '',
+                      jtype: l.jtype || 'General Service',
+                      notes: l.notes || l.description || '',
+                      hrs: l.hrs || '',
+                      mat: l.mat || l.materialCost || '',
+                      miles: l.miles || l.mileRT || '',
+                      date: new Date().toISOString().split('T')[0],
+                    }
+                    localStorage.setItem(SVC_ESTIMATE_PREFILL_KEY, JSON.stringify(prefill))
+                    // Dispatch custom event to trigger navigation to estimate subtab
+                    window.dispatchEvent(new CustomEvent('poweron:navigate', { detail: { view: 'estimate', subtab: 'service', prefill: true } }))
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[10px] font-semibold hover:bg-blue-600/30 transition-colors min-h-[36px]"
+                >
+                  <FileText size={10} /> Convert to Estimate
+                </button>
+              </div>
 
               {/* Trigger flags */}
               {(triggers || []).length > 0 && (

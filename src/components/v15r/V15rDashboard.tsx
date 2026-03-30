@@ -113,10 +113,14 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
+    // G1 debug: confirm data is reaching the chart
+    console.log('[CFOTChart] rendering', data.length, 'weeks, sample:', data.slice(0, 3))
+
     // Build labels from week start dates
     const labels = data.map(d => {
-      if (!d.start) return `Wk ${d.wk}`
-      const dt = new Date(d.start)
+      if (!d.start) return `Wk ${d.wk ?? '?'}`
+      const dt = new Date(d.start + 'T00:00:00')
+      if (isNaN(dt.getTime())) return `Wk ${d.wk ?? '?'}`
       return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     })
 
@@ -400,7 +404,13 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
             ticks: {
               color: '#9ca3af',
               font: { size: 11 },
-              callback: (v: any) => '$' + Number(v).toLocaleString()
+              callback: (v: any) => {
+                // G1 fix: guard against NaN, use toFixed(0) for whole dollars
+                const n = Number(v)
+                if (isNaN(n)) return '$0'
+                if (n >= 1000) return '$' + (n / 1000).toFixed(0) + 'k'
+                return '$' + n.toFixed(0)
+              }
             },
             grid: { color: 'rgba(255,255,255,0.05)' }
           }
@@ -838,7 +848,7 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
 }
 
 // ── REVENUE vs COST ANALYSIS CHART COMPONENT ──
-function RevenueCostChart({ projects, backup }: { projects: any[], backup: BackupData }) {
+function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: any[], backup: BackupData, dateStart?: string, dateEnd?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
@@ -849,6 +859,18 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
       const logProj = (l.projId || l.projectId || '').toString().trim().toLowerCase()
       const selected = projectId.toString().trim().toLowerCase()
       return logProj === selected
+    })
+  }
+
+  // G2: Helper to filter logs by date range
+  const filterLogsByDateRange = (logs: any[]) => {
+    if (!dateStart && !dateEnd) return logs
+    return logs.filter(l => {
+      const d = l.date || l.logDate
+      if (!d) return true
+      if (dateStart && d < dateStart) return false
+      if (dateEnd && d > dateEnd) return false
+      return true
     })
   }
 
@@ -868,7 +890,8 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
 
     const mileRate = num(backup.settings?.mileRate || 0.66)
     const opCost = num(backup.settings?.opCost || 42.45)
-    const logs = backup.logs || []
+    // G2: apply date range filter to logs
+    const logs = filterLogsByDateRange(backup.logs || [])
     const isSingleProject = projects.length === 1
 
     const collectedData: number[] = []
@@ -1139,7 +1162,7 @@ function RevenueCostChart({ projects, backup }: { projects: any[], backup: Backu
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup])
+  }, [chartReady, projects, backup, dateStart, dateEnd])
 
   // Check if selected project has no logs
   const hasData = (() => {
@@ -1390,6 +1413,127 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
   )
 }
 
+// ── G6: PULSE "Analyze Trends" — 1-hour cached AI trend analysis ──
+const PULSE_CACHE_KEY = 'pulse_trend_analysis_cache'
+const PULSE_CACHE_TTL = 60 * 60 * 1000 // 1 hour
+
+function PulseTrendAnalyzer({ backup, cfotSummary, projects }: {
+  backup: BackupData
+  cfotSummary: { exposure: number; unbilled: number; pending: number; svcTotal: number; projTotal: number; accumTotal: number }
+  projects: any[]
+}) {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [cached, setCached] = useState(false)
+
+  // Load cached result on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PULSE_CACHE_KEY)
+      if (raw) {
+        const { text, ts } = JSON.parse(raw)
+        if (Date.now() - ts < PULSE_CACHE_TTL) {
+          setResult(text)
+          setCached(true)
+        }
+      }
+    } catch {}
+  }, [])
+
+  const runAnalysis = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      // Collect last 30 days of CFOT + revenue data
+      const now = new Date()
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+      const recentWeekly = (backup.weeklyData || []).filter((w: any) => {
+        if (!w.start) return false
+        return new Date(w.start + 'T00:00:00') >= thirtyDaysAgo
+      })
+      const recentSvcLogs = (backup.serviceLogs || []).filter((l: any) => {
+        if (!l.date) return false
+        return new Date(l.date + 'T00:00:00') >= thirtyDaysAgo
+      })
+
+      const summary = [
+        `Date: ${now.toLocaleDateString()}`,
+        `Active Projects: ${projects.filter(p => p.status === 'active').length}`,
+        `Total Exposure: $${cfotSummary.exposure.toLocaleString()}`,
+        `Unbilled AR: $${cfotSummary.unbilled.toLocaleString()}`,
+        `Pending Collections: $${cfotSummary.pending.toLocaleString()}`,
+        `Service Revenue (all time): $${cfotSummary.svcTotal.toLocaleString()}`,
+        `Project Revenue (all time): $${cfotSummary.projTotal.toLocaleString()}`,
+        `Accumulative Income: $${cfotSummary.accumTotal.toLocaleString()}`,
+        '',
+        `Last 30 days — ${recentWeekly.length} weekly rows:`,
+        ...recentWeekly.map((w: any) => `  Wk${w.wk || '?'} (${w.start || 'N/A'}): proj=$${num(w.proj)}, svc=$${num(w.svc)}, accum=$${num(w.accum)}`),
+        '',
+        `Last 30 days — ${recentSvcLogs.length} service calls:`,
+        ...recentSvcLogs.slice(0, 10).map((l: any) => `  ${l.date}: ${l.customer || 'Unknown'} quoted=$${num(l.quoted)} collected=$${num(l.collected)}`),
+      ].join('\n')
+
+      const response = await callClaude({
+        system: 'You are PULSE, a financial analyst for Power On Solutions LLC. Analyze these metrics and give Christian a 3-bullet plain-English summary of the trend, one risk, and one opportunity. Use emojis for bullets: 📈 trend, ⚠️ risk, 💡 opportunity. Be specific and concise.',
+        messages: [{ role: 'user' as const, content: `Analyze my last 30 days of business metrics:\n\n${summary}` }],
+        max_tokens: 800,
+      })
+      const text = extractText(response)
+      setResult(text)
+      setCached(false)
+      // Cache result for 1 hour
+      try {
+        localStorage.setItem(PULSE_CACHE_KEY, JSON.stringify({ text, ts: Date.now() }))
+      } catch {}
+    } catch (err) {
+      setError((err as any)?.message || 'Analysis failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="bg-[var(--bg-card)] rounded-lg border border-blue-900/40 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">📊</span>
+          <div>
+            <h2 className="text-xl font-bold text-blue-300">PULSE — Trend Analyzer</h2>
+            <p className="text-xs text-gray-500">Last 30 days · CFOT + Revenue · 1-hour cache</p>
+          </div>
+        </div>
+        <button
+          onClick={runAnalysis}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors min-h-[44px] px-4"
+        >
+          {loading ? '⏳ Analyzing...' : '🔍 Analyze trends'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded p-3">{error}</div>
+      )}
+
+      {result && (
+        <div className="space-y-2">
+          {cached && <p className="text-[10px] text-gray-600 italic">Cached result · click "Analyze trends" to refresh</p>}
+          {result.split('\n').filter(l => l.trim()).map((line, i) => (
+            <div key={i} className="text-sm text-gray-300 py-1.5 px-2 rounded bg-[var(--bg-input)]">
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!result && !loading && !error && (
+        <p className="text-gray-500 text-sm">Click "Analyze trends" to get a PULSE analysis of your last 30 days.</p>
+      )}
+    </div>
+  )
+}
+
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
   const backup = getBackupData()
@@ -1459,6 +1603,14 @@ function V15rDashboardInner() {
 
   // ── RCA: Revenue vs Cost Analysis (Active Projects) ──
   const [rcaSelectedProject, setRcaSelectedProject] = useState<string>('all')
+  // G2: date range filter state (default: 90 days back → today)
+  const rcaDefaultEnd = new Date().toISOString().split('T')[0]
+  const rcaDefaultStart = (() => {
+    const d = new Date(); d.setDate(d.getDate() - 90)
+    return d.toISOString().split('T')[0]
+  })()
+  const [rcaDateStart, setRcaDateStart] = useState<string>(rcaDefaultStart)
+  const [rcaDateEnd, setRcaDateEnd] = useState<string>(rcaDefaultEnd)
   const allRcaProjects = projects
     .filter(p => p.status === 'active' && (p.contract || 0) > 0)
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
@@ -1577,20 +1729,41 @@ function V15rDashboardInner() {
               <h2 className="text-[26px] font-bold text-gray-100 leading-tight">Revenue vs Cost Analysis — Active Projects</h2>
               <p className="text-sm text-gray-400 italic mt-1">Collected Revenue, Labor/Material/Mileage Costs, AR Exposure &amp; Break-even — with shaded profit zones</p>
             </div>
-            <select
-              value={rcaSelectedProject}
-              onChange={e => setRcaSelectedProject(e.target.value)}
-              className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
-            >
-              <option value="all">All Projects</option>
-              {rcaDropdownProjects.map(p => (
-                <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
-              ))}
-            </select>
+            {/* G2: date range + project filter controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span>From:</span>
+                <input
+                  type="date"
+                  value={rcaDateStart}
+                  onChange={e => setRcaDateStart(e.target.value)}
+                  className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span>To:</span>
+                <input
+                  type="date"
+                  value={rcaDateEnd}
+                  onChange={e => setRcaDateEnd(e.target.value)}
+                  className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <select
+                value={rcaSelectedProject}
+                onChange={e => setRcaSelectedProject(e.target.value)}
+                className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
+              >
+                <option value="all">All Projects</option>
+                {rcaDropdownProjects.map(p => (
+                  <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="relative w-full h-[420px]">
             <ChartErrorBoundary>
-              <RevenueCostChart projects={rcaProjects} backup={backup} />
+              <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
             </ChartErrorBoundary>
           </div>
           <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-500">
@@ -1598,6 +1771,11 @@ function V15rDashboardInner() {
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(245,158,11,0.15)'}}></span> Warning zone</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(16,185,129,0.15)'}}></span> Profit zone</span>
           </div>
+        </div>
+
+        {/* G6: PULSE Trend Analyzer — "Analyze trends" button + 1hr cache */}
+        <div className="lg:col-span-2">
+          <PulseTrendAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
         </div>
 
         {/* NEXUS: AI Dashboard Analyzer */}

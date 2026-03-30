@@ -2,11 +2,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, Plus, Loader2, AlertTriangle, Eye } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Loader2, AlertTriangle, Eye, RefreshCw, CheckCircle2, Cloud } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import clsx from 'clsx'
 import type { ConflictAlert } from '@/agents/chrono'
+import {
+  syncJobToCalendar,
+  pullCalendarEvents,
+  type ExternalCalendarEvent,
+} from '@/services/calendarSyncService'
 
 interface CalendarEvent {
   id: string
@@ -18,6 +23,7 @@ interface CalendarEvent {
   address?: string
   org_id: string
   project_id?: string
+  google_event_id?: string | null   // Phase D Part 2
 }
 
 // Color coding per spec: blue=project, green=service call, yellow=estimate/site visit
@@ -28,6 +34,8 @@ const eventTypeColors: Record<string, string> = {
   deadline:      'bg-red-400/10 text-red-400 border border-red-400/20',
   vacation:      'bg-gray-400/10 text-gray-400 border border-gray-400/20',
   maintenance:   'bg-orange-400/10 text-orange-400 border border-orange-400/20',
+  // External Google Calendar events render in a lighter / teal tint
+  external:      'bg-teal-400/5 text-teal-300 border border-teal-400/20 opacity-80',
 }
 
 const eventTypeDots: Record<string, string> = {
@@ -37,6 +45,7 @@ const eventTypeDots: Record<string, string> = {
   deadline:      'bg-red-400',
   vacation:      'bg-gray-400',
   maintenance:   'bg-orange-400',
+  external:      'bg-teal-400',
 }
 
 type ViewMode = 'week' | 'month'
@@ -46,13 +55,27 @@ interface Props {
   conflicts?: ConflictAlert[]
 }
 
+// ─── Google Calendar icon (inline SVG) ────────────────────────────────────────
+function GoogleIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M21.805 10.023H21V10H12v4h5.651C16.956 16.21 14.692 17.5 12 17.5c-3.038 0-5.5-2.462-5.5-5.5S8.962 6.5 12 6.5c1.395 0 2.665.527 3.626 1.374l2.828-2.828A9.956 9.956 0 0 0 12 2C6.477 2 2 6.477 2 12s4.477 10 10 10c5.523 0 10-4.477 10-10 0-.67-.069-1.325-.195-1.977z" fill="#4285F4"/>
+      <path d="M3.153 7.345l3.285 2.41A5.499 5.499 0 0 1 12 6.5c1.395 0 2.665.527 3.626 1.374l2.828-2.828A9.956 9.956 0 0 0 12 2 9.993 9.993 0 0 0 3.153 7.345z" fill="#EA4335"/>
+      <path d="M12 22c2.583 0 4.93-.988 6.704-2.596l-3.096-2.619A5.499 5.499 0 0 1 12 17.5a5.494 5.494 0 0 1-5.641-4.49L3.095 15.53A9.993 9.993 0 0 0 12 22z" fill="#34A853"/>
+      <path d="M21.805 10.023H21V10H12v4h5.651a5.511 5.511 0 0 1-1.986 2.385l3.096 2.619C19.98 17.34 22 14.896 22 12c0-.67-.069-1.325-.195-1.977z" fill="#FBBC05"/>
+    </svg>
+  )
+}
+
 export function CalendarView({ conflicts = [] }: Props) {
   const { profile } = useAuth()
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [weekOffset, setWeekOffset] = useState(0)
   const [monthOffset, setMonthOffset] = useState(0)
   const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [externalEvents, setExternalEvents] = useState<ExternalCalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [pullingExternal, setPullingExternal] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
@@ -65,6 +88,8 @@ export function CalendarView({ conflicts = [] }: Props) {
     location: '',
     address: '',
   })
+  // Sync state: map of jobId → 'idle' | 'syncing' | 'done' | 'error'
+  const [syncState, setSyncState] = useState<Record<string, 'idle' | 'syncing' | 'done' | 'error'>>({})
 
   const orgId = profile?.org_id
 
@@ -113,9 +138,45 @@ export function CalendarView({ conflicts = [] }: Props) {
     fetchEvents()
   }, [orgId, rangeStart.toISOString(), rangeEnd.toISOString()])
 
+  // ── Phase D Part 2: Sync job to Google Calendar ───────────────────────────
+  const handleSyncJob = async (jobId: string) => {
+    setSyncState(prev => ({ ...prev, [jobId]: 'syncing' }))
+    const result = await syncJobToCalendar(jobId)
+    if (result.success) {
+      setSyncState(prev => ({ ...prev, [jobId]: 'done' }))
+      // Update local event list with new google_event_id
+      setEvents(prev => prev.map(e =>
+        e.id === jobId ? { ...e, google_event_id: result.googleEventId } : e
+      ))
+    } else {
+      setSyncState(prev => ({ ...prev, [jobId]: 'error' }))
+      console.error('[CalendarView] Sync failed:', result.error)
+    }
+  }
+
+  // ── Phase D Part 2: Pull external Google Calendar events ─────────────────
+  const handlePullExternal = async () => {
+    setPullingExternal(true)
+    try {
+      const ext = await pullCalendarEvents(14)
+      setExternalEvents(ext)
+    } catch (e: any) {
+      console.error('[CalendarView] Pull external failed:', e.message)
+    } finally {
+      setPullingExternal(false)
+    }
+  }
+
   const getEventsForDate = (dateStr: string) => {
     return events.filter(e => {
       const eventDate = new Date(e.start_time).toISOString().split('T')[0]
+      return eventDate === dateStr
+    })
+  }
+
+  const getExternalEventsForDate = (dateStr: string) => {
+    return externalEvents.filter(e => {
+      const eventDate = new Date(e.start).toISOString().split('T')[0]
       return eventDate === dateStr
     })
   }
@@ -193,7 +254,7 @@ export function CalendarView({ conflicts = [] }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Header: View toggle + Navigation */}
+      {/* Header: View toggle + Navigation + Pull External */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button onClick={handlePrev} className="p-2 hover:bg-gray-700/50 rounded text-gray-300">
@@ -206,6 +267,20 @@ export function CalendarView({ conflicts = [] }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Phase D Part 2: Pull Google Events */}
+          <button
+            onClick={handlePullExternal}
+            disabled={pullingExternal}
+            title="Pull Google Calendar events (next 14 days)"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600/20 text-teal-400 hover:bg-teal-600/30 rounded text-xs font-medium transition-colors disabled:opacity-50"
+          >
+            {pullingExternal
+              ? <Loader2 size={12} className="animate-spin" />
+              : <Cloud size={12} />
+            }
+            Pull Google Events
+          </button>
+
           <div className="flex bg-gray-800/50 rounded-lg p-0.5 border border-gray-700">
             <button
               onClick={() => setViewMode('week')}
@@ -224,6 +299,14 @@ export function CalendarView({ conflicts = [] }: Props) {
           </button>
         </div>
       </div>
+
+      {/* External events banner */}
+      {externalEvents.length > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-teal-500/10 border border-teal-500/20 rounded text-xs text-teal-300">
+          <GoogleIcon size={12} />
+          <span>{externalEvents.length} Google Calendar event{externalEvents.length !== 1 ? 's' : ''} loaded — shown in teal</span>
+        </div>
+      )}
 
       {/* Add Event Form */}
       {showAddForm && (
@@ -279,6 +362,7 @@ export function CalendarView({ conflicts = [] }: Props) {
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400" /> Meeting</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Deadline</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400" /> Maintenance</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-teal-400" /> Google Calendar</span>
       </div>
 
       {/* WEEK VIEW */}
@@ -289,6 +373,7 @@ export function CalendarView({ conflicts = [] }: Props) {
             dayDate.setDate(rangeStart.getDate() + idx)
             const dateStr = dayDate.toISOString().split('T')[0]
             const dayEvents = getEventsForDate(dateStr)
+            const extEventsForDay = getExternalEventsForDate(dateStr)
             const hasConflict = hasConflictOnDate(dateStr)
             const isToday = dateStr === new Date().toISOString().split('T')[0]
 
@@ -310,34 +395,85 @@ export function CalendarView({ conflicts = [] }: Props) {
                 </div>
 
                 <div className="space-y-1.5">
-                  {dayEvents.length === 0 ? (
+                  {/* Internal job events */}
+                  {dayEvents.length === 0 && extEventsForDay.length === 0 ? (
                     <div className="text-xs text-gray-500 text-center py-4">No events</div>
                   ) : (
-                    dayEvents.map(event => (
-                      <div key={event.id}>
-                        <button
-                          onClick={e => { e.stopPropagation(); setExpandedEvent(expandedEvent === event.id ? null : event.id) }}
-                          className={clsx('w-full text-left p-2 rounded text-xs cursor-pointer transition-all', eventTypeColors[event.event_type])}
+                    <>
+                      {dayEvents.map(event => (
+                        <div key={event.id}>
+                          <button
+                            onClick={e => { e.stopPropagation(); setExpandedEvent(expandedEvent === event.id ? null : event.id) }}
+                            className={clsx('w-full text-left p-2 rounded text-xs cursor-pointer transition-all', eventTypeColors[event.event_type])}
+                          >
+                            <div className="flex items-center gap-1">
+                              <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', eventTypeDots[event.event_type])} />
+                              <span className="font-semibold truncate flex-1">{event.title}</span>
+                              {/* Google synced indicator */}
+                              {event.google_event_id
+                                ? <GoogleIcon size={10} />
+                                : null
+                              }
+                            </div>
+                            <div className="text-xs opacity-80 ml-2.5">
+                              {formatTime(event.start_time)} - {formatTime(event.end_time)}
+                            </div>
+                            {event.location && <div className="text-xs opacity-70 truncate ml-2.5">{event.location}</div>}
+                          </button>
+
+                          {/* Expanded: show Sync to Google button */}
+                          {expandedEvent === event.id && (
+                            <div className={clsx('mt-1 p-2 rounded text-xs space-y-1', eventTypeColors[event.event_type])}>
+                              <div><span className="opacity-70">Type:</span> {event.event_type}</div>
+                              <div><span className="opacity-70">Time:</span> {formatTime(event.start_time)} - {formatTime(event.end_time)}</div>
+                              {event.location && <div><span className="opacity-70">Location:</span> {event.location}</div>}
+                              {event.address && <div><span className="opacity-70">Address:</span> {event.address}</div>}
+
+                              {/* Phase D Part 2: Sync to Google Calendar button */}
+                              <div className="pt-1 border-t border-current/10">
+                                {event.google_event_id ? (
+                                  <span className="flex items-center gap-1 text-[10px] opacity-70">
+                                    <GoogleIcon size={10} /> Synced to Google Calendar
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={e2 => { e2.stopPropagation(); handleSyncJob(event.id) }}
+                                    disabled={syncState[event.id] === 'syncing'}
+                                    className="flex items-center gap-1 px-2 py-0.5 bg-white/10 hover:bg-white/20 rounded text-[10px] font-medium transition-colors disabled:opacity-50"
+                                  >
+                                    {syncState[event.id] === 'syncing' && <Loader2 size={9} className="animate-spin" />}
+                                    {syncState[event.id] === 'done'    && <CheckCircle2 size={9} className="text-emerald-400" />}
+                                    {syncState[event.id] === 'error'   && <AlertTriangle size={9} className="text-red-400" />}
+                                    {(!syncState[event.id] || syncState[event.id] === 'idle') && <GoogleIcon size={9} />}
+                                    {syncState[event.id] === 'syncing' ? 'Syncing…'
+                                      : syncState[event.id] === 'done'  ? 'Synced!'
+                                      : syncState[event.id] === 'error' ? 'Sync failed'
+                                      : 'Sync to Google Calendar'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+
+                      {/* External Google Calendar events — lighter teal color */}
+                      {extEventsForDay.map(ext => (
+                        <div
+                          key={`ext-${ext.id}`}
+                          className={clsx('p-2 rounded text-xs', eventTypeColors.external)}
+                          title={ext.description || ext.summary}
                         >
                           <div className="flex items-center gap-1">
-                            <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', eventTypeDots[event.event_type])} />
-                            <span className="font-semibold truncate">{event.title}</span>
+                            <GoogleIcon size={9} />
+                            <span className="font-medium truncate">{ext.summary}</span>
                           </div>
-                          <div className="text-xs opacity-80 ml-2.5">
-                            {formatTime(event.start_time)} - {formatTime(event.end_time)}
+                          <div className="text-[10px] opacity-70 ml-3.5">
+                            {formatTime(ext.start)} - {formatTime(ext.end)}
                           </div>
-                          {event.location && <div className="text-xs opacity-70 truncate ml-2.5">{event.location}</div>}
-                        </button>
-                        {expandedEvent === event.id && (
-                          <div className={clsx('mt-1 p-2 rounded text-xs space-y-1', eventTypeColors[event.event_type])}>
-                            <div><span className="opacity-70">Type:</span> {event.event_type}</div>
-                            <div><span className="opacity-70">Time:</span> {formatTime(event.start_time)} - {formatTime(event.end_time)}</div>
-                            {event.location && <div><span className="opacity-70">Location:</span> {event.location}</div>}
-                            {event.address && <div><span className="opacity-70">Address:</span> {event.address}</div>}
-                          </div>
-                        )}
-                      </div>
-                    ))
+                        </div>
+                      ))}
+                    </>
                   )}
                 </div>
               </div>
@@ -358,6 +494,7 @@ export function CalendarView({ conflicts = [] }: Props) {
             {buildMonthDays().map((cell, idx) => {
               const dateStr = cell.date.toISOString().split('T')[0]
               const cellEvents = getEventsForDate(dateStr)
+              const extForDay  = getExternalEventsForDate(dateStr)
               const hasConflict = hasConflictOnDate(dateStr)
               const isToday = dateStr === new Date().toISOString().split('T')[0]
 
@@ -383,8 +520,11 @@ export function CalendarView({ conflicts = [] }: Props) {
                     {cellEvents.slice(0, 3).map(e => (
                       <span key={e.id} className={clsx('w-1.5 h-1.5 rounded-full', eventTypeDots[e.event_type])} title={e.title} />
                     ))}
-                    {cellEvents.length > 3 && (
-                      <span className="text-[8px] text-gray-500">+{cellEvents.length - 3}</span>
+                    {extForDay.slice(0, 2).map(e => (
+                      <span key={`ext-${e.id}`} className="w-1.5 h-1.5 rounded-full bg-teal-400/70" title={e.summary} />
+                    ))}
+                    {(cellEvents.length + extForDay.length) > 3 && (
+                      <span className="text-[8px] text-gray-500">+{cellEvents.length + extForDay.length - 3}</span>
                     )}
                   </div>
                 </div>
@@ -412,19 +552,62 @@ export function CalendarView({ conflicts = [] }: Props) {
             </div>
           )}
 
-          {getEventsForDate(selectedDay).length === 0 ? (
+          {/* Internal events for selected day */}
+          {getEventsForDate(selectedDay).length === 0 && getExternalEventsForDate(selectedDay).length === 0 ? (
             <p className="text-xs text-gray-500">No events scheduled.</p>
           ) : (
-            getEventsForDate(selectedDay).map(event => (
-              <div key={event.id} className={clsx('p-3 rounded text-sm', eventTypeColors[event.event_type])}>
-                <div className="font-semibold">{event.title}</div>
-                <div className="text-xs opacity-80 mt-1">
-                  {formatTime(event.start_time)} – {formatTime(event.end_time)}
+            <>
+              {getEventsForDate(selectedDay).map(event => (
+                <div key={event.id} className={clsx('p-3 rounded text-sm', eventTypeColors[event.event_type])}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">{event.title}</span>
+                    {/* Sync button in day detail view */}
+                    {event.google_event_id ? (
+                      <span className="flex items-center gap-1 text-[10px] opacity-60">
+                        <GoogleIcon size={10} /> Synced
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleSyncJob(event.id)}
+                        disabled={syncState[event.id] === 'syncing'}
+                        className="flex items-center gap-1 px-2 py-0.5 bg-white/10 hover:bg-white/20 rounded text-[10px] font-medium disabled:opacity-50"
+                      >
+                        {syncState[event.id] === 'syncing'
+                          ? <><Loader2 size={9} className="animate-spin" /> Syncing…</>
+                          : syncState[event.id] === 'done'
+                          ? <><CheckCircle2 size={9} className="text-emerald-400" /> Synced!</>
+                          : <><GoogleIcon size={9} /> Sync</>
+                        }
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-xs opacity-80 mt-1">
+                    {formatTime(event.start_time)} – {formatTime(event.end_time)}
+                  </div>
+                  {event.location && <div className="text-xs opacity-70 mt-0.5">{event.location}</div>}
+                  {event.address && <div className="text-xs opacity-70">{event.address}</div>}
                 </div>
-                {event.location && <div className="text-xs opacity-70 mt-0.5">{event.location}</div>}
-                {event.address && <div className="text-xs opacity-70">{event.address}</div>}
-              </div>
-            ))
+              ))}
+
+              {/* External Google events for selected day */}
+              {getExternalEventsForDate(selectedDay).map(ext => (
+                <div key={`ext-${ext.id}`} className={clsx('p-3 rounded text-sm', eventTypeColors.external)}>
+                  <div className="flex items-center gap-1.5">
+                    <GoogleIcon size={12} />
+                    <span className="font-semibold">{ext.summary}</span>
+                  </div>
+                  <div className="text-xs opacity-80 mt-1">
+                    {formatTime(ext.start)} – {formatTime(ext.end)}
+                  </div>
+                  {ext.location && <div className="text-xs opacity-70 mt-0.5">{ext.location}</div>}
+                  {ext.htmlLink && (
+                    <a href={ext.htmlLink} target="_blank" rel="noopener noreferrer" className="text-[10px] opacity-60 hover:opacity-100 underline mt-0.5 block">
+                      Open in Google Calendar ↗
+                    </a>
+                  )}
+                </div>
+              ))}
+            </>
           )}
 
           <button

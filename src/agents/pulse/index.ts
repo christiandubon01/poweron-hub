@@ -16,6 +16,7 @@ import { calculateWeeklyKPIs, calculateARaging, generateCashFlowForecast, getHis
 import { analyzeTrends } from './trendAnalyzer'
 import { logAudit } from '@/lib/memory/audit'
 import { getBackupData } from '@/services/backupDataService'
+import { subscribe, type AgentMessage } from '@/services/agentBus'
 
 // ── Local Backup Weekly Context ──────────────────────────────────────────────
 
@@ -413,4 +414,52 @@ export function getCampaignMetrics(): Array<{
     const raw = localStorage.getItem('pulse_campaign_metrics') || '[]'
     return JSON.parse(raw)
   } catch { return [] }
+}
+
+// ── AgentBus Subscriptions ───────────────────────────────────────────────────
+
+/**
+ * _pulseRefreshCallbacks — External components register here to be notified
+ * when PULSE receives a bus update (e.g. NexusChatPanel refreshes KPI cards).
+ */
+const _pulseRefreshCallbacks = new Set<(event: string, payload: Record<string, unknown>) => void>()
+
+/**
+ * onPulseRefresh — Register a callback for when PULSE receives an agentBus update.
+ * Returns an unsubscribe function.
+ */
+export function onPulseRefresh(
+  cb: (event: string, payload: Record<string, unknown>) => void
+): () => void {
+  _pulseRefreshCallbacks.add(cb)
+  return () => _pulseRefreshCallbacks.delete(cb)
+}
+
+function _notifyPulseRefresh(event: string, payload: Record<string, unknown>): void {
+  for (const cb of _pulseRefreshCallbacks) {
+    try { cb(event, payload) } catch { /* ignore */ }
+  }
+}
+
+/**
+ * initPulseBusSubscriptions — Subscribe PULSE to agentBus messages from
+ * VAULT, BLUEPRINT, and LEDGER. Call once on app startup.
+ *
+ * On receiving data_updated messages, PULSE fires refresh callbacks so
+ * dashboard components can re-query KPIs without a full page reload.
+ */
+export function initPulseBusSubscriptions(): () => void {
+  const unsub = subscribe('PULSE', (msg: AgentMessage) => {
+    if (msg.type !== 'data_updated') return
+
+    const event = (msg.payload?.event as string) || msg.type
+
+    console.log(`[PULSE] AgentBus update from ${msg.from}: ${event}`)
+
+    // Notify registered dashboard components to refresh
+    _notifyPulseRefresh(event, msg.payload)
+  })
+
+  console.log('[PULSE] AgentBus subscriptions initialized')
+  return unsub
 }

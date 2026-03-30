@@ -350,6 +350,14 @@ export async function checkProjectCompliance(
       .select('*')
       .eq('project_id', projectId)
 
+    // ERROR 4 fix: log the exact Supabase error so we can diagnose 400s
+    if (logsError) {
+      console.error('[ComplianceChecker] field_logs query failed (400 or schema mismatch):',
+        logsError.message, '| code:', logsError.code, '| details:', logsError.details,
+        '\nNote: If 400, check that field_logs table has a "project_id" column in Supabase.'
+      )
+    }
+
     if (!logsError && fieldLogs) {
       for (const log of fieldLogs) {
         const detectedViolations = await detectCodeViolations(log.notes || '', project.type)

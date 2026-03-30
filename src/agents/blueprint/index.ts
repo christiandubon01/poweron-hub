@@ -19,6 +19,16 @@ import * as changeOrderManager from './changeOrderManager'
 import * as coordinationTracker from './coordinationTracker'
 import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
 import { getLocalProjectContext } from '@/agents/nexus/router'
+import { publish as busPublish } from '@/services/agentBus'
+import { autoSnapshot } from '@/services/snapshotService'
+import { storeEmbedding } from '@/services/embeddingService'
+import { analyzeAfterWrite } from '@/services/patternService'
+
+// ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
+function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
+  storeEmbedding(entityType as any, entityId, content, metadata, orgId).catch(() => { /* non-critical */ })
+  analyzeAfterWrite(entityType, { ...metadata, id: entityId }, orgId).catch(() => { /* non-critical */ })
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -155,6 +165,22 @@ async function handleProjectCreate(req: BlueprintRequest): Promise<BlueprintResp
       req.userId
     )
 
+    // Phase F: store embedding + trigger pattern learning (fire-and-forget)
+    fireAndForgetMemory(req.orgId, 'project', String(projectId), `Project: ${name}. Type: ${type}. Address: ${address}.`, {
+      project_type: type,
+      client_id: clientId,
+      template_id: templateId,
+    })
+
+    // Auto-snapshot: background save, no UI interrupt
+    autoSnapshot('BLUEPRINT', 'project updated', {
+      projectId,
+      name,
+      type,
+      address,
+      orgId: req.orgId,
+    })
+
     return {
       success: true,
       action: 'project_create',
@@ -188,6 +214,11 @@ async function handleProjectUpdatePhase(req: BlueprintRequest): Promise<Blueprin
       { status },
       req.userId
     )
+
+    // Route through NEXUS → notify PULSE (dashboard refresh) and CHRONO (schedule impact)
+    const phasePayload = { projectId, phaseIndex, status, event: 'project_status_changed' }
+    busPublish('BLUEPRINT', 'PULSE',  'data_updated', phasePayload)
+    busPublish('BLUEPRINT', 'CHRONO', 'data_updated', phasePayload)
 
     return {
       success: true,

@@ -21,6 +21,8 @@ import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSu
 import { pushState, clear as clearHistory, setMaxHistoryDepth } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
+import SnapshotPanel from '@/components/SnapshotPanel'
+import { ProposalQueue } from '@/components/ProposalQueue'
 
 function NoData() {
   return (
@@ -235,6 +237,9 @@ export default function V15rSettingsPanel() {
       }
       // Save to dedicated key for fast inline-script access on next load
       localStorage.setItem('poweron_theme', newTheme)
+      // G3 fix: dispatch storage event so V15rLayout refreshes its backupData
+      // (same-tab storage events don't fire automatically)
+      window.dispatchEvent(new Event('storage'))
       forceUpdate()
     }
   }, [currentTheme, forceUpdate])
@@ -1005,6 +1010,18 @@ export default function V15rSettingsPanel() {
               </div>
             </div>
           </SettingCard>
+
+          {/* Cloud Snapshot History (Supabase-backed) */}
+          <SettingCard title="Cloud Snapshot History">
+            <SnapshotPanel />
+          </SettingCard>
+
+          {/* MiroFish Proposal Queue */}
+          <div data-section="proposals">
+            <SettingCard title="Proposals">
+              <ProposalQueue maxHeight="600px" />
+            </SettingCard>
+          </div>
 
           {/* Version History */}
           <SettingCard title="Version History">

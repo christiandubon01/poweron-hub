@@ -41,16 +41,16 @@ export type PreferenceCategory =
 const PREFERENCE_TRIGGERS = [
   'moving forward',
   'from now on',
-  'remember that',
-  'always ',
-  'never ',
+  // 'remember that' — removed: too ambiguous, overlaps with passive capture ("remember we need wire")
+  // 'always ' — removed: too ambiguous, overlaps with operational notes ("always wear PPE")
+  // 'never ' — removed: too ambiguous, overlaps with operational notes ("never skip grounding")
   'i prefer',
-  'i like',
+  // 'i like' — removed: too ambiguous, colloquial usage not always a preference instruction
   'i want you to',
   'going forward',
-  'make sure you',
-  'keep in mind',
-  'don\'t forget',
+  // 'make sure you' — removed: also in passiveCaptureIntent patterns
+  // 'keep in mind' — removed: also in passiveCaptureIntent patterns
+  // 'don\'t forget' — removed: also in passiveCaptureIntent patterns
   'note that i',
   'my preference is',
   'default to',

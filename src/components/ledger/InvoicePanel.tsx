@@ -204,7 +204,7 @@ export function InvoicePanel({ onSelectInvoice, selectedInvoiceId }: InvoicePane
                 setSearchTerm('')
               }}
               className={clsx(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all',
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all min-h-[44px]',
                 filterStatus === status
                   ? clsx(config.bgColor, config.color, 'ring-1 ring-current')
                   : 'bg-bg-3 text-text-3 hover:bg-bg-4'

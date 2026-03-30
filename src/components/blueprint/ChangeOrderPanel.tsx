@@ -280,7 +280,7 @@ export function ChangeOrderPanel({
                             e.stopPropagation()
                             onSubmitCO(co.id)
                           }}
-                          className="px-2 py-1 text-xs bg-blue-600/30 hover:bg-blue-600/50 text-blue-400 rounded transition-colors"
+                          className="px-3 py-2 text-xs bg-blue-600/30 hover:bg-blue-600/50 text-blue-400 rounded transition-colors min-h-[44px]"
                         >
                           Submit
                         </button>
@@ -292,7 +292,7 @@ export function ChangeOrderPanel({
                             e.stopPropagation()
                             onApproveCO(co.id)
                           }}
-                          className="px-2 py-1 text-xs bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-400 rounded transition-colors"
+                          className="px-3 py-2 text-xs bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-400 rounded transition-colors min-h-[44px]"
                         >
                           Approve
                         </button>
@@ -304,7 +304,7 @@ export function ChangeOrderPanel({
                             e.stopPropagation()
                             onRejectCO(co.id)
                           }}
-                          className="px-2 py-1 text-xs bg-red-600/30 hover:bg-red-600/50 text-red-400 rounded transition-colors"
+                          className="px-3 py-2 text-xs bg-red-600/30 hover:bg-red-600/50 text-red-400 rounded transition-colors min-h-[44px]"
                         >
                           Reject
                         </button>

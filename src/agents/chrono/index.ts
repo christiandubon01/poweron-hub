@@ -33,7 +33,18 @@ import {
 } from './jobScheduler'
 import { logAudit } from '@/lib/memory/audit'
 import { publish } from '@/services/agentEventBus'
+import { publish as busPublish } from '@/services/agentBus'
 import { getBackupData } from '@/services/backupDataService'
+
+// Phase D Part 1 — chronoService tools
+import {
+  getAvailability,
+  scheduleJob as svcScheduleJob,
+  detectConflicts as svcDetectConflicts,
+  getIdleSlots,
+  getUpcomingSchedule,
+  type ScheduleJobInput as SvcScheduleJobInput,
+} from '@/services/chronoService'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -43,9 +54,11 @@ export type ChronoAction =
   | 'get_available_crew' | 'dispatch_crew' | 'get_job_schedules'
   | 'get_agenda_tasks' | 'create_agenda_task' | 'update_agenda_task'
   | 'get_daily_standup' | 'schedule_reminder' | 'generate_schedule_summary'
-  // Phase D new actions
+  // Phase D legacy actions
   | 'schedule_job' | 'generate_daily_briefing' | 'detect_idle_slots'
   | 'run_conflict_scan' | 'generate_client_reminder' | 'generate_daily_reminders'
+  // Phase D Part 1 — chronoService tool handlers
+  | 'svc_schedule_job' | 'check_availability' | 'find_idle_slots' | 'list_conflicts'
 
 export interface ChronoRequest {
   action: ChronoAction
@@ -239,9 +252,11 @@ export async function runConflictScan(
     }
   }
 
-  // Publish conflicts to event bus
+  // Publish conflicts to agentEventBus (existing broadcast)
   if (alerts.length > 0) {
     const criticalCount = alerts.filter(a => a.severity === 'critical').length
+
+    // 1. Broadcast via agentEventBus (wildcard subscribers, NEXUS context injection)
     publish(
       'SCHEDULE_CONFLICT',
       'chrono',
@@ -252,6 +267,26 @@ export async function runConflictScan(
       },
       `⚠️ CHRONO found ${alerts.length} scheduling conflict(s) (${criticalCount} critical) in the next ${daysAhead} days`
     )
+
+    // 2. Direct alert to NEXUS via agentBus — surfaces as priority card with red badge
+    //    NEXUS arbitration.ts will route this to the NEXUS panel message list.
+    busPublish('CHRONO', 'NEXUS', 'alert', {
+      urgency:       'high',
+      subject:       `48h Conflict Alert — ${criticalCount} critical, ${alerts.length - criticalCount} warning`,
+      totalConflicts: alerts.length,
+      criticalCount,
+      conflicts:     alerts.map(a => ({
+        type:            a.type,
+        severity:        a.severity,
+        date:            a.date,
+        description:     a.description,
+        suggestedAction: a.suggestedAction,
+        affectedCrew:    a.affectedCrew   || [],
+        affectedEvents:  a.affectedEvents || [],
+      })),
+      scannedDays:   daysAhead,
+      scannedAt:     new Date().toISOString(),
+    })
   }
 
   await logAudit({
@@ -387,11 +422,24 @@ export async function processChronoRequest(request: ChronoRequest): Promise<Chro
         summary = `Briefing: ${briefings.length} crew, ${briefings.reduce((s, b) => s + b.totalJobs, 0)} jobs, ${idle} idle`
         break
 
-      case 'detect_idle_slots':
+      case 'detect_idle_slots': {
         data = await detectIdleSlots(request.orgId)
         const idleResult = data as { idleSlots: IdleSlotInfo[]; totalIdleHours: number; suggestions: string[] }
         summary = `${idleResult.idleSlots.length} idle slots (${Math.round(idleResult.totalIdleHours)}h total). ${idleResult.suggestions.join(' ')}`
+
+        // Phase D Part 2: Notify SPARK via agentBus so it can store follow_up_opportunities
+        // SPARK subscribes to 'data_updated' from CHRONO and stores idle dates internally.
+        if (idleResult.idleSlots.length > 0) {
+          busPublish('CHRONO', 'SPARK', 'data_updated', {
+            event:              'idle_slots_detected',
+            idleSlots:          idleResult.idleSlots,
+            totalIdleHours:     idleResult.totalIdleHours,
+            suggestions:        idleResult.suggestions,
+            detectedAt:         new Date().toISOString(),
+          })
+        }
         break
+      }
 
       case 'run_conflict_scan':
         data = await runConflictScan(request.orgId, (request.params?.daysAhead as number) || 2)
@@ -410,6 +458,60 @@ export async function processChronoRequest(request: ChronoRequest): Promise<Chro
         data = await generateDailyReminders(request.orgId)
         summary = `Generated ${(data as any[]).length} reminder draft(s)`
         break
+
+      // ── Phase D Part 1 — chronoService tool handlers ────────────────────
+
+      case 'svc_schedule_job': {
+        // title, crew (string[]), date (YYYY-MM-DD), hours (number)
+        const p = request.params as any
+        const input: SvcScheduleJobInput = {
+          project_id:      p?.project_id,
+          job_title:       p?.title ?? p?.job_title ?? 'Untitled Job',
+          crew_assigned:   Array.isArray(p?.crew) ? p.crew : [p?.crew].filter(Boolean),
+          scheduled_date:  p?.date ?? p?.scheduled_date,
+          start_time:      p?.start_time,
+          estimated_hours: p?.hours ?? p?.estimated_hours,
+        }
+        data = await svcScheduleJob(input)
+        const r = data as any
+        summary = r.conflict_flag
+          ? `⚠️ Job "${r.job_title}" scheduled on ${r.scheduled_date} — CONFLICT: ${r.conflict_reason}`
+          : `✅ Job "${r.job_title}" scheduled on ${r.scheduled_date} (crew: ${r.crew_assigned?.join(', ')})`
+        break
+      }
+
+      case 'check_availability': {
+        // crew name + date range: { crew?, startDate, endDate }
+        const p = request.params as any
+        const start = p?.startDate ? new Date(p.startDate) : new Date()
+        const end   = p?.endDate   ? new Date(p.endDate)   : new Date(Date.now() + 7 * 86400000)
+        const avail = await getAvailability({ start, end })
+        data = p?.crew
+          ? avail.filter((a: any) => a.crew_member === p.crew)
+          : avail
+        summary = `Availability grid: ${(data as any[]).length} record(s)`
+        break
+      }
+
+      case 'find_idle_slots': {
+        const lookahead = (request.params?.lookahead as number) ?? 7
+        const idle = await getIdleSlots(lookahead)
+        data = { idleDates: idle, count: idle.length, lookahead }
+        summary = idle.length > 0
+          ? `Found ${idle.length} idle slot(s) in the next ${lookahead} days: ${idle.slice(0, 3).join(', ')}${idle.length > 3 ? '...' : ''}`
+          : `No idle slots — fully booked in the next ${lookahead} days`
+        break
+      }
+
+      case 'list_conflicts': {
+        // Return all job_schedule rows where conflict_flag = true
+        const upcoming = await getUpcomingSchedule(30)
+        data = upcoming.filter((j: any) => j.conflict_flag)
+        summary = (data as any[]).length > 0
+          ? `${(data as any[]).length} conflict(s): ${(data as any[]).map((j: any) => `"${j.job_title}" on ${j.scheduled_date}`).join(', ')}`
+          : '✅ No scheduling conflicts'
+        break
+      }
 
       default:
         throw new Error(`Unknown CHRONO action: ${request.action}`)

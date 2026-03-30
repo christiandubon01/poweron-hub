@@ -87,10 +87,10 @@ const WORDS_PER_MINUTE = 150   // Average speaking rate for duration estimation
  * Returns audio blob and object URL for playback.
  */
 export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTSResponse> {
-  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY
+  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY || import.meta.env.VITE_ELEVENLABS_API_KEY
 
   if (!apiKey) {
-    throw new Error('VITE_ELEVEN_LABS_API_KEY not configured. Add it to your .env file.')
+    throw new Error('ElevenLabs API key not configured. Set VITE_ELEVENLABS_API_KEY in your .env file.')
   }
 
   if (!request.text || request.text.trim().length === 0) {
@@ -133,6 +133,9 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => 'Unknown error')
+    if (response.status === 401) {
+      console.error('[ElevenLabs] 401 Unauthorized — check that VITE_ELEVENLABS_API_KEY is set correctly in Netlify environment variables and is a valid, active ElevenLabs API key.')
+    }
     throw new Error(`ElevenLabs API error (${response.status}): ${errorBody}`)
   }
 
@@ -164,8 +167,8 @@ export async function streamSynthesis(
   text: string,
   voiceId: string = DEFAULT_VOICE_ID
 ): Promise<ReadableStream<Uint8Array> | null> {
-  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY
-  if (!apiKey) throw new Error('VITE_ELEVEN_LABS_API_KEY not configured.')
+  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY || import.meta.env.VITE_ELEVENLABS_API_KEY
+  if (!apiKey) throw new Error('ElevenLabs API key not configured. Set VITE_ELEVENLABS_API_KEY in your .env file.')
 
   const response = await fetch(
     `${ELEVEN_LABS_BASE_URL}/text-to-speech/${voiceId}/stream`,
@@ -220,7 +223,7 @@ export interface ElevenLabsAPIVoice {
  * Falls back to AVAILABLE_VOICES if API key is missing or request fails.
  */
 export async function fetchElevenLabsVoices(): Promise<ElevenLabsAPIVoice[]> {
-  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY
+  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY || import.meta.env.VITE_ELEVENLABS_API_KEY
   if (!apiKey) {
     console.warn('[ElevenLabs] No API key — returning hardcoded voices')
     return AVAILABLE_VOICES.map(v => ({

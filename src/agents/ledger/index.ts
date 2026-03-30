@@ -21,6 +21,16 @@ import * as invoiceManager from './invoiceManager'
 import * as cashFlowAnalyzer from './cashFlowAnalyzer'
 import { subscribe, publish, type AgentEvent } from '@/services/agentEventBus'
 import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
+import { publish as busPublish } from '@/services/agentBus'
+import { autoSnapshot } from '@/services/snapshotService'
+import { storeEmbedding } from '@/services/embeddingService'
+import { analyzeAfterWrite } from '@/services/patternService'
+
+// ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
+function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
+  storeEmbedding(entityType as any, entityId, content, metadata, orgId).catch(() => { /* non-critical */ })
+  analyzeAfterWrite(entityType, { ...metadata, id: entityId }, orgId).catch(() => { /* non-critical */ })
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -318,6 +328,32 @@ async function handleRecordPayment(req: LedgerRequest): Promise<LedgerResponse> 
     { invoiceId, amount, method, newStatus: result.newStatus },
     `Payment recorded: $${amount.toLocaleString()} via ${method}. Invoice → ${result.newStatus}`
   )
+
+  // Route through NEXUS → notify PULSE so dashboard cards refresh
+  busPublish('LEDGER', 'PULSE', 'data_updated', {
+    event:     'payment_recorded',
+    invoiceId,
+    amount,
+    method,
+    newStatus: result.newStatus,
+  })
+
+  // Phase F: store payment embedding + trigger pattern learning (fire-and-forget)
+  fireAndForgetMemory(req.orgId, 'payment', invoiceId, `Payment recorded: $${amount} via ${method}. Invoice status: ${result.newStatus}.`, {
+    invoice_id: invoiceId,
+    amount,
+    method,
+    new_status: result.newStatus,
+  })
+
+  // Auto-snapshot: background save, no UI interrupt
+  autoSnapshot('LEDGER', 'payment recorded', {
+    invoiceId,
+    amount,
+    method,
+    newStatus: result.newStatus,
+    orgId: req.orgId,
+  })
 
   return {
     success: true,

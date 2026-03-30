@@ -25,6 +25,16 @@ import { supabase } from '@/lib/supabase'
 import { logAudit } from '@/lib/memory/audit'
 import { publish } from '@/services/agentEventBus'
 import { requiresMiroFish, submitProposal, runAutomatedReview } from '@/services/miroFish'
+import { publish as busPublish } from '@/services/agentBus'
+import { autoSnapshot } from '@/services/snapshotService'
+import { storeEmbedding } from '@/services/embeddingService'
+import { analyzeAfterWrite } from '@/services/patternService'
+
+// ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
+function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
+  storeEmbedding(entityType as any, entityId, content, metadata, orgId).catch(() => { /* non-critical */ })
+  analyzeAfterWrite(entityType, { ...metadata, id: entityId }, orgId).catch(() => { /* non-critical */ })
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -190,6 +200,26 @@ async function handleCreateEstimate(request: VaultRequest): Promise<VaultRespons
       { estimateId: inserted.id, estimateNumber, total: totals.total, marginPct: totals.marginPct, lineItems: lineItems.length },
       `Estimate ${estimateNumber} created: $${totals.total.toFixed(2)}, ${totals.marginPct.toFixed(1)}% margin, ${lineItems.length} items`
     )
+
+    // Phase F: store embedding + trigger pattern learning (fire-and-forget)
+    const estimateContent = `Estimate ${estimateNumber}: ${request.projectDescription?.slice(0, 400) || ''}. ${lineItems.length} line items. Total: $${totals.total.toFixed(2)}. Margin: ${totals.marginPct.toFixed(1)}%. Items: ${lineItems.slice(0, 5).map((li: any) => li.description || li.name || '').filter(Boolean).join(', ')}`
+    fireAndForgetMemory(request.orgId, 'estimate', inserted.id, estimateContent, {
+      estimate_number: estimateNumber,
+      total: totals.total,
+      margin_pct: totals.marginPct,
+      line_items_count: lineItems.length,
+      project_id: request.projectId,
+    })
+
+    // Auto-snapshot: background save, no UI interrupt
+    autoSnapshot('VAULT', 'estimate saved', {
+      estimateId: inserted.id,
+      estimateNumber,
+      total: totals.total,
+      marginPct: totals.marginPct,
+      lineItemsCount: lineItems.length,
+      orgId: request.orgId,
+    })
 
     return {
       success: true,
@@ -474,6 +504,18 @@ async function handleApproveEstimate(request: VaultRequest): Promise<VaultRespon
       },
       `Estimate ${estimate.estimate_number} approved: $${(estimate.total || 0).toLocaleString()}`
     )
+
+    // Route through NEXUS → notify BLUEPRINT (project cost updated) and LEDGER (create invoice)
+    const estimatePayload = {
+      estimateId: estimate.id,
+      estimateNumber: estimate.estimate_number,
+      total: estimate.total,
+      clientId: estimate.client_id,
+      projectId: estimate.project_id,
+      orgId: estimate.org_id,
+    }
+    busPublish('VAULT', 'BLUEPRINT', 'data_updated', { ...estimatePayload, event: 'estimate_finalized' })
+    busPublish('VAULT', 'LEDGER',    'data_updated', { ...estimatePayload, event: 'estimate_finalized' })
 
     return {
       success: true,

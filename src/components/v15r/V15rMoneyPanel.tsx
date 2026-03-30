@@ -78,17 +78,18 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
         chartRef.current.destroy()
       }
 
+      // G5 fix: use separate labels per dataset to prevent color index misalignment
+      // The doughnut uses two datasets (outer ring + inner ring) — labels must align per dataset
       chartRef.current = new Chart(ctx, {
         type: 'doughnut',
         data: {
-          labels: [
-            'Pipeline', 'Paid', 'Unbilled',
-            'Overhead', 'Profit Margin'
-          ],
+          // Labels array matches outer ring dataset order: Pipeline, Paid, Unbilled
+          labels: ['Pipeline', 'Paid', 'Unbilled'],
           datasets: [
             {
               label: 'Revenue Breakdown',
               data: [pipeline, paid, unbilled],
+              // G5 fix: colors indexed to match labels order exactly
               backgroundColor: ['#22c55e', '#3b82f6', '#eab308'],
               borderColor: '#1a1d27',
               borderWidth: 2,
@@ -97,8 +98,10 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
             },
             {
               label: 'Expense Ratio',
+              // G5 fix: inner ring labels embedded via dataset label for tooltip clarity
               data: [overheadAmount, profitMargin],
-              backgroundColor: ['#ef4444', '#22c55e'],
+              // colors: Overhead=red, Profit Margin=teal (changed from duplicate green)
+              backgroundColor: ['#ef4444', '#14b8a6'],
               borderColor: '#1a1d27',
               borderWidth: 2,
               borderRadius: 2,
@@ -110,14 +113,10 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
           maintainAspectRatio: true,
           cutout: '35%',
           plugins: {
+            // G5 fix: hide built-in legend — custom HTML legend below is the source of truth
+            // This prevents color mismatches between Chart.js auto-legend and actual segment colors
             legend: {
-              position: 'bottom',
-              labels: {
-                color: '#d1d5db',
-                font: { size: 12 },
-                padding: 15,
-                usePointStyle: true,
-              },
+              display: false,
             },
             tooltip: {
               backgroundColor: '#374151',
@@ -158,7 +157,8 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
     { name: 'Paid', value: paid, color: '#3b82f6', ring: 'outer' },
     { name: 'Unbilled', value: unbilled, color: '#eab308', ring: 'outer' },
     { name: 'Overhead', value: overheadAmount, color: '#ef4444', ring: 'inner' },
-    { name: 'Profit Margin', value: profitMargin, color: '#22c55e', ring: 'inner' }
+    // G5 fix: Profit Margin color changed to teal (#14b8a6) to match inner ring dataset color
+    { name: 'Profit Margin', value: profitMargin, color: '#14b8a6', ring: 'inner' }
   ]
 
   const outerSegments = segments.filter(s => s.ring === 'outer')

@@ -24,6 +24,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { getBackupData, num, fmt } from '@/services/backupDataService'
+import { AgentActivityPanel } from './AgentActivityPanel'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,27 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
 
     setInput('')
     setError(null)
+
+    // ── NEXUS built-in command: "show snapshots" ─────────────────────────────
+    if (/show\s+snapshots?/i.test(trimmed)) {
+      const cmdMsg: ChatMessage = {
+        id:        crypto.randomUUID(),
+        role:      'user',
+        content:   trimmed,
+        timestamp: Date.now(),
+      }
+      setMessages(prev => [...prev, cmdMsg])
+      const replyMsg: ChatMessage = {
+        id:        crypto.randomUUID(),
+        role:      'assistant',
+        content:   'Opening Snapshot History in Settings…',
+        timestamp: Date.now(),
+        agentId:   'nexus',
+      }
+      setMessages(prev => [...prev, replyMsg])
+      window.dispatchEvent(new CustomEvent('poweron:show-snapshots'))
+      return
+    }
 
     // Add user message to thread
     const userMsg: ChatMessage = {
@@ -366,7 +388,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           {mode === 'deepdive' && (
             <button
               onClick={resetToNewAnalysis}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-3 border border-bg-5 text-text-2 text-[10px] font-bold hover:bg-bg-4 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-3 border border-bg-5 text-text-2 text-[10px] font-bold hover:bg-bg-4 transition-colors min-h-[44px]"
             >
               <RotateCcw size={11} />
               New Analysis
@@ -378,6 +400,9 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           </div>
         </div>
       </div>
+
+      {/* Agent Activity — shows last 5 routed messages + live bus health */}
+      <AgentActivityPanel />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
@@ -416,7 +441,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
                 <button
                   key={suggestion}
                   onClick={() => { setInput(suggestion); inputRef.current?.focus() }}
-                  className="px-3 py-1.5 rounded-lg bg-bg-2 border border-bg-4 text-xs text-text-2 hover:bg-bg-3 hover:text-text-1 transition-colors"
+                  className="px-3 py-1.5 rounded-lg bg-bg-2 border border-bg-4 text-xs text-text-2 hover:bg-bg-3 hover:text-text-1 transition-colors min-h-[44px]"
                 >
                   {suggestion}
                 </button>
@@ -482,7 +507,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
                 <div className="flex justify-end mt-1 pr-1">
                   <button
                     onClick={triggerDeepDive}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-2 border border-bg-4 text-[10px] font-bold text-text-2 hover:bg-bg-3 hover:text-text-1 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-2 border border-bg-4 text-[10px] font-bold text-text-2 hover:bg-bg-3 hover:text-text-1 transition-colors min-h-[44px]"
                   >
                     <ChevronDown size={11} />
                     Deep Dive

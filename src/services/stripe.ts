@@ -73,16 +73,23 @@ export async function getOrgSubscription(orgId: string): Promise<OrgSubscription
   if (!orgId) return getEmptySubscription()
 
   try {
-    const { data, error } = await supabase
+    // FIX 1: Remove .eq('org_id', orgId) — RLS policy handles org scoping automatically
+    // via: org_id IN (SELECT profiles.org_id FROM profiles WHERE profiles.id = auth.uid())
+    // Querying with an explicit org_id filter can cause 406 if RLS resolves differently.
+    const { data: rows, error } = await supabase
       .from('subscriptions' as never)
       .select('*')
-      .eq('org_id', orgId)
       .in('status', ['active', 'trialing', 'past_due'])
       .order('created_at', { ascending: false })
       .limit(1)
-      .single()
 
-    if (error || !data) {
+    if (error) {
+      console.warn('[stripe] subscriptions query failed:', error.message)
+      return getEmptySubscription(orgId)
+    }
+
+    const data = (rows as Record<string, unknown>[])?.[0]
+    if (!data) {
       return getEmptySubscription(orgId)
     }
 

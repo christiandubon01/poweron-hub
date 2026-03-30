@@ -66,10 +66,13 @@ export async function loadLearnedPatterns(
 
   let supabasePatterns: LearnedPattern[] = []
   try {
+    // FIX 3: Remove .eq('org_id') — RLS policy uses auth.uid() = user_id, filter by user_id only
+    // SQL to run in Supabase SQL Editor:
+    //   CREATE POLICY "Users manage own profile" ON nexus_learned_profile
+    //     FOR ALL USING (auth.uid() = user_id);
     const { data, error } = await supabase
       .from('nexus_learned_profile' as never)
       .select('*')
-      .eq('org_id', orgId)
       .eq('user_id', userId)
       .eq('active', true)
       .order('confidence', { ascending: false })
@@ -158,20 +161,22 @@ export async function upsertPattern(
     }
 
     // Check if pattern already exists in Supabase
-    const { data: existing, error: selectError } = await supabase
+    // ERROR 5 fix: use .limit(1) instead of .single() to avoid 406 when multiple rows exist
+    const { data: existingRows, error: selectError } = await supabase
       .from('nexus_learned_profile' as never)
       .select('id, confidence')
       .eq('org_id', orgId)
       .eq('user_id', userId)
       .eq('pattern_key', pattern.pattern_key)
       .eq('active', true)
-      .single()
+      .limit(1)
 
-    if (selectError && selectError.code !== 'PGRST116') {
-      // PGRST116 = no rows found (expected for new patterns)
+    if (selectError) {
       console.warn('[LearnedProfile] Supabase select failed:', selectError.message)
       return
     }
+
+    const existing = (existingRows as any[])?.[0] || null
 
     if (existing) {
       // Increment confidence

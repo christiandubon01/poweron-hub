@@ -858,17 +858,30 @@ export default function V15rFieldLogPanel() {
         {/* Last 7 Days summary box */}
         {sorted.length > 0 && (() => {
           const now = new Date()
-          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+          // G4 fix: use new Date() minus 7 days (not hardcoded), normalize to local midnight
+          const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
+
+          // G4 fix: safe date parser — appends T00:00:00 to date-only strings to force local time
+          const parseLogDate = (dateStr: string | undefined | null): Date | null => {
+            if (!dateStr) return null
+            // If date-only string (YYYY-MM-DD), parse as local time to avoid UTC offset issues
+            const d = /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+              ? new Date(dateStr + 'T00:00:00')
+              : new Date(dateStr)
+            return isNaN(d.getTime()) ? null : d
+          }
 
           // Filter project logs by date range
           const recentProjectLogs = (backup.logs || []).filter((log: any) => {
-            const logDate = new Date(log.date || log.logDate)
+            const logDate = parseLogDate(log.date || log.logDate)
+            if (!logDate) return false
             return logDate >= sevenDaysAgo
           })
 
           // Filter service logs by date range
           const recentServiceLogs = (backup.serviceLogs || []).filter((log: any) => {
-            const logDate = new Date(log.date)
+            const logDate = parseLogDate(log.date)
+            if (!logDate) return false
             return logDate >= sevenDaysAgo
           })
 
@@ -1985,6 +1998,29 @@ export default function V15rFieldLogPanel() {
                     <button onClick={() => addServiceAdjustment(l.id, 'income')} className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50">+ Income</button>
                     <button onClick={() => beginSvcEdit(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
                     <button onClick={() => deleteSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400">Delete</button>
+                    {/* G8: Convert to Estimate — pre-fills the service estimate form */}
+                    <button
+                      onClick={() => {
+                        // Pre-populate the service estimate form above from this service call
+                        setEstCust(l.customer || '')
+                        setEstAddr(l.address || l.addr || '')
+                        setEstJobType(l.jtype || JOB_TYPES[0])
+                        setEstNotes(l.notes || '')
+                        setEstHours(String(num(l.hrs || 0) || ''))
+                        setEstMaterials(String(num(l.mat || 0) || ''))
+                        setEstMiles(String(num(l.miles || l.mileRT || 0) || ''))
+                        setEditEstimateId(null)
+                        setShowEstimateForm(true)
+                        // Scroll form into view
+                        setTimeout(() => {
+                          const formEl = document.querySelector('[data-estimate-form]')
+                          if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                        }, 100)
+                      }}
+                      className="text-[9px] px-2 py-1 rounded bg-blue-600/30 text-blue-400 border border-blue-600/30 hover:bg-blue-600/40 min-h-[28px]"
+                    >
+                      📋 Convert to Estimate
+                    </button>
                   </div>
                 </div>
               )
