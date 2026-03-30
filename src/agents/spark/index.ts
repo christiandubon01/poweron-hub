@@ -2,28 +2,41 @@
 /**
  * SPARK Orchestrator — Marketing & Sales intelligence for PowerOn Hub
  *
- * Actions:
- * - get_pipeline: Lead pipeline summary by status
- * - get_leads: List leads with optional filters
- * - create_lead: Create a new lead
- * - update_lead_status: Transition a lead's status
- * - get_gc_contacts: List GC contacts with relationship scores
- * - update_gc_scores: Recalculate GC relationship scores
- * - log_gc_activity: Log an activity for a GC contact
- * - get_campaigns: List campaigns
- * - create_campaign: Create a new campaign
- * - get_campaign_roi: Calculate campaign ROI
- * - get_reviews: List reviews
- * - draft_review_response: Generate AI draft response
- * - get_review_summary: Review analytics summary
+ * Phase E additions (full automation):
+ * - get_reviews:       Fetch last 10 Google Business reviews via Netlify proxy
+ * - draft_response:    AI-draft a review response → MiroFish approval required
+ * - log_lead:          Create a new lead record in Supabase
+ * - list_leads:        Return leads by status
+ * - create_follow_up:  Set follow_up_date on a lead
+ * - send_campaign:     Route campaign send through MiroFish approval before delivery
+ *
+ * Original actions preserved:
+ * - get_pipeline, get_leads, create_lead, update_lead_status
+ * - get_gc_contacts, update_gc_scores, log_gc_activity
+ * - get_campaigns, create_campaign, get_campaign_roi
+ * - draft_review_response, get_review_summary
  */
 
 import { SPARK_SYSTEM_PROMPT } from './systemPrompt'
-import { createLead, updateLeadStatus, getLeads, getLeadPipelineSummary } from './leadManager'
+import { createLead as createLeadLegacy, updateLeadStatus, getLeads as getLeadsLegacy, getLeadPipelineSummary } from './leadManager'
 import { getGCContacts, updateGCScores, logGCActivity } from './gcManager'
-import { getCampaigns, createCampaign, calculateCampaignROI } from './campaignManager'
-import { getReviews, draftReviewResponse, getReviewSummary } from './reviewManager'
+import { getCampaigns, createCampaign as createCampaignLegacy, calculateCampaignROI } from './campaignManager'
+import { getReviews as getReviewsLegacy, draftReviewResponse as draftReviewResponseLegacy, getReviewSummary } from './reviewManager'
 import { logAudit } from '@/lib/memory/audit'
+import { submitProposal, runAutomatedReview } from '@/services/miroFish'
+import {
+  getReviews,
+  draftReviewResponse as draftReviewService,
+  postReviewResponse,
+  createLead as createLeadService,
+  getLeads as getLeadsService,
+  scheduleFollowUp,
+  updateLeadStatus as updateLeadStatusService,
+  sendCampaign as sendCampaignService,
+} from '@/services/sparkService'
+import { subscribe as agentBusSubscribe } from '@/services/agentBus'
+import type { AgentMessage } from '@/services/agentBus'
+import { publish } from '@/services/agentEventBus'
 
 // Types
 export type SparkAction =
@@ -31,6 +44,8 @@ export type SparkAction =
   | 'get_gc_contacts' | 'update_gc_scores' | 'log_gc_activity'
   | 'get_campaigns' | 'create_campaign' | 'get_campaign_roi'
   | 'get_reviews' | 'draft_review_response' | 'get_review_summary'
+  // Phase E new tools:
+  | 'draft_response' | 'log_lead' | 'list_leads' | 'create_follow_up' | 'send_campaign'
 
 export interface SparkRequest {
   action: SparkAction
@@ -111,11 +126,6 @@ export async function processSparkRequest(request: SparkRequest): Promise<SparkR
         summary = `Campaign ROI: ${(data as any).roi_pct}%`
         break
 
-      case 'get_reviews':
-        data = await getReviews(request.orgId, request.params as any)
-        summary = `Found ${(data as any[]).length} reviews`
-        break
-
       case 'draft_review_response':
         data = await draftReviewResponse(
           request.orgId,
@@ -131,6 +141,130 @@ export async function processSparkRequest(request: SparkRequest): Promise<SparkR
         data = await getReviewSummary(request.orgId)
         summary = await generateSparkSummary('reviews', data)
         break
+
+      // ── Phase E: SPARK Full Automation Tools ──────────────────────────────
+
+      /**
+       * get_reviews — Fetch last 10 Google Business reviews via Netlify proxy.
+       * Publishes REVIEW_RECEIVED to NEXUS for morning briefing.
+       */
+      case 'get_reviews': {
+        data = await getReviews()
+        const reviewArr = data as any[]
+        summary = `Fetched ${reviewArr.length} reviews from Google Business`
+
+        // Notify NEXUS for any unanswered reviews
+        const unanswered = reviewArr.filter((r: any) => !r.reviewReply)
+        if (unanswered.length > 0) {
+          publish(
+            'REVIEW_RECEIVED' as any,
+            'spark',
+            { count: unanswered.length, reviews: unanswered.map((r: any) => ({ id: r.reviewId, rating: r.starRating })) },
+            `${unanswered.length} unanswered Google Business review(s) need attention`
+          )
+        }
+        break
+      }
+
+      /**
+       * draft_response — AI-draft a review response using electrical contractor persona.
+       * DOES NOT POST — submits a MiroFish proposal for Christian to approve.
+       */
+      case 'draft_response': {
+        const reviewText = request.params?.reviewText as string
+        const reviewId   = request.params?.reviewId as string
+
+        if (!reviewText) throw new Error('draft_response requires params.reviewText')
+
+        const draftText = await draftReviewService(reviewText)
+
+        // Submit to MiroFish — SPARK does NOT post directly
+        const proposal = await submitProposal({
+          orgId:          request.orgId,
+          proposingAgent: 'spark',
+          title:          `Review Response — ${(reviewText || '').slice(0, 60)}...`,
+          description:    `SPARK drafted a review response for approval. Review ID: ${reviewId || 'unknown'}`,
+          category:       'operations',
+          impactLevel:    'medium',
+          actionType:     'post_review_response',
+          actionPayload:  { reviewId, responseText: draftText },
+          sourceData:     { reviewText, reviewId },
+        })
+
+        await runAutomatedReview(proposal.id!)
+
+        data    = { draft: draftText, proposalId: proposal.id }
+        summary = 'Review response drafted — MiroFish proposal created, awaiting Christian\'s approval'
+        break
+      }
+
+      /**
+       * log_lead — Create a new lead record in Supabase leads table.
+       */
+      case 'log_lead': {
+        const leadData = request.params as any
+        if (!leadData?.name) throw new Error('log_lead requires params.name')
+
+        data    = await createLeadService(leadData)
+        summary = `Lead "${leadData.name}" logged from ${leadData.source || 'manual'}`
+        break
+      }
+
+      /**
+       * list_leads — Return leads, optionally filtered by status.
+       */
+      case 'list_leads': {
+        const statusFilter = request.params?.status as string | undefined
+        data    = await getLeadsService(statusFilter as any)
+        const leadsArr = data as any[]
+        summary = statusFilter
+          ? `Found ${leadsArr.length} leads with status "${statusFilter}"`
+          : `Found ${leadsArr.length} total leads`
+        break
+      }
+
+      /**
+       * create_follow_up — Set follow_up_date on an existing lead.
+       */
+      case 'create_follow_up': {
+        const leadId   = request.params?.leadId as string
+        const dateStr  = request.params?.date as string
+
+        if (!leadId || !dateStr) throw new Error('create_follow_up requires params.leadId and params.date')
+
+        const followUpDate = new Date(dateStr)
+        data    = await scheduleFollowUp(leadId, followUpDate)
+        summary = `Follow-up scheduled for lead ${leadId} on ${dateStr}`
+        break
+      }
+
+      /**
+       * send_campaign — Route campaign send through MiroFish before execution.
+       * SPARK submits a proposal — does NOT send directly.
+       */
+      case 'send_campaign': {
+        const campaignId = request.params?.campaignId as string
+        if (!campaignId) throw new Error('send_campaign requires params.campaignId')
+
+        // Submit MiroFish proposal — do NOT call sendCampaignService directly
+        const proposal = await submitProposal({
+          orgId:          request.orgId,
+          proposingAgent: 'spark',
+          title:          `Send Email Campaign — ${campaignId}`,
+          description:    `SPARK requests approval to send email campaign ${campaignId} to its target segment.`,
+          category:       'operations',
+          impactLevel:    'high',
+          actionType:     'send_email_campaign',
+          actionPayload:  { campaignId },
+          sourceData:     { campaignId, requestedBy: request.userId },
+        })
+
+        await runAutomatedReview(proposal.id!)
+
+        data    = { proposalId: proposal.id, campaignId }
+        summary = 'Campaign send routed through MiroFish — awaiting Christian\'s approval before delivery'
+        break
+      }
 
       default:
         throw new Error(`Unknown SPARK action: ${request.action}`)
@@ -169,6 +303,83 @@ export async function processSparkRequest(request: SparkRequest): Promise<SparkR
     throw error
   }
 }
+
+// ── Phase D Part 2: SPARK ↔ CHRONO agentBus Route ────────────────────────────
+
+/**
+ * In-memory store for idle slot follow-up opportunities received from CHRONO.
+ * Phase E automation will read this to auto-schedule outreach.
+ * SPARK never auto-sends anything — it only stores for later.
+ */
+export interface FollowUpOpportunity {
+  date: string
+  idleHours: number
+  suggestions: string[]
+  receivedAt: string
+  source: 'CHRONO'
+}
+
+let _followUpOpportunities: FollowUpOpportunity[] = []
+
+/** Get all stored follow-up opportunities (Phase E reads this). */
+export function getFollowUpOpportunities(): FollowUpOpportunity[] {
+  return [..._followUpOpportunities]
+}
+
+/** Clear follow-up opportunities (e.g. after Phase E processes them). */
+export function clearFollowUpOpportunities(): void {
+  _followUpOpportunities = []
+}
+
+/**
+ * Initialize SPARK's agentBus subscription.
+ * Subscribe to 'data_updated' messages from CHRONO.
+ * When CHRONO detects idle slots, SPARK stores them as follow_up_opportunities.
+ * Called once on app startup (from App.tsx or layout).
+ * Returns an unsubscribe function.
+ */
+export function initSparkBusListeners(): () => void {
+  console.log('[SPARK] Initializing agentBus listener for CHRONO idle slots')
+
+  const unsubscribe = agentBusSubscribe('SPARK', (msg: AgentMessage) => {
+    // Only handle 'data_updated' messages from CHRONO
+    if (msg.from !== 'CHRONO' || msg.type !== 'data_updated') return
+
+    const payload = msg.payload as any
+
+    if (payload?.event === 'idle_slots_detected' && Array.isArray(payload?.idleSlots)) {
+      const opportunities: FollowUpOpportunity[] = payload.idleSlots.map((slot: any) => ({
+        date:        slot.date || slot.startDate || 'unknown',
+        idleHours:   typeof slot.idleHours === 'number' ? slot.idleHours : 0,
+        suggestions: Array.isArray(payload.suggestions) ? payload.suggestions : [],
+        receivedAt:  payload.detectedAt || new Date().toISOString(),
+        source:      'CHRONO' as const,
+      }))
+
+      // Merge new opportunities (dedupe by date)
+      for (const opp of opportunities) {
+        const exists = _followUpOpportunities.some(o => o.date === opp.date)
+        if (!exists) {
+          _followUpOpportunities.push(opp)
+        }
+      }
+
+      // Keep most recent 90 days of opportunities
+      _followUpOpportunities = _followUpOpportunities
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-90)
+
+      console.log(
+        `[SPARK] Stored ${opportunities.length} follow-up opportunity(ies) from CHRONO idle slots. ` +
+        `Total stored: ${_followUpOpportunities.length}`
+      )
+    }
+  })
+
+  return unsubscribe
+}
+
+// ── Claude summary generator ──────────────────────────────────────────────────
 
 // Claude summary generator
 async function generateSparkSummary(topic: string, data: unknown): Promise<string> {
