@@ -15,6 +15,8 @@ import { verifyProposal, type MiroFishResult } from './mirofish'
 import { analyzeIdea, type IdeaAnalysis, type IntegrationOption } from './ideaAnalyzer'
 import { logAudit } from '@/lib/memory/audit'
 import { supabase } from '@/lib/supabase'
+import { storeEmbedding } from '@/services/embeddingService'
+import { analyzeAfterWrite } from '@/services/patternService'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -77,6 +79,22 @@ export async function runScoutAnalysis(orgId: string): Promise<ScoutRunResult> {
   const durationMs  = Date.now() - startMs
 
   console.log(`[SCOUT] Complete: ${proposalIds.length} proposed, ${rejections.length} rejected (${durationMs}ms)`)
+
+  // Phase F: embed verified proposals into vector memory (fire-and-forget)
+  for (const proposal of rawProposals) {
+    const content = `SCOUT finding: ${proposal.title}. ${proposal.description?.slice(0, 300) || ''}. Category: ${proposal.category || 'general'}. Impact: ${proposal.impact_score}/10.`
+    const embeddingId = `scout_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    storeEmbedding('scout_finding' as any, embeddingId, content, {
+      title: proposal.title,
+      category: proposal.category,
+      impact_score: proposal.impact_score,
+    }, orgId).catch(() => { /* non-critical */ })
+    analyzeAfterWrite('scout_finding', {
+      finding: proposal.title,
+      description: proposal.description,
+      finding_type: proposal.category,
+    }, orgId).catch(() => { /* non-critical */ })
+  }
 
   // ── Step 4: Audit trail ───────────────────────────────────────────────
   try {
@@ -345,6 +363,137 @@ function mapRiskToScore(risk: string): number {
     case 'medium': return 6
     case 'high':   return 8
     default:       return 5
+  }
+}
+
+
+// ── Gap Detection ──────────────────────────────────────────────────────────
+
+import { submitProposal as submitMiroFishProposal, runAutomatedReview } from '@/services/miroFish'
+import { subscribe as busSubscribe } from '@/services/agentEventBus'
+
+/**
+ * Gap categories that SCOUT auto-detects from context strings.
+ */
+const GAP_PATTERNS: Array<{
+  regex: RegExp
+  category: 'operations' | 'financial' | 'nec_compliance' | 'safety' | 'feature' | 'optimization'
+  impactLevel: 'low' | 'medium' | 'high'
+}> = [
+  { regex: /missing.*(?:price|cost|material|item)/i,              category: 'financial',       impactLevel: 'high' },
+  { regex: /incomplete.*(?:field|log|entry|record)/i,             category: 'operations',      impactLevel: 'medium' },
+  { regex: /(?:error|fail|crash|exception).*agent/i,              category: 'feature',         impactLevel: 'high' },
+  { regex: /repeated.*(?:correction|fix|redo)/i,                  category: 'optimization',    impactLevel: 'medium' },
+  { regex: /no.*(?:estimate|quote|bid)/i,                         category: 'financial',       impactLevel: 'high' },
+  { regex: /(?:compliance|code|nec|permit).*(?:gap|missing|fail)/i, category: 'nec_compliance', impactLevel: 'high' },
+  { regex: /(?:schedule|crew|dispatch).*(?:conflict|gap|missing)/i, category: 'operations',    impactLevel: 'medium' },
+  { regex: /overdue.*(?:invoice|payment|collection)/i,            category: 'financial',       impactLevel: 'high' },
+]
+
+export interface GapDetectionResult {
+  detected:   boolean
+  proposalId?: string
+  title?:     string
+  category?:  string
+  error?:     string
+}
+
+/**
+ * Detect a data gap from a context string and submit a MiroFish proposal.
+ * SCOUT does NOT fix anything — it only submits proposals.
+ *
+ * @param context - Description of the gap (e.g., "missing material cost in estimate POS-001")
+ * @param orgId - Organization ID (defaults to localStorage-cached orgId)
+ */
+export async function detectGap(
+  context: string,
+  orgId?: string
+): Promise<GapDetectionResult> {
+  const resolvedOrgId = orgId || localStorage.getItem('poweron_org_id') || 'default'
+
+  // Match against known gap patterns
+  let matchedCategory: typeof GAP_PATTERNS[0] | undefined
+  for (const pattern of GAP_PATTERNS) {
+    if (pattern.regex.test(context)) {
+      matchedCategory = pattern
+      break
+    }
+  }
+
+  // Default if no pattern matched
+  const category = matchedCategory?.category ?? 'operations'
+  const impactLevel = matchedCategory?.impactLevel ?? 'medium'
+
+  // Build title from context (truncate)
+  const title = `SCOUT Gap: ${context.slice(0, 80)}${context.length > 80 ? '...' : ''}`
+
+  try {
+    // Step 1: Submit to MiroFish pipeline
+    const proposal = await submitMiroFishProposal({
+      orgId:          resolvedOrgId,
+      proposingAgent: 'scout',
+      title,
+      description:    context,
+      category:       category as any,
+      impactLevel,
+      actionType:     'gap_resolution',
+      actionPayload:  { gapContext: context, detectedAt: new Date().toISOString() },
+      sourceData:     { source: 'scout_gap_detection', raw_context: context },
+    })
+
+    if (!proposal.id) {
+      return { detected: true, error: 'Proposal created but no ID returned' }
+    }
+
+    // Steps 2+3: Run automated NEXUS review + domain verification
+    const review = await runAutomatedReview(proposal.id)
+
+    console.log(`[SCOUT:detectGap] Proposal ${proposal.id} — review ${review.passed ? 'PASSED' : 'FAILED'} at step ${review.step}`)
+
+    return {
+      detected:   true,
+      proposalId: proposal.id,
+      title,
+      category,
+    }
+  } catch (err) {
+    console.error('[SCOUT:detectGap] Failed:', err)
+    return {
+      detected: true,
+      error:    err instanceof Error ? err.message : 'Unknown error',
+    }
+  }
+}
+
+/**
+ * Subscribe to agentBus events that indicate gaps SCOUT should auto-detect.
+ * Call once at app startup.
+ */
+export function initScoutAutoDetection(): void {
+  // Watch for DATA_GAP_DETECTED events from other agents
+  busSubscribe('DATA_GAP_DETECTED', (event) => {
+    // Don't react to our own proposals
+    if (event.source === 'mirofish' || event.source === 'scout') return
+    const summary = event.summary || JSON.stringify(event.payload)
+    detectGap(summary).catch(err => console.warn('[SCOUT:autoDetect] Failed:', err))
+  })
+
+  // Watch for compliance flags
+  busSubscribe('COMPLIANCE_FLAG', (event) => {
+    const summary = `Compliance gap flagged: ${event.summary}`
+    detectGap(summary).catch(err => console.warn('[SCOUT:autoDetect] Failed:', err))
+  })
+
+  console.log('[SCOUT] Auto-detection listeners initialized')
+}
+
+// ── Window global for manual testing ────────────────────────────────────────
+
+if (typeof window !== 'undefined') {
+  (window as any).__scout = {
+    detectGap,
+    runScoutAnalysis,
+    analyzeUserIdea,
   }
 }
 

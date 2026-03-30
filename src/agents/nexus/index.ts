@@ -218,6 +218,24 @@ CRITICAL RULES:
 - Format with clean section headers for chat display.
 `
 
+const BRANCH_FORMAT_INSTRUCTION = `
+## Response Format — BRANCH CARDS (Business Strategy Mode)
+The user is asking about business growth, opportunities, or strategic direction.
+You MUST respond with a brief snapshot paragraph followed by BRANCH_CARDS in this EXACT format:
+
+[1-2 sentence snapshot of the current situation based on available data]
+
+BRANCH_CARDS: [{"title":"<short action title>","summary":"<2-3 sentence explanation of the opportunity or strategy>","relevance":"HIGH","relevance_reason":"<why this matters right now for their business>"},{"title":"...","summary":"...","relevance":"MEDIUM","relevance_reason":"..."},{"title":"...","summary":"...","relevance":"LOW","relevance_reason":"..."}]
+
+CRITICAL RULES:
+- ALWAYS include the BRANCH_CARDS: marker followed by a valid JSON array on a single line.
+- Provide 3-5 branch cards — one HIGH, one or two MEDIUM, one LOW relevance minimum.
+- relevance must be exactly "HIGH", "MEDIUM", or "LOW" (all caps).
+- Base branches on real data from the app — use actual project names, cash flow gaps, crew capacity, etc.
+- Title should be short (3-6 words). Summary should be actionable and specific.
+- Never use placeholder text — if a section has no data, skip that branch card.
+`
+
 /**
  * Main NEXUS pipeline. Call this for every user message.
  */
@@ -395,6 +413,114 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
       return {
         intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'No buckets yet' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    }
+  }
+
+  // ── SEMANTIC SEARCH — intercept before classifier ─────────────────────────
+  // Handles: "find jobs where AFCI was flagged", "show estimates similar to Starbucks job"
+  const isSemanticSearchQuery = /(?:find|search|show me|look for|retrieve)\s+(?:jobs?|projects?|estimates?|service calls?|field logs?|compliance|payments?)\s+(?:where|with|that|similar to|related to|about|involving)/i.test(query) ||
+    /similar to (?:the\s+)?["']?[\w\s]+["']?\s+(?:job|project|estimate)/i.test(query) ||
+    /find (?:anything|records?|entries?) (?:about|related to|involving|where)/i.test(query)
+
+  if (isSemanticSearchQuery) {
+    try {
+      const { searchSimilar } = await import('@/services/embeddingService')
+
+      // Extract entity type hint from query
+      let entityTypeFilter: string | undefined
+      if (/estimate/i.test(query)) entityTypeFilter = 'estimate'
+      else if (/compliance|NEC|flag|AFCI|GFCI|code/i.test(query)) entityTypeFilter = 'compliance_flag'
+      else if (/service call/i.test(query)) entityTypeFilter = 'service_call'
+      else if (/payment|paid|invoice/i.test(query)) entityTypeFilter = 'payment'
+      else if (/project/i.test(query)) entityTypeFilter = 'project'
+      else if (/field log|log entry/i.test(query)) entityTypeFilter = 'field_log'
+
+      // Use the full query as the search phrase
+      const searchResults = await searchSimilar(query, entityTypeFilter as any, 5, request.orgId)
+
+      if (searchResults.length > 0) {
+        const branchCards = searchResults.map(r => ({
+          title: `[${r.entity_type.replace(/_/g, ' ')}] ${r.content.split('.')[0].slice(0, 60)}`,
+          summary: r.content.slice(0, 200),
+          relevance: r.similarity >= 0.80 ? 'HIGH' : r.similarity >= 0.70 ? 'MEDIUM' : 'LOW',
+          relevance_reason: `${Math.round(r.similarity * 100)}% semantic match to your query`,
+          entity_type: r.entity_type,
+          entity_id: r.entity_id,
+          similarity: Math.round(r.similarity * 100),
+        }))
+
+        const chatContent = `Found **${searchResults.length} result${searchResults.length !== 1 ? 's' : ''}** matching "${query.slice(0, 80)}":\n\nBRANCH_CARDS:${JSON.stringify(branchCards)}\n\nTap a card to dive deeper. These results are ranked by semantic similarity to your search.`
+        const voiceContent = `Found ${searchResults.length} matching records. Check the chat to review them.`
+
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Semantic search — vector memory query' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false,
+          conversationMessage: msg,
+          mode,
+          voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+        }
+      } else {
+        const chatContent = `Semantic search found no matches for "${query.slice(0, 80)}". Try seeding memory first by calling \`window.__memory.seedMemory()\` in the browser console, then search again.`
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Semantic search — no results' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false,
+          conversationMessage: msg,
+          mode,
+          voiceSummary: request.isVoiceCommand ? 'No matching records found for that search.' : undefined,
+        }
+      }
+    } catch (searchErr) {
+      console.warn('[NEXUS] Semantic search failed, falling through to classifier:', searchErr)
+      // Fall through — don't block if vector search fails
+    }
+  }
+
+  // ── PROPOSAL QUERY — intercept before classifier ──────────────────────────
+  const isProposalQuery = /(?:what needs attention|show proposals?|any suggestions?|scout.*(?:proposals?|suggestions?|ideas?)|pending.*proposals?|what(?:['\u2019]s| is) scout|mirofish|approval queue)/i.test(query)
+
+  if (isProposalQuery) {
+    const proposals = await getPendingProposals(request.orgId)
+    if (proposals.length > 0) {
+      const branchCards = proposals.slice(0, 5).map(p => ({
+        label: p.title,
+        detail: p.description.slice(0, 80) + (p.description.length > 80 ? '...' : ''),
+        query: `Tell me more about proposal: ${p.title}`,
+        relevance: p.impactLevel === 'high' || p.impactLevel === 'critical' ? 'high' : p.impactLevel === 'medium' ? 'medium' : 'low',
+      }))
+      const chatContent = `SCOUT has **${proposals.length} pending proposal${proposals.length > 1 ? 's' : ''}** for your review:\n\nBRANCH_CARDS:${JSON.stringify(branchCards)}\n\nOpen the **Proposal Queue** to approve, reject, or defer each one. Tap a card above for details.`
+      const voiceContent = `SCOUT has ${proposals.length} pending proposals. Check the chat to review them, or open the proposal queue.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Proposal query — showing pending proposals as branch cards' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    } else {
+      const chatContent = 'SCOUT has no pending proposals at this time.'
+      const voiceContent = 'No pending proposals from SCOUT right now.'
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Proposal query — no pending' },
         agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
         needsConfirmation: false, conversationMessage: msg, mode,
         voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
@@ -661,11 +787,13 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   const isResearchQuery = /research|look up|find out|what does.*code|NEC|CEC|title 24|CBC|industry|benchmark|compare|best practice|how do.*install|installation method|market rate|pricing data|code requirement/i.test(request.message)
   const modeInstruction = isListQuery
     ? LIST_FORMAT_INSTRUCTION
-    : isOpBriefing
-      ? OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION
-      : mode === 'deepdive'
-        ? DEEP_DIVE_FORMAT_INSTRUCTION
-        : BRIEFING_FORMAT_INSTRUCTION
+    : isBranchQuery
+      ? BRANCH_FORMAT_INSTRUCTION
+      : isOpBriefing
+        ? OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION
+        : mode === 'deepdive'
+          ? DEEP_DIVE_FORMAT_INSTRUCTION
+          : BRIEFING_FORMAT_INSTRUCTION
   let enrichedMessage = `${request.message}\n\n${modeInstruction}`
 
   // Prepend user preferences so the agent respects them

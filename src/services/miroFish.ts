@@ -19,6 +19,7 @@
 import { supabase } from '@/lib/supabase'
 import { logAudit } from '@/lib/memory/audit'
 import { publish } from './agentEventBus'
+import { autoSnapshot } from './snapshotService'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export type ProposalStatus =
   | 'rejected'      // Failed at any step
   | 'expired'       // 24h timeout reached
   | 'skipped'       // User dismissed
+  | 'deferred'      // User postponed — stays in queue
 
 export type ProposalCategory =
   | 'nec_compliance'
@@ -99,6 +101,8 @@ export const HIGH_IMPACT_ACTIONS: Record<string, Set<string>> = {
   ledger:    new Set(['send_invoice', 'send_reminder', 'void_invoice']),
   blueprint: new Set(['modify_template', 'compliance_flag', 'approve_change_order']),
   chrono:    new Set(['book_job', 'send_crew_briefing', 'send_client_reminder', 'create_gcal_event']),
+  // Phase E: SPARK — review responses and campaign sends require human approval
+  spark:     new Set(['post_review_response', 'send_email_campaign']),
 }
 
 /**
@@ -475,6 +479,24 @@ export async function confirmProposal(
     metadata: { confirmed_by: userId, proposing_agent: proposal.proposingAgent, action_type: proposal.actionType },
   })
 
+  // Pre-approval snapshot (fire-and-forget)
+  autoSnapshot('MiroFish', `pre-approval backup — ${proposal.title}`, {})
+
+  // Emit PROPOSAL_APPROVED event for post-approval execution hook
+  publish(
+    'PROPOSAL_APPROVED' as any,
+    'mirofish',
+    {
+      proposalId,
+      title: proposal.title,
+      proposingAgent: proposal.proposingAgent,
+      actionType: proposal.actionType,
+      actionPayload: proposal.actionPayload,
+      confirmedBy: userId,
+    },
+    `MiroFish — proposal approved — ${proposal.title} — ${now}`
+  )
+
   return { success: true, detail: 'Proposal confirmed — ready for execution' }
 }
 
@@ -605,15 +627,16 @@ export async function getPendingProposals(orgId: string): Promise<MiroFishPropos
     .from('agent_proposals')
     .select('*')
     .eq('org_id', orgId)
-    .in('status', ['proposed', 'reviewing'])
-    .order('created_at', { ascending: false })
+    .in('status', ['proposed', 'reviewing', 'deferred'])
+    .order('impact_score', { ascending: false })
+    .order('created_at', { ascending: true })
     .limit(50)
 
   if (error || !data) {
     console.warn('[MiroFish] Pending query failed:', error)
     // Fall back to localStorage
     return getLocalQueue().filter(p =>
-      p.orgId === orgId && ['proposed', 'reviewing'].includes(p.status)
+      p.orgId === orgId && ['proposed', 'reviewing', 'deferred'].includes(p.status)
     )
   }
 
@@ -671,6 +694,77 @@ export async function getRecentProposals(orgId: string, limit = 20): Promise<Mir
 
   if (error || !data) {
     return getLocalQueue().filter(p => p.orgId === orgId).slice(0, limit)
+  }
+
+  return data.map(mapDbToProposal)
+}
+
+// ── Defer ───────────────────────────────────────────────────────────────
+
+/**
+ * Defer a proposal — stays in queue but moved to 'deferred' status.
+ * Can be re-reviewed later.
+ */
+export async function deferProposal(
+  proposalId: string,
+  userId?: string
+): Promise<{ success: boolean }> {
+  const now = new Date().toISOString()
+
+  const { error } = await supabase
+    .from('agent_proposals')
+    .update({
+      status:      'deferred',
+      reviewed_at: now,
+      reviewed_by: userId || null,
+      updated_at:  now,
+    })
+    .eq('id', proposalId)
+
+  if (error) {
+    console.error('[MiroFish] Defer update failed:', error)
+    return { success: false }
+  }
+
+  // Update local mirror
+  const queue = getLocalQueue()
+  const idx = queue.findIndex(p => p.id === proposalId)
+  if (idx >= 0) {
+    queue[idx].status = 'deferred'
+    saveLocalQueue(queue)
+  }
+
+  await logAudit({
+    action: 'update',
+    entity_type: 'agent_proposals',
+    entity_id: proposalId,
+    description: `MiroFish proposal deferred`,
+    metadata: { deferred_by: userId },
+  })
+
+  return { success: true }
+}
+
+// ── Proposal History ────────────────────────────────────────────────────
+
+/**
+ * Get approved + rejected proposals, sorted by most recent.
+ * For the collapsible history section in ProposalQueue.
+ */
+export async function getProposalHistory(orgId: string, limit = 30): Promise<MiroFishProposal[]> {
+  const { data, error } = await supabase
+    .from('agent_proposals')
+    .select('*')
+    .eq('org_id', orgId)
+    .in('status', ['confirmed', 'completed', 'rejected'])
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error || !data) {
+    console.warn('[MiroFish] History query failed:', error)
+    return getLocalQueue()
+      .filter(p => p.orgId === orgId && ['confirmed', 'completed', 'rejected'].includes(p.status))
+      .slice(0, limit)
   }
 
   return data.map(mapDbToProposal)

@@ -48,6 +48,8 @@ export type AgentEventType =
   | 'CAMPAIGN_RESULT'
   | 'SOCIAL_POST_PUBLISHED'
   | 'PATTERN_LEARNED'
+  | 'PROPOSAL_APPROVED'
+  | 'PROPOSAL_REJECTED'
 
 export interface AgentEvent {
   id:        string
@@ -310,5 +312,75 @@ export function initCrossEntityEmbeddings(orgId: string): () => void {
         console.warn(`[EventBus] Auto-embed failed for ${event.type}:`, err)
       }
     }, 100) // Small delay to not block event processing
+  })
+}
+
+// ── Post-Approval Execution Hook ────────────────────────────────────────────
+
+/**
+ * Initialize the post-approval execution hook.
+ * When a MiroFish proposal is approved:
+ *   1. Log the approval to agent_messages table (via audit)
+ *   2. Create auto-snapshot: "MiroFish — proposal approved — [title] — [timestamp]"
+ *   3. Emit to the target agent for execution
+ *
+ * Call once on app startup after initEventBus().
+ */
+export function initPostApprovalHook(): () => void {
+  return subscribe('PROPOSAL_APPROVED' as AgentEventType, (event: AgentEvent) => {
+    const { proposalId, title, proposingAgent, actionType, actionPayload, confirmedBy } = event.payload as any
+
+    console.log(`[PostApproval] Proposal approved: "${title}" from ${proposingAgent}`)
+
+    // 1. Log via audit (fire-and-forget)
+    setTimeout(async () => {
+      try {
+        const { logAudit } = await import('@/lib/memory/audit')
+        await logAudit({
+          action: 'approve',
+          entity_type: 'agent_proposals',
+          entity_id: proposalId,
+          description: `MiroFish — proposal approved — ${title} — ${new Date().toISOString()}`,
+          metadata: {
+            proposing_agent: proposingAgent,
+            action_type: actionType,
+            confirmed_by: confirmedBy,
+          },
+        })
+      } catch (err) {
+        console.warn('[PostApproval] Audit log failed:', err)
+      }
+    }, 50)
+
+    // 2. Create auto-snapshot
+    setTimeout(async () => {
+      try {
+        const { createSnapshot } = await import('@/services/snapshotService')
+        if (typeof createSnapshot === 'function') {
+          await createSnapshot(`MiroFish — proposal approved — ${title} — ${new Date().toISOString()}`)
+        }
+      } catch (err) {
+        console.warn('[PostApproval] Snapshot failed:', err)
+      }
+    }, 200)
+
+    // 3. Notify the proposing agent via a targeted event
+    // The target agent MUST check for a valid approved proposal before executing
+    setTimeout(() => {
+      publish(
+        'DATA_GAP_DETECTED', // Reuse as generic "agent action needed" event
+        'mirofish',
+        {
+          type:           'execute_approved_proposal',
+          proposalId,
+          title,
+          targetAgent:    proposingAgent,
+          actionType,
+          actionPayload,
+          approvedAt:     new Date().toISOString(),
+        },
+        `Execute approved proposal: ${title} → ${proposingAgent}`
+      )
+    }, 300)
   })
 }
