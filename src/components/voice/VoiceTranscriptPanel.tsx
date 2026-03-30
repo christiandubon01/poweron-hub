@@ -29,6 +29,65 @@ export interface VoiceTranscriptPanelProps {
   onMaximize: () => void
 }
 
+// ── Branch Cards ────────────────────────────────────────────────────────────
+
+interface BranchCard {
+  title: string
+  summary: string
+  relevance: 'HIGH' | 'MEDIUM' | 'LOW'
+  relevance_reason: string
+}
+
+const RELEVANCE_COLORS: Record<string, { color: string; bg: string }> = {
+  HIGH:   { color: '#2EE89A', bg: 'rgba(46,232,154,0.15)' },
+  MEDIUM: { color: '#FFD24A', bg: 'rgba(255,210,74,0.15)' },
+  LOW:    { color: '#60607A', bg: 'rgba(96,96,122,0.15)' },
+}
+
+function parseBranchCards(content: string): { snapshot: string; branches: BranchCard[] } | null {
+  const match = content.match(/^([\s\S]*?)BRANCH_CARDS:\s*(\[[\s\S]+\])/)
+  if (!match) return null
+  try {
+    return { snapshot: match[1].trim(), branches: JSON.parse(match[2]) }
+  } catch { return null }
+}
+
+/**
+ * Programmatically submit a text query to NEXUS as if the user typed it.
+ * Bypasses voice input but goes through the full classifier + response pipeline.
+ */
+async function sendVoiceQuery(text: string): Promise<void> {
+  try {
+    const { processMessage } = await import('@/agents/nexus')
+    // Read profile from localStorage (same pattern as NexusChatPanel)
+    const profileRaw = localStorage.getItem('nexus_user_profile')
+    const profile = profileRaw ? JSON.parse(profileRaw) : null
+    if (!profile?.org_id) {
+      console.warn('[BranchCards] No user profile found, cannot send query')
+      return
+    }
+
+    // Fire the query through NEXUS pipeline
+    const result = await processMessage({
+      message: text,
+      orgId: profile.org_id,
+      userId: profile.id,
+      userName: profile.full_name,
+      conversationHistory: [],
+      isVoiceCommand: false,
+    })
+
+    // Dispatch a custom event so VoiceTranscriptPanel + NexusChatPanel can pick up the response
+    window.dispatchEvent(new CustomEvent('nexus-branch-query', {
+      detail: { userText: text, response: result },
+    }))
+
+    console.log('[BranchCards] Query sent:', text.slice(0, 60))
+  } catch (err) {
+    console.error('[BranchCards] Failed to send query:', err)
+  }
+}
+
 // Agent colors
 const AGENT_COLORS: Record<string, string> = {
   nexus: '#8b5cf6',
@@ -237,12 +296,61 @@ function voicePreview(text: string): string {
   return sentences.slice(0, 2).join(' ')
 }
 
+// ── BranchCardsBlock — renders interactive branch option cards ──────────────
+
+function BranchCardsBlock({ branches }: { branches: BranchCard[] }) {
+  return (
+    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '0' }}>
+      {branches.map((branch, i) => {
+        const rel = RELEVANCE_COLORS[branch.relevance] || RELEVANCE_COLORS.LOW
+        return (
+          <div
+            key={i}
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: `1px solid ${rel.color}`,
+              borderRadius: '12px',
+              padding: '12px 14px',
+              marginBottom: '8px',
+              cursor: 'pointer',
+              transition: 'background 0.2s, transform 0.15s',
+            }}
+            onClick={() => sendVoiceQuery(`dive deeper into ${branch.title}`)}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
+              e.currentTarget.style.transform = 'scale(1.01)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+              e.currentTarget.style.transform = 'scale(1)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#F0F0FF' }}>{branch.title}</span>
+              <span style={{
+                fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px',
+                background: rel.bg, color: rel.color,
+              }}>{branch.relevance}</span>
+            </div>
+            <p style={{ fontSize: '11px', color: '#A8A8C0', margin: 0, lineHeight: 1.5 }}>{branch.summary}</p>
+            <p style={{ fontSize: '10px', color: '#60607A', margin: '4px 0 0', fontStyle: 'italic' }}>{branch.relevance_reason}</p>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── NexusResponseBlock — shows voice summary + expandable Full Report ────────
 
 function NexusResponseBlock({ entry }: { entry: TranscriptEntry }) {
   const [expanded, setExpanded] = useState(false)
-  const isRichReport = hasMarkdown(entry.nexusText) && entry.nexusText.length > 300
-  const preview = isRichReport ? voicePreview(entry.nexusText) : entry.nexusText
+
+  // Check for branch cards in the response
+  const branchData = parseBranchCards(entry.nexusText)
+  const displayText = branchData ? branchData.snapshot : entry.nexusText
+  const isRichReport = hasMarkdown(displayText) && displayText.length > 300
+  const preview = isRichReport ? voicePreview(displayText) : displayText
 
   return (
     <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
@@ -252,8 +360,13 @@ function NexusResponseBlock({ entry }: { entry: TranscriptEntry }) {
       <div style={{ flex: 1 }}>
         {/* Voice-friendly preview (always shown) */}
         <div style={{ fontSize: '12px', color: '#d1d5db', marginBottom: '6px', lineHeight: '1.5' }}>
-          {isRichReport ? preview + (preview.endsWith('.') ? '' : '...') : entry.nexusText}
+          {isRichReport ? preview + (preview.endsWith('.') ? '' : '...') : displayText}
         </div>
+
+        {/* Branch cards — interactive tap-to-dive cards */}
+        {branchData && branchData.branches.length > 0 && (
+          <BranchCardsBlock branches={branchData.branches} />
+        )}
 
         {/* Full Report accordion for rich markdown responses */}
         {isRichReport && (

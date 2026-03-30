@@ -20,6 +20,7 @@ import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEve
 import { getPendingProposals, type MiroFishProposal } from '@/services/miroFish'
 import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceConfirmation, hasCompletedInterview, isInterviewInProgress, getCurrentInterviewQuestion, startInterview, processInterviewAnswer, resetInterview, getSessionCount, incrementSessionCount } from '@/services/nexusPreferences'
 import { buildLearnedProfilePrompt, analyzeSessionPatterns, addConversationTurn, getRecentTurns, type ConversationTurn } from '@/services/nexusLearnedProfile'
+import { createBucket, addEntry, addPassiveCapture, getBucket, listBuckets, autoTag } from '@/services/memoryBuckets'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -425,6 +426,185 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     // Non-critical
   }
 
+  // ── Step 2b: Memory bucket intent detection (handled locally — never reaches Claude) ──
+  const query = request.message
+
+  // Create bucket
+  const createBucketMatch = query.match(
+    /create.*(?:memory|bucket|note|list).*(?:called|named?)\s+["']?(.+?)["']?\s*$/i
+  ) || query.match(/(?:new|start).*bucket.*["']?(.+?)["']?\s*$/i)
+
+  if (createBucketMatch) {
+    const bucketName = createBucketMatch[1].replace(/["']/g, '').trim()
+    const bucket = await createBucket(bucketName, request.orgId, request.userId)
+    const chatContent = `Memory bucket '${bucket.bucket_name}' is ready. Say 'add to ${bucket.bucket_name}: [note]' or 'save this into ${bucket.bucket_name}' to drop notes in anytime.`
+    const voiceContent = `${bucket.bucket_name} bucket created.`
+    const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+    try { addTurn('user', query) } catch { /* non-critical */ }
+    try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+    addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+    return {
+      intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Memory bucket create' },
+      agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+      needsConfirmation: false, conversationMessage: msg, mode,
+      voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+    }
+  }
+
+  // Add to named bucket
+  const addToBucketMatch = query.match(
+    /(?:save|add|put|store|log).*(?:into?|to|in)\s+["']?(.+?)["']?\s*(?:bucket|memory|list)?[,:]\s*(.+)/i
+  )
+
+  if (addToBucketMatch) {
+    const bucketName = addToBucketMatch[1].replace(/["']/g, '').trim()
+    const content = addToBucketMatch[2].trim()
+    const result = await addEntry(bucketName, content, { orgId: request.orgId, userId: request.userId, source: 'voice' })
+    const chatContent = `Added to ${result.bucket.bucket_name}: '${content}'. ${result.totalEntries} entries total.`
+    const voiceContent = `Saved to ${result.bucket.bucket_name}.`
+    const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+    try { addTurn('user', query) } catch { /* non-critical */ }
+    try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+    addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+    return {
+      intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Memory bucket add entry' },
+      agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+      needsConfirmation: false, conversationMessage: msg, mode,
+      voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+    }
+  }
+
+  // Passive capture — "remember X", "don't forget X", "make a note X", "save this X", "note that X"
+  const passiveCaptureIntent = /^(?:remember|don't forget|make(?:\s+a)?\s+note|save this|note that|also remember|make sure you)/i.test(query)
+
+  if (passiveCaptureIntent) {
+    // Strip trigger phrase to extract the actual content
+    const content = query
+      .replace(/^(?:remember|don't forget|make(?:\s+a)?\s+note(?:\s+that)?|save this|note that|also remember|make sure you)\s*/i, '')
+      .trim()
+    if (content.length > 2) {
+      const result = await addPassiveCapture(content, { orgId: request.orgId, userId: request.userId })
+      const tags = autoTag(content)
+      const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : ''
+      const chatContent = `Saved to Field Notes: '${content}'${tagStr}. I've got it — stay focused.`
+      const voiceContent = `Got it. Saved.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Passive memory capture' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    }
+  }
+
+  // Retrieve bucket — "pull up X bucket", "what's in X notes", "what did I save"
+  const getBucketMatch = query.match(
+    /(?:pull up|show me|get|read back|what(?:'s| is) in|retrieve|open)\s+["']?(.+?)["']?\s*(?:bucket|memory|notes?|list)/i
+  )
+  const getGenericMatch = /what did I (?:save|note|capture|record|tell you)/i.test(query)
+
+  if (getBucketMatch || getGenericMatch) {
+    if (getBucketMatch) {
+      const bucketName = getBucketMatch[1].replace(/["']/g, '').trim()
+      const bucketData = await getBucket(bucketName, request.orgId, request.userId)
+      if (bucketData && bucketData.entries.length > 0) {
+        const entriesText = bucketData.entries.slice(0, 15).map((e, i) => {
+          const date = new Date(e.created_at).toLocaleDateString()
+          const tagStr = e.tags.length > 0 ? ` [${e.tags.join(', ')}]` : ''
+          return `${i + 1}. ${e.content}${tagStr} — ${date}`
+        }).join('\n')
+        const chatContent = `## ${bucketData.bucket_name} (${bucketData.entries.length} entries)\n\n${entriesText}`
+        const voiceContent = `${bucketData.bucket_name} has ${bucketData.entries.length} entries. Check the chat window for the full list.`
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Memory bucket retrieve' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false, conversationMessage: msg, mode,
+          voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+        }
+      } else {
+        const chatContent = `No bucket found matching '${bucketName}', or it's empty. Try 'list my buckets' to see what's available.`
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Memory bucket not found' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false, conversationMessage: msg, mode,
+          voiceSummary: request.isVoiceCommand ? chatContent : undefined,
+        }
+      }
+    }
+    // Generic "what did I save" — show all recent entries
+    if (getGenericMatch) {
+      const { getAllEntries } = await import('@/services/memoryBuckets')
+      const entries = await getAllEntries(request.userId, 15)
+      if (entries.length > 0) {
+        const localBuckets = (await listBuckets(request.orgId, request.userId))
+        const bucketMap = new Map(localBuckets.map(b => [b.id, b.bucket_name]))
+        const entriesText = entries.map((e, i) => {
+          const date = new Date(e.created_at).toLocaleDateString()
+          const bucket = bucketMap.get(e.bucket_id) || 'Unknown'
+          const tagStr = e.tags.length > 0 ? ` [${e.tags.join(', ')}]` : ''
+          return `${i + 1}. [${bucket}] ${e.content}${tagStr} — ${date}`
+        }).join('\n')
+        const chatContent = `## Recent Memory Entries (${entries.length})\n\n${entriesText}`
+        const voiceContent = `You have ${entries.length} recent entries saved. Check the chat for the full list.`
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Memory entries retrieval' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false, conversationMessage: msg, mode,
+          voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+        }
+      }
+    }
+  }
+
+  // List all buckets — "list my buckets", "show my memory lists", "what are my buckets"
+  const listBucketsMatch = /(?:list|show|what are)(?: all)?(?: my)?\s+(?:buckets?|memories|memory lists?)/i.test(query)
+
+  if (listBucketsMatch) {
+    const allBuckets = await listBuckets(request.orgId, request.userId)
+    if (allBuckets.length > 0) {
+      const bucketsText = allBuckets.map(b => {
+        const lastUpdated = b.last_entry_at ? new Date(b.last_entry_at).toLocaleDateString() : 'never'
+        return `- **${b.bucket_name}** — ${b.entry_count} entries (last: ${lastUpdated})`
+      }).join('\n')
+      const chatContent = `## Your Memory Buckets (${allBuckets.length})\n\n${bucketsText}\n\nSay 'pull up [name] bucket' to see entries, or 'add to [name]: [note]' to add.`
+      const voiceContent = `You have ${allBuckets.length} buckets. ${allBuckets.map(b => `${b.bucket_name} with ${b.entry_count} entries`).join(', ')}. Check the chat for details.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Memory bucket list' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    } else {
+      const chatContent = `No memory buckets yet. Say 'create a bucket called [name]' to start one, or just say 'remember [something]' and I'll save it to Field Notes automatically.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'No buckets yet' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? chatContent : undefined,
+      }
+    }
+  }
+
   // ── Step 3: Classify intent ─────────────────────────────────────────────
   const intent = await classifyIntent(
     request.message,
@@ -465,7 +645,6 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   }
 
   // ── Step 4b: Detect short follow-up questions and inject last turn context ──
-  const query = request.message
   const isFollowUp = query.split(' ').length <= 12 &&
     /\b(that|it|the list|was that|which|what about|those|them|more|continue|go on|keep going|all of them)\b/i.test(query)
 
