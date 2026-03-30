@@ -33,25 +33,9 @@ function resolveOrgId(orgId?: string): string {
 
 /**
  * Generate a 1536-dim embedding for the given text.
- * Tries Netlify proxy first, falls back to direct OpenAI.
+ * Routes through Netlify proxy via createEmbedding (server-side key, no CORS).
  */
 export async function embedText(text: string): Promise<number[]> {
-  // Try Netlify proxy first (server-side key)
-  try {
-    const res = await fetch('/.netlify/functions/embed', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: text.slice(0, 8000) }),
-    })
-    if (res.ok) {
-      const json = await res.json()
-      if (json.data?.[0]?.embedding) {
-        return json.data[0].embedding
-      }
-    }
-  } catch {
-    // Proxy unavailable, fall through to direct
-  }
   return createEmbedding(text)
 }
 
