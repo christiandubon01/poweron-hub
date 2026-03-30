@@ -226,6 +226,33 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   const mode = detectMode(request.message, request.mode)
   const query = request.message
 
+  // ── PASSIVE CAPTURE — MUST be the absolute first check ───────────────────
+  // Voice transcription may produce curly apostrophes, so match both ' and \u2019
+  const passiveCaptureIntent = /^(?:remember|don['\u2019]t forget|make(?:\s+a)?\s+note|save this|note that|also remember|make sure you|keep in mind|jot down)/i.test(query)
+
+  if (passiveCaptureIntent) {
+    const noteContent = query
+      .replace(/^(?:remember|don['\u2019]t forget|make(?:\s+a)?\s+note(?:\s+that)?|save this|note that|also remember|make sure you(?:['\u2019]re aware| remember| know)?|keep in mind|jot down)[,:\s]*/i, '')
+      .trim()
+    if (noteContent.length > 2) {
+      const tags = autoTag(noteContent)
+      await addPassiveCapture(noteContent, { orgId: request.orgId, userId: request.userId })
+      const tagStr = tags.length > 0 ? ` — tagged: ${tags.join(', ')}` : ''
+      const chatContent = `Saved to Field Notes: "${noteContent}"${tagStr}. I've got it.`
+      const voiceContent = `Got it. Saved.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Passive memory capture' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    }
+  }
+
   // ── MEMORY INTENT — intercept before classifier ──────────────────────────
   // These commands are handled locally and never reach Claude.
 
@@ -247,31 +274,6 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
       needsConfirmation: false, conversationMessage: msg, mode,
       voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
-    }
-  }
-
-  const passiveCaptureIntent = /^(?:remember|don't forget|make(?:\s+a)?\s+note|save this|note that|also remember|make sure you)/i.test(query)
-
-  if (passiveCaptureIntent) {
-    const noteContent = query
-      .replace(/^(?:remember|don't forget|make(?:\s+a)?\s+note(?:\s+that)?|save this|note that|also remember|make sure you(?:'re aware| remember| know)?)[,\s]*/i, '')
-      .trim()
-    if (noteContent.length > 2) {
-      const tags = autoTag(noteContent)
-      await addPassiveCapture(noteContent, { orgId: request.orgId, userId: request.userId })
-      const tagStr = tags.length > 0 ? ` — tagged: ${tags.join(', ')}` : ''
-      const chatContent = `Saved to Field Notes: "${noteContent}"${tagStr}. I've got it.`
-      const voiceContent = `Got it. Saved.`
-      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
-      try { addTurn('user', query) } catch { /* non-critical */ }
-      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
-      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
-      return {
-        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Passive memory capture' },
-        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
-        needsConfirmation: false, conversationMessage: msg, mode,
-        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
-      }
     }
   }
 
@@ -298,7 +300,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   }
 
   const getBucketMatch = query.match(
-    /(?:pull up|show me|get|read back|what(?:'s| is) in|retrieve|open)\s+["']?(.+?)["']?\s*(?:bucket|memory|notes?|list)/i
+    /(?:pull up|show me|get|read back|what(?:['\u2019]s| is) in|retrieve|open)\s+(?:my\s+)?["']?(.+?)["']?\s*(?:bucket|memory|notes?|list|entries)?$/i
   )
   const getGenericMatch = /what did I (?:save|note|capture|record|tell you)/i.test(query)
 
@@ -415,13 +417,14 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       (capabilityAnswer.includes('Manual only') ||
        capabilityAnswer.includes('not yet') ||
        capabilityAnswer.includes('Planned'))
+    const featureSummary = query.replace(/(?:can you|do you|does the app|is there|do I have|can I|able to|feature|capability|currently|support)\s*/gi, '').trim()
     const suggestion = isMissingFeature
-      ? `\n\nWant to track this? Say "save this into March Improvements: [describe the feature you want]" and I'll capture it for your next development session.`
+      ? `\n\n**Want me to track this?** I'll save it to your App Improvements bucket right now so it doesn't get lost. Just say "yes" or "save that" and I'll log: "${featureSummary || 'feature request'}".`
       : ''
     const chatContent = baseAnswer + suggestion
     const voiceContent = capabilityAnswer
-      ? `Here's what I found about that capability. Check the chat for the full details.`
-      : `That feature isn't built yet. I can save it to your improvement bucket if you want.`
+      ? `Here's what I found about that capability. Check the chat for full details.`
+      : `That feature isn't built yet. Want me to save it to your improvement bucket? Just say yes.`
     const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
     try { addTurn('user', query) } catch { /* non-critical */ }
     try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }

@@ -38,6 +38,18 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   // Track last transcript and response for adding to panel
   const lastTranscriptRef = useRef<string>('')
 
+  // Silence detection refs
+  const silenceTimerRef = useRef<number | null>(null)
+  const silenceStartRef = useRef<number>(0)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const silenceStreamRef = useRef<MediaStream | null>(null)
+  const silenceRafRef = useRef<number | null>(null)
+  const silenceAudioCtxRef = useRef<AudioContext | null>(null)
+  const [silenceProgress, setSilenceProgress] = useState(0)
+
+  const SILENCE_THRESHOLD = 0.01
+  const SILENCE_DURATION_MS = 2000
+
   // Debug panel — only active when ?debug=1 is in the URL
   const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=1')
   const showDebug = isDebugMode
@@ -144,6 +156,98 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       unsub()
     }
   }, [user?.id, profile?.org_id, isIOS])
+
+  // ── Silence Detection ──────────────────────────────────────────────────────
+
+  const stopSilenceDetection = useCallback(() => {
+    if (silenceRafRef.current) {
+      cancelAnimationFrame(silenceRafRef.current)
+      silenceRafRef.current = null
+    }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+    if (silenceStreamRef.current) {
+      silenceStreamRef.current.getTracks().forEach(t => t.stop())
+      silenceStreamRef.current = null
+    }
+    if (silenceAudioCtxRef.current) {
+      try { silenceAudioCtxRef.current.close() } catch { /* ignore */ }
+      silenceAudioCtxRef.current = null
+    }
+    analyserRef.current = null
+    silenceStartRef.current = 0
+    setSilenceProgress(0)
+  }, [])
+
+  const startSilenceDetection = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      silenceStreamRef.current = stream
+      const audioCtx = new AudioContext()
+      silenceAudioCtxRef.current = audioCtx
+      const source = audioCtx.createMediaStreamSource(stream)
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 512
+      source.connect(analyser)
+      analyserRef.current = analyser
+
+      const dataArray = new Float32Array(analyser.fftSize)
+
+      const checkSilence = () => {
+        if (!analyserRef.current) return
+        analyserRef.current.getFloatTimeDomainData(dataArray)
+
+        // Calculate RMS
+        let sumSq = 0
+        for (let i = 0; i < dataArray.length; i++) {
+          sumSq += dataArray[i] * dataArray[i]
+        }
+        const rms = Math.sqrt(sumSq / dataArray.length)
+
+        if (rms < SILENCE_THRESHOLD) {
+          if (silenceStartRef.current === 0) {
+            silenceStartRef.current = Date.now()
+          }
+          const elapsed = Date.now() - silenceStartRef.current
+          setSilenceProgress(Math.min(elapsed / SILENCE_DURATION_MS, 1))
+
+          if (elapsed >= SILENCE_DURATION_MS) {
+            // Auto-stop recording
+            const voice = getVoiceSubsystem()
+            voice.stopRecording()
+            stopSilenceDetection()
+            return
+          }
+        } else {
+          // Reset silence timer
+          silenceStartRef.current = 0
+          setSilenceProgress(0)
+        }
+
+        silenceRafRef.current = requestAnimationFrame(checkSilence)
+      }
+
+      silenceRafRef.current = requestAnimationFrame(checkSilence)
+    } catch (err) {
+      console.warn('[VoiceButton] Silence detection setup failed:', err)
+    }
+  }, [stopSilenceDetection])
+
+  // Start/stop silence detection based on recording status
+  useEffect(() => {
+    if (status === 'recording') {
+      startSilenceDetection()
+    } else {
+      stopSilenceDetection()
+    }
+  }, [status, startSilenceDetection, stopSilenceDetection])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopSilenceDetection()
+  }, [stopSilenceDetection])
 
   const handlePress = useCallback(async () => {
     // CRITICAL: Unlock AudioContext synchronously on the user gesture call stack.
@@ -285,6 +389,34 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
           }
         `}</style>
       </button>
+
+      {/* Silence detection progress bar */}
+      {isRecording && silenceProgress > 0 && (
+        <div className="fixed bottom-[72px] right-6 z-50 w-14">
+          <div style={{
+            height: '3px',
+            borderRadius: '2px',
+            background: 'rgba(255,255,255,0.15)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%',
+              width: `${silenceProgress * 100}%`,
+              background: silenceProgress > 0.7 ? '#ef4444' : '#eab308',
+              borderRadius: '2px',
+              transition: 'width 0.1s linear',
+            }} />
+          </div>
+          <p style={{
+            fontSize: '9px',
+            color: '#9ca3af',
+            textAlign: 'center',
+            margin: '2px 0 0',
+          }}>
+            {silenceProgress > 0.7 ? 'Auto-stop...' : 'Silence'}
+          </p>
+        </div>
+      )}
 
       {/* Status label below button */}
       {!isIdle && !errorFlash && !permissionError && (

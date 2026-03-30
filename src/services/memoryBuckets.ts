@@ -314,6 +314,41 @@ export async function addPassiveCapture(
 }
 
 /**
+ * Fuzzy bucket finder — matches by exact slug, exact name, partial slug,
+ * or partial name (normalized, ignoring hyphens/spaces).
+ */
+function findBucketFuzzy(localBuckets: MemoryBucket[], nameOrSlug: string): MemoryBucket | undefined {
+  const slug = slugify(nameOrSlug)
+  const lower = nameOrSlug.toLowerCase().replace(/[-\s]+/g, '')
+  const activeBuckets = localBuckets.filter(b => b.active)
+
+  // 1. Exact slug match
+  const exact = activeBuckets.find(b => b.bucket_slug === slug)
+  if (exact) return exact
+
+  // 2. Exact name match (case-insensitive)
+  const nameMatch = activeBuckets.find(b => b.bucket_name.toLowerCase() === nameOrSlug.toLowerCase())
+  if (nameMatch) return nameMatch
+
+  // 3. Normalized match — strip hyphens/spaces and compare
+  const normalized = activeBuckets.find(b => {
+    const bNorm = b.bucket_name.toLowerCase().replace(/[-\s]+/g, '')
+    const bSlugNorm = b.bucket_slug.replace(/-/g, '')
+    return bNorm === lower || bSlugNorm === lower
+  })
+  if (normalized) return normalized
+
+  // 4. Partial/contains match — input is substring of bucket name or vice versa
+  const partial = activeBuckets.find(b => {
+    const bNorm = b.bucket_name.toLowerCase().replace(/[-\s]+/g, '')
+    return bNorm.includes(lower) || lower.includes(bNorm)
+  })
+  if (partial) return partial
+
+  return undefined
+}
+
+/**
  * Get a bucket with all its entries, sorted by created_at DESC.
  */
 export async function getBucket(
@@ -321,13 +356,10 @@ export async function getBucket(
   orgId?: string,
   userId?: string
 ): Promise<BucketWithEntries | null> {
-  const slug = slugify(nameOrSlug)
   const localBuckets = getLocalBuckets()
   const localEntries = getLocalEntries()
 
-  const bucket = localBuckets.find(
-    b => (b.bucket_slug === slug || b.bucket_name.toLowerCase() === nameOrSlug.toLowerCase()) && b.active
-  )
+  const bucket = findBucketFuzzy(localBuckets, nameOrSlug)
   if (!bucket) return null
 
   // Try Supabase first for entries
@@ -516,4 +548,13 @@ export async function initMemoryBuckets(orgId?: string, userId?: string): Promis
   } catch (err) {
     console.warn('[MemoryBuckets] Init sync failed, using localStorage only:', err)
   }
+}
+
+/**
+ * Ensure default buckets exist on first load.
+ * Call once at app startup alongside initMemoryBuckets.
+ */
+export async function initDefaultBuckets(orgId?: string, userId?: string): Promise<void> {
+  await ensureDefaultBucket(orgId, userId)
+  console.log('[MemoryBuckets] Default buckets ensured')
 }

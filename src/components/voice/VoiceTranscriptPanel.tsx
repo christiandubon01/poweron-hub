@@ -447,6 +447,9 @@ export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
   const [summary, setSummary] = useState<string>('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
+  const [orbCollapsed, setOrbCollapsed] = useState(
+    typeof window !== 'undefined' && window.innerWidth < 768
+  )
 
   // Orb state — subscribes to real-time voice subsystem status
   const [orbState, setOrbState] = useState<OrbState>('inactive')
@@ -691,24 +694,58 @@ export const VoiceTranscriptPanel: React.FC<VoiceTranscriptPanelProps> = ({
         </div>
       </div>
 
-      {/* NEXUS Presence Orb — always visible in voice panel */}
+      {/* NEXUS Presence Orb — collapsible to save chat space */}
       <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        padding: '10px 0 8px',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         background: 'rgba(0,0,0,0.2)',
       }}>
-        <div style={{
-          width: typeof window !== 'undefined' && window.innerWidth > 768 ? '200px' : '120px',
-          height: typeof window !== 'undefined' && window.innerWidth > 768 ? '200px' : '120px',
-          flexShrink: 0,
-        }}>
-          <NexusPresenceOrb
-            state={orbState}
-            size={typeof window !== 'undefined' && window.innerWidth > 768 ? 200 : 120}
-          />
-        </div>
+        <button
+          onClick={() => setOrbCollapsed(prev => !prev)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            width: '100%',
+            padding: '6px 12px',
+            background: 'transparent',
+            border: 'none',
+            color: '#9ca3af',
+            fontSize: '10px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
+          }}
+        >
+          {orbCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+          {orbCollapsed ? 'Show Orb' : 'Hide Orb'}
+          <span style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: orbState === 'active' ? '#2EE89A' : orbState === 'listening' ? '#3b82f6' : orbState === 'processing' ? '#eab308' : '#6b7280',
+            marginLeft: '4px',
+            flexShrink: 0,
+          }} />
+        </button>
+        {!orbCollapsed && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            padding: '4px 0 8px',
+          }}>
+            <div style={{
+              width: typeof window !== 'undefined' && window.innerWidth > 768 ? '160px' : '100px',
+              height: typeof window !== 'undefined' && window.innerWidth > 768 ? '160px' : '100px',
+              flexShrink: 0,
+            }}>
+              <NexusPresenceOrb
+                state={orbState}
+                size={typeof window !== 'undefined' && window.innerWidth > 768 ? 160 : 100}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Scrollable Content */}
