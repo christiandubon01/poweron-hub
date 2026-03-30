@@ -37,6 +37,7 @@ import {
 import { subscribe as agentBusSubscribe } from '@/services/agentBus'
 import type { AgentMessage } from '@/services/agentBus'
 import { publish } from '@/services/agentEventBus'
+import { logActivity } from '@/services/activityLog'
 
 // Types
 export type SparkAction =
@@ -207,6 +208,16 @@ export async function processSparkRequest(request: SparkRequest): Promise<SparkR
 
         data    = await createLeadService(leadData)
         summary = `Lead "${leadData.name}" logged from ${leadData.source || 'manual'}`
+
+        // Activity log (fire-and-forget)
+        logActivity({
+          agentName:   'SPARK',
+          actionType:  'lead_created',
+          entityType:  'lead',
+          entityLabel: leadData.name,
+          summary:     `SPARK logged new lead: ${leadData.name} — ${leadData.service_requested || 'service TBD'}`,
+          details:     { name: leadData.name, source: leadData.source, service_requested: leadData.service_requested },
+        })
         break
       }
 

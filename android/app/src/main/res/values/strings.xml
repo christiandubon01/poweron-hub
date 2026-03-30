@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PowerOn Hub</string>
+    <string name="title_activity_main">PowerOn Hub</string>
+    <string name="package_name">com.poweronsolutions.hub</string>
+    <string name="custom_url_scheme">com.poweronsolutions.hub</string>
+</resources>

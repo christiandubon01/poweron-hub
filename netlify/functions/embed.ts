@@ -25,8 +25,15 @@ exports.handler = async (event: any, _context: any) => {
   }
 
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: 'OPENAI_API_KEY not configured on server' }) }
+  if (!apiKey || apiKey.trim() === '') {
+    console.error('[embed] OPENAI_API_KEY is not set or empty in Netlify environment variables.')
+    return {
+      statusCode: 401,
+      headers,
+      body: JSON.stringify({
+        error: 'OPENAI_API_KEY is not configured on the server. Set it in Netlify → Site settings → Environment variables.',
+      }),
+    }
   }
 
   try {

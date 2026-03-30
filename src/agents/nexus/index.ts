@@ -22,6 +22,7 @@ import { detectPreference, savePreference, buildPreferencePrompt, getPreferenceC
 import { buildLearnedProfilePrompt, analyzeSessionPatterns, addConversationTurn, getRecentTurns, type ConversationTurn } from '@/services/nexusLearnedProfile'
 import { createBucket, addEntry, addPassiveCapture, getBucket, listBuckets, autoTag } from '@/services/memoryBuckets'
 import { getCapabilityAnswer } from '@/services/appCapabilityMap'
+import { getRecentActivity, getActivitySummary } from '@/services/activityLog'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,19 @@ const OPERATIONAL_BRIEFING_TRIGGERS = [
 function isOperationalQuery(message: string): boolean {
   const lower = message.toLowerCase()
   return OPERATIONAL_BRIEFING_TRIGGERS.some(t => lower.includes(t))
+}
+
+// ── Activity Log Query Detection ────────────────────────────────────────────
+
+const ACTIVITY_TRIGGERS = [
+  'what changed', 'recent activity', 'what happened', 'activity log',
+  'last changes', 'what did you do', 'show me what happened', 'changelog',
+  'audit trail',
+]
+
+function isActivityQuery(message: string): boolean {
+  const lower = message.toLowerCase()
+  return ACTIVITY_TRIGGERS.some(t => lower.includes(t))
 }
 
 export function detectMode(message: string, requestedMode?: NexusMode): NexusMode {
@@ -560,6 +574,61 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
       needsConfirmation: false, conversationMessage: msg, mode,
       voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+    }
+  }
+
+  // ── ACTIVITY LOG QUERY — intercept before classifier ─────────────────────
+  if (isActivityQuery(query)) {
+    try {
+      const lowerQuery = query.toLowerCase()
+      let activityContent = ''
+
+      if (lowerQuery.includes('today') || lowerQuery.includes('last 24')) {
+        // Plain English summary for today
+        activityContent = await getActivitySummary(24)
+      } else if (lowerQuery.includes('week') || lowerQuery.includes('last 7')) {
+        // Plain English summary for the week
+        activityContent = await getActivitySummary(168)
+      } else {
+        // Recent activity as bullet list with timestamps
+        const entries = await getRecentActivity(10)
+        if (entries.length === 0) {
+          activityContent = 'No activity recorded yet. Start using the app and I\'ll track every action here.'
+        } else {
+          const lines = entries.map(e => {
+            const date = new Date(e.created_at)
+            const now = Date.now()
+            const diffMs = now - date.getTime()
+            const diffMins = Math.floor(diffMs / 60000)
+            const diffHours = Math.floor(diffMins / 60)
+            const diffDays = Math.floor(diffHours / 24)
+            const ts = diffMins < 60
+              ? `${diffMins}m ago`
+              : diffHours < 24
+                ? `${diffHours}h ago`
+                : diffDays === 1
+                  ? 'yesterday'
+                  : date.toLocaleDateString()
+            return `• ${e.summary} — ${ts}`
+          })
+          activityContent = `**Recent Activity**\n\n${lines.join('\n')}`
+        }
+      }
+
+      const activityMsg: ConversationMessage = { role: 'assistant', content: activityContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', activityContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: activityContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Activity log query' },
+        agent: { content: activityContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false,
+        conversationMessage: activityMsg,
+        mode,
+        voiceSummary: request.isVoiceCommand ? activityContent.replace(/\*\*/g, '').replace(/^• /gm, '').replace(/\n/g, '. ').slice(0, 300) : undefined,
+      }
+    } catch {
+      // Fall through to normal routing if activity query fails
     }
   }
 
