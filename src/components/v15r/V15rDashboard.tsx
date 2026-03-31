@@ -17,7 +17,6 @@ import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import ChartJS from 'chart.js/auto'
-import 'chartjs-adapter-date-fns'
 
 // Make Chart.js available on window for zoom plugin compatibility
 ;(window as any).Chart = ChartJS
