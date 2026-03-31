@@ -1781,3 +1781,12 @@ function V15rDashboardInner() {
     </div>
   )
 }
+
+// ── EXPORT WITH ERROR BOUNDARY ──
+export default function V15rDashboard() {
+  return (
+    <ChartErrorBoundary>
+      <V15rDashboardInner />
+    </ChartErrorBoundary>
+  )
+}
