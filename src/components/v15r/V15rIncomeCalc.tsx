@@ -725,7 +725,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Job Mix Distribution</h3>
 
       <div className="flex items-center justify-center">
-        <div style={{ position: 'relative', maxWidth: '320px', maxHeight: '320px', width: '100%' }}>
+        <div style={{ position: 'relative', maxWidth: '320px', height: '320px', width: '100%' }}>
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
         </div>
       </div>

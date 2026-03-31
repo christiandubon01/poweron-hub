@@ -318,7 +318,7 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       <button
         onClick={handlePress}
         disabled={isProcessing}
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
         className={clsx(
           'fixed bottom-6 right-6 z-50',
           'w-14 h-14 rounded-full shadow-lg',

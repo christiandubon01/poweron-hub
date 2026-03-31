@@ -1467,7 +1467,7 @@ export default function V15rTeamPanel() {
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
         <h2 className="text-lg font-bold text-gray-100 mb-4">6-Month Cost vs Pipeline Forecast</h2>
         <p className="text-sm text-gray-500 mb-4">Next 6 months: stacked costs (red/orange/yellow) vs projected revenue (green line)</p>
-        <div className="relative w-full h-80">
+        <div className="relative w-full" style={{ height: '320px' }}>
           <ChartErrorBoundary>
             <EnhancedCostVsPipelineChart backup={backup} />
           </ChartErrorBoundary>

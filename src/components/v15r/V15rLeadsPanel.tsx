@@ -67,6 +67,9 @@ export default function V15rLeadsPanel() {
   const [logType, setLogType] = useState('Call')
   const [logNotes, setLogNotes] = useState('')
   const panelRef = useRef<HTMLDivElement>(null)
+  const [aiScriptContactId, setAiScriptContactId] = useState<string | null>(null)
+  const [aiScriptText, setAiScriptText] = useState('')
+  const [aiScriptLoading, setAiScriptLoading] = useState(false)
 
   const backup = getBackupData()
   if (!backup) {
@@ -221,6 +224,42 @@ export default function V15rLeadsPanel() {
       else window.scrollTo(0, scrollTop)
     })
     alert(`Project created: ${newProj.name}`)
+  }
+
+  // ── AI Script Generation ───────────────────────────────────────────────
+
+  async function handleAIScript(contact: any) {
+    setAiScriptContactId(contact.id)
+    setAiScriptText('')
+    setAiScriptLoading(true)
+    try {
+      const { processMessage } = await import('@/agents/nexus')
+      const profileRaw = localStorage.getItem('nexus_user_profile')
+      const profile = profileRaw ? JSON.parse(profileRaw) : null
+      if (!profile?.org_id) {
+        setAiScriptText('Not authenticated — import a backup or log in first.')
+        setAiScriptLoading(false)
+        return
+      }
+      const message = `Generate a short professional outreach script for contacting ${contact.contact || 'unknown'} at ${contact.company || 'unknown company'}. ` +
+        `Phase: ${contact.phase || 'unknown'}. Fit score: ${contact.fit || 0}/5. Avg job size: $${num(contact.avg || 0).toLocaleString()}. ` +
+        `Notes: ${contact.notes || 'none'}. Next action: ${contact.action || 'none'}. ` +
+        `Keep it concise, professional, and specific to an electrical contractor reaching out.`
+      const result = await processMessage({
+        message,
+        orgId: profile.org_id,
+        userId: profile.id,
+        userName: profile.full_name,
+        conversationHistory: [],
+        isVoiceCommand: false,
+      })
+      setAiScriptText(result?.agent?.content || result?.conversationMessage?.content || 'No response generated.')
+    } catch (err: any) {
+      console.error('[Leads] AI Script error:', err)
+      setAiScriptText('Failed to generate script: ' + (err.message || 'unknown error'))
+    } finally {
+      setAiScriptLoading(false)
+    }
   }
 
   // ── Service Leads CRUD ─────────────────────────────────────────────────
@@ -392,7 +431,13 @@ export default function V15rLeadsPanel() {
                           )}
                         </td>
                         <td className="py-2 px-2 text-center">
-                          <button onClick={() => alert('AI script generation coming soon - will send lead context to NEXUS')} className="text-[9px] px-1.5 py-0.5 rounded bg-purple-700/50 text-purple-300 hover:text-purple-200">AI Script</button>
+                          <button
+                            onClick={() => handleAIScript(c)}
+                            disabled={aiScriptLoading && aiScriptContactId === c.id}
+                            className="text-[9px] px-1.5 py-0.5 rounded bg-purple-700/50 text-purple-300 hover:text-purple-200 disabled:opacity-50"
+                          >
+                            {aiScriptLoading && aiScriptContactId === c.id ? 'Generating…' : 'AI Script'}
+                          </button>
                         </td>
                         <td className="py-2 px-2 text-center">
                           <div className="flex gap-1 justify-center">
@@ -592,6 +637,25 @@ export default function V15rLeadsPanel() {
                                   <div className="text-xs text-gray-500">No linked service jobs found</div>
                                 )}
                               </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+
+                      {/* AI Script response row */}
+                      {aiScriptContactId === c.id && (aiScriptLoading || aiScriptText) && (
+                        <tr>
+                          <td colSpan={11} className="p-0">
+                            <div className="mx-4 my-2 p-3 bg-purple-900/20 border border-purple-500/30 rounded-lg">
+                              <div className="flex justify-between items-start mb-2">
+                                <span className="text-[10px] font-bold text-purple-400 uppercase">AI Script — {c.company}</span>
+                                <button onClick={() => { setAiScriptContactId(null); setAiScriptText('') }} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+                              </div>
+                              {aiScriptLoading ? (
+                                <div className="text-xs text-gray-400 animate-pulse">Generating script...</div>
+                              ) : (
+                                <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">{aiScriptText}</pre>
+                              )}
                             </div>
                           </td>
                         </tr>

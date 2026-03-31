@@ -601,9 +601,12 @@ export function CalendarView({ conflicts = [] }: Props) {
                   </div>
                   {ext.location && <div className="text-xs opacity-70 mt-0.5">{ext.location}</div>}
                   {ext.htmlLink && (
-                    <a href={ext.htmlLink} target="_blank" rel="noopener noreferrer" className="text-[10px] opacity-60 hover:opacity-100 underline mt-0.5 block">
+                    <button
+                      onClick={(e) => { e.preventDefault(); window.open(ext.htmlLink, '_blank', 'noopener,noreferrer') }}
+                      className="text-[10px] opacity-60 hover:opacity-100 underline mt-0.5 block text-left"
+                    >
                       Open in Google Calendar ↗
-                    </a>
+                    </button>
                   )}
                 </div>
               ))}

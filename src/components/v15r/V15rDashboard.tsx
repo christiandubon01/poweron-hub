@@ -1679,7 +1679,7 @@ function V15rDashboardInner() {
         {/* OPP: Open Projects Pipeline */}
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
           <h2 className="text-lg font-bold text-gray-100 mb-4">OPP: Open Projects Pipeline</h2>
-          <div className="relative w-full h-64">
+          <div className="relative w-full" style={{ height: '300px' }}>
             <ChartErrorBoundary>
               <OPPChart projects={oppProjects} backup={backup} />
             </ChartErrorBoundary>
@@ -1689,7 +1689,7 @@ function V15rDashboardInner() {
         {/* PCD: Project Completion Distribution */}
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
           <h2 className="text-lg font-bold text-gray-100 mb-4">PCD: Project Completion Distribution</h2>
-          <div className="relative w-full h-64">
+          <div className="relative w-full" style={{ height: '300px' }}>
             <ChartErrorBoundary>
               <PCDChart projects={pcdProjects} backup={backup} />
             </ChartErrorBoundary>
@@ -1699,7 +1699,7 @@ function V15rDashboardInner() {
         {/* EVR: Exposure vs Revenue */}
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
           <h2 className="text-lg font-bold text-gray-100 mb-4">EVR: Exposure vs Revenue</h2>
-          <div className="relative w-full h-64">
+          <div className="relative w-full" style={{ height: '300px' }}>
             <ChartErrorBoundary>
               <EVRChart projects={evrProjects} backup={backup} />
             </ChartErrorBoundary>
@@ -1710,7 +1710,7 @@ function V15rDashboardInner() {
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
           <h2 className="text-lg font-bold text-gray-100 mb-4">SCP: Service Calls Performance</h2>
           {scpLogs.length > 0 ? (
-            <div className="relative w-full h-64">
+            <div className="relative w-full" style={{ height: '300px' }}>
               <ChartErrorBoundary>
                 <SCPChart serviceLogs={scpLogs} backup={backup} />
               </ChartErrorBoundary>
@@ -1761,7 +1761,7 @@ function V15rDashboardInner() {
               </select>
             </div>
           </div>
-          <div className="relative w-full h-[420px]">
+          <div className="relative w-full" style={{ height: '420px' }}>
             <ChartErrorBoundary>
               <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
             </ChartErrorBoundary>
