@@ -3,9 +3,12 @@
  * GuardianPanel — Crew activity monitoring, audit trail, and anomaly flagging.
  *
  * Tabs:
- *   Pending Review — flagged unreviewed logs
- *   All Logs       — full list with filters
+ *   Activity Feed  — real-time activity_log feed (Part 2)
+ *   Pending Review — flagged unreviewed crew_field_logs
+ *   All Logs       — full crew log list with filters
  *   Crew Members   — manage crew, add members, generate invite links
+ *
+ * Role gate (Part 4): only owner / admin roles see this panel.
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
@@ -22,14 +25,23 @@ import {
   RefreshCw,
   Filter,
   ChevronDown,
+  Activity,
+  Play,
+  Lock,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/hooks/useAuth'
 import {
   reviewPendingLogs,
   markLogReviewed,
   markAllLogsReviewed,
+  getActivityFeed,
+  runActivityAnalysis,
+  routeGuardianAlerts,
   type CrewFieldLog,
   type Flag,
+  type ActivityEntry,
+  type ActivityAnomalyType,
 } from '@/agents/guardian'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -68,11 +80,28 @@ function flagLabel(flag: Flag): string {
   }
 }
 
+function anomalyLabel(type: ActivityAnomalyType): string {
+  switch (type) {
+    case 'DUPLICATE_SAME_DAY': return 'Duplicate Entry'
+    case 'EXCESS_HOURS': return 'Excess Hours'
+    case 'MATERIAL_COST_SPIKE': return 'Cost Spike'
+    case 'OUT_OF_HOURS': return 'After Hours'
+    default: return type
+  }
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+  })
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
   })
 }
 
@@ -83,6 +112,15 @@ function FlagBadge({ flag }: { flag: Flag }) {
     <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-medium ${severityColor(flag.severity)}`}>
       <AlertTriangle size={9} />
       {flagLabel(flag)}
+    </span>
+  )
+}
+
+function ActivityFlagBadge({ type, severity }: { type: ActivityAnomalyType; severity: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-medium ${severityColor(severity)}`}>
+      <AlertTriangle size={9} />
+      {anomalyLabel(type)}
     </span>
   )
 }
@@ -111,7 +149,6 @@ function LogCard({
 
   return (
     <div className={`rounded-xl border p-4 space-y-3 ${hasFlagsToShow ? 'border-amber-700/30 bg-amber-900/5' : 'border-gray-700/30 bg-gray-800/20'}`}>
-      {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -152,16 +189,148 @@ function LogCard({
         )}
       </div>
 
-      {/* Work Description */}
       <p className="text-gray-400 text-xs leading-relaxed line-clamp-3">
         {log.work_description}
       </p>
 
-      {/* Flags */}
       {hasFlagsToShow && (
         <div className="flex flex-wrap gap-1.5">
           {log.flags.map((flag, i) => (
             <FlagBadge key={i} flag={flag} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Activity Feed Tab (Part 2) ─────────────────────────────────────────────────
+
+function ActivityFeedTab() {
+  const [loading, setLoading] = useState(true)
+  const [entries, setEntries] = useState<ActivityEntry[]>([])
+  const [analysisRunning, setAnalysisRunning] = useState(false)
+  const [analysisResult, setAnalysisResult] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const feed = await getActivityFeed(60)
+      setEntries(feed)
+    } catch (err) {
+      console.error('[GuardianPanel] ActivityFeedTab error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleRunAnalysis = async () => {
+    setAnalysisRunning(true)
+    setAnalysisResult(null)
+    try {
+      const result = await runActivityAnalysis(30)
+      // Route any new flags to Home panel alerts
+      if (result.flags.length > 0) {
+        routeGuardianAlerts(result.flags)
+      }
+      setAnalysisResult(result.summary)
+      // Reload feed to pick up fresh flag data
+      await load()
+    } catch (err) {
+      console.error('[GuardianPanel] runAnalysis error:', err)
+      setAnalysisResult('Analysis failed — check console for details.')
+    } finally {
+      setAnalysisRunning(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-gray-500 gap-2 text-sm">
+        <RefreshCw size={16} className="animate-spin" />
+        Loading activity feed…
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Analysis button + result */}
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={handleRunAnalysis}
+          disabled={analysisRunning}
+          className="flex items-center justify-center gap-2 text-sm bg-emerald-700/20 hover:bg-emerald-700/40 text-emerald-400 border border-emerald-700/30 px-4 py-2 rounded-lg transition-colors disabled:opacity-60 w-full"
+        >
+          {analysisRunning ? (
+            <><RefreshCw size={14} className="animate-spin" /> Analyzing last 30 days…</>
+          ) : (
+            <><Play size={14} /> Run Analysis (Last 30 Days)</>
+          )}
+        </button>
+
+        {analysisResult && (
+          <div className="rounded-xl px-4 py-3 bg-blue-900/15 border border-blue-700/30 text-blue-300 text-xs leading-relaxed">
+            {analysisResult}
+          </div>
+        )}
+      </div>
+
+      {/* Feed */}
+      <p className="text-gray-600 text-xs">{entries.length} recent entr{entries.length !== 1 ? 'ies' : 'y'}</p>
+
+      {entries.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
+          <Activity size={36} className="text-gray-600/40" />
+          <p className="text-gray-500 text-sm">No activity log entries yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {entries.map(entry => (
+            <div
+              key={entry.id}
+              className={`rounded-xl border p-3 space-y-2 ${
+                entry.isFlagged
+                  ? 'border-red-700/30 bg-red-900/8'
+                  : 'border-emerald-700/20 bg-emerald-900/5'
+              }`}
+            >
+              {/* Header row */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Status dot */}
+                  <span
+                    className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
+                      entry.isFlagged ? 'bg-red-500' : 'bg-emerald-500'
+                    }`}
+                  />
+                  <span className="text-white text-xs font-medium">
+                    {entry.entity_label || entry.entity_id || entry.action_type}
+                  </span>
+                  <span className="text-gray-600 text-[10px]">{entry.agent_name}</span>
+                </div>
+                <div className="flex-shrink-0 text-[10px] text-gray-600 whitespace-nowrap">
+                  {formatDate(entry.created_at)} {formatTime(entry.created_at)}
+                </div>
+              </div>
+
+              {/* Summary */}
+              <p className="text-gray-400 text-xs leading-relaxed">{entry.summary}</p>
+
+              {/* Anomaly flags */}
+              {entry.isFlagged && entry.flags && entry.flags.length > 0 && (
+                <div className="space-y-1">
+                  {entry.flags.map((f, i) => (
+                    <div key={i} className="flex flex-wrap gap-1.5 items-center">
+                      <ActivityFlagBadge type={f.anomalyType} severity={f.severity} />
+                      <span className="text-[10px] text-gray-500">{f.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -217,7 +386,6 @@ function PendingReviewTab() {
 
   return (
     <div className="space-y-4">
-      {/* Summary bar */}
       <div className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${flaggedLogs.length > 0 ? 'bg-amber-900/20 border border-amber-700/30' : 'bg-emerald-900/20 border border-emerald-700/30'}`}>
         <div className="flex items-center gap-2">
           {flaggedLogs.length > 0 ? (
@@ -242,7 +410,6 @@ function PendingReviewTab() {
         )}
       </div>
 
-      {/* Flagged logs */}
       {flaggedLogs.length > 0 ? (
         <div className="space-y-3">
           {flaggedLogs.map(log => (
@@ -318,7 +485,6 @@ function AllLogsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
       <div className="flex flex-wrap gap-2">
         <div className="relative">
           <select
@@ -353,15 +519,12 @@ function AllLogsTab() {
         )}
       </div>
 
-      {/* Log count */}
       <p className="text-gray-600 text-xs">{filtered.length} log{filtered.length !== 1 ? 's' : ''}</p>
 
-      {/* Logs */}
       {filtered.length > 0 ? (
         <div className="space-y-3">
           {filtered.map(log => (
             <div key={log.id} className="relative">
-              {/* Reviewed / flagged indicator */}
               <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-full" style={{
                 background: log.reviewed_by_owner
                   ? '#10b981'
@@ -429,7 +592,6 @@ function CrewMembersTab() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Generate a proper UUID invite token
       const token: string = (typeof crypto !== 'undefined' && crypto.randomUUID)
         ? crypto.randomUUID()
         : `${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`
@@ -464,7 +626,6 @@ function CrewMembersTab() {
   }
 
   const handleCopyInviteLink = (token: string) => {
-    // Use /invite/:token path (matches InviteAccept route in App.tsx)
     const link = `${window.location.origin}/invite/${token}`
     navigator.clipboard.writeText(link).then(() => {
       setCopiedToken(token)
@@ -483,7 +644,6 @@ function CrewMembersTab() {
 
   return (
     <div className="space-y-4">
-      {/* Add crew button */}
       <button
         onClick={() => setShowAddForm(v => !v)}
         className="flex items-center gap-2 text-sm bg-emerald-700/20 hover:bg-emerald-700/40 text-emerald-400 border border-emerald-700/30 px-4 py-2 rounded-lg transition-colors w-full justify-center"
@@ -492,7 +652,6 @@ function CrewMembersTab() {
         Add Crew Member
       </button>
 
-      {/* Add form */}
       {showAddForm && (
         <div className="rounded-xl border border-gray-700/40 bg-gray-800/30 p-4 space-y-3">
           <h4 className="text-white text-sm font-semibold">New Crew Member</h4>
@@ -545,7 +704,6 @@ function CrewMembersTab() {
         </div>
       )}
 
-      {/* Member list */}
       {members.length > 0 ? (
         <div className="space-y-3">
           {members.map(member => (
@@ -559,34 +717,23 @@ function CrewMembersTab() {
                     </span>
                   </div>
                   <div className="mt-1 space-y-0.5">
-                    {member.phone && (
-                      <p className="text-gray-500 text-xs">{member.phone}</p>
-                    )}
-                    {member.email && (
-                      <p className="text-gray-500 text-xs">{member.email}</p>
-                    )}
+                    {member.phone && <p className="text-gray-500 text-xs">{member.phone}</p>}
+                    {member.email && <p className="text-gray-500 text-xs">{member.email}</p>}
                     {!member.user_id && (
                       <p className="text-yellow-600 text-xs">Account not linked yet</p>
                     )}
                   </div>
                 </div>
 
-                {/* Invite link */}
                 {member.invite_token && (
                   <button
                     onClick={() => handleCopyInviteLink(member.invite_token!)}
                     className="flex-shrink-0 flex items-center gap-1.5 text-xs bg-gray-700/30 hover:bg-gray-700/60 text-gray-400 border border-gray-700/40 px-3 py-1.5 rounded-lg transition-colors"
                   >
                     {copiedToken === member.invite_token ? (
-                      <>
-                        <CheckCircle size={12} className="text-emerald-400" />
-                        <span className="text-emerald-400">Copied!</span>
-                      </>
+                      <><CheckCircle size={12} className="text-emerald-400" /><span className="text-emerald-400">Copied!</span></>
                     ) : (
-                      <>
-                        <UserPlus size={12} />
-                        Invite Link
-                      </>
+                      <><UserPlus size={12} />Invite Link</>
                     )}
                   </button>
                 )}
@@ -604,28 +751,70 @@ function CrewMembersTab() {
   )
 }
 
+// ── Role Gate ─────────────────────────────────────────────────────────────────
+
+function AccessRestricted() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-center gap-4 py-24 px-6">
+      <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center">
+        <Lock size={28} className="text-gray-500" />
+      </div>
+      <div>
+        <h3 className="text-white font-semibold text-base mb-1">Access restricted</h3>
+        <p className="text-gray-500 text-sm max-w-xs mx-auto">
+          The GUARDIAN panel is only available to owners and admins. Contact the account owner if you need access.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 // ── Guardian Panel ────────────────────────────────────────────────────────────
 
-type TabId = 'pending' | 'all-logs' | 'crew-members'
+type TabId = 'activity' | 'pending' | 'all-logs' | 'crew-members'
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  { id: 'activity', label: 'Activity Feed', icon: <Activity size={14} /> },
   { id: 'pending', label: 'Pending Review', icon: <ShieldAlert size={14} /> },
   { id: 'all-logs', label: 'All Logs', icon: <ClipboardList size={14} /> },
   { id: 'crew-members', label: 'Crew Members', icon: <Users size={14} /> },
 ]
 
 export function GuardianPanel() {
-  const [activeTab, setActiveTab] = useState<TabId>('pending')
+  const [activeTab, setActiveTab] = useState<TabId>('activity')
+  const { isAdmin, isOwner, isOwnerRole } = useAuth()
 
   // Listen for poweron:show-guardian event from NEXUS
   useEffect(() => {
     function handleShow() {
-      // Panel is already rendered when this fires; just ensure we're on pending tab
-      setActiveTab('pending')
+      setActiveTab('activity')
     }
     window.addEventListener('poweron:show-guardian', handleShow)
     return () => window.removeEventListener('poweron:show-guardian', handleShow)
   }, [])
+
+  // Part 4: Role-based access gate
+  const canAccess = isOwner || isAdmin || isOwnerRole
+  if (!canAccess) {
+    return (
+      <div className="flex flex-col h-full bg-gray-900 text-white">
+        <div className="px-6 pt-6 pb-4 border-b border-gray-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/15 flex items-center justify-center">
+              <ShieldAlert className="text-emerald-400" size={20} />
+            </div>
+            <div>
+              <h2 className="text-white font-bold text-lg">GUARDIAN</h2>
+              <p className="text-gray-500 text-xs">Crew monitoring · Audit trail · Anomaly detection</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <AccessRestricted />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
@@ -643,12 +832,12 @@ export function GuardianPanel() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex border-b border-gray-800 px-4">
+      <div className="flex border-b border-gray-800 px-4 overflow-x-auto">
         {TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 text-xs font-medium px-4 py-3 border-b-2 transition-colors ${
+            className={`flex items-center gap-1.5 text-xs font-medium px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab.id
                 ? 'border-emerald-500 text-emerald-400'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
@@ -662,8 +851,9 @@ export function GuardianPanel() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto px-4 py-5">
-        {activeTab === 'pending' && <PendingReviewTab />}
-        {activeTab === 'all-logs' && <AllLogsTab />}
+        {activeTab === 'activity'     && <ActivityFeedTab />}
+        {activeTab === 'pending'      && <PendingReviewTab />}
+        {activeTab === 'all-logs'     && <AllLogsTab />}
         {activeTab === 'crew-members' && <CrewMembersTab />}
       </div>
     </div>
