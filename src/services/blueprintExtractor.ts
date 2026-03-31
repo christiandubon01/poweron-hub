@@ -69,7 +69,7 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
 
   try {
     // Dynamic import to avoid SSR issues and allow tree shaking
-    const pdfjsLib = await import('pdfjs-dist')
+    const pdfjsLib = await import(/* @vite-ignore */ 'pdfjs-dist')
 
     // Configure worker — use CDN worker to avoid bundling issues
     // The worker URL must match the installed pdfjs-dist version
