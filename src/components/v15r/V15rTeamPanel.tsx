@@ -204,6 +204,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
             data: employeeCosts,
             backgroundColor: '#ef4444',
             borderColor: 'rgba(239,68,68,0.5)',
+            borderWidth: 2,
             type: 'line',
             borderWidth: 3,
             pointBackgroundColor: '#ef4444',

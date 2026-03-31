@@ -89,11 +89,13 @@ export async function storeMemory(params: CreateMemoryParams): Promise<string | 
   try {
     const embedding = await createEmbedding(params.content)
 
+    // Migration 040: upsert_memory now uses p_user_id (not p_org_id).
+    // entity_id is TEXT NOT NULL — fallback to a generated id if not provided.
+    // p_agent_id removed from function signature in 040.
     const { data, error } = await supabase.rpc('upsert_memory', {
-      p_org_id:      params.orgId,
+      p_user_id:     params.orgId,
       p_entity_type: params.entityType,
-      p_entity_id:   params.entityId   ?? null,
-      p_agent_id:    params.agentId    ?? null,
+      p_entity_id:   params.entityId   ?? crypto.randomUUID(),
       p_content:     params.content,
       p_embedding:   `[${embedding.join(',')}]`,
       p_metadata:    params.metadata   ?? {},
@@ -122,13 +124,14 @@ export async function searchMemory(params: SearchMemoryParams): Promise<MemoryRe
   try {
     const queryEmbedding = await createEmbedding(params.query)
 
-    const { data, error } = await supabase.rpc('search_memory', {
-      p_org_id:          params.orgId,
-      p_query_embedding: `[${queryEmbedding.join(',')}]`,
-      p_agent_id:        params.agentId    ?? null,
-      p_entity_type:     params.entityType ?? null,
-      p_limit:           params.limit      ?? 10,
-      p_threshold:       params.threshold  ?? 0.70,
+    // Migration 040: function renamed search_memory → search_memories.
+    // New signature: p_user_id, p_embedding, p_limit, p_threshold.
+    // p_agent_id and p_entity_type removed — filter client-side if needed.
+    const { data, error } = await supabase.rpc('search_memories', {
+      p_user_id:   params.orgId,
+      p_embedding: `[${queryEmbedding.join(',')}]`,
+      p_limit:     params.limit     ?? 10,
+      p_threshold: params.threshold ?? 0.70,
     })
 
     if (error) {

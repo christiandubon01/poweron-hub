@@ -23,6 +23,54 @@ import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo 
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
 
+// ── Role system ───────────────────────────────────────────────────────────────
+// owner   → the business owner; sees the full app (V15rLayout + all panels)
+// crew    → a field crew member; sees only CrewPortal (simplified field log UI)
+// client  → a client; sees ClientPortal (read-only project status — future)
+export type UserRole = 'owner' | 'crew' | 'client'
+
+const ROLE_STORAGE_KEY = 'poweron-hub-role'
+const OWNER_ID_STORAGE_KEY = 'poweron-hub-owner-id'
+
+/**
+ * Determine the user's role by checking the crew_members table.
+ * If a matching active row with user_id = auth.uid() exists → crew.
+ * Otherwise → owner.
+ * Stores result in localStorage for fast re-load.
+ */
+async function resolveUserRole(userId: string): Promise<{ role: UserRole; ownerId: string | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('crew_members')
+      .select('owner_id')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (!error && data) {
+      const role: UserRole = 'crew'
+      const ownerId = data.owner_id ?? null
+      localStorage.setItem(ROLE_STORAGE_KEY, role)
+      localStorage.setItem(OWNER_ID_STORAGE_KEY, ownerId ?? '')
+      return { role, ownerId }
+    }
+  } catch (e) {
+    console.warn('[Auth] resolveUserRole: crew check failed (non-blocking):', e)
+  }
+
+  // Default: owner
+  localStorage.setItem(ROLE_STORAGE_KEY, 'owner')
+  localStorage.setItem(OWNER_ID_STORAGE_KEY, userId)
+  return { role: 'owner', ownerId: userId }
+}
+
+/** Fast load from localStorage — used when app session already valid. */
+function loadRoleFromStorage(userId: string): { role: UserRole; ownerId: string | null } {
+  const role = (localStorage.getItem(ROLE_STORAGE_KEY) ?? 'owner') as UserRole
+  const ownerId = localStorage.getItem(OWNER_ID_STORAGE_KEY) || userId
+  return { role, ownerId }
+}
+
 // Timeout helper — prevents auth flow from hanging on slow Redis/network calls
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([
@@ -52,6 +100,13 @@ interface AuthState {
   biometric:      BiometricCapabilities | null
   lockExpiresAt:  Date | null
   error:          string | null
+
+  // ── Role fields (V3 Session 5) ────────────────────────────────────────────
+  // role:    Determines which portal the user sees after auth.
+  // ownerId: For crew members = the owner's user_id.
+  //          For owners = their own user_id.
+  role:     UserRole
+  ownerId:  string | null
 
   // Actions
   initialize:         () => Promise<void>
@@ -105,6 +160,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   biometric:     null,
   lockExpiresAt: null,
   error:         null,
+  role:          'owner',
+  ownerId:       null,
 
   // ── Initialize ─────────────────────────────────────────────────────────────
   // Called once on app mount. Determines which screen to show.
@@ -179,7 +236,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       //    Timeout after 5s — if Redis is slow, assume no session and ask for passcode
       const appSession = await withTimeout(validateAppSession(), 5000, null)
       if (appSession) {
-        set({ status: 'authenticated', user, profile, appSession })
+        // Re-use cached role from localStorage; re-resolve in background occasionally
+        const { role, ownerId } = loadRoleFromStorage(user.id)
+        set({ status: 'authenticated', user, profile, appSession, role, ownerId })
+        // Fire background re-verify in case crew membership changed
+        resolveUserRole(user.id).then(({ role: r, ownerId: o }) => {
+          set({ role: r, ownerId: o })
+        }).catch(() => {})
         return
       }
 
@@ -286,8 +349,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .then(() => {})
           .catch(() => {})
 
+        // Resolve role (owner vs crew) — determines which portal to show
+        const { role, ownerId } = await withTimeout(
+          resolveUserRole(user.id),
+          5000,
+          { role: 'owner' as UserRole, ownerId: user.id }
+        )
+
         const session = await withTimeout(validateAppSession(), 3000, null)
-        set({ status: 'authenticated', appSession: session })
+        set({ status: 'authenticated', appSession: session, role, ownerId })
 
       } else if ('locked' in result && result.locked) {
         set({ status: 'locked', lockExpiresAt: result.lockExpiresAt })
@@ -347,18 +417,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ status: 'biometric_prompt', profile: refreshedProfile, biometric })
       } else {
         // 5. Create app session (Redis write — timeout 5s, fall through on failure)
-        const orgId = (refreshedProfile ?? profile)!.org_id
-        const role  = (refreshedProfile ?? profile)!.role
+        const orgId   = (refreshedProfile ?? profile)!.org_id
+        const profRole = (refreshedProfile ?? profile)!.role
         await withTimeout(
-          createAppSession({ userId: user.id, orgId, role, deviceInfo: getDeviceInfo() }),
+          createAppSession({ userId: user.id, orgId, role: profRole, deviceInfo: getDeviceInfo() }),
           5000,
           'timeout'
         )
         // Fire-and-forget audit
         logLogin(user.id, { method: 'passcode_setup' }).catch(() => {})
 
+        // Resolve portal role (owner vs crew)
+        const { role: userRole, ownerId } = await withTimeout(
+          resolveUserRole(user.id),
+          5000,
+          { role: 'owner' as UserRole, ownerId: user.id }
+        )
+
         const session = await withTimeout(validateAppSession(), 3000, null)
-        set({ status: 'authenticated', profile: refreshedProfile, appSession: session })
+        set({ status: 'authenticated', profile: refreshedProfile, appSession: session, role: userRole, ownerId })
       }
 
     } catch (err) {
@@ -389,7 +466,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .from('profiles')
           .update({ last_login_at: new Date().toISOString() })
           .eq('id', user.id)
-        set({ status: 'authenticated', appSession: await validateAppSession() })
+        // Resolve role after biometric auth
+        const { role, ownerId } = await withTimeout(
+          resolveUserRole(user.id),
+          5000,
+          { role: 'owner' as UserRole, ownerId: user.id }
+        )
+        set({ status: 'authenticated', appSession: await validateAppSession(), role, ownerId })
 
       } else if (result.reason === 'cancelled') {
         // User chose to use passcode instead
@@ -417,6 +500,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     await destroyAppSession()
     await supabase.auth.signOut()
+    // Clear role from localStorage on sign-out
+    localStorage.removeItem(ROLE_STORAGE_KEY)
+    localStorage.removeItem(OWNER_ID_STORAGE_KEY)
     set({
       status:        'unauthenticated',
       user:          null,
@@ -425,6 +511,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       biometric:     null,
       lockExpiresAt: null,
       error:         null,
+      role:          'owner',
+      ownerId:       null,
     })
   },
 

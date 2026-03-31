@@ -17,7 +17,6 @@ import { logAudit } from '@/lib/memory/audit'
 import { supabase } from '@/lib/supabase'
 import { storeEmbedding } from '@/services/embeddingService'
 import { analyzeAfterWrite } from '@/services/patternService'
-import { logActivity } from '@/services/activityLog'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -183,18 +182,6 @@ async function insertProposal(
     } catch {
       // Non-critical
     }
-
-    // Activity log (fire-and-forget)
-    const impactLevel = proposal.impact_score >= 7 ? 'high' : proposal.impact_score >= 4 ? 'medium' : 'low'
-    logActivity({
-      agentName:   'SCOUT',
-      actionType:  'gap_detected',
-      entityType:  'proposal',
-      entityId:    data?.id as string | undefined,
-      entityLabel: proposal.title,
-      summary:     `SCOUT flagged: ${proposal.title} — impact: ${impactLevel}`,
-      details:     { title: proposal.title, category: proposal.category, impact_score: proposal.impact_score, risk_score: proposal.risk_score },
-    })
 
     return data?.id as string ?? null
   } catch (err) {

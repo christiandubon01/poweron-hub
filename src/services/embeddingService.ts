@@ -16,22 +16,42 @@
 import { embedAndStore, getRelatedMemories, batchEmbedAndStore, type ExtendedEntityType } from '@/services/vectorMemory'
 import { createEmbedding } from '@/lib/memory/embeddings'
 import { getBackupData } from '@/services/backupDataService'
-import { supabase } from '@/lib/supabase'
 
 // ── Re-export types used across the app ─────────────────────────────────────
 export type { ExtendedEntityType }
 
-// ── Org ID resolution ─────────────────────────────────────────────────────────
-// In the PowerOn app, the authenticated user's UUID is the org identifier.
-// Always resolved from Supabase auth at call time — never hardcoded.
+// ── Org ID fallback (used when no explicit orgId is passed) ──────────────────
+// In the PowerOn app, the user's org ID is stored in Supabase user metadata
+// or can be read from the backup state. We use a stable default for single-org apps.
+const DEFAULT_ORG_ID = 'poweron-default-org'
+
+function resolveOrgId(orgId?: string): string {
+  return orgId || DEFAULT_ORG_ID
+}
 
 // ── Core functions ───────────────────────────────────────────────────────────
 
 /**
  * Generate a 1536-dim embedding for the given text.
- * Routes through Netlify proxy via createEmbedding (server-side key, no CORS).
+ * Tries Netlify proxy first, falls back to direct OpenAI.
  */
 export async function embedText(text: string): Promise<number[]> {
+  // Try Netlify proxy first (server-side key)
+  try {
+    const res = await fetch('/.netlify/functions/embed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: text.slice(0, 8000) }),
+    })
+    if (res.ok) {
+      const json = await res.json()
+      if (json.data?.[0]?.embedding) {
+        return json.data[0].embedding
+      }
+    }
+  } catch {
+    // Proxy unavailable, fall through to direct
+  }
   return createEmbedding(text)
 }
 
@@ -53,9 +73,7 @@ export async function storeEmbedding(
   orgId?: string
 ): Promise<string | null> {
   try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-    return await embedAndStore(user.id, entityType, content, entityId, undefined, metadata)
+    return await embedAndStore(resolveOrgId(orgId), entityType, content, entityId, undefined, metadata)
   } catch (err) {
     // Never throw from fire-and-forget paths
     console.warn('[EmbeddingService] storeEmbedding failed (non-critical):', err)
@@ -87,9 +105,7 @@ export async function searchSimilar(
   created_at: string
 }>> {
   try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return []
-    const results = await getRelatedMemories(user.id, query, {
+    const results = await getRelatedMemories(resolveOrgId(orgId), query, {
       entityType,
       limit,
       threshold: 0.60, // slightly lower threshold for broader discovery
@@ -117,9 +133,7 @@ export async function seedMemory(orgId?: string): Promise<{
   errors: number
   summary: string
 }> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { seeded: 0, errors: 0, summary: 'Not authenticated — sign in first.' }
-  const resolvedOrgId = user.id
+  const resolvedOrgId = resolveOrgId(orgId)
   const backup = getBackupData()
 
   if (!backup) {

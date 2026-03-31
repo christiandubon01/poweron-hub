@@ -25,7 +25,6 @@ import { publish as busPublish } from '@/services/agentBus'
 import { autoSnapshot } from '@/services/snapshotService'
 import { storeEmbedding } from '@/services/embeddingService'
 import { analyzeAfterWrite } from '@/services/patternService'
-import { logActivity } from '@/services/activityLog'
 
 // ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
 function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
@@ -354,16 +353,6 @@ async function handleRecordPayment(req: LedgerRequest): Promise<LedgerResponse> 
     method,
     newStatus: result.newStatus,
     orgId: req.orgId,
-  })
-
-  // Activity log (fire-and-forget)
-  logActivity({
-    agentName:  'LEDGER',
-    actionType: 'payment_recorded',
-    entityType: 'invoice',
-    entityId:   invoiceId,
-    summary:    `LEDGER recorded payment — $${(amount || 0).toLocaleString()} via ${method || 'unknown'}`,
-    details:    { amount, method, invoiceId, newStatus: result.newStatus },
   })
 
   return {

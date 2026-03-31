@@ -14,6 +14,7 @@
 
 import { classifyIntent, type ClassifiedIntent, type ConversationMessage } from './classifier'
 import { routeToAgent, type AgentResponse } from './router'
+import { getActiveMode, setActiveMode, getModeConfig, MODE_CONFIGS, type NexusAgentMode } from '@/services/nexusMode'
 import { addTurn, getContext, getCompactContext, updateProjectContext, getMemory, trackInteractionPatterns, applyProfileToPrompt } from '@/services/nexusMemory'
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
 import { getEventContext, subscribe, type AgentEvent } from '@/services/agentEventBus'
@@ -23,10 +24,46 @@ import { buildLearnedProfilePrompt, analyzeSessionPatterns, addConversationTurn,
 import { createBucket, addEntry, addPassiveCapture, getBucket, listBuckets, autoTag } from '@/services/memoryBuckets'
 import { getCapabilityAnswer } from '@/services/appCapabilityMap'
 import { getRecentActivity, getActivitySummary } from '@/services/activityLog'
+// ── V3 Session 2: Conversational Memory ─────────────────────────────────────
+import { analyzeCompleteness, generateClarifyingQuestion, mergeContext, type ContextFragment } from '@/services/conversationContext'
+import { saveJournalEntry, getRecentJournal, getJournalSummary, semanticSearch as semanticSearchJournal, type JournalEntry } from '@/services/voiceJournalService'
+import { getRelatedMemories } from '@/services/vectorMemory'
+import { setVoiceContext, getVoiceContext, type VoiceContext } from '@/services/voice'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type NexusMode = 'briefing' | 'deepdive'
+
+// ── V3 Session 2: Conversation State for clarification flow ─────────────────
+// Resets each session (stored in module memory, not localStorage) — by design.
+
+interface ConversationState {
+  /** Active context fragment awaiting clarification */
+  activeFragment: ContextFragment | null
+  /** True when NEXUS is waiting for a clarifying answer */
+  awaitingClarification: boolean
+  /** Topic label of the fragment being clarified */
+  clarificationTopic: string | null
+  /** Original user message that triggered the clarification flow */
+  originalMessage: string | null
+}
+
+/** Module-level state — resets on every page load / session. */
+let _conversationState: ConversationState = {
+  activeFragment:       null,
+  awaitingClarification: false,
+  clarificationTopic:   null,
+  originalMessage:      null,
+}
+
+function _resetConversationState(): void {
+  _conversationState = {
+    activeFragment:       null,
+    awaitingClarification: false,
+    clarificationTopic:   null,
+    originalMessage:      null,
+  }
+}
 
 export interface NexusRequest {
   message:     string
@@ -134,6 +171,69 @@ const ACTIVITY_TRIGGERS = [
 function isActivityQuery(message: string): boolean {
   const lower = message.toLowerCase()
   return ACTIVITY_TRIGGERS.some(t => lower.includes(t))
+}
+
+// ── V3 Session 2: Journal Trigger Detection ──────────────────────────────────
+
+/**
+ * Detect messages that should trigger the voice journal save flow.
+ * Intentionally distinct from the passive capture "remember/note" pattern
+ * to allow both to coexist without conflict.
+ *
+ * Triggers: "remember this — [job context]", "journal this", "save to journal",
+ * "log this", "capture this", "add to journal", "journal entry", etc.
+ */
+const JOURNAL_SAVE_TRIGGERS = [
+  /^(?:journal|journal\s+this|log\s+this|log\s+entry|add\s+to\s+journal|save\s+to\s+journal|journal\s+entry|capture\s+this)\b/i,
+  /^remember\s+this\s*[-—:]/i,    // "Remember this — we need conduit..."
+  /^log\s+this\b/i,
+  /^capture\s+for\s+(?:later|the\s+job|the\s+record)\b/i,
+]
+
+function isJournalSaveTrigger(message: string): boolean {
+  return JOURNAL_SAVE_TRIGGERS.some(re => re.test(message.trim()))
+}
+
+/**
+ * Strip the journal trigger prefix from the message to get the content.
+ */
+function stripJournalPrefix(message: string): string {
+  return message
+    .replace(/^(?:journal(?:\s+this)?|log(?:\s+this)?|log\s+entry|add\s+to\s+journal|save\s+to\s+journal|journal\s+entry|capture\s+this|capture\s+for\s+(?:later|the\s+job|the\s+record))[,:\s]*/i, '')
+    .replace(/^remember\s+this\s*[-—:]\s*/i, '')
+    .trim()
+}
+
+// ── V3 Session 2: Memory Query Detection ─────────────────────────────────────
+
+const JOURNAL_MEMORY_TRIGGERS = [
+  'what materials did we use',
+  'what were we short on',
+  'what did i say about',
+  'remind me what i captured',
+  'what did i save about',
+  'what did i log about',
+  'what did i capture about',
+  'pull up my notes on',
+  'show me what i saved',
+  'what did i journal about',
+  'find my notes on',
+  'what did i record about',
+]
+
+function isJournalMemoryQuery(message: string): boolean {
+  const lower = message.toLowerCase()
+  return JOURNAL_MEMORY_TRIGGERS.some(t => lower.includes(t))
+}
+
+/**
+ * Extract the key search terms from a journal memory query.
+ * Strips the trigger phrase to get the subject being searched.
+ */
+function extractJournalSearchTerms(message: string): string {
+  return message
+    .replace(/^(?:what (?:materials (?:did we use(?: on)?|were we short on)|did (?:I|we) (?:say|log|save|capture|record|journal) about)|remind me what (?:I|we) captured(?: about)?|pull up (?:my )?notes on|show me what (?:I|we) saved|find (?:my )?notes on)\s*/i, '')
+    .trim() || message
 }
 
 export function detectMode(message: string, requestedMode?: NexusMode): NexusMode {
@@ -257,6 +357,182 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
   const startTime = Date.now()
   const mode = detectMode(request.message, request.mode)
   const query = request.message
+
+  // ── V3 SESSION 2: CONVERSATIONAL MEMORY LAYER ────────────────────────────
+  // Runs BEFORE passive capture to handle:
+  //   1. Clarification answers (when awaitingClarification = true)
+  //   2. Journal save triggers with completeness check
+  //   3. Journal memory queries (semantic + vector search)
+  // Additive only — no existing logic below is modified.
+
+  // ── Step V3-1: Handle clarification answers ───────────────────────────────
+  if (_conversationState.awaitingClarification && _conversationState.activeFragment) {
+    const updatedFragment = mergeContext(_conversationState.activeFragment, query)
+
+    if (updatedFragment.complete) {
+      // Fragment is complete — build full-context content and save
+      const orig = _conversationState.originalMessage || ''
+      const knownParts = Object.entries(updatedFragment.known)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(', ')
+      const fullContent = orig ? `${orig} — ${knownParts}` : knownParts
+
+      await saveJournalEntry({
+        transcript:   fullContent,
+        contextTag:   updatedFragment.topic,
+        jobReference: updatedFragment.known.client,
+      })
+
+      _resetConversationState()
+
+      const summaryParts: string[] = []
+      if (updatedFragment.known.size)     summaryParts.push(`size: ${updatedFragment.known.size}`)
+      if (updatedFragment.known.quantity) summaryParts.push(`quantity: ${updatedFragment.known.quantity}`)
+      if (updatedFragment.known.location) summaryParts.push(`location: ${updatedFragment.known.location}`)
+      if (updatedFragment.known.client)   summaryParts.push(`job: ${updatedFragment.known.client}`)
+      if (updatedFragment.known.date)     summaryParts.push(`date: ${updatedFragment.known.date}`)
+      const summaryStr = summaryParts.length > 0 ? ` (${summaryParts.join(', ')})` : ''
+
+      const chatContent = `Got it — saved the full picture.${summaryStr}`
+      const voiceContent = `Saved. Full context captured.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Journal clarification complete — saved' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    } else {
+      // Still incomplete — ask next clarifying question, keep state
+      _conversationState.activeFragment = updatedFragment
+      const nextQuestion = generateClarifyingQuestion(updatedFragment)
+      const msg: ConversationMessage = { role: 'assistant', content: nextQuestion, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', nextQuestion, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: nextQuestion, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Journal clarification in progress' },
+        agent: { content: nextQuestion, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? nextQuestion : undefined,
+      }
+    }
+  }
+
+  // ── Step V3-2: Handle journal save triggers ───────────────────────────────
+  if (isJournalSaveTrigger(query)) {
+    const content = stripJournalPrefix(query)
+    if (content.length > 2) {
+      const fragment = analyzeCompleteness(content)
+
+      if (fragment.complete) {
+        // Context is complete — save immediately
+        await saveJournalEntry({
+          transcript:   content,
+          contextTag:   fragment.topic,
+          jobReference: fragment.known.client,
+        })
+        const summaryParts: string[] = []
+        if (fragment.known.size)     summaryParts.push(`size: ${fragment.known.size}`)
+        if (fragment.known.quantity) summaryParts.push(`quantity: ${fragment.known.quantity}`)
+        if (fragment.known.location) summaryParts.push(`location: ${fragment.known.location}`)
+        if (fragment.known.client)   summaryParts.push(`job: ${fragment.known.client}`)
+        const summaryStr = summaryParts.length > 0 ? ` (${summaryParts.join(', ')})` : ''
+        const chatContent = `Got it — saved the full picture.${summaryStr}`
+        const voiceContent = `Saved to journal.`
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Journal save — complete context' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false, conversationMessage: msg, mode,
+          voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+        }
+      } else {
+        // Fragment is incomplete — store state and ask first clarifying question
+        _conversationState.activeFragment       = fragment
+        _conversationState.awaitingClarification = true
+        _conversationState.clarificationTopic   = fragment.topic
+        _conversationState.originalMessage      = content
+
+        const question = generateClarifyingQuestion(fragment)
+        const msg: ConversationMessage = { role: 'assistant', content: question, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', question, 'nexus') } catch { /* non-critical */ }
+        addConversationTurn({ role: 'assistant', content: question, agentUsed: 'nexus', timestamp: Date.now() })
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Journal save — awaiting clarification' },
+          agent: { content: question, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false, conversationMessage: msg, mode,
+          voiceSummary: request.isVoiceCommand ? question : undefined,
+        }
+      }
+    }
+  }
+
+  // ── Step V3-3: Handle journal memory queries ──────────────────────────────
+  if (isJournalMemoryQuery(query)) {
+    const searchTerms = extractJournalSearchTerms(query)
+    try {
+      // Run semantic journal search + vector memory search in parallel
+      const [journalResults, memoryResults] = await Promise.all([
+        semanticSearchJournal(searchTerms, 5).catch(() => [] as JournalEntry[]),
+        getRelatedMemories(request.userId || request.orgId, searchTerms, { limit: 5 }).catch(() => []),
+      ])
+
+      if (journalResults.length === 0 && memoryResults.length === 0) {
+        const chatContent = `I don't have anything saved about that. Want me to capture something now?`
+        const voiceContent = `Nothing saved about that yet. Want me to capture something?`
+        const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+        try { addTurn('user', query) } catch { /* non-critical */ }
+        try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+        addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+        return {
+          intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Journal memory query — no results' },
+          agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+          needsConfirmation: false, conversationMessage: msg, mode,
+          voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+        }
+      }
+
+      // Deduplicate and format as conversational response
+      const seen = new Set<string>()
+      const lines: string[] = []
+
+      for (const entry of journalResults.slice(0, 5)) {
+        const key = (entry.raw_transcript || '').slice(0, 80)
+        if (seen.has(key)) continue
+        seen.add(key)
+        const date = new Date(entry.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        const snippet = (entry.raw_transcript || '').slice(0, 200)
+        const actionNote = Array.isArray(entry.action_items) && entry.action_items.length > 0
+          ? ` You also flagged: ${entry.action_items[0]}.`
+          : ''
+        lines.push(`Based on your notes from ${date}: ${snippet}.${actionNote}`)
+      }
+
+      const chatContent = lines.join('\n\n')
+      const voiceContent = `Found ${lines.length} note${lines.length !== 1 ? 's' : ''} about that. Check the chat for details.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Journal memory query — results found' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    } catch (memErr) {
+      console.warn('[NEXUS] Journal memory query error — routing to standard flow:', memErr)
+      // Fall through to standard classifier pipeline on error
+    }
+  }
 
   // ── PASSIVE CAPTURE — MUST be the absolute first check ───────────────────
   // Voice transcription may produce curly apostrophes, so match both ' and \u2019
@@ -467,7 +743,19 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
           similarity: Math.round(r.similarity * 100),
         }))
 
-        const chatContent = `Found **${searchResults.length} result${searchResults.length !== 1 ? 's' : ''}** matching "${query.slice(0, 80)}":\n\nBRANCH_CARDS:${JSON.stringify(branchCards)}\n\nTap a card to dive deeper. These results are ranked by semantic similarity to your search.`
+        // Natural language summary: "Based on your data from [date]: [content]. Related: [second]."
+        const top = searchResults[0]
+        const topDate = (top.metadata as any)?.date
+          ? new Date((top.metadata as any).date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : 'your records'
+        const topSummary = top.content.slice(0, 200)
+        let naturalSummary = `Based on your data from ${topDate}: ${topSummary}.`
+        if (searchResults.length > 1) {
+          const second = searchResults[1]
+          naturalSummary += ` Related: ${second.content.slice(0, 120)}.`
+        }
+
+        const chatContent = `${naturalSummary}\n\nFound **${searchResults.length} result${searchResults.length !== 1 ? 's' : ''}** matching "${query.slice(0, 80)}":\n\nBRANCH_CARDS:${JSON.stringify(branchCards)}\n\nTap a card to dive deeper. These results are ranked by semantic similarity to your search.`
         const voiceContent = `Found ${searchResults.length} matching records. Check the chat to review them.`
 
         const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
@@ -484,7 +772,7 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
           voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
         }
       } else {
-        const chatContent = `Semantic search found no matches for "${query.slice(0, 80)}". Try seeding memory first by calling \`window.__memory.seedMemory()\` in the browser console, then search again.`
+        const chatContent = `I don't have anything stored about that yet. As you use the app, I'll learn more.`
         const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
         try { addTurn('user', query) } catch { /* non-critical */ }
         try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
@@ -629,6 +917,205 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
       }
     } catch {
       // Fall through to normal routing if activity query fails
+    }
+  }
+
+  // ── GUARDIAN QUERY — intercept before classifier ──────────────────────────
+  const GUARDIAN_TRIGGERS = [
+    'crew activity', 'what did the crew do', 'any flags', 'crew review',
+    'team logs', 'what happened on site', 'crew logs', 'crew summary',
+    'field team', 'crew flagged', 'guardian',
+  ]
+
+  const isGuardianQuery = GUARDIAN_TRIGGERS.some(t => query.toLowerCase().includes(t))
+
+  if (isGuardianQuery) {
+    try {
+      const { getDailyCrewSummary, reviewPendingLogs } = await import('@/agents/guardian')
+      const [summary, review] = await Promise.all([
+        getDailyCrewSummary(),
+        reviewPendingLogs(),
+      ])
+
+      let chatContent = `**GUARDIAN — Crew Activity**\n\n${summary}`
+
+      if (review.flagged.length > 0) {
+        chatContent += `\n\nYou have **${review.flagged.length} item${review.flagged.length !== 1 ? 's' : ''}** needing review. Want me to walk you through them?`
+      } else if (review.clean.length > 0) {
+        chatContent += `\n\n✓ All reviewed logs are clean.`
+      }
+
+      const voiceContent = summary.replace(/\n/g, ' ').slice(0, 300)
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'GUARDIAN crew activity query' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+      }
+    } catch (guardianErr) {
+      console.warn('[NEXUS] GUARDIAN query failed, falling through to classifier:', guardianErr)
+      // Fall through — don't block if GUARDIAN fails
+    }
+  }
+
+  // ── MODE SWITCH DETECTION — intercept before classifier ──────────────────
+  // Detects voice/text phrases that should switch NEXUS to a different response mode.
+  // Confirms the switch inline and returns early without hitting Claude.
+
+  const modeSwitchDetected = ((): NexusAgentMode | null => {
+    const q = query.toLowerCase()
+    if (/switch to proactive mode|be proactive/.test(q)) return 'proactive'
+    if (/switch to analytical mode|show me the numbers|break it down/.test(q)) return 'analytical'
+    if (/coaching mode|help me prepare|give me advice/.test(q)) return 'coaching'
+    if (/let'?s just talk|conversational mode|open conversation/.test(q)) return 'conversational'
+    if (/i'?m driving|carplay mode|i'?m in the car/.test(q)) return 'carplay'
+    return null
+  })()
+
+  if (modeSwitchDetected) {
+    setActiveMode(modeSwitchDetected)
+    const cfg = MODE_CONFIGS[modeSwitchDetected]
+    const modeDescriptions: Record<NexusAgentMode, string> = {
+      proactive:      "I'll now anticipate what you need next and flag risks proactively.",
+      analytical:     "I'll lead every answer with data, calculations, and scenario breakdowns.",
+      coaching:       "I'll present options and consequences, then ask what you want to do.",
+      conversational: "I'll keep it direct and natural — ask me anything.",
+      carplay:        "Responses will be short and voice-friendly. Stay safe out there.",
+    }
+    const confirmContent = `Switching to ${cfg.name} mode. ${modeDescriptions[modeSwitchDetected]}`
+    const confirmMsg: ConversationMessage = { role: 'assistant', content: confirmContent, agentId: 'nexus', timestamp: Date.now() }
+    try { addTurn('user', query) } catch { /* non-critical */ }
+    try { addTurn('assistant', confirmContent, 'nexus') } catch { /* non-critical */ }
+    addConversationTurn({ role: 'assistant', content: confirmContent, agentUsed: 'nexus', timestamp: Date.now() })
+    return {
+      intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: `Mode switch to ${modeSwitchDetected}` },
+      agent: { content: confirmContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+      needsConfirmation: false,
+      conversationMessage: confirmMsg,
+      mode,
+      voiceSummary: request.isVoiceCommand ? confirmContent : undefined,
+    }
+  }
+
+  // ── VOICE JOURNAL — CONTEXT SWITCH ───────────────────────────────────────
+  // Intercept context-switch phrases before classifier.
+  const contextSwitchMatch = (() => {
+    const lower = query.toLowerCase()
+    if (/i['\u2019]?m on a job site|i['\u2019]?m at (?:the job|work site|a job)/i.test(lower)) return 'job_site' as VoiceContext
+    if (/i['\u2019]?m driving|i['\u2019]?m in the car/i.test(lower)) return 'driving' as VoiceContext
+    if (/i['\u2019]?m in the office|i['\u2019]?m at the office|i['\u2019]?m home/i.test(lower)) return 'office' as VoiceContext
+    return null
+  })()
+
+  if (contextSwitchMatch) {
+    try { setVoiceContext(contextSwitchMatch) } catch { /* non-critical */ }
+    const ctxLabels: Record<string, string> = { job_site: 'job site', driving: 'driving', office: 'office', general: 'general' }
+    const ctxLabel = ctxLabels[contextSwitchMatch] ?? contextSwitchMatch
+    const ctxThresholds: Record<string, number> = { office: 1500, job_site: 3500, driving: 2500, general: 2000 }
+    const ctxMs = ctxThresholds[contextSwitchMatch] ?? 2000
+    const chatContent = `Got it — switching to **${ctxLabel} mode**. I'll give you more time between responses (${ctxMs}ms pause threshold).`
+    const voiceContent = `Got it — switching to ${ctxLabel} mode. I'll give you more time between responses.`
+    const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+    try { addTurn('user', query) } catch { /* non-critical */ }
+    try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+    addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+    return {
+      intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Voice context switch' },
+      agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+      needsConfirmation: false, conversationMessage: msg, mode,
+      voiceSummary: request.isVoiceCommand ? voiceContent : undefined,
+    }
+  }
+
+  // ── VOICE JOURNAL — SAVE ──────────────────────────────────────────────────
+  // Trigger phrases: 'remember this', 'save this', 'note that', 'log this',
+  // 'capture this', "don't forget", 'remind me', 'journal', 'voice note',
+  // 'save for later', 'keep this'
+  const isJournalSaveIntent = /\b(?:journal(?:ize)?|voice note|log this|capture this|save for later|keep this)\b/i.test(query) ||
+    /\b(?:remember this|save this|note that|don['\u2019]t forget|remind me)\b/i.test(query)
+
+  if (isJournalSaveIntent) {
+    try {
+      const activeCtx = (() => { try { return getVoiceContext() } catch { return 'general' as VoiceContext } })()
+      const savedEntry = await saveJournalEntry({
+        transcript: query,
+        contextTag: activeCtx,
+      })
+      const actionCount = savedEntry?.action_items?.length ?? 0
+      const actionLabel = actionCount === 1 ? '1 action item' : `${actionCount} action items`
+      const chatContent = `Saved. I captured ${actionLabel} from that. You can ask me "what did I save today" anytime.`
+      const msg: ConversationMessage = { role: 'assistant', content: chatContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', chatContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: chatContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Voice journal save' },
+        agent: { content: chatContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: msg, mode,
+        voiceSummary: request.isVoiceCommand ? chatContent : undefined,
+      }
+    } catch (journalErr) {
+      console.warn('[NEXUS] Voice journal save failed, falling through:', journalErr)
+    }
+  }
+
+  // ── VOICE JOURNAL — RETRIEVE ──────────────────────────────────────────────
+  // Trigger phrases: 'what did I save', 'what did I capture', 'show my notes',
+  // 'what did I log', 'what was I thinking about', 'my journal', 'what did I say',
+  // 'saved notes'
+  const isJournalRetrieveIntent = /(?:what did I (?:save|capture|log|say)|show my notes|saved notes|my journal|what was I thinking)/i.test(query)
+
+  if (isJournalRetrieveIntent) {
+    try {
+      const lowerQ = query.toLowerCase()
+      let journalContent = ''
+
+      if (lowerQ.includes('today') || lowerQ.includes('24')) {
+        journalContent = await getJournalSummary(24)
+      } else if (lowerQ.includes('week')) {
+        journalContent = await getJournalSummary(168)
+      } else {
+        const entries = await getRecentJournal(5)
+        if (entries.length === 0) {
+          journalContent = 'No voice notes yet. Say "remember this" or "save this" to NEXUS to capture thoughts on the go.'
+        } else {
+          const lines = entries.map((e: JournalEntry, i: number) => {
+            const date = new Date(e.created_at)
+            const now = Date.now()
+            const diffMs = now - date.getTime()
+            const diffMins = Math.floor(diffMs / 60000)
+            const diffHours = Math.floor(diffMins / 60)
+            const diffDays = Math.floor(diffHours / 24)
+            const ts = diffMins < 60
+              ? `${diffMins}m ago`
+              : diffHours < 24 ? `${diffHours}h ago`
+              : diffDays === 1 ? 'yesterday'
+              : date.toLocaleDateString()
+            const actions = e.action_items.length > 0
+              ? `\n   _Actions: ${e.action_items.slice(0, 2).join('; ')}_`
+              : ''
+            return `${i + 1}. [${ts}] ${e.raw_transcript.slice(0, 100)}${e.raw_transcript.length > 100 ? '…' : ''}${actions}`
+          })
+          journalContent = `**Recent Voice Notes (${entries.length})**\n\n${lines.join('\n\n')}`
+        }
+      }
+
+      const journalMsg: ConversationMessage = { role: 'assistant', content: journalContent, agentId: 'nexus', timestamp: Date.now() }
+      try { addTurn('user', query) } catch { /* non-critical */ }
+      try { addTurn('assistant', journalContent, 'nexus') } catch { /* non-critical */ }
+      addConversationTurn({ role: 'assistant', content: journalContent, agentUsed: 'nexus', timestamp: Date.now() })
+      return {
+        intent: { category: 'general', targetAgent: 'nexus', confidence: 1.0, entities: [], requiresConfirmation: false, impactLevel: 'LOW', reasoning: 'Voice journal retrieve' },
+        agent: { content: journalContent, agentId: 'nexus', agentName: 'NEXUS', confidence: 1.0 },
+        needsConfirmation: false, conversationMessage: journalMsg, mode,
+        voiceSummary: request.isVoiceCommand ? journalContent.replace(/\*\*/g, '').replace(/\n/g, '. ').slice(0, 300) : undefined,
+      }
+    } catch (journalRetrieveErr) {
+      console.warn('[NEXUS] Voice journal retrieve failed, falling through:', journalRetrieveErr)
     }
   }
 
@@ -864,6 +1351,40 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
           ? DEEP_DIVE_FORMAT_INSTRUCTION
           : BRIEFING_FORMAT_INSTRUCTION
   let enrichedMessage = `${request.message}\n\n${modeInstruction}`
+
+  // ── COACHING MODE CONSEQUENCES — inject structured option/consequence format ─
+  // When in coaching mode and the user asks for advice/recommendation, force
+  // NEXUS to present: situation → Option A → Option B → consequences → "What do you want to do?"
+  const activeAgentMode = getActiveMode()
+  const isAdviceQuery = /should i|what should|advise|recommend|my best option|help me decide|which is better|worth it|take.*job|hire.*person|raise my rate|lower.*price/i.test(query)
+
+  if (activeAgentMode === 'coaching' && isAdviceQuery) {
+    enrichedMessage = enrichedMessage + `
+
+## COACHING MODE — MANDATORY RESPONSE STRUCTURE
+You MUST follow this exact structure. Do NOT skip steps.
+
+1. State the current situation factually in one sentence.
+2. Present Option A and what action it involves.
+3. State the consequences of Option A with any available data (costs, risk, timeline).
+4. Present Option B and what action it involves.
+5. State the consequences of Option B with any available data.
+6. End with EXACTLY: "What do you want to do?"
+
+RULES:
+- Never say "you should" or "I recommend".
+- Always say "Option A means..." / "Option B leads to..."
+- Use real numbers from the data where available.
+- Keep the structure tight — no preamble, no conclusions.
+
+Example format:
+"Here's the situation: [fact].
+Option A — [action]: leads to [consequence with data].
+Option B — [action]: leads to [consequence with data].
+Based on your numbers, Option A has [X] risk and Option B has [Y] cost.
+What do you want to do?"
+`
+  }
 
   // Prepend user preferences so the agent respects them
   try {

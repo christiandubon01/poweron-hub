@@ -7,7 +7,7 @@
 
 import { useEffect } from 'react'
 import { useAuthStore } from '@/store/authStore'
-import type { AuthStatus } from '@/store/authStore'
+import type { AuthStatus, UserRole } from '@/store/authStore'
 
 export function useAuth() {
   const store = useAuthStore()
@@ -22,6 +22,12 @@ export function useAuth() {
     lockExpiresAt: store.lockExpiresAt,
     error:         store.error,
 
+    // ── Role (V3 Session 5) ───────────────────────────────────────────────
+    // role:    'owner' | 'crew' | 'client' — determines which portal to render
+    // ownerId: the owner's user_id (for crew: their owner; for owner: themselves)
+    role:          store.role as UserRole,
+    ownerId:       store.ownerId,
+
     // ── Derived booleans ──────────────────────────────────────────────────
     isLoading:        store.status === 'loading',
     isAuthenticated:  store.status === 'authenticated',
@@ -31,6 +37,10 @@ export function useAuth() {
     showBiometric:    store.status === 'biometric_prompt',
 
     // ── Role helpers ──────────────────────────────────────────────────────
+    isOwnerRole:   store.role === 'owner',
+    isCrewRole:    store.role === 'crew',
+    isClientRole:  store.role === 'client',
+    // Profile-level role helpers (admin/field within the org structure)
     isOwner:   store.profile?.role === 'owner',
     isAdmin:   store.profile?.role === 'admin' || store.profile?.role === 'owner',
     isField:   store.profile?.role === 'field',
