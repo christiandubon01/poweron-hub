@@ -174,6 +174,12 @@ export default function V15rHome() {
   // Load custom alerts from backup
   const loadedCustomAlerts = backup.customAlerts || []
 
+  // Filter out AI alerts that have been manually edited (avoid duplicates)
+  const editedProjectIds = new Set(
+    loadedCustomAlerts.filter(a => a.isAI && a.manuallyEdited).map(a => a.linkedProjectId)
+  )
+  const filteredAgendaAlerts = agendaAlerts.filter(a => !editedProjectIds.has(a.id))
+
   // ── Recent logs (last 4-6) ───────────────────────────────────────────────
   const recentLogs = [...logs].reverse().slice(0, 6)
 
@@ -570,10 +576,10 @@ export default function V15rHome() {
       {/* ── AGENDA ALERTS ────────────────────────────────────────────────────── */}
       <div>
         <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Alerts</h2>
-        {agendaAlerts.length > 0 || loadedCustomAlerts.length > 0 ? (
+        {filteredAgendaAlerts.length > 0 || loadedCustomAlerts.length > 0 ? (
           <div className="space-y-2">
             {/* AI-generated alerts */}
-            {agendaAlerts.map((a, i) => {
+            {filteredAgendaAlerts.map((a, i) => {
               const aiAlertId = 'ai-' + i
               const isEditing = editingAIAlertId === aiAlertId
               return (
@@ -590,20 +596,24 @@ export default function V15rHome() {
                       onChange={(e) => setEditAIAlertText(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
-                          // Save edited AI alert as custom alert
+                          // Update existing or create custom alert for this AI alert
                           pushState(backup)
                           if (!backup.customAlerts) backup.customAlerts = []
-                          const newId = 'ai2c_' + Date.now() + '_' + i
-                          backup.customAlerts.push({
-                            id: newId,
-                            title: editAIAlertText,
-                            description: '',
-                            action: '',
-                            isAI: true,
-                            manuallyEdited: true,
-                            scheduledAt: '',
-                            linkedProjectId: a.id || ''
-                          })
+                          const existing = backup.customAlerts.find(ca => ca.isAI && ca.manuallyEdited && ca.linkedProjectId === (a.id || ''))
+                          if (existing) {
+                            existing.title = editAIAlertText
+                          } else {
+                            backup.customAlerts.push({
+                              id: 'ai2c_' + Date.now() + '_' + i,
+                              title: editAIAlertText,
+                              description: '',
+                              action: '',
+                              isAI: true,
+                              manuallyEdited: true,
+                              scheduledAt: '',
+                              linkedProjectId: a.id || ''
+                            })
+                          }
                           persist()
                           forceUpdate()
                           setEditingAIAlertId(null)
@@ -611,21 +621,26 @@ export default function V15rHome() {
                         }
                       }}
                       onBlur={() => {
-                        // Save edited AI alert as custom alert
+                        if (editingAIAlertId !== aiAlertId) return
+                        // Update existing or create custom alert for this AI alert
                         if (editAIAlertText.trim()) {
                           pushState(backup)
                           if (!backup.customAlerts) backup.customAlerts = []
-                          const newId = 'ai2c_' + Date.now() + '_' + i
-                          backup.customAlerts.push({
-                            id: newId,
-                            title: editAIAlertText,
-                            description: '',
-                            action: '',
-                            isAI: true,
-                            manuallyEdited: true,
-                            scheduledAt: '',
-                            linkedProjectId: a.id || ''
-                          })
+                          const existing = backup.customAlerts.find(ca => ca.isAI && ca.manuallyEdited && ca.linkedProjectId === (a.id || ''))
+                          if (existing) {
+                            existing.title = editAIAlertText
+                          } else {
+                            backup.customAlerts.push({
+                              id: 'ai2c_' + Date.now() + '_' + i,
+                              title: editAIAlertText,
+                              description: '',
+                              action: '',
+                              isAI: true,
+                              manuallyEdited: true,
+                              scheduledAt: '',
+                              linkedProjectId: a.id || ''
+                            })
+                          }
                           persist()
                           forceUpdate()
                         }

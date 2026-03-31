@@ -726,7 +726,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
 
       <div className="flex items-center justify-center">
         <div style={{ position: 'relative', maxWidth: '320px', maxHeight: '320px', width: '100%' }}>
-          <canvas ref={canvasRef} />
+          <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
         </div>
       </div>
 
@@ -896,7 +896,7 @@ function RevenueStreamChart({ data }) {
     <div className="bg-[#232738] rounded-lg p-4">
       <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Electrical Pipeline & Revenue Projection</h3>
       <div style={{ height: '300px' }}>
-        <canvas ref={canvasRef} />
+        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
       </div>
     </div>
   )
@@ -1008,7 +1008,7 @@ function BusinessProjectionsChart({
     <div className="bg-[#232738] rounded-lg p-4">
       <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Business-Linked Projections</h3>
       <div style={{ height: '300px' }}>
-        <canvas ref={canvasRef} />
+        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
       </div>
     </div>
   )

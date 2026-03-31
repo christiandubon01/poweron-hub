@@ -126,7 +126,7 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
           use_speaker_boost: true,
           ...(request.voice_settings || {}),
         },
-        ...(request.speed && request.speed !== 1.0 ? { speaking_rate: request.speed } : {}),
+        ...(request.speed && request.speed !== 1.0 ? { speed: request.speed } : {}),
       }),
     }
   )

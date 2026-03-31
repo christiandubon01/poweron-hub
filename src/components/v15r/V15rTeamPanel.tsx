@@ -287,7 +287,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
     }
   }, [chartReady, backup])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── LABOR COST VS REVENUE 12-WEEK CHART ──
@@ -500,7 +500,7 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
     }
   }, [chartReady, backup])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── EMPLOYEE COST STRUCTURE COMPONENT ──
@@ -955,7 +955,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
     }
   }, [chartReady, backup])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── AI INSIGHT CARD ──

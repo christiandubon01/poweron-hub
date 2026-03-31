@@ -525,7 +525,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
     }
   }, [chartReady, projects, backup, isMobileView])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── PCD CHART COMPONENT ──
@@ -617,7 +617,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
     }
   }, [chartReady, projects, backup, isMobileView])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── EVR CHART COMPONENT ──
@@ -742,7 +742,7 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
     }
   }, [chartReady, projects, backup, isMobileView])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── SCP: Service Calls Performance CHART COMPONENT ──
@@ -844,7 +844,7 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
     }
   }, [chartReady, serviceLogs, backup])
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── REVENUE vs COST ANALYSIS CHART COMPONENT ──
@@ -1183,7 +1183,7 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
     )
   }
 
-  return <canvas ref={canvasRef} />
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── NEXUS AI DASHBOARD ANALYZER ──

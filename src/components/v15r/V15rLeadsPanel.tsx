@@ -11,7 +11,7 @@
  * - Contact activity timeline (expandable row showing contactLog entries)
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X } from 'lucide-react'
 import {
   getBackupData,
@@ -66,6 +66,7 @@ export default function V15rLeadsPanel() {
   const [loggingContactId, setLoggingContactId] = useState<string | null>(null)
   const [logType, setLogType] = useState('Call')
   const [logNotes, setLogNotes] = useState('')
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const backup = getBackupData()
   if (!backup) {
@@ -81,9 +82,14 @@ export default function V15rLeadsPanel() {
   const weeklyReviews = backup.weeklyReviews || []
 
   function persist() {
+    const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
     backup._lastSavedAt = new Date().toISOString()
     saveBackupData(backup)
     forceUpdate()
+    requestAnimationFrame(() => {
+      if (panelRef.current) panelRef.current.scrollTop = scrollTop
+      else window.scrollTo(0, scrollTop)
+    })
   }
 
   // ── GC Contacts CRUD ───────────────────────────────────────────────────
@@ -163,6 +169,7 @@ export default function V15rLeadsPanel() {
 
   function convertGCToProject(gc: any) {
     if (!confirm(`Convert "${gc.company}" to a new project?`)) return
+    const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
     pushState(backup)
     const projId = 'proj' + Date.now() + Math.random().toString(36).slice(2, 6)
     const newProj: any = {
@@ -181,11 +188,16 @@ export default function V15rLeadsPanel() {
     gc.convertedProjectId = projId
     saveBackupDataAndSync(backup)
     forceUpdate()
+    requestAnimationFrame(() => {
+      if (panelRef.current) panelRef.current.scrollTop = scrollTop
+      else window.scrollTo(0, scrollTop)
+    })
     alert(`Project created: ${newProj.name}`)
   }
 
   function convertSvcLeadToProject(lead: any) {
     if (!confirm(`Convert service lead "${lead.customer}" to a new project?`)) return
+    const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
     pushState(backup)
     const projId = 'proj' + Date.now() + Math.random().toString(36).slice(2, 6)
     const newProj: any = {
@@ -204,6 +216,10 @@ export default function V15rLeadsPanel() {
     lead.convertedProjectId = projId
     saveBackupDataAndSync(backup)
     forceUpdate()
+    requestAnimationFrame(() => {
+      if (panelRef.current) panelRef.current.scrollTop = scrollTop
+      else window.scrollTo(0, scrollTop)
+    })
     alert(`Project created: ${newProj.name}`)
   }
 
@@ -806,7 +822,7 @@ export default function V15rLeadsPanel() {
   // ── Main return ────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[#1a1d27] p-6">
+    <div ref={panelRef} className="min-h-screen bg-[#1a1d27] p-6">
       {/* Tab switcher */}
       <div className="flex gap-2 mb-6 items-center">
         {[
