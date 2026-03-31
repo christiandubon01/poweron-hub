@@ -1246,16 +1246,54 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
     const analyze = async () => {
       try {
         setState({ loading: true })
+
+        // Pre-calculate accurate values — active = status === 'active' ONLY
+        const activeProjects = projects.filter(p => p.status === 'active')
+        const pipelineProjects = projects.filter(p => p.status !== 'active')
+        const activeContractTotal = activeProjects.reduce((s: number, p: any) => s + num(p.contract), 0)
+        const totalARExposure = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
+        const totalCollected = activeProjects.reduce((s: number, p: any) => s + num(p.paid), 0)
+        const totalBilled = activeProjects.reduce((s: number, p: any) => s + num(p.billed), 0)
+        const totalUnbilledInvoiced = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.billed) - num(p.paid)), 0)
+        const pipelineTotal = pipelineProjects.reduce((s: number, p: any) => s + num(p.contract), 0)
+
+        // Per-project detail for active projects
+        const activeProjectDetails = activeProjects.map(p => ({
+          name: p.name,
+          contract: num(p.contract),
+          paid: num(p.paid),
+          billed: num(p.billed),
+          arExposure: Math.max(0, num(p.contract) - num(p.paid)),
+        }))
+
+        // Service logs — use collected (actual revenue), not quoted
+        const recentSvcLogs = (backup.serviceLogs || []).slice(-5).map((l: any) => ({
+          date: l.date,
+          customer: l.customer,
+          collected: num(l.collected),
+          quoted: num(l.quoted),
+          type: l.jtype,
+        }))
+        const svcTotalCollected = (backup.serviceLogs || []).reduce((s: number, l: any) => s + num(l.collected), 0)
+
         const dashboardContext = {
-          summary: cfotSummary,
-          activeProjects: projects.filter(p => p.status === 'active').length,
-          totalContract: projects.reduce((s: number, p: any) => s + num(p.contract), 0),
+          definitions: 'Active projects = status === active only. AR Exposure = contract minus paid (uncollected contract value). Unbilled/invoiced = billed minus paid (invoiced but not yet collected). Pipeline = non-active projects (estimates, pending, etc). These values are pre-calculated — do not recalculate them.',
+          activeProjectCount: activeProjects.length,
+          activeContractTotal,
+          totalARExposure,
+          totalCollected,
+          totalBilled,
+          totalUnbilledInvoiced,
+          pipelineCount: pipelineProjects.length,
+          pipelineTotal,
+          serviceLogRevenue: svcTotalCollected,
+          activeProjectDetails,
+          recentServiceLogs: recentSvcLogs,
           weeklyData: (backup.weeklyData || []).slice(-4),
-          serviceLogs: (backup.serviceLogs || []).slice(-5),
         }
 
         const response = await callClaude({
-          system: 'You are NEXUS, the AI dashboard analyzer for Power On Solutions. Analyze financial dashboard data and provide 3-5 priority-scored bullet points (🔴 high risk, 🟡 medium attention, 🟢 healthy). Be concise and actionable.',
+          system: 'You are NEXUS, the AI dashboard analyzer for Power On Solutions. Analyze financial dashboard data and provide 3-5 priority-scored bullet points (🔴 high risk, 🟡 medium attention, 🟢 healthy). Be concise and actionable. Use the pre-calculated values provided — do not recalculate them.',
           messages: [{
             role: 'user',
             content: `Analyze this dashboard data and identify key risk items, projects needing attention, and healthy indicators:\n${JSON.stringify(dashboardContext, null, 2)}`
