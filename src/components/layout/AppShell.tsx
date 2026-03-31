@@ -10,6 +10,7 @@ import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { getBackupData } from '@/services/backupDataService'
+import { useReadOnly } from '@/contexts/ReadOnlyContext'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
@@ -72,6 +73,8 @@ export function AppShell({ children }: AppShellProps) {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [projectTab, setProjectTab] = useState('estimate')
   const [showOnboarding, setShowOnboarding] = useState(false)
+
+  const { isReadOnly } = useReadOnly()
 
   let profile = null
   try {
@@ -232,8 +235,33 @@ export function AppShell({ children }: AppShellProps) {
       activeProjectId={activeProjectId}
       activeProjectName={activeProjectName}
     >
+      {/* Audit Mode banner — shown when app is opened via audit URL (read-only) */}
+      {isReadOnly && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            backgroundColor: '#f59e0b',
+            color: '#000',
+            textAlign: 'center',
+            padding: '8px 16px',
+            fontWeight: 700,
+            fontSize: '13px',
+            letterSpacing: '0.05em',
+          }}
+        >
+          🔒 Audit Mode — Read Only
+        </div>
+      )}
+
       <ErrorBoundary>
-        {renderContent()}
+        {/* Add top padding when audit banner is visible so content isn't hidden behind it */}
+        <div style={isReadOnly ? { paddingTop: '36px' } : undefined}>
+          {renderContent()}
+        </div>
       </ErrorBoundary>
 
       {/* Floating NEXUS voice button — bottom right on all panels */}

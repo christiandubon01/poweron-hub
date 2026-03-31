@@ -617,10 +617,11 @@ export function CalendarView({ conflicts = [] }: Props) {
             onClick={() => { setShowAddForm(true); setSelectedDay(null) }}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-xs"
           >
-            <Plus className="w-3 h-3" /> Book new job on this day
+            <Plus size={12} /> Add Event
           </button>
         </div>
       )}
+
     </div>
   )
 }

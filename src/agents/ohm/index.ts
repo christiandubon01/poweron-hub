@@ -19,6 +19,10 @@ import * as complianceChecker from './complianceChecker'
 import * as calculators from './calculators'
 import { storeEmbedding } from '@/services/embeddingService'
 import { analyzeAfterWrite } from '@/services/patternService'
+import {
+  queryTradeKnowledge,
+  formatTradeKnowledgeContext,
+} from '@/services/tradeKnowledgeService'
 
 // ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
 function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
@@ -109,6 +113,10 @@ async function handleCodeQuestion(req: OhmRequest): Promise<OhmResponse> {
     // Get jurisdiction from payload
     const jurisdiction = (req.payload?.jurisdiction as string) || 'California'
 
+    // ── Phase Session 12: Query Trade Knowledge Base before Claude ────────
+    const tradeMatches = await queryTradeKnowledge(req.userMessage, req.orgId)
+    const tradeContext = formatTradeKnowledgeContext(tradeMatches)
+
     // Search NEC articles
     const searchResults = await codeSearch.searchNECArticles(
       req.userMessage,
@@ -131,6 +139,7 @@ ${articlesContext || 'No articles found'}
 Jurisdiction Rules (${jurisdiction}):
 ${rulesContext || 'No jurisdiction-specific rules found'}
 
+${tradeContext ? tradeContext + '\n' : ''}
 User Question: "${req.userMessage}"
 `
 
@@ -178,8 +187,16 @@ User Question: "${req.userMessage}"
           section: a.section,
         })),
         jurisdiction,
+        tradeKnowledgeMatches: tradeMatches.map(m => ({
+          id: m.entry.id,
+          scenario: m.entry.scenario,
+          relevance: m.relevance,
+        })),
       },
-      metadata: { articlesUsed: searchResults.articles.length },
+      metadata: {
+        articlesUsed: searchResults.articles.length,
+        tradeEntriesMatched: tradeMatches.length,
+      },
     }
   } catch (err) {
     throw err

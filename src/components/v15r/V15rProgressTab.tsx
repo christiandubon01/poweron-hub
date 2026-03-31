@@ -3,6 +3,20 @@ import React, { useState, useCallback } from 'react'
 import { getBackupData, saveBackupData, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 
+function parseDateLocal(dateStr?: string): Date | null {
+  if (!dateStr) return null
+  const d = new Date(dateStr + 'T00:00:00')
+  return isNaN(d.getTime()) ? null : d
+}
+
+function fmtDateShort(d: Date): string {
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function diffDays(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / 86400000)
+}
+
 interface V15rProgressTabProps {
   projectId: string
   onUpdate?: () => void
@@ -96,9 +110,99 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     }, 0)
   )
 
+  // ── Timeline calculations ─────────────────────────────────────────────────
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const plannedStart = parseDateLocal(p.plannedStart)
+  const plannedEnd = parseDateLocal(p.plannedEnd)
+
+  // Actual timeline: first and last field log date for this project
+  const allLogs = (backup.logs || []).filter((l: any) => l.projId === p.id)
+  const logDates = allLogs
+    .map((l: any) => parseDateLocal(l.date))
+    .filter(Boolean)
+    .sort((a: Date, b: Date) => a.getTime() - b.getTime())
+  const actualStart = logDates.length > 0 ? logDates[0] : null
+  const actualEnd = logDates.length > 0 ? logDates[logDates.length - 1] : null
+
+  // Variance: today vs planned end (negative = ahead, positive = behind)
+  const scheduleDays = plannedEnd ? diffDays(plannedEnd, today) : null
+  // scheduleDays > 0 → behind (today is past planned end)
+  // scheduleDays < 0 → ahead (today is before planned end)
+  // scheduleDays === 0 → on time
+
+  function renderTimelineBar(start: Date | null, end: Date | null, color: string, label: string) {
+    if (!start || !end) return null
+    const totalSpan = diffDays(start, end) || 1
+    const elapsed = Math.max(0, Math.min(totalSpan, diffDays(start, today)))
+    const pctElapsed = Math.round((elapsed / totalSpan) * 100)
+    return (
+      <div style={{ marginBottom: '10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--t3)', fontWeight: '600' }}>{label}</span>
+          <span style={{ fontSize: '11px', color: 'var(--t3)' }}>{fmtDateShort(start)} – {fmtDateShort(end)}</span>
+        </div>
+        <div style={{ height: '8px', backgroundColor: '#1e2130', borderRadius: '4px', overflow: 'hidden', position: 'relative' }}>
+          <div style={{ width: pctElapsed + '%', height: '100%', backgroundColor: color, borderRadius: '4px', transition: 'width 0.3s' }} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+
+        {/* SCHEDULE TIMELINE */}
+        <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px' }}>
+          <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 12px 0' }}>Schedule Timeline</h4>
+          {(!plannedStart || !plannedEnd) ? (
+            <div style={{
+              padding: '12px',
+              backgroundColor: 'rgba(59,130,246,0.08)',
+              border: '1px dashed rgba(59,130,246,0.3)',
+              borderRadius: '6px',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '12px', color: '#60a5fa', marginBottom: '4px' }}>📅 No planned dates set</div>
+              <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
+                Add planned dates to this project to track schedule variance.
+              </div>
+            </div>
+          ) : (
+            <>
+              {renderTimelineBar(plannedStart, plannedEnd, '#3b82f6', 'Planned')}
+              {actualStart && renderTimelineBar(actualStart, actualEnd || today, '#10b981', 'Actual (logged)')}
+              {scheduleDays !== null && (
+                <div style={{
+                  display: 'inline-block',
+                  marginTop: '8px',
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  backgroundColor: scheduleDays <= 0
+                    ? 'rgba(16,185,129,0.15)'
+                    : scheduleDays <= 7
+                    ? 'rgba(245,158,11,0.15)'
+                    : 'rgba(239,68,68,0.15)',
+                  color: scheduleDays <= 0
+                    ? '#10b981'
+                    : scheduleDays <= 7
+                    ? '#f59e0b'
+                    : '#ef4444',
+                }}>
+                  {scheduleDays < 0
+                    ? `${Math.abs(scheduleDays)} days ahead of schedule`
+                    : scheduleDays === 0
+                    ? 'On schedule (planned end is today)'
+                    : `${scheduleDays} days behind schedule`}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         {/* OVERALL COMPLETION */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>

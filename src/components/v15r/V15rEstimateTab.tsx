@@ -21,6 +21,25 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [subtab, setSubtab] = useState<'project' | 'service'>('project')
   const [aiOpen, setAiOpen] = useState(false)
 
+  // Part 1 — VAULT Health Check
+  const [healthCheckLoading, setHealthCheckLoading] = useState(false)
+  const [healthCheckOpen, setHealthCheckOpen] = useState(false)
+  const [healthCheckResult, setHealthCheckResult] = useState<any>(null)
+
+  // Part 2 — Quick Start Templates
+  const [showQuickStart, setShowQuickStart] = useState(false)
+
+  // Part 3 — Labor Calculator
+  const [showLaborCalc, setShowLaborCalc] = useState(false)
+  const [calcInput, setCalcInput] = useState(1000)
+  const [calcInputType, setCalcInputType] = useState<'sqft' | 'devices'>('sqft')
+  const [calcComplexity, setCalcComplexity] = useState<'simple' | 'standard' | 'complex'>('standard')
+  const [calcCrew, setCalcCrew] = useState(2)
+  const [calcResult, setCalcResult] = useState<{hours: number; cost: number} | null>(null)
+
+  // Part 4 — Version History
+  const [showVersionHistory, setShowVersionHistory] = useState(false)
+
   // Service Call form state
   const [scCust, setScCust] = useState('')
   const [scAddr, setScAddr] = useState('')
@@ -383,6 +402,229 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return insights
   }
 
+  // ── Part 1: VAULT Health Check ──────────────────────────────────────────────
+
+  async function runVaultHealthCheck() {
+    if (!hasAnyData) { alert('Add some estimate data first.'); return }
+    setHealthCheckLoading(true)
+    setHealthCheckOpen(false)
+    setHealthCheckResult(null)
+    try {
+      const { callClaude, extractText } = await import('@/services/claudeProxy')
+      const totals = estTotals()
+      const laborRows = (p.laborRows || []).map(r => `${r.desc}: ${r.hrs}h @ $${r.rate}/h`)
+      const priceBookItems = (backup.priceBook || []).map(i => i.name || i.desc || '').filter(Boolean).slice(0, 30)
+      const completedJobs = (backup.completedArchive || []).slice(0, 5).map(j => `${j.name}: $${j.contract || 0} contract`)
+      const prompt = `You are VAULT, estimating AI for Power On Solutions LLC, C-10 electrical contractor (Coachella Valley, CA).
+
+Analyze this project estimate and return a JSON object with exactly these keys:
+- "marginCheck": string — is the ${totals.marginPct.toFixed(1)}% margin adequate? What's typical for this job type?
+- "missingItems": string[] — list of common line items for electrical work that appear to be missing
+- "riskFlags": string[] — any unusually low or high line items or red flags
+- "comparison": string — how this compares to typical estimates for similar work
+
+Project: ${p.name || 'Unnamed'}
+Contract: $${num(p.contract || 0).toFixed(0)}
+Estimate Total: $${totals.total.toFixed(0)}
+Labor: $${totals.lab.toFixed(0)} (${totals.labHrs.toFixed(1)} hrs)
+Materials: $${totals.matC.toFixed(0)}
+Overhead: $${totals.oh.toFixed(0)}
+Mileage: $${totals.mi.toFixed(0)}
+Margin: ${totals.marginPct.toFixed(1)}%
+Labor rows: ${laborRows.join('; ') || 'none'}
+Price book items available: ${priceBookItems.join(', ')}
+Past completed jobs: ${completedJobs.join('; ') || 'none on record'}
+
+Return ONLY valid JSON, no other text.`
+      const resp = await callClaude({
+        messages: [{ role: 'user', content: prompt }],
+        system: 'You are VAULT, an electrical contracting estimate analyst. Return only valid JSON.',
+        max_tokens: 800,
+      })
+      const text = extractText(resp)
+      const cleaned = text.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim()
+      const parsed = JSON.parse(cleaned)
+      setHealthCheckResult(parsed)
+      setHealthCheckOpen(true)
+    } catch (err) {
+      console.error('[VAULT HealthCheck]', err)
+      setHealthCheckResult({ error: 'Analysis failed. Check console.' })
+      setHealthCheckOpen(true)
+    } finally {
+      setHealthCheckLoading(false)
+    }
+  }
+
+  // ── Part 2: Quick Start Templates ───────────────────────────────────────────
+
+  const QUICK_START_TEMPLATES = [
+    {
+      id: 'residential_service_upgrade',
+      label: '⚡ Residential Service Upgrade',
+      laborRows: [
+        { desc: 'Service Upgrade — Main', hrs: 16, rate: null },
+        { desc: 'Panel Installation', hrs: 8, rate: null },
+        { desc: 'Service Conductors & Conduit', hrs: 12, rate: null },
+        { desc: 'Final Connections & Testing', hrs: 4, rate: null },
+      ],
+      ohRows: [
+        { desc: 'Permit Fees', hrs: 2, rate: null },
+        { desc: 'Inspection & Final Walkthrough', hrs: 2, rate: null },
+      ],
+    },
+    {
+      id: 'commercial_tenant_improvement',
+      label: '🏢 Commercial Tenant Improvement',
+      laborRows: [
+        { desc: 'Branch Circuit Rough-In', hrs: 32, rate: null },
+        { desc: 'Lighting Installation', hrs: 16, rate: null },
+        { desc: 'Device & Outlet Install', hrs: 12, rate: null },
+        { desc: 'Panel Feeder & Main', hrs: 8, rate: null },
+        { desc: 'Final Trim & Testing', hrs: 6, rate: null },
+      ],
+      ohRows: [
+        { desc: 'Permit & Plan Check', hrs: 4, rate: null },
+        { desc: 'Inspection', hrs: 2, rate: null },
+        { desc: 'As-Built Drawings', hrs: 2, rate: null },
+      ],
+    },
+    {
+      id: 'solar_installation',
+      label: '☀️ Solar Installation (Sub to RMO)',
+      laborRows: [
+        { desc: 'AC Disconnect Installation', hrs: 4, rate: null },
+        { desc: 'Conduit, Wire & Raceway', hrs: 12, rate: null },
+        { desc: 'Inverter Connection & Config', hrs: 4, rate: null },
+        { desc: 'Interconnection & Metering', hrs: 3, rate: null },
+      ],
+      ohRows: [
+        { desc: 'Utility Interconnection Paperwork', hrs: 2, rate: null },
+        { desc: 'NEC Labeling & Inspection', hrs: 2, rate: null },
+      ],
+    },
+    {
+      id: 'service_call',
+      label: '🔧 Service Call',
+      laborRows: [
+        { desc: 'Diagnostic / Troubleshoot', hrs: 1, rate: null },
+        { desc: 'Repair Labor', hrs: 2, rate: null },
+      ],
+      ohRows: [],
+    },
+    {
+      id: 'panel_replacement',
+      label: '🔌 Panel Replacement',
+      laborRows: [
+        { desc: 'Demo Existing Panel', hrs: 3, rate: null },
+        { desc: 'Install New Panel & Bus', hrs: 8, rate: null },
+        { desc: 'Reconnect Circuits', hrs: 6, rate: null },
+        { desc: 'Label & Test', hrs: 2, rate: null },
+      ],
+      ohRows: [
+        { desc: 'Permit Filing', hrs: 2, rate: null },
+        { desc: 'Inspection', hrs: 1, rate: null },
+      ],
+    },
+  ]
+
+  function applyQuickStartTemplate(templateId: string) {
+    const tpl = QUICK_START_TEMPLATES.find(t => t.id === templateId)
+    if (!tpl) return
+    if ((p.laborRows || []).length > 0 || (p.ohRows || []).length > 0) {
+      if (!confirm(`This will replace existing labor and overhead rows with the "${tpl.label}" template. Continue?`)) return
+    }
+    pushState()
+    const billRate = num(backup.settings?.billRate || 65)
+    const ohRate = num(backup.settings?.defaultOHRate || 55)
+    p.laborRows = tpl.laborRows.map(r => ({
+      id: 'lr' + Date.now() + Math.random().toString(36).slice(2, 5),
+      desc: r.desc,
+      empId: 'me',
+      hrs: r.hrs,
+      rate: r.rate !== null ? r.rate : billRate,
+    }))
+    p.ohRows = tpl.ohRows.map(r => ({
+      id: 'oh' + Date.now() + Math.random().toString(36).slice(2, 5),
+      desc: r.desc,
+      hrs: r.hrs,
+      rate: r.rate !== null ? r.rate : ohRate,
+    }))
+    saveBackupData(backup)
+    setShowQuickStart(false)
+    forceUpdate()
+  }
+
+  // ── Part 3: Labor Calculator ─────────────────────────────────────────────────
+
+  function computeLaborCalc() {
+    const hrsPerUnit = {
+      sqft: { simple: 0.02, standard: 0.035, complex: 0.06 },
+      devices: { simple: 0.15, standard: 0.25, complex: 0.40 },
+    }
+    const crewEfficiency = { 1: 1.0, 2: 1.7, 3: 2.3 }
+    const baseHrs = calcInput * (hrsPerUnit[calcInputType][calcComplexity] || 0.035)
+    const efficiency = crewEfficiency[calcCrew as 1 | 2 | 3] || 1.7
+    const hours = Math.round((baseHrs / efficiency) * 10) / 10
+    const rate = num(backup.settings?.billRate || 65)
+    return { hours, cost: Math.round(hours * rate * 100) / 100 }
+  }
+
+  function applyLaborCalc() {
+    const result = computeLaborCalc()
+    pushState()
+    p.laborRows = p.laborRows || []
+    p.laborRows.push({
+      id: 'lr' + Date.now(),
+      desc: `Labor — ${calcComplexity.charAt(0).toUpperCase() + calcComplexity.slice(1)} (${calcInput} ${calcInputType}, ${calcCrew}-person crew)`,
+      empId: 'me',
+      hrs: result.hours,
+      rate: num(backup.settings?.billRate || 65),
+    })
+    saveBackupData(backup)
+    setShowLaborCalc(false)
+    setCalcResult(null)
+    forceUpdate()
+  }
+
+  // ── Part 4: Version History ───────────────────────────────────────────────────
+
+  function saveEstimateVersion() {
+    const totals = estTotals()
+    if (!hasAnyData && totals.total === 0) { alert('Nothing to snapshot yet.'); return }
+    pushState()
+    if (!backup.estimateVersions) backup.estimateVersions = {}
+    if (!backup.estimateVersions[projectId]) backup.estimateVersions[projectId] = []
+    const versions = backup.estimateVersions[projectId]
+    versions.unshift({
+      ts: Date.now(),
+      total: totals.total,
+      laborCount: (p.laborRows || []).length,
+      ohCount: (p.ohRows || []).length,
+      laborRows: JSON.parse(JSON.stringify(p.laborRows || [])),
+      ohRows: JSON.parse(JSON.stringify(p.ohRows || [])),
+    })
+    // Max 5 versions
+    if (versions.length > 5) versions.length = 5
+    saveBackupData(backup)
+    forceUpdate()
+    alert('Snapshot saved ✓')
+  }
+
+  function restoreEstimateVersion(versionIdx: number) {
+    const versions = (backup.estimateVersions || {})[projectId] || []
+    const ver = versions[versionIdx]
+    if (!ver) return
+    if (!confirm(`Restore snapshot from ${new Date(ver.ts).toLocaleString()}? This replaces current labor and overhead rows.`)) return
+    pushState()
+    p.laborRows = JSON.parse(JSON.stringify(ver.laborRows))
+    p.ohRows = JSON.parse(JSON.stringify(ver.ohRows))
+    saveBackupData(backup)
+    setShowVersionHistory(false)
+    forceUpdate()
+  }
+
+  const estimateVersions = ((backup.estimateVersions || {})[projectId] || [])
+
   // G7: Estimate pipeline — compute Won / Pending / Lost from data
   const pipelineWon = (() => {
     const svcLogs = backup.serviceLogs || []
@@ -465,14 +707,99 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       </div>
 
       {/* Estimate header bar */}
-      <div style={{ display: 'flex', gap: '2px', marginBottom: '16px', backgroundColor: '#0f1117', borderRadius: '8px', padding: '3px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '2px', marginBottom: showQuickStart ? '0' : '16px', backgroundColor: '#0f1117', borderRadius: showQuickStart ? '8px 8px 0 0' : '8px', padding: '3px', alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ flex: 1, padding: '8px 12px', fontSize: '13px', fontWeight: '600', color: '#fff' }}>
           Project Estimate
         </div>
-        <div style={{ marginLeft: 'auto', paddingRight: '8px' }}>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', paddingRight: '8px' }}>
+          <button
+            onClick={() => { setShowQuickStart(v => !v); setShowVersionHistory(false) }}
+            title="Quick Start Templates"
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', backgroundColor: showQuickStart ? 'rgba(234,179,8,0.25)' : 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '5px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+          >
+            ⚡ Quick Start
+          </button>
+          <button
+            onClick={() => { setShowVersionHistory(v => !v); setShowQuickStart(false) }}
+            title="Version History"
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', backgroundColor: showVersionHistory ? 'rgba(99,102,241,0.25)' : 'rgba(99,102,241,0.12)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '5px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+          >
+            📋 History {estimateVersions.length > 0 ? `(${estimateVersions.length})` : ''}
+          </button>
           <AskAIButton onClick={() => setAiOpen(true)} />
         </div>
       </div>
+
+      {/* Quick Start Template Dropdown */}
+      {showQuickStart && (
+        <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(234,179,8,0.25)', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '12px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
+            Select a job type to pre-populate common line items:
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '6px' }}>
+            {QUICK_START_TEMPLATES.map(tpl => (
+              <button
+                key={tpl.id}
+                onClick={() => applyQuickStartTemplate(tpl.id)}
+                style={{ textAlign: 'left', padding: '8px 12px', backgroundColor: 'rgba(234,179,8,0.08)', color: '#f3f4f6', border: '1px solid rgba(234,179,8,0.2)', borderRadius: '6px', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}
+              >
+                {tpl.label}
+                <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '2px' }}>
+                  {tpl.laborRows.length} labor rows{tpl.ohRows.length > 0 ? ` + ${tpl.ohRows.length} overhead` : ''}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: '10px', color: '#4b5563', marginTop: '8px' }}>
+            Tip: Templates use your price book rates. Edit any row after applying.
+          </div>
+        </div>
+      )}
+
+      {/* Version History Dropdown */}
+      {showVersionHistory && (
+        <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.25)', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '12px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Saved Snapshots (max 5)
+            </div>
+            <button
+              onClick={saveEstimateVersion}
+              style={{ padding: '4px 10px', backgroundColor: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '4px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}
+            >
+              💾 Save Now
+            </button>
+          </div>
+          {estimateVersions.length === 0 ? (
+            <div style={{ fontSize: '12px', color: '#4b5563', textAlign: 'center', padding: '12px 0' }}>
+              No snapshots yet. Click "Save Now" to capture current state.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {estimateVersions.map((ver, idx) => (
+                <div key={ver.ts} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', backgroundColor: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: '6px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '12px', color: '#e5e7eb', fontWeight: '600' }}>
+                      {new Date(ver.ts).toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#6b7280' }}>
+                      Total: <span style={{ color: '#10b981', fontFamily: 'monospace' }}>{fmt(ver.total)}</span>
+                      {' · '}{ver.laborCount} labor + {ver.ohCount} overhead rows
+                    </div>
+                  </div>
+                  {idx === 0 && <span style={{ fontSize: '9px', color: '#818cf8', fontWeight: '700', textTransform: 'uppercase' }}>Latest</span>}
+                  <button
+                    onClick={() => restoreEstimateVersion(idx)}
+                    style={{ padding: '3px 8px', backgroundColor: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Service Call Estimate removed — available in Field Log panel */}
       {false && (
@@ -675,6 +1002,101 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
             </button>
           </div>
         )}
+
+        {/* LABOR CALCULATOR */}
+        <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
+          <div
+            style={{ backgroundColor: 'rgba(6,182,212,0.1)', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', borderBottom: showLaborCalc ? '1px solid rgba(255,255,255,0.05)' : 'none' }}
+            onClick={() => { setShowLaborCalc(v => !v); setCalcResult(null) }}
+          >
+            <h4 style={{ color: '#22d3ee', fontWeight: '600', margin: '0', fontSize: '13px' }}>🔢 Labor Calculator</h4>
+            <span style={{ color: '#6b7280', fontSize: '11px' }}>{showLaborCalc ? '▲ Hide' : '▼ Expand'}</span>
+          </div>
+          {showLaborCalc && (
+            <div style={{ padding: '14px 16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                {/* Input value */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>
+                    {calcInputType === 'sqft' ? 'Square Footage' : 'Number of Devices'}
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={calcInput}
+                    onChange={e => { setCalcInput(parseInt(e.target.value) || 1); setCalcResult(null) }}
+                    style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: '#f3f4f6', fontFamily: 'monospace', fontSize: '13px' }}
+                  />
+                </div>
+                {/* Input type */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>Input Type</label>
+                  <select
+                    value={calcInputType}
+                    onChange={e => { setCalcInputType(e.target.value as any); setCalcResult(null) }}
+                    style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: '#f3f4f6', fontSize: '13px' }}
+                  >
+                    <option value="sqft">Square Footage</option>
+                    <option value="devices">Number of Devices</option>
+                  </select>
+                </div>
+                {/* Complexity */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>Job Complexity</label>
+                  <select
+                    value={calcComplexity}
+                    onChange={e => { setCalcComplexity(e.target.value as any); setCalcResult(null) }}
+                    style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: '#f3f4f6', fontSize: '13px' }}
+                  >
+                    <option value="simple">Simple</option>
+                    <option value="standard">Standard</option>
+                    <option value="complex">Complex</option>
+                  </select>
+                </div>
+                {/* Crew size */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>Crew Size</label>
+                  <select
+                    value={calcCrew}
+                    onChange={e => { setCalcCrew(parseInt(e.target.value)); setCalcResult(null) }}
+                    style={{ width: '100%', padding: '6px 8px', backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', color: '#f3f4f6', fontSize: '13px' }}
+                  >
+                    <option value={1}>1 Person</option>
+                    <option value={2}>2 People</option>
+                    <option value={3}>3 People</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setCalcResult(computeLaborCalc())}
+                  style={{ padding: '8px 16px', backgroundColor: 'rgba(6,182,212,0.2)', color: '#22d3ee', border: '1px solid rgba(6,182,212,0.4)', borderRadius: '5px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                >
+                  Calculate
+                </button>
+                {calcResult && (
+                  <>
+                    <div style={{ flex: 1, padding: '8px 12px', backgroundColor: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: '5px', fontSize: '13px', color: '#e5e7eb' }}>
+                      <span style={{ color: '#22d3ee', fontWeight: '700', fontFamily: 'monospace' }}>{calcResult.hours}h</span>
+                      <span style={{ color: '#6b7280', margin: '0 6px' }}>·</span>
+                      <span style={{ color: '#10b981', fontWeight: '700', fontFamily: 'monospace' }}>{fmt(calcResult.cost)}</span>
+                      <span style={{ color: '#6b7280', fontSize: '11px', marginLeft: '6px' }}>@ ${num(backup.settings?.billRate || 65)}/h</span>
+                    </div>
+                    <button
+                      onClick={applyLaborCalc}
+                      style={{ padding: '8px 14px', backgroundColor: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.4)', borderRadius: '5px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                    >
+                      + Add to Estimate
+                    </button>
+                  </>
+                )}
+              </div>
+              <div style={{ fontSize: '10px', color: '#374151', marginTop: '8px' }}>
+                Rates: sqft — simple 0.02h, standard 0.035h, complex 0.06h | devices — simple 0.15h, standard 0.25h, complex 0.40h
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* LABOR SECTION */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
@@ -1204,27 +1626,97 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
           </div>
         </div>
 
-        {/* AI REVIEW BUTTON */}
-        <button
-          onClick={() => alert('AI Estimate Review placeholder')}
-          style={{
-            marginTop: '16px',
-            padding: '10px 16px',
-            backgroundColor: 'rgba(139,92,246,0.2)',
-            color: '#a78bfa',
-            border: '1px solid rgba(139,92,246,0.3)',
-            borderRadius: '6px',
-            fontSize: '13px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-          }}
-        >
-          <Sparkles size={14} />
-          AI Estimate Review
-        </button>
+        {/* VAULT HEALTH CHECK */}
+        <div style={{ marginTop: '16px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              onClick={runVaultHealthCheck}
+              disabled={healthCheckLoading}
+              style={{
+                padding: '10px 16px',
+                backgroundColor: healthCheckLoading ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.2)',
+                color: healthCheckLoading ? '#6b7280' : '#a78bfa',
+                border: '1px solid rgba(139,92,246,0.3)',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: healthCheckLoading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                opacity: healthCheckLoading ? 0.7 : 1,
+              }}
+            >
+              <Sparkles size={14} />
+              {healthCheckLoading ? 'Analyzing...' : 'VAULT Analysis'}
+            </button>
+            <button
+              onClick={saveEstimateVersion}
+              style={{ padding: '10px 14px', backgroundColor: 'rgba(99,102,241,0.15)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            >
+              💾 Save Snapshot
+            </button>
+          </div>
+
+          {/* Health Check Result */}
+          {healthCheckOpen && healthCheckResult && (
+            <div style={{ marginTop: '12px', backgroundColor: '#1a1f2e', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', overflow: 'hidden' }}>
+              <div
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', backgroundColor: 'rgba(139,92,246,0.12)', cursor: 'pointer' }}
+                onClick={() => setHealthCheckOpen(v => !v)}
+              >
+                <span style={{ color: '#a78bfa', fontWeight: '700', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Sparkles size={14} /> VAULT Analysis Results
+                </span>
+                <span style={{ color: '#6b7280', fontSize: '11px' }}>▲ Collapse</span>
+              </div>
+              <div style={{ padding: '14px' }}>
+                {healthCheckResult.error ? (
+                  <div style={{ color: '#ef4444', fontSize: '13px' }}>{healthCheckResult.error}</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Margin Check */}
+                    {healthCheckResult.marginCheck && (
+                      <div style={{ padding: '10px 12px', backgroundColor: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '700', textTransform: 'uppercase', marginBottom: '4px' }}>📊 Margin Check</div>
+                        <div style={{ fontSize: '13px', color: '#d1fae5' }}>{healthCheckResult.marginCheck}</div>
+                      </div>
+                    )}
+                    {/* Missing Items */}
+                    {healthCheckResult.missingItems && healthCheckResult.missingItems.length > 0 && (
+                      <div style={{ padding: '10px 12px', backgroundColor: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '700', textTransform: 'uppercase', marginBottom: '4px' }}>📋 Potentially Missing Items</div>
+                        <ul style={{ margin: '0', paddingLeft: '16px', fontSize: '12px', color: '#fef3c7' }}>
+                          {healthCheckResult.missingItems.map((item, i) => (
+                            <li key={i} style={{ marginBottom: '2px' }}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {/* Risk Flags */}
+                    {healthCheckResult.riskFlags && healthCheckResult.riskFlags.length > 0 && (
+                      <div style={{ padding: '10px 12px', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '700', textTransform: 'uppercase', marginBottom: '4px' }}>⚠️ Risk Flags</div>
+                        <ul style={{ margin: '0', paddingLeft: '16px', fontSize: '12px', color: '#fecaca' }}>
+                          {healthCheckResult.riskFlags.map((flag, i) => (
+                            <li key={i} style={{ marginBottom: '2px' }}>{flag}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {/* Comparison */}
+                    {healthCheckResult.comparison && (
+                      <div style={{ padding: '10px 12px', backgroundColor: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '700', textTransform: 'uppercase', marginBottom: '4px' }}>📈 Comparison</div>
+                        <div style={{ fontSize: '13px', color: '#e0e7ff' }}>{healthCheckResult.comparison}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       )}
 

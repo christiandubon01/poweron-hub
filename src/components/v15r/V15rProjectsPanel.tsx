@@ -37,6 +37,12 @@ const JOB_TYPES = ['Residential', 'Commercial', 'Service', 'Solar', 'New Constru
 const STATUS_OPTIONS = ['active', 'coming']
 const DEFAULT_PHASES = { Planning: 0, Estimating: 0, 'Site Prep': 0, 'Rough-in': 0, Trim: 0, Finish: 0 }
 
+function fmtDate(dateStr?: string): string {
+  if (!dateStr) return ''
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
 export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, onPrefillUsed }: Props) {
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -53,6 +59,19 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [npNotes, setNpNotes] = useState('')
   const [npPlannedStart, setNpPlannedStart] = useState('')
   const [npPlannedEnd, setNpPlannedEnd] = useState('')
+
+  // Edit Project modal state
+  const [showEditProject, setShowEditProject] = useState(false)
+  const [editProjectId, setEditProjectId] = useState<string | null>(null)
+  const [epName, setEpName] = useState('')
+  const [epClient, setEpClient] = useState('')
+  const [epContract, setEpContract] = useState('')
+  const [epType, setEpType] = useState('Residential')
+  const [epStartDate, setEpStartDate] = useState('')
+  const [epStatus, setEpStatus] = useState('active')
+  const [epNotes, setEpNotes] = useState('')
+  const [epPlannedStart, setEpPlannedStart] = useState('')
+  const [epPlannedEnd, setEpPlannedEnd] = useState('')
 
   const backup = getBackupData()
 
@@ -72,6 +91,20 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setNpStartDate(new Date().toISOString().slice(0, 10)); setNpStatus('active'); setNpNotes('')
     setNpPlannedStart(''); setNpPlannedEnd('')
     setShowNewProject(true)
+  }
+
+  function openEditProjectModal(p: BackupProject) {
+    setEditProjectId(p.id)
+    setEpName(p.name || '')
+    setEpClient((p as any).client || '')
+    setEpContract(String(p.contract || 0))
+    setEpType(p.type || 'Residential')
+    setEpStartDate(p.lastMove ? p.lastMove.slice(0, 10) : new Date().toISOString().slice(0, 10))
+    setEpStatus(p.status || 'active')
+    setEpNotes((p as any).notes || '')
+    setEpPlannedStart(p.plannedStart || '')
+    setEpPlannedEnd(p.plannedEnd || '')
+    setShowEditProject(true)
   }
 
   function saveNewProject() {
@@ -114,6 +147,27 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     backup.projects = [...(backup.projects || []), newProj]
     saveBackupDataAndSync(backup)
     setShowNewProject(false)
+    forceUpdate()
+  }
+
+  function saveEditProject() {
+    if (!epName.trim()) { alert('Project name is required.'); return }
+    if (!backup || !editProjectId) return
+    pushState(backup)
+    const p = (backup.projects || []).find((x: any) => x.id === editProjectId)
+    if (!p) return
+    p.name = epName.trim()
+    ;(p as any).client = epClient.trim()
+    p.contract = num(epContract)
+    p.type = epType
+    p.status = epStatus
+    p.lastMove = epStartDate
+    ;(p as any).notes = epNotes.trim()
+    p.plannedStart = epPlannedStart || undefined
+    p.plannedEnd = epPlannedEnd || undefined
+    saveBackupDataAndSync(backup)
+    setShowEditProject(false)
+    setEditProjectId(null)
     forceUpdate()
   }
 
@@ -162,6 +216,11 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
     const fin = getProjectFinancials(p, backup)
 
+    // Planned timeline display
+    const plannedLine = (p.plannedStart && p.plannedEnd)
+      ? `Planned: ${fmtDate(p.plannedStart)} – ${fmtDate(p.plannedEnd)}`
+      : null
+
     return (
       <div
         key={p.id}
@@ -175,6 +234,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           >
             <div className="font-bold text-sm text-gray-100">{p.name}</div>
             <div className="text-[10px] text-gray-500">{p.type}</div>
+            {plannedLine && (
+              <div className="text-[9px] text-gray-500 mt-0.5">{plannedLine}</div>
+            )}
           </div>
           <div className="text-right">
             <div className="text-xl font-bold font-mono" style={{ color: h.clr }}>{h.sc}</div>
@@ -229,8 +291,18 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         <div className="flex gap-2 pt-2 border-t border-gray-700/50">
           {bucket !== 'completed' ? (
             <>
-              <button onClick={() => onSelectProject?.(p.id)} className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50 font-semibold">
+              <button
+                onClick={() => openEditProjectModal(p)}
+                className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50 font-semibold"
+              >
                 <Edit3 size={10} className="inline mr-1" /> Edit
+              </button>
+              <button
+                onClick={() => onSelectProject?.(p.id)}
+                className="text-[10px] px-2 py-1.5 rounded bg-gray-700/30 text-gray-400 hover:bg-gray-600/30 font-semibold border border-gray-700/50"
+                title="Open project tabs"
+              >
+                <Eye size={10} />
               </button>
               <button
                 onClick={() => moveStatus(p.id, bucket === 'active' ? 'coming' : 'active')}
@@ -285,6 +357,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     )
   }
 
+  const inputCls = "w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
       {/* Header */}
@@ -327,7 +401,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       {/* New Project Modal */}
       {showNewProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#232738] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl">
+          <div className="bg-[#232738] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">New Project</h3>
               <button onClick={() => setShowNewProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
@@ -335,58 +409,118 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Project Name *</label>
-                <input value={npName} onChange={e => setNpName(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" placeholder="e.g. Smith Residence Panel Upgrade" />
+                <input value={npName} onChange={e => setNpName(e.target.value)} className={inputCls} placeholder="e.g. Smith Residence Panel Upgrade" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Client / Customer</label>
-                  <input value={npClient} onChange={e => setNpClient(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                  <input value={npClient} onChange={e => setNpClient(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
-                  <input type="number" value={npContract} onChange={e => setNpContract(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" placeholder="0" />
+                  <input type="number" value={npContract} onChange={e => setNpContract(e.target.value)} className={inputCls} placeholder="0" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned Start</label>
-                  <input type="date" value={npPlannedStart} onChange={e => setNpPlannedStart(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                  <input type="date" value={npPlannedStart} onChange={e => setNpPlannedStart(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned End</label>
-                  <input type="date" value={npPlannedEnd} onChange={e => setNpPlannedEnd(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                  <input type="date" value={npPlannedEnd} onChange={e => setNpPlannedEnd(e.target.value)} className={inputCls} />
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job Type</label>
-                  <select value={npType} onChange={e => setNpType(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500">
+                  <select value={npType} onChange={e => setNpType(e.target.value)} className={inputCls}>
                     {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
-                  <input type="date" value={npStartDate} onChange={e => setNpStartDate(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                  <input type="date" value={npStartDate} onChange={e => setNpStartDate(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Status</label>
-                  <select value={npStatus} onChange={e => setNpStatus(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500">
-                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s === 'active' ? 'Active' : 'Coming Up'}</option>)}
+                  <select value={npStatus} onChange={e => setNpStatus(e.target.value)} className={inputCls}>
+                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Notes</label>
-                <textarea value={npNotes} onChange={e => setNpNotes(e.target.value)} rows={2} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500 resize-none" />
+                <textarea value={npNotes} onChange={e => setNpNotes(e.target.value)} rows={2} className={inputCls + ' resize-none'} placeholder="Optional project notes..." />
               </div>
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={saveNewProject} className="flex-1 px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700 transition-colors">
-                Create Project
-              </button>
-              <button onClick={() => setShowNewProject(false)} className="px-4 py-2 bg-gray-700 text-gray-300 text-xs font-bold rounded hover:bg-gray-600 transition-colors">
-                Cancel
-              </button>
+              <button onClick={() => setShowNewProject(false)} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm font-semibold hover:bg-gray-600">Cancel</button>
+              <button onClick={saveNewProject} className="flex-1 px-4 py-2 rounded bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500">Create Project</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Project Modal */}
+      {showEditProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#232738] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Edit Project</h3>
+              <button onClick={() => setShowEditProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Project Name *</label>
+                <input value={epName} onChange={e => setEpName(e.target.value)} className={inputCls} placeholder="e.g. Smith Residence Panel Upgrade" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Client / Customer</label>
+                  <input value={epClient} onChange={e => setEpClient(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
+                  <input type="number" value={epContract} onChange={e => setEpContract(e.target.value)} className={inputCls} placeholder="0" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned Start</label>
+                  <input type="date" value={epPlannedStart} onChange={e => setEpPlannedStart(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned End</label>
+                  <input type="date" value={epPlannedEnd} onChange={e => setEpPlannedEnd(e.target.value)} className={inputCls} />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job Type</label>
+                  <select value={epType} onChange={e => setEpType(e.target.value)} className={inputCls}>
+                    {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
+                  <input type="date" value={epStartDate} onChange={e => setEpStartDate(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Status</label>
+                  <select value={epStatus} onChange={e => setEpStatus(e.target.value)} className={inputCls}>
+                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Notes</label>
+                <textarea value={epNotes} onChange={e => setEpNotes(e.target.value)} rows={2} className={inputCls + ' resize-none'} placeholder="Optional project notes..." />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setShowEditProject(false)} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm font-semibold hover:bg-gray-600">Cancel</button>
+              <button onClick={saveEditProject} className="flex-1 px-4 py-2 rounded bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500">Save Changes</button>
             </div>
           </div>
         </div>

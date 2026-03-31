@@ -33,6 +33,7 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { processSkillSignals } from '@/services/skillSignalExtractor'
 import QuickBooksImportModal from './QuickBooksImportModal'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -521,6 +522,11 @@ export default function V15rFieldLogPanel() {
       backup.logs = [...logs, entry]
     }
     persist()
+    // Session 10: Passive skill signal extraction (fire-and-forget)
+    if (flNotes && flNotes.trim().length > 10) {
+      const signalText = `Phase: ${flPhase}. Notes: ${flNotes}`
+      processSkillSignals(signalText, 'field_log')
+    }
     resetProjForm()
   }
 
@@ -592,6 +598,11 @@ export default function V15rFieldLogPanel() {
       backup.serviceLogs = [...serviceLogs, entry]
     }
     persist()
+    // Session 10: Passive skill signal extraction (fire-and-forget)
+    if (slNotes && slNotes.trim().length > 10) {
+      const signalText = `Job type: ${slJtype}. Notes: ${slNotes}`
+      processSkillSignals(signalText, 'field_log')
+    }
     resetSvcForm()
   }
 

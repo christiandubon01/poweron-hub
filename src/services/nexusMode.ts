@@ -18,6 +18,7 @@ export type NexusAgentMode =
   | 'coaching'
   | 'conversational'
   | 'carplay'
+  | 'strategic'
 
 export interface ModeConfig {
   name: string
@@ -100,6 +101,37 @@ export const MODE_CONFIGS: Record<NexusAgentMode, ModeConfig> = {
       Prioritize safety — never ask for visual
       attention. If a question needs a long answer,
       say "I'll save that for when you're parked."`,
+  },
+  strategic: {
+    name: 'Strategic',
+    description: 'Development, growth, prioritization — uses owner profile',
+    responseStyle: 'strategic',
+    maxBullets: 6,
+    askConsequences: true,
+    voiceOptimized: false,
+    systemPromptAddition: `You are in STRATEGIC ADVISOR mode.
+      The user is asking a development, growth, or
+      prioritization question. You have their Business
+      Owner Profile injected above with their skills,
+      knowledge gaps, city licenses, open permits,
+      goals, and bandwidth constraints.
+
+      Your job:
+      1. Lead with WHERE THEY ARE based on their profile
+         and operational data.
+      2. Identify the HIGHEST LEVERAGE next move given
+         their current bandwidth and goals.
+      3. Give a SEQUENCED RECOMMENDATION — what to do
+         first, second, third — with clear reasoning.
+      4. Flag any SKILL GAPS or PERMIT/LICENSE gaps
+         that could create a ceiling.
+      5. Close with a single clear PRIORITY ACTION
+         they can take this week.
+
+      Be direct, specific, and personal. Reference their
+      actual goals and constraints by name. Never give
+      generic business advice — always anchor to their
+      profile data.`,
   },
 }
 

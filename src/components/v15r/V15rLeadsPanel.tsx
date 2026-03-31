@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react'
-import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X } from 'lucide-react'
+import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X, Copy, Phone, Mail, Mic } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import {
   getBackupData,
@@ -71,6 +71,8 @@ export default function V15rLeadsPanel() {
   const [aiScriptContactId, setAiScriptContactId] = useState<string | null>(null)
   const [aiScriptText, setAiScriptText] = useState('')
   const [aiScriptLoading, setAiScriptLoading] = useState(false)
+  const [aiScriptVariants, setAiScriptVariants] = useState<{ cold: string; voicemail: string; email: string } | null>(null)
+  const [aiScriptTab, setAiScriptTab] = useState<'cold' | 'voicemail' | 'email'>('cold')
 
   let authProfile: any = null
   try { authProfile = useAuth().profile } catch { /* auth not available */ }
@@ -151,6 +153,8 @@ export default function V15rLeadsPanel() {
       notes: '',
       created: today(),
       contactLog: [],
+      nextFollowup: '',
+      lastContact: '',
     }
     pushState(backup)
     backup.gcContacts = [...gcContacts, newGC]
@@ -232,9 +236,25 @@ export default function V15rLeadsPanel() {
 
   // ── AI Script Generation ───────────────────────────────────────────────
 
+  function parseScriptVariants(text: string): { cold: string; voicemail: string; email: string } {
+    const variants = { cold: '', voicemail: '', email: '' }
+    const coldMatch = text.match(/---COLD CALL---([\s\S]*?)(?=---VOICEMAIL---|---EMAIL---|$)/i)
+    const voicemailMatch = text.match(/---VOICEMAIL---([\s\S]*?)(?=---COLD CALL---|---EMAIL---|$)/i)
+    const emailMatch = text.match(/---EMAIL---([\s\S]*?)(?=---COLD CALL---|---VOICEMAIL---|$)/i)
+    if (coldMatch) variants.cold = coldMatch[1].trim()
+    if (voicemailMatch) variants.voicemail = voicemailMatch[1].trim()
+    if (emailMatch) variants.email = emailMatch[1].trim()
+    if (!variants.cold && !variants.voicemail && !variants.email) {
+      variants.cold = text // fallback: put entire response in cold
+    }
+    return variants
+  }
+
   async function handleAIScript(contact: any) {
     setAiScriptContactId(contact.id)
     setAiScriptText('')
+    setAiScriptVariants(null)
+    setAiScriptTab('cold')
     setAiScriptLoading(true)
     try {
       const { processMessage } = await import('@/agents/nexus')
@@ -243,10 +263,23 @@ export default function V15rLeadsPanel() {
         setAiScriptLoading(false)
         return
       }
-      const message = `Generate a short professional outreach script for contacting ${contact.contact || 'unknown'} at ${contact.company || 'unknown company'}. ` +
-        `Phase: ${contact.phase || 'unknown'}. Fit score: ${contact.fit || 0}/5. Avg job size: $${num(contact.avg || 0).toLocaleString()}. ` +
-        `Notes: ${contact.notes || 'none'}. Next action: ${contact.action || 'none'}. ` +
-        `Keep it concise, professional, and specific to an electrical contractor reaching out.`
+      const message =
+        `You are a sales coach for Power On Solutions LLC, a C-10 electrical contractor in Coachella Valley, CA. ` +
+        `Generate THREE outreach script variations for contacting ${contact.contact || 'the decision maker'} at ${contact.company || 'this GC company'}.\n\n` +
+        `Context:\n` +
+        `- Phase: ${contact.phase || 'unknown'}\n` +
+        `- Fit score: ${contact.fit || 0}/5\n` +
+        `- Avg job size: $${num(contact.avg || 0).toLocaleString()}\n` +
+        `- Notes: ${contact.notes || 'none'}\n` +
+        `- Next action: ${contact.action || 'none'}\n\n` +
+        `Format your response EXACTLY as follows (use the exact delimiters):\n\n` +
+        `---COLD CALL---\n` +
+        `[30-second cold call opening script — conversational, direct, referencing Power On's track record]\n\n` +
+        `---VOICEMAIL---\n` +
+        `[20-second follow-up voicemail — friendly, leaves curiosity, ends with callback number placeholder]\n\n` +
+        `---EMAIL---\n` +
+        `Subject: [compelling subject line]\n` +
+        `[First paragraph of email — professional, specific to their phase and job size, includes a clear CTA]`
       const result = await processMessage({
         message,
         orgId: authProfile.org_id,
@@ -255,7 +288,9 @@ export default function V15rLeadsPanel() {
         conversationHistory: [],
         isVoiceCommand: false,
       })
-      setAiScriptText(result?.agent?.content || result?.conversationMessage?.content || 'No response generated.')
+      const rawText = result?.agent?.content || result?.conversationMessage?.content || 'No response generated.'
+      setAiScriptText(rawText)
+      setAiScriptVariants(parseScriptVariants(rawText))
     } catch (err: any) {
       console.error('[Leads] AI Script error:', err)
       setAiScriptText('Failed to generate script: ' + (err.message || 'unknown error'))
@@ -364,11 +399,130 @@ export default function V15rLeadsPanel() {
     return { sent, awarded, avg, linkedLeads: leads, linkedLogs: logs }
   }
 
+  // ── Lead Scoring ────────────────────────────────────────────────────────
+
+  function calcLeadScore(gc: any): number {
+    let score = 0
+
+    // Fit score (0-5) × 15 = up to 75 pts
+    const fit = Math.min(5, Math.max(0, num(gc.fit || 0)))
+    score += fit * 15
+
+    // Avg job size
+    const avg = num(gc.avg || 0)
+    if (avg > 10000) score += 15
+    else if (avg >= 5000) score += 10
+    else score += 5
+
+    // Phase points
+    const phase = gc.phase || ''
+    if (phase === 'Qualified') score += 10
+    else if (phase === 'Active Bidding') score += 8
+    else if (phase === 'Awarded') score += 5
+
+    // Days since last contact
+    if (gc.lastContact) {
+      const last = new Date(gc.lastContact).getTime()
+      const diffDays = Math.floor((Date.now() - last) / (1000 * 60 * 60 * 24))
+      if (diffDays < 7) score += 5
+      else if (diffDays > 30) score -= 10
+    } else {
+      score -= 10
+    }
+
+    // Has notes
+    if (gc.notes && gc.notes.trim().length > 0) score += 5
+
+    return Math.max(0, Math.min(100, score))
+  }
+
+  function getScoreBadge(score: number) {
+    const [bg, label] = score >= 80
+      ? ['#10b981', 'Hot']
+      : score >= 50
+        ? ['#f59e0b', 'Warm']
+        : ['#ef4444', 'Cold']
+    return (
+      <span
+        className="text-[9px] px-2 py-0.5 rounded-full font-bold inline-block tabular-nums"
+        style={{ background: bg + '22', color: bg, border: `1px solid ${bg}44` }}
+      >
+        {score} {label}
+      </span>
+    )
+  }
+
+  // ── Mark Contacted ──────────────────────────────────────────────────────
+
+  function markContacted(id: string) {
+    const c = gcContacts.find(x => x.id === id)
+    if (!c) return
+    pushState(backup)
+    const future = new Date()
+    future.setDate(future.getDate() + 7)
+    c.nextFollowup = future.toISOString().slice(0, 10)
+    c.lastContact = today()
+    persist()
+  }
+
   // ── Render GC Table ────────────────────────────────────────────────────
 
   function renderGCTable() {
+    // ── Pipeline summary calculations ──
+    const todayStr = today()
+    const totalLeads = gcContacts.length
+    const scoredContacts = gcContacts.map(c => ({ ...c, _score: calcLeadScore(c) }))
+    const hotLeads = scoredContacts.filter(c => c._score >= 80)
+    const hotAvgJob = hotLeads.length > 0
+      ? hotLeads.reduce((s, c) => s + num(c.avg || 0), 0) / hotLeads.length
+      : 0
+    const overdueFollowups = gcContacts.filter(c => c.nextFollowup && c.nextFollowup < todayStr)
+    const fitFactors: Record<number, number> = { 5: 1.0, 4: 0.8, 3: 0.6, 2: 0.4, 1: 0.2, 0: 0 }
+    const pipelineValue = gcContacts.reduce((s, c) => {
+      const ff = fitFactors[Math.min(5, Math.max(0, Math.round(num(c.fit || 0))))] || 0
+      return s + num(c.avg || 0) * ff
+    }, 0)
+
+    // ── Sort: overdue first (most overdue first), then by score desc ──
+    const sortedContacts = [...scoredContacts].sort((a, b) => {
+      const aOv = a.nextFollowup && a.nextFollowup < todayStr
+      const bOv = b.nextFollowup && b.nextFollowup < todayStr
+      if (aOv && !bOv) return -1
+      if (!aOv && bOv) return 1
+      if (aOv && bOv) {
+        // most overdue (earlier date) first
+        return (a.nextFollowup || '').localeCompare(b.nextFollowup || '')
+      }
+      return b._score - a._score
+    })
+
     return (
       <div>
+        {/* ── Pipeline Summary Card ── */}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+            <div className="text-[8px] uppercase text-gray-500 font-bold">Total Leads</div>
+            <div className="text-sm font-bold font-mono mt-1 text-gray-200">{totalLeads}</div>
+          </div>
+          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+            <div className="text-[8px] uppercase text-gray-500 font-bold">Hot Leads (80+)</div>
+            <div className="text-sm font-bold font-mono mt-1 text-emerald-400">{hotLeads.length}</div>
+            {hotLeads.length > 0 && (
+              <div className="text-[9px] text-gray-500 mt-0.5">Avg {fmtK(hotAvgJob)}</div>
+            )}
+          </div>
+          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+            <div className="text-[8px] uppercase text-gray-500 font-bold">Overdue Follow-ups</div>
+            <div className={`text-sm font-bold font-mono mt-1 ${overdueFollowups.length > 0 ? 'text-red-400' : 'text-gray-400'}`}>
+              {overdueFollowups.length}
+            </div>
+          </div>
+          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+            <div className="text-[8px] uppercase text-gray-500 font-bold">Est. Pipeline Value</div>
+            <div className="text-sm font-bold font-mono mt-1 text-blue-400">{fmtK(pipelineValue)}</div>
+          </div>
+        </div>
+
         <div className="flex justify-end mb-3">
           <button onClick={addGC} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold">
             <Plus size={12} /> Add GC
@@ -389,26 +543,29 @@ export default function V15rLeadsPanel() {
                   <th className="text-left py-2 px-2 font-bold">Phase</th>
                   <th className="text-right py-2 px-2 font-bold">Fit</th>
                   <th className="text-left py-2 px-2 font-bold">Action / Due</th>
-                  <th className="text-center py-2 px-2 font-bold">AI Score</th>
+                  <th className="text-center py-2 px-2 font-bold">Score</th>
+                  <th className="text-left py-2 px-2 font-bold">Next Follow-up</th>
                   <th className="text-center py-2 px-2 font-bold">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {gcContacts.map(c => {
+                {sortedContacts.map(c => {
                   const phaseClr = PHASE_COLORS[c.phase] || '#6b7280'
                   const fitClr = c.fit >= 4 ? '#10b981' : c.fit >= 3 ? '#f59e0b' : '#ef4444'
-                  const isOverdue = c.due && c.due < today()
+                  const isOverdue = c.due && c.due < todayStr
+                  const isFollowupOverdue = c.nextFollowup && c.nextFollowup < todayStr
                   const isExpanded = expandedGCId === c.id
                   const agg = getGCAggregation(c, backup)
+                  const score = c._score
 
                   return (
                     <tbody key={c.id}>
-                      <tr className={`border-b border-gray-800/50 hover:bg-gray-700/20 ${isOverdue ? 'bg-red-900/10' : ''}`}>
+                      <tr className={`border-b border-gray-800/50 hover:bg-gray-700/20 ${isFollowupOverdue ? 'bg-red-900/10' : ''}`}>
                         <td className="py-2 px-2">
                           <div className="font-semibold text-gray-200">{c.company}</div>
                           <div className="text-gray-500">{c.contact}</div>
                           {c.lastContact && (
-                            <span className="text-xs text-gray-500">Last contact: {c.lastContact}</span>
+                            <span className="text-[9px] text-gray-500">Last: {c.lastContact}</span>
                           )}
                         </td>
                         <td className="py-2 px-2 text-gray-400">{c.role}</td>
@@ -427,28 +584,43 @@ export default function V15rLeadsPanel() {
                           <div className="text-gray-300">{c.action}</div>
                           {c.due && (
                             <div className={`text-[9px] ${isOverdue ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
-                              {isOverdue && <span className="bg-red-600 text-white px-1 rounded text-[8px] mr-1">{Math.ceil((new Date(c.due).getTime() - new Date(today()).getTime()) / (1000*60*60*24))} days</span>}
+                              {isOverdue && <span className="bg-red-600 text-white px-1 rounded text-[8px] mr-1">{Math.ceil((new Date(c.due).getTime() - new Date(todayStr).getTime()) / (1000*60*60*24))} days</span>}
                               {c.due}
                             </div>
                           )}
                         </td>
-                        <td className="py-2 px-2 text-center">
+                        <td className="py-2 px-2 text-center">{getScoreBadge(score)}</td>
+                        <td className="py-2 px-2">
+                          {c.nextFollowup ? (
+                            <div className={`text-[9px] font-mono ${isFollowupOverdue ? 'text-red-400 font-bold' : 'text-gray-400'}`}>
+                              {isFollowupOverdue && <span className="bg-red-600 text-white px-1 rounded text-[8px] mr-1">OVERDUE</span>}
+                              {c.nextFollowup}
+                            </div>
+                          ) : (
+                            <span className="text-[9px] text-gray-600">—</span>
+                          )}
                           <button
-                            onClick={() => handleAIScript(c)}
-                            disabled={aiScriptLoading && aiScriptContactId === c.id}
-                            className="text-[9px] px-1.5 py-0.5 rounded bg-purple-700/50 text-purple-300 hover:text-purple-200 disabled:opacity-50"
+                            onClick={() => markContacted(c.id)}
+                            className="mt-0.5 text-[8px] px-1.5 py-0.5 rounded bg-cyan-700/40 text-cyan-300 hover:bg-cyan-700/60 block"
                           >
-                            {aiScriptLoading && aiScriptContactId === c.id ? 'Generating…' : 'AI Script'}
+                            ✓ Mark Contacted
                           </button>
                         </td>
                         <td className="py-2 px-2 text-center">
-                          <div className="flex gap-1 justify-center">
+                          <div className="flex gap-1 justify-center flex-wrap">
                             {c.phase === 'Awarded' && !c.convertedProjectId && (
                               <button onClick={() => convertGCToProject(c)} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-700/50 text-emerald-300 hover:text-emerald-200 font-semibold" title="Convert to Project">→Proj</button>
                             )}
                             {c.convertedProjectId && (
                               <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">Converted</span>
                             )}
+                            <button
+                              onClick={() => handleAIScript(c)}
+                              disabled={aiScriptLoading && aiScriptContactId === c.id}
+                              className="text-[9px] px-1.5 py-0.5 rounded bg-purple-700/50 text-purple-300 hover:text-purple-200 disabled:opacity-50"
+                            >
+                              {aiScriptLoading && aiScriptContactId === c.id ? '…' : '🤖'}
+                            </button>
                             <button onClick={() => editGC(c.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">✎</button>
                             <button onClick={() => deleteGC(c.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300">✕</button>
                             <button onClick={() => setExpandedGCId(isExpanded ? null : c.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400">
@@ -461,7 +633,7 @@ export default function V15rLeadsPanel() {
                       {/* Expanded row: Contact Log + Quick Log Form + Next Best Action */}
                       {isExpanded && (
                         <tr className="border-b border-gray-800/50 bg-gray-800/30">
-                          <td colSpan={12} className="py-3 px-4">
+                          <td colSpan={13} className="py-3 px-4">
                             <div className="space-y-4">
                               {/* Next Best Action AI Chip */}
                               <div className="flex gap-2">
@@ -644,17 +816,52 @@ export default function V15rLeadsPanel() {
                         </tr>
                       )}
 
-                      {/* AI Script response row */}
+                      {/* AI Script response row — tabbed 3-variant UI */}
                       {aiScriptContactId === c.id && (aiScriptLoading || aiScriptText) && (
                         <tr>
-                          <td colSpan={11} className="p-0">
+                          <td colSpan={13} className="p-0">
                             <div className="mx-4 my-2 p-3 bg-purple-900/20 border border-purple-500/30 rounded-lg">
                               <div className="flex justify-between items-start mb-2">
                                 <span className="text-[10px] font-bold text-purple-400 uppercase">AI Script — {c.company}</span>
-                                <button onClick={() => { setAiScriptContactId(null); setAiScriptText('') }} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+                                <button onClick={() => { setAiScriptContactId(null); setAiScriptText(''); setAiScriptVariants(null) }} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
                               </div>
                               {aiScriptLoading ? (
-                                <div className="text-xs text-gray-400 animate-pulse">Generating script...</div>
+                                <div className="text-xs text-gray-400 animate-pulse">Generating 3 script variations…</div>
+                              ) : aiScriptVariants ? (
+                                <div>
+                                  {/* Tab switcher */}
+                                  <div className="flex gap-1 mb-3">
+                                    {([
+                                      { key: 'cold', label: '📞 Cold Call', icon: 'cold' },
+                                      { key: 'voicemail', label: '🎙 Voicemail', icon: 'voicemail' },
+                                      { key: 'email', label: '✉ Email', icon: 'email' },
+                                    ] as const).map(({ key, label }) => (
+                                      <button
+                                        key={key}
+                                        onClick={() => setAiScriptTab(key)}
+                                        className={`text-[10px] px-3 py-1 rounded font-semibold transition-colors ${aiScriptTab === key ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+                                      >
+                                        {label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {/* Tab content */}
+                                  <div className="relative">
+                                    <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans leading-relaxed bg-gray-900/50 rounded p-3 pr-10 min-h-[60px]">
+                                      {aiScriptVariants[aiScriptTab] || '(No content for this variation)'}
+                                    </pre>
+                                    <button
+                                      onClick={() => {
+                                        const txt = aiScriptVariants[aiScriptTab]
+                                        if (txt) navigator.clipboard?.writeText(txt).catch(() => {})
+                                      }}
+                                      className="absolute top-2 right-2 p-1 rounded bg-gray-700 text-gray-400 hover:text-gray-200 hover:bg-gray-600"
+                                      title="Copy to clipboard"
+                                    >
+                                      <Copy size={11} />
+                                    </button>
+                                  </div>
+                                </div>
                               ) : (
                                 <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">{aiScriptText}</pre>
                               )}

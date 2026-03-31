@@ -16,8 +16,14 @@
  */
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image } from 'lucide-react'
+import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen } from 'lucide-react'
+import { getLocalSkillMap, getLocalSkillSignals, getLocalDevelopmentLog, calculateDevelopmentRate, IDEAL_PROFILE, SKILL_DOMAINS } from '@/services/skillSignalExtractor'
+import type { SkillDomain, StoredSkillSignal } from '@/services/skillSignalExtractor'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/hooks/useAuth'
+import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
 import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
+import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense, type OpenPermit } from '@/services/ownerProfileService'
 import { pushState, clear as clearHistory, setMaxHistoryDepth } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
@@ -1235,10 +1241,22 @@ export default function V15rSettingsPanel() {
             </div>
           </SettingCard>
 
+          {/* MY DEVELOPMENT — SKILL INTELLIGENCE */}
+          <SkillIntelligenceCard />
+
+          {/* MY PROFILE */}
+          <OwnerProfileCard />
+
           {/* NEXUS VOICE */}
           <SettingCard title="NEXUS Voice">
             <VoiceSettings />
           </SettingCard>
+
+          {/* AUDIT ACCESS */}
+          <AuditAccessCard />
+
+          {/* SECURITY — CHANGE PASSCODE */}
+          <SecurityCard />
 
           {/* SYSTEM INFO */}
           <SettingCard title="System Info">
@@ -1257,6 +1275,381 @@ export default function V15rSettingsPanel() {
     </div>
   )
 }
+
+// ── Audit Access Sub-Component ───────────────────────────────────────────────
+// Allows the owner to generate a shareable read-only audit URL.
+// Token stored in profiles.audit_token; flag in profiles.audit_access_enabled.
+
+const AUDIT_BASE_URL = 'https://incomparable-croissant-a86c81.netlify.app'
+
+function AuditAccessCard() {
+  const { user } = useAuth()
+  const [auditToken, setAuditToken]     = useState<string | null>(null)
+  const [auditEnabled, setAuditEnabled] = useState(false)
+  const [loading, setLoading]           = useState(true)
+  const [saving, setSaving]             = useState(false)
+  const [copied, setCopied]             = useState(false)
+  const [toast, setToast]               = useState<string | null>(null)
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2500)
+  }
+
+  // Load current audit settings from Supabase
+  useEffect(() => {
+    if (!user?.id) return
+    setLoading(true)
+    supabase
+      .from('profiles')
+      .select('audit_token, audit_access_enabled')
+      .eq('id', user.id)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setAuditToken(data.audit_token || null)
+          setAuditEnabled(data.audit_access_enabled || false)
+          // Auto-generate token if none exists
+          if (!data.audit_token) {
+            generateAndSaveToken(false)
+          }
+        }
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }, [user?.id])
+
+  function newUUID(): string {
+    return crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+        })
+  }
+
+  async function generateAndSaveToken(showFeedback = true) {
+    if (!user?.id) return
+    const token = newUUID()
+    setSaving(true)
+    const { error } = await supabase
+      .from('profiles')
+      .update({ audit_token: token } as any)
+      .eq('id', user.id)
+    setSaving(false)
+    if (!error) {
+      setAuditToken(token)
+      if (showFeedback) showToast('New audit token generated')
+    } else {
+      if (showFeedback) showToast('Failed to save token')
+    }
+  }
+
+  async function toggleAuditEnabled() {
+    if (!user?.id) return
+    const next = !auditEnabled
+    setSaving(true)
+    const { error } = await supabase
+      .from('profiles')
+      .update({ audit_access_enabled: next } as any)
+      .eq('id', user.id)
+    setSaving(false)
+    if (!error) {
+      setAuditEnabled(next)
+      showToast(next ? 'Audit access enabled' : 'Audit access disabled')
+    } else {
+      showToast('Failed to update setting')
+    }
+  }
+
+  function copyAuditURL() {
+    if (!auditToken) return
+    const url = `${AUDIT_BASE_URL}?audit=${auditToken}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      showToast('Audit URL copied!')
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const auditURL = auditToken ? `${AUDIT_BASE_URL}?audit=${auditToken}` : null
+
+  return (
+    <SettingCard title="Audit Access">
+      {toast && (
+        <div className="mb-3 px-3 py-2 rounded text-xs font-semibold bg-green-900/40 text-green-300 border border-green-700/40">
+          {toast}
+        </div>
+      )}
+
+      <div className="space-y-4">
+        <p className="text-xs text-gray-400">
+          Share a read-only view of the app with an accountant, bookkeeper, or auditor.
+          The audit URL bypasses the passcode screen and loads the app in read-only mode.
+        </p>
+
+        {/* Enable / Disable toggle */}
+        <div className="flex items-center justify-between">
+          <label className="text-sm text-gray-300 font-medium">Audit access</label>
+          <button
+            onClick={toggleAuditEnabled}
+            disabled={saving || loading}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${auditEnabled ? 'bg-green-600' : 'bg-gray-600'} disabled:opacity-50`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${auditEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
+        {/* Token display */}
+        {loading ? (
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Loader2 size={12} className="animate-spin" /> Loading…
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Audit Token</label>
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex-1 px-3 py-2 rounded text-xs font-mono text-gray-300 truncate select-all"
+                  style={{ backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-secondary)' }}
+                >
+                  {auditToken || '—'}
+                </div>
+                <button
+                  onClick={() => generateAndSaveToken(true)}
+                  disabled={saving}
+                  title="Regenerate token (invalidates old URL)"
+                  className="px-2 py-2 rounded text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-700/30 hover:bg-yellow-900/50 disabled:opacity-50 flex items-center gap-1"
+                >
+                  <RefreshCw size={12} className={saving ? 'animate-spin' : ''} />
+                  Regenerate
+                </button>
+              </div>
+            </div>
+
+            {/* Audit URL */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Audit URL</label>
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex-1 px-3 py-2 rounded text-xs font-mono text-gray-400 truncate"
+                  style={{ backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-secondary)' }}
+                >
+                  {auditURL || '—'}
+                </div>
+                <button
+                  onClick={copyAuditURL}
+                  disabled={!auditToken || saving}
+                  className="px-3 py-2 rounded text-xs font-semibold bg-blue-900/30 text-blue-300 border border-blue-700/30 hover:bg-blue-900/50 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                  {copied ? 'Copied!' : 'Copy URL'}
+                </button>
+              </div>
+            </div>
+
+            {!auditEnabled && (
+              <p className="text-xs text-yellow-500">
+                ⚠ Audit access is currently disabled. Enable the toggle above to allow access.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </SettingCard>
+  )
+}
+
+
+// ── Security Sub-Component — Change Passcode ─────────────────────────────────
+
+const CODE_LEN = 6
+
+function SecurityCard() {
+  const { user, profile } = useAuth()
+  const [showModal, setShowModal]           = useState(false)
+  const [currentCode, setCurrentCode]       = useState('')
+  const [newCode, setNewCode]               = useState('')
+  const [confirmCode, setConfirmCode]       = useState('')
+  const [step, setStep]                     = useState<'current' | 'new' | 'confirm'>('current')
+  const [error, setError]                   = useState<string | null>(null)
+  const [saving, setSaving]                 = useState(false)
+  const [successToast, setSuccessToast]     = useState(false)
+
+  function openModal() {
+    setShowModal(true)
+    setStep('current')
+    setCurrentCode('')
+    setNewCode('')
+    setConfirmCode('')
+    setError(null)
+  }
+
+  function closeModal() {
+    setShowModal(false)
+    setStep('current')
+    setCurrentCode('')
+    setNewCode('')
+    setConfirmCode('')
+    setError(null)
+  }
+
+  async function handleSubmit() {
+    if (!user || !profile) return
+    setError(null)
+
+    if (step === 'current') {
+      if (currentCode.length !== CODE_LEN) { setError('Enter your current 6-digit passcode'); return }
+      setSaving(true)
+      const result = await verifyPasscode(user.id, profile.org_id, currentCode)
+      setSaving(false)
+      if (result.success) {
+        setStep('new')
+      } else {
+        setError('Incorrect passcode. Please try again.')
+        setCurrentCode('')
+      }
+      return
+    }
+
+    if (step === 'new') {
+      if (!/^\d{6}$/.test(newCode)) { setError('New passcode must be exactly 6 digits'); return }
+      setStep('confirm')
+      return
+    }
+
+    if (step === 'confirm') {
+      if (newCode !== confirmCode) { setError('Passcodes do not match'); setConfirmCode(''); return }
+      setSaving(true)
+      const result = await setPasscode(user.id, newCode)
+      setSaving(false)
+      if (result.success) {
+        closeModal()
+        setSuccessToast(true)
+        setTimeout(() => setSuccessToast(false), 3000)
+      } else {
+        setError(result.error || 'Failed to save passcode')
+      }
+    }
+  }
+
+  const stepLabel = step === 'current' ? 'Current Passcode' : step === 'new' ? 'New Passcode' : 'Confirm New Passcode'
+  const stepSub   = step === 'current' ? 'Enter your current 6-digit passcode to verify identity'
+                  : step === 'new'     ? 'Enter your new 6-digit passcode'
+                  : 'Re-enter your new passcode to confirm'
+  const codeValue = step === 'current' ? currentCode : step === 'new' ? newCode : confirmCode
+  const setCode   = step === 'current' ? setCurrentCode : step === 'new' ? setNewCode : setConfirmCode
+
+  return (
+    <SettingCard title="Security">
+      {successToast && (
+        <div className="mb-3 px-3 py-2 rounded text-xs font-semibold bg-green-900/40 text-green-300 border border-green-700/40">
+          ✓ Passcode updated successfully
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <p className="text-xs text-gray-400">
+          Change the 6-digit passcode used to unlock the app.
+        </p>
+        <button
+          onClick={openModal}
+          className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-900/30 text-blue-300 border border-blue-700/30 hover:bg-blue-900/50 transition-colors"
+        >
+          <Lock size={14} />
+          Change Passcode
+        </button>
+      </div>
+
+      {/* Change Passcode Modal */}
+      {showModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal() }}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl p-6 space-y-5"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-secondary)' }}
+          >
+            {/* Modal header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield size={18} className="text-blue-400" />
+                <h3 className="text-base font-bold text-gray-100">Change Passcode</h3>
+              </div>
+              <button onClick={closeModal} className="text-gray-500 hover:text-gray-300">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Step indicator */}
+            <div className="flex gap-1">
+              {(['current', 'new', 'confirm'] as const).map((s) => (
+                <div
+                  key={s}
+                  className={`flex-1 h-1 rounded-full transition-colors ${step === s || (s === 'current' && step !== 'current') || (s === 'new' && step === 'confirm') ? 'bg-blue-500' : 'bg-gray-700'}`}
+                />
+              ))}
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-gray-200 mb-1">{stepLabel}</p>
+              <p className="text-xs text-gray-500 mb-3">{stepSub}</p>
+
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={CODE_LEN}
+                value={codeValue}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/\D/g, '').slice(0, CODE_LEN)
+                  setCode(v)
+                  setError(null)
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit() }}
+                placeholder="••••••"
+                autoFocus
+                className="w-full px-4 py-3 rounded-xl text-center text-xl font-bold tracking-widest text-gray-100 focus:outline-none"
+                style={{ backgroundColor: 'var(--bg-input)', border: '2px solid var(--border-secondary)' }}
+              />
+
+              {error && (
+                <p className="mt-2 text-xs text-red-400 flex items-center gap-1">
+                  <AlertCircle size={12} /> {error}
+                </p>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={closeModal}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-gray-400 hover:text-gray-200 transition-colors"
+                style={{ backgroundColor: 'var(--bg-input)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={saving || codeValue.length !== CODE_LEN}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                {saving
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : step === 'confirm' ? <Check size={14} /> : null
+                }
+                {saving ? 'Saving…' : step === 'confirm' ? 'Save Passcode' : 'Next'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </SettingCard>
+  )
+}
+
 
 // ── QuickBooks Batch Import Sub-Component ────────────────────────────────────
 
@@ -1454,6 +1847,611 @@ function QuickBooksBatchImport({ persist, forceUpdate }: { persist: () => void; 
         )}
 
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      </div>
+    </SettingCard>
+  )
+}
+
+// ── Skill Intelligence Sub-Component ─────────────────────────────────────────
+
+const SKILL_LABELS: Record<SkillDomain, string> = {
+  field_execution:      'Field Execution',
+  estimating:           'Estimating',
+  project_management:   'Project Management',
+  business_development: 'Business Development',
+  financial_literacy:   'Financial Literacy',
+  permitting_compliance:'Permitting & Compliance',
+  crew_management:      'Crew Management',
+  client_communication: 'Client Communication',
+  technical_knowledge:  'Technical Knowledge',
+  systems_thinking:     'Systems Thinking',
+}
+
+function scoreColor(score: number, target: number): string {
+  const gap = target - score
+  if (gap <= 10) return '#22c55e'   // green
+  if (gap <= 25) return '#eab308'   // yellow
+  return '#ef4444'                   // red
+}
+
+function ScoreBar({ domain, score, target }: { domain: SkillDomain; score: number; target: number }) {
+  const color = scoreColor(score, target)
+  const gap = Math.max(0, target - score)
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span style={{ color: 'var(--text-primary)' }} className="font-medium">{SKILL_LABELS[domain]}</span>
+        <span style={{ color }} className="font-bold">{score}<span className="text-gray-500 font-normal">/{target}</span></span>
+      </div>
+      <div className="relative h-3 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-input)' }}>
+        {/* Target outline */}
+        <div
+          className="absolute top-0 left-0 h-full rounded-full border-2 opacity-30"
+          style={{ width: `${target}%`, borderColor: color }}
+        />
+        {/* Current score fill */}
+        <div
+          className="absolute top-0 left-0 h-full rounded-full transition-all duration-500"
+          style={{ width: `${score}%`, backgroundColor: color }}
+        />
+      </div>
+      {gap > 0 && (
+        <p className="text-[10px] text-gray-500">Gap: {gap} pts to target</p>
+      )}
+    </div>
+  )
+}
+
+function VelocityCard({ domain, score, velocity }: { domain: SkillDomain; score: number; velocity: number }) {
+  const TrendIcon = velocity > 0.5 ? TrendingUp : velocity < -0.5 ? TrendingDown : Minus
+  const trendColor = velocity > 0.5 ? 'text-green-400' : velocity < -0.5 ? 'text-red-400' : 'text-gray-400'
+
+  return (
+    <div className="rounded-lg p-3 border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{SKILL_LABELS[domain]}</span>
+        <TrendIcon size={14} className={trendColor} />
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{score}</span>
+        <span className={`text-xs font-semibold ${trendColor}`}>
+          {velocity > 0 ? '+' : ''}{velocity.toFixed(1)} pts/30d
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function PriorityCard({ rank, domain, score, target }: { rank: number; domain: SkillDomain; score: number; target: number }) {
+  const gap = target - score
+  const ideal = IDEAL_PROFILE[domain]
+  const nextSteps: Record<SkillDomain, string> = {
+    field_execution:      'Log more field work with detailed notes. Seek complex commercial or multi-phase jobs.',
+    estimating:           'Build 3+ estimates with material breakdowns. Track wins/losses with reasons.',
+    project_management:   'Start using RFI tracking and milestone billing on active projects.',
+    business_development: 'Reach out to 2 GC contacts this week. Update your estimate conversion rate.',
+    financial_literacy:   'Review AR aging report. Match job costing to estimates weekly.',
+    permitting_compliance:'Pull your next permit independently. Log NEC code lookups in journal.',
+    crew_management:      'Document crew onboarding process. Track labor cost per job.',
+    client_communication: 'Send a scope summary to your next client before starting. Log outcomes.',
+    technical_knowledge:  'Complete a solar or EV charger install. Document technical specs in journal.',
+    systems_thinking:     'Create one repeatable checklist or template this week.',
+  }
+
+  return (
+    <div className="rounded-lg p-4 border-l-4" style={{ backgroundColor: 'var(--bg-card)', borderLeftColor: rank === 1 ? '#ef4444' : rank === 2 ? '#eab308' : '#3b82f6', borderTop: '1px solid var(--border-secondary)', borderRight: '1px solid var(--border-secondary)', borderBottom: '1px solid var(--border-secondary)' }}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-bold text-gray-500">#{rank}</span>
+        <Target size={14} className="text-blue-400" />
+        <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{SKILL_LABELS[domain]}</span>
+        <span className="ml-auto text-xs text-red-400 font-semibold">-{gap} pts</span>
+      </div>
+      <p className="text-[11px] text-gray-400 mb-2">{ideal?.description}</p>
+      <div className="flex items-start gap-2">
+        <Zap size={12} className="text-yellow-400 mt-0.5 flex-shrink-0" />
+        <p className="text-[11px] text-yellow-300">{nextSteps[domain]}</p>
+      </div>
+    </div>
+  )
+}
+
+function SkillIntelligenceCard() {
+  const [skillMap] = useState(() => getLocalSkillMap())
+  const [signals] = useState(() => getLocalSkillSignals())
+  const [, setTick] = useState(0)
+
+  // Calculate velocities (30-day score gains)
+  const velocities = useMemo(() => {
+    const now = Date.now()
+    const MS_30D = 30 * 24 * 60 * 60 * 1000
+    const result: Record<string, number> = {}
+    for (const domain of SKILL_DOMAINS) {
+      const recent = signals.filter(
+        s => s.skill === domain && new Date(s.timestamp).getTime() >= now - MS_30D
+      )
+      const SIGNAL_DELTA: Record<string, number> = { positive_1: 1, positive_2: 2, positive_3: 3, learning_1: 0.5, learning_2: 0.5, learning_3: 0.5 }
+      result[domain] = recent.reduce((sum, s) => sum + (SIGNAL_DELTA[`${s.signal}_${s.strength}`] || 0), 0)
+    }
+    return result
+  }, [signals])
+
+  // Sort by velocity (fastest improving first)
+  const skillsByVelocity = useMemo(() => {
+    return [...SKILL_DOMAINS].sort((a, b) => (velocities[b] || 0) - (velocities[a] || 0))
+  }, [velocities])
+
+  // Top 3 priority gaps (largest gap to ideal)
+  const top3Gaps = useMemo(() => {
+    return [...SKILL_DOMAINS]
+      .sort((a, b) => {
+        const gapA = (IDEAL_PROFILE[a]?.target ?? 80) - (skillMap[a]?.score ?? 0)
+        const gapB = (IDEAL_PROFILE[b]?.target ?? 80) - (skillMap[b]?.score ?? 0)
+        return gapB - gapA
+      })
+      .slice(0, 3)
+  }, [skillMap])
+
+  // Recent signals (last 20, newest first)
+  const recentSignals = useMemo(() => {
+    return [...signals]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 20)
+  }, [signals])
+
+  const hasData = SKILL_DOMAINS.some(d => (skillMap[d]?.score ?? 0) > 0)
+
+  if (!hasData) {
+    return (
+      <SettingCard title="My Development — Skill Intelligence">
+        <div className="text-center py-8">
+          <BarChart2 size={40} className="mx-auto text-gray-600 mb-3" />
+          <p className="text-gray-400 text-sm font-medium">No skill signals captured yet</p>
+          <p className="text-gray-600 text-xs mt-1">
+            Use NEXUS chat, save journal entries, or log field notes — skill signals are captured automatically.
+          </p>
+        </div>
+      </SettingCard>
+    )
+  }
+
+  return (
+    <SettingCard title="My Development — Skill Intelligence">
+      <div className="space-y-8">
+
+        {/* SECTION 1: Skill Map Bar Chart */}
+        <div>
+          <h3 className="text-sm font-bold text-blue-400 mb-4 flex items-center gap-2">
+            <BarChart2 size={16} />
+            Skill Map vs Ideal Profile
+          </h3>
+          <div className="space-y-4">
+            {SKILL_DOMAINS.map(domain => (
+              <ScoreBar
+                key={domain}
+                domain={domain}
+                score={skillMap[domain]?.score ?? 0}
+                target={IDEAL_PROFILE[domain]?.target ?? 80}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-4 mt-3 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1"><span className="w-3 h-1 bg-green-500 rounded inline-block" />Within 10 pts</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-1 bg-yellow-500 rounded inline-block" />11-25 pts behind</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-1 bg-red-500 rounded inline-block" />25+ pts behind</span>
+          </div>
+        </div>
+
+        {/* SECTION 2: Development Velocity */}
+        <div>
+          <h3 className="text-sm font-bold text-green-400 mb-4 flex items-center gap-2">
+            <TrendingUp size={16} />
+            Development Velocity (sorted by 30-day gain)
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            {skillsByVelocity.map(domain => (
+              <VelocityCard
+                key={domain}
+                domain={domain}
+                score={skillMap[domain]?.score ?? 0}
+                velocity={velocities[domain] || 0}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* SECTION 3: Top 3 Priorities */}
+        <div>
+          <h3 className="text-sm font-bold text-orange-400 mb-4 flex items-center gap-2">
+            <Target size={16} />
+            Top 3 Development Priorities
+          </h3>
+          <div className="space-y-3">
+            {top3Gaps.map((domain, idx) => (
+              <PriorityCard
+                key={domain}
+                rank={idx + 1}
+                domain={domain}
+                score={skillMap[domain]?.score ?? 0}
+                target={IDEAL_PROFILE[domain]?.target ?? 80}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* SECTION 4: Evidence Log */}
+        <div>
+          <h3 className="text-sm font-bold text-purple-400 mb-4 flex items-center gap-2">
+            <BookOpen size={16} />
+            Recent Skill Signals Captured
+          </h3>
+          {recentSignals.length === 0 ? (
+            <p className="text-gray-500 text-xs">No signals yet. Use NEXUS, journal, or field logs to start capturing.</p>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {recentSignals.map((s, i) => {
+                const signalColor = s.signal === 'positive' ? 'text-green-400' : s.signal === 'gap' ? 'text-red-400' : 'text-yellow-400'
+                const signalLabel = s.signal === 'positive' ? '✓' : s.signal === 'gap' ? '!' : '→'
+                const date = new Date(s.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                return (
+                  <div key={i} className="rounded p-2 border text-[11px]" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`font-bold ${signalColor}`}>{signalLabel}</span>
+                      <span className="text-blue-300 font-semibold">{SKILL_LABELS[s.skill as SkillDomain] || s.skill}</span>
+                      <span className="text-gray-600">·</span>
+                      <span className="text-gray-500 capitalize">{s.source?.replace('_', ' ')}</span>
+                      <span className="ml-auto text-gray-600">{date}</span>
+                    </div>
+                    <p className="text-gray-400 leading-snug">{s.evidence}</p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+      </div>
+    </SettingCard>
+  )
+}
+
+// ── Owner Profile Sub-Component ──────────────────────────────────────────────
+
+/**
+ * OwnerProfileCard — "My Profile" section in Settings
+ *
+ * Stores strategic context (skills, gaps, city licenses, open permits, goals,
+ * bandwidth) in the owner_profile Supabase table AND in localStorage so NEXUS
+ * can inject it into its system prompt without a blocking async call.
+ */
+function OwnerProfileCard() {
+  const [profile, setProfile] = useState(() => getLocalOwnerProfile())
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState('')
+
+  // Tag input helpers
+  const [skillInput, setSkillInput] = useState('')
+  const [gapInput, setGapInput] = useState('')
+  const [goalInput, setGoalInput] = useState('')
+
+  // City license form
+  const [licenseCity, setLicenseCity] = useState('')
+  const [licenseStatus, setLicenseStatus] = useState<'active' | 'pending' | 'needed'>('active')
+
+  // Open permit form
+  const [permitProject, setPermitProject] = useState('')
+  const [permitCity, setPermitCity] = useState('')
+  const [permitNumber, setPermitNumber] = useState('')
+  const [permitStatus, setPermitStatus] = useState('')
+
+  // Derive a stable org_id from the Supabase URL env var (project ref = first subdomain segment)
+  const orgId = (() => {
+    try {
+      const url = import.meta.env.VITE_SUPABASE_URL || ''
+      const match = url.match(/https?:\/\/([^.]+)/)
+      return match ? match[1] : 'local'
+    } catch { return 'local' }
+  })()
+
+  const persist = useCallback(async (updated: typeof profile) => {
+    setProfile(updated)
+    saveLocalOwnerProfile(updated)
+    setSaving(true)
+    setSaveMsg('')
+    const { ok, error } = await saveOwnerProfile(orgId, updated)
+    setSaving(false)
+    setSaveMsg(ok ? 'Saved ✓' : `Saved locally (cloud: ${error})`)
+    setTimeout(() => setSaveMsg(''), 3000)
+  }, [orgId])
+
+  // ── Tag helpers ───────────────────────────────────────────────────────────
+
+  const addTag = (field: 'skill_inventory' | 'knowledge_gaps' | 'business_goals', value: string) => {
+    const v = value.trim()
+    if (!v) return
+    const updated = { ...profile, [field]: [...profile[field], v] }
+    persist(updated)
+  }
+
+  const removeTag = (field: 'skill_inventory' | 'knowledge_gaps' | 'business_goals', idx: number) => {
+    const updated = { ...profile, [field]: profile[field].filter((_: any, i: number) => i !== idx) }
+    persist(updated)
+  }
+
+  // ── City license helpers ──────────────────────────────────────────────────
+
+  const addLicense = () => {
+    const city = licenseCity.trim()
+    if (!city) return
+    const entry: CityLicense = { city, status: licenseStatus }
+    const updated = { ...profile, active_city_licenses: [...profile.active_city_licenses, entry] }
+    setLicenseCity('')
+    persist(updated)
+  }
+
+  const removeLicense = (idx: number) => {
+    const updated = { ...profile, active_city_licenses: profile.active_city_licenses.filter((_: any, i: number) => i !== idx) }
+    persist(updated)
+  }
+
+  // ── Open permit helpers ───────────────────────────────────────────────────
+
+  const addPermit = () => {
+    const projectName = permitProject.trim()
+    const city = permitCity.trim()
+    if (!projectName || !city) return
+    const entry: OpenPermit = {
+      projectName,
+      city,
+      permitNumber: permitNumber.trim() || '—',
+      status: permitStatus.trim() || 'Open',
+    }
+    const updated = { ...profile, open_permits: [...profile.open_permits, entry] }
+    setPermitProject('')
+    setPermitCity('')
+    setPermitNumber('')
+    setPermitStatus('')
+    persist(updated)
+  }
+
+  const removePermit = (idx: number) => {
+    const updated = { ...profile, open_permits: profile.open_permits.filter((_: any, i: number) => i !== idx) }
+    persist(updated)
+  }
+
+  // ── Tag input key handler ─────────────────────────────────────────────────
+
+  const onTagKey = (e: React.KeyboardEvent<HTMLInputElement>, field: 'skill_inventory' | 'knowledge_gaps' | 'business_goals', value: string, clear: () => void) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      addTag(field, value)
+      clear()
+    }
+  }
+
+  // ── Shared status badge ───────────────────────────────────────────────────
+
+  const statusColor = (s: string) =>
+    s === 'active' ? 'bg-green-600/20 text-green-400 border-green-600/30'
+    : s === 'pending' ? 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30'
+    : 'bg-gray-600/20 text-gray-400 border-gray-600/30'
+
+  return (
+    <SettingCard title="My Profile — Strategic Context for NEXUS">
+      <div className="space-y-6">
+
+        {/* Save status */}
+        {(saving || saveMsg) && (
+          <div className={`text-xs px-3 py-1.5 rounded border ${saving ? 'text-blue-400 border-blue-500/30 bg-blue-900/20' : 'text-green-400 border-green-500/30 bg-green-900/20'}`}>
+            {saving ? 'Saving…' : saveMsg}
+          </div>
+        )}
+
+        {/* Skills inventory */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Skills Inventory</label>
+          <p className="text-[10px] text-gray-600 mb-2">Things you can do. e.g. "Service work", "Rough-in", "Solar installation", "Commercial TI"</p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {profile.skill_inventory.map((skill: string, i: number) => (
+              <span key={i} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-300 border border-blue-600/30">
+                {skill}
+                <button onClick={() => removeTag('skill_inventory', i)} className="text-blue-500 hover:text-blue-200 ml-0.5">×</button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={skillInput}
+              onChange={e => setSkillInput(e.target.value)}
+              onKeyDown={e => onTagKey(e, 'skill_inventory', skillInput, () => setSkillInput(''))}
+              placeholder="Type skill + Enter"
+              className="flex-1 text-xs px-3 py-2 rounded border theme-input"
+            />
+            <button
+              onClick={() => { addTag('skill_inventory', skillInput); setSkillInput('') }}
+              className="text-xs px-3 py-2 bg-blue-600/30 text-blue-300 rounded border border-blue-500/30 hover:bg-blue-600/40"
+            >+ Add</button>
+          </div>
+        </div>
+
+        {/* Knowledge gaps */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Knowledge Gaps / Actively Learning</label>
+          <p className="text-[10px] text-gray-600 mb-2">Things you're learning or need to develop. e.g. "Permitting", "Load calculations", "Arc flash"</p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {profile.knowledge_gaps.map((gap: string, i: number) => (
+              <span key={i} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300 border border-yellow-600/30">
+                {gap}
+                <button onClick={() => removeTag('knowledge_gaps', i)} className="text-yellow-500 hover:text-yellow-200 ml-0.5">×</button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={gapInput}
+              onChange={e => setGapInput(e.target.value)}
+              onKeyDown={e => onTagKey(e, 'knowledge_gaps', gapInput, () => setGapInput(''))}
+              placeholder="Type gap + Enter"
+              className="flex-1 text-xs px-3 py-2 rounded border theme-input"
+            />
+            <button
+              onClick={() => { addTag('knowledge_gaps', gapInput); setGapInput('') }}
+              className="text-xs px-3 py-2 bg-yellow-600/30 text-yellow-300 rounded border border-yellow-500/30 hover:bg-yellow-600/40"
+            >+ Add</button>
+          </div>
+        </div>
+
+        {/* City Licenses */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">City Licenses / Registrations</label>
+          <div className="space-y-1.5 mb-3">
+            {profile.active_city_licenses.length === 0 && (
+              <p className="text-[10px] text-gray-600 italic">No cities added yet.</p>
+            )}
+            {profile.active_city_licenses.map((lic: CityLicense, i: number) => (
+              <div key={i} className="flex items-center justify-between text-xs px-3 py-1.5 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
+                <span className="text-gray-300 font-medium">{lic.city}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-0.5 rounded text-[10px] border ${statusColor(lic.status)}`}>{lic.status}</span>
+                  <button onClick={() => removeLicense(i)} className="text-gray-600 hover:text-red-400">×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={licenseCity}
+              onChange={e => setLicenseCity(e.target.value)}
+              placeholder="City name"
+              className="flex-1 text-xs px-3 py-2 rounded border theme-input"
+            />
+            <select
+              value={licenseStatus}
+              onChange={e => setLicenseStatus(e.target.value as any)}
+              className="text-xs px-2 py-2 rounded border theme-input"
+            >
+              <option value="active">Active</option>
+              <option value="pending">Pending</option>
+              <option value="needed">Needed</option>
+            </select>
+            <button
+              onClick={addLicense}
+              className="text-xs px-3 py-2 bg-green-600/30 text-green-300 rounded border border-green-500/30 hover:bg-green-600/40"
+            >+ Add</button>
+          </div>
+        </div>
+
+        {/* Open Permits */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Open Permits</label>
+          <div className="space-y-1.5 mb-3">
+            {profile.open_permits.length === 0 && (
+              <p className="text-[10px] text-gray-600 italic">No open permits tracked.</p>
+            )}
+            {profile.open_permits.map((pmt: OpenPermit, i: number) => (
+              <div key={i} className="flex items-center justify-between text-xs px-3 py-1.5 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
+                <div>
+                  <span className="text-gray-200 font-medium">{pmt.projectName}</span>
+                  <span className="text-gray-500 ml-2">{pmt.city}</span>
+                  {pmt.permitNumber !== '—' && <span className="text-gray-600 ml-2">#{pmt.permitNumber}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-500 italic">{pmt.status}</span>
+                  <button onClick={() => removePermit(i)} className="text-gray-600 hover:text-red-400">×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <input
+              type="text"
+              value={permitProject}
+              onChange={e => setPermitProject(e.target.value)}
+              placeholder="Project name"
+              className="text-xs px-3 py-2 rounded border theme-input"
+            />
+            <input
+              type="text"
+              value={permitCity}
+              onChange={e => setPermitCity(e.target.value)}
+              placeholder="City"
+              className="text-xs px-3 py-2 rounded border theme-input"
+            />
+            <input
+              type="text"
+              value={permitNumber}
+              onChange={e => setPermitNumber(e.target.value)}
+              placeholder="Permit # (optional)"
+              className="text-xs px-3 py-2 rounded border theme-input"
+            />
+            <input
+              type="text"
+              value={permitStatus}
+              onChange={e => setPermitStatus(e.target.value)}
+              placeholder="Status (e.g. Open, Finaled)"
+              className="text-xs px-3 py-2 rounded border theme-input"
+            />
+          </div>
+          <button
+            onClick={addPermit}
+            className="text-xs px-3 py-2 bg-purple-600/30 text-purple-300 rounded border border-purple-500/30 hover:bg-purple-600/40"
+          >+ Add Permit</button>
+        </div>
+
+        {/* Business Goals */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Business Goals</label>
+          <p className="text-[10px] text-gray-600 mb-2">e.g. "Hit $150K active pipeline before hiring", "Close MTZ Solar RMO"</p>
+          <div className="space-y-1.5 mb-2">
+            {profile.business_goals.map((goal: string, i: number) => (
+              <div key={i} className="flex items-center justify-between text-xs px-3 py-1.5 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
+                <span className="text-gray-300">{goal}</span>
+                <button onClick={() => removeTag('business_goals', i)} className="text-gray-600 hover:text-red-400">×</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={goalInput}
+              onChange={e => setGoalInput(e.target.value)}
+              onKeyDown={e => onTagKey(e, 'business_goals', goalInput, () => setGoalInput(''))}
+              placeholder="Type goal + Enter"
+              className="flex-1 text-xs px-3 py-2 rounded border theme-input"
+            />
+            <button
+              onClick={() => { addTag('business_goals', goalInput); setGoalInput('') }}
+              className="text-xs px-3 py-2 bg-emerald-600/30 text-emerald-300 rounded border border-emerald-500/30 hover:bg-emerald-600/40"
+            >+ Add</button>
+          </div>
+        </div>
+
+        {/* Bandwidth Notes */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Current Bandwidth / Constraints</label>
+          <p className="text-[10px] text-gray-600 mb-2">Free-text. e.g. "Running solo, maxed at 2 active projects" or "Looking to add 1 helper by Q3"</p>
+          <textarea
+            value={profile.bandwidth_notes}
+            onChange={e => {
+              const updated = { ...profile, bandwidth_notes: e.target.value }
+              setProfile(updated)
+              saveLocalOwnerProfile(updated)
+            }}
+            onBlur={async () => {
+              setSaving(true)
+              const { ok } = await saveOwnerProfile(orgId, profile)
+              setSaving(false)
+              setSaveMsg(ok ? 'Saved ✓' : 'Saved locally')
+              setTimeout(() => setSaveMsg(''), 3000)
+            }}
+            rows={3}
+            placeholder="Describe your current capacity and any constraints…"
+            className="w-full text-xs px-3 py-2 rounded border theme-input resize-none"
+          />
+        </div>
+
       </div>
     </SettingCard>
   )

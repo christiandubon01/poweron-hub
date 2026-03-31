@@ -14,6 +14,7 @@
 
 import { classifyIntent, type ClassifiedIntent, type ConversationMessage } from './classifier'
 import { routeToAgent, type AgentResponse } from './router'
+import { supabase } from '@/lib/supabase'
 import { getActiveMode, setActiveMode, getModeConfig, MODE_CONFIGS, type NexusAgentMode } from '@/services/nexusMode'
 import { addTurn, getContext, getCompactContext, updateProjectContext, getMemory, trackInteractionPatterns, applyProfileToPrompt } from '@/services/nexusMemory'
 import { checkInterviewTrigger, type AgentInterviewDefinition } from './interviewDefinitions'
@@ -29,6 +30,8 @@ import { analyzeCompleteness, generateClarifyingQuestion, mergeContext, type Con
 import { saveJournalEntry, getRecentJournal, getJournalSummary, semanticSearch as semanticSearchJournal, type JournalEntry } from '@/services/voiceJournalService'
 import { getRelatedMemories } from '@/services/vectorMemory'
 import { setVoiceContext, getVoiceContext, type VoiceContext } from '@/services/voice'
+// ── Session 10: Skill Intelligence ──────────────────────────────────────────
+import { processSkillSignals, isDevelopmentQuery, buildSkillMapContext } from '@/services/skillSignalExtractor'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +66,225 @@ function _resetConversationState(): void {
     clarificationTopic:   null,
     originalMessage:      null,
   }
+}
+
+// ── Operational Context Cache (Session 2: Live Data) ─────────────────────────
+// Built once per conversation session. Rebuilds when orgId changes or
+// when a new session starts (empty conversation history).
+
+let _operationalContext: string | null = null
+let _contextBuiltAt: number = 0
+let _contextOrgId: string | null = null
+
+/** Returns the timestamp (ms) when operational context was last built, or 0 if never. */
+export function getLastContextSyncTime(): number {
+  return _contextBuiltAt
+}
+
+/**
+ * Build a structured operational data block from live Supabase data.
+ * Queries active projects, service logs (30d), field logs (30d),
+ * open RFIs, AR items, and pending agenda alerts.
+ */
+async function buildOperationalContext(orgId: string): Promise<string> {
+  const timestamp = new Date().toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  })
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+  const lines: string[] = [`## Live Operational Data (as of ${timestamp})`]
+
+  try {
+    // 1. Active projects
+    const { data: projects } = await supabase
+      .from('projects')
+      .select('id, name, contract_value, actual_cost, status, phase, updated_at')
+      .eq('org_id', orgId)
+      .not('status', 'in', '("completed","canceled")')
+      .order('updated_at', { ascending: false })
+      .limit(20)
+
+    // Invoices for paid/billed computation
+    const { data: invoices } = await supabase
+      .from('invoices')
+      .select('project_id, total, balance_due, status')
+      .eq('org_id', orgId)
+      .limit(100)
+
+    // Aggregate paid and billed amounts per project
+    const paidByProject   = new Map()
+    const billedByProject = new Map()
+    for (const inv of (invoices || [])) {
+      const pid = inv.project_id
+      if (!pid) continue
+      const paid = (Number(inv.total) || 0) - (Number(inv.balance_due) || 0)
+      paidByProject.set(pid, (paidByProject.get(pid) || 0) + paid)
+      billedByProject.set(pid, (billedByProject.get(pid) || 0) + (Number(inv.total) || 0))
+    }
+
+    // Name lookup for later joins
+    const projectNameById = new Map()
+    for (const p of (projects || [])) projectNameById.set(p.id, p.name)
+
+    if (projects?.length) {
+      lines.push('\n### Active Projects')
+      for (const p of projects) {
+        const contract = Number(p.contract_value) || 0
+        const paid     = paidByProject.get(p.id) || 0
+        const billed   = billedByProject.get(p.id) || 0
+        const lastMove = p.updated_at
+          ? new Date(p.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : 'unknown'
+        lines.push(`- [${p.id.slice(0, 8)}] ${p.name} | Status: ${p.status} | Phase: ${p.phase || 'N/A'} | Contract: $${contract.toLocaleString()} | Paid: $${paid.toLocaleString()} | Billed: $${billed.toLocaleString()} | Last Move: ${lastMove}`)
+      }
+    }
+
+    // 2. Service logs last 30 days
+    const { data: serviceLogs } = await supabase
+      .from('service_logs')
+      .select('log_date, customer_name, collected, job_type, field_log_id')
+      .eq('org_id', orgId)
+      .gte('log_date', thirtyDaysAgo)
+      .order('log_date', { ascending: false })
+      .limit(50)
+
+    // Quoted amounts from linked field_logs
+    const quotedByFieldLog = new Map()
+    const slFieldLogIds = (serviceLogs || []).filter(sl => sl.field_log_id).map(sl => sl.field_log_id)
+    if (slFieldLogIds.length > 0) {
+      const { data: flData } = await supabase
+        .from('field_logs')
+        .select('id, quoted_amount')
+        .in('id', slFieldLogIds)
+      for (const fl of (flData || [])) {
+        if (fl.id && fl.quoted_amount) quotedByFieldLog.set(fl.id, Number(fl.quoted_amount))
+      }
+    }
+
+    if (serviceLogs?.length) {
+      lines.push('\n### Recent Service Logs (30d)')
+      for (const sl of serviceLogs) {
+        const quoted = sl.field_log_id ? quotedByFieldLog.get(sl.field_log_id) || 0 : 0
+        lines.push(`- ${sl.log_date} | ${sl.customer_name || 'Unknown'} | Quoted: $${quoted} | Collected: $${Number(sl.collected) || 0} | Type: ${sl.job_type || 'N/A'}`)
+      }
+    }
+
+    // 3. Field logs last 30 days
+    const { data: fieldLogs } = await supabase
+      .from('field_logs')
+      .select('log_date, project_id, phase, hours, collected, material_cost')
+      .eq('org_id', orgId)
+      .gte('log_date', thirtyDaysAgo)
+      .order('log_date', { ascending: false })
+      .limit(50)
+
+    if (fieldLogs?.length) {
+      lines.push('\n### Recent Field Logs (30d)')
+      for (const fl of fieldLogs) {
+        const projName = fl.project_id
+          ? (projectNameById.get(fl.project_id) || fl.project_id.slice(0, 8))
+          : 'Unknown'
+        lines.push(`- ${fl.log_date} | ${projName} | Phase: ${fl.phase || 'N/A'} | Hrs: ${Number(fl.hours) || 0} | Collected: $${Number(fl.collected) || 0} | Mat: $${Number(fl.material_cost) || 0}`)
+      }
+    }
+
+    // 4. Open RFIs
+    const { data: rfis } = await supabase
+      .from('rfis')
+      .select('subject, description, status, project_id')
+      .eq('org_id', orgId)
+      .in('status', ['open', 'pending', 'draft'])
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    if (rfis?.length) {
+      lines.push('\n### Open RFIs')
+      for (const rfi of rfis) {
+        const projName = rfi.project_id
+          ? (projectNameById.get(rfi.project_id) || rfi.project_id.slice(0, 8))
+          : 'Unknown Project'
+        const desc = rfi.description ? rfi.description.slice(0, 120) : 'No description'
+        lines.push(`- [${projName}] ${rfi.subject}: ${desc}`)
+      }
+    }
+
+    // 5. AR items (contract - paid)
+    if (projects?.length) {
+      const arItems = (projects || [])
+        .map(p => ({
+          name:      p.name,
+          contract:  Number(p.contract_value) || 0,
+          paid:      paidByProject.get(p.id) || 0,
+          amountDue: (Number(p.contract_value) || 0) - (paidByProject.get(p.id) || 0),
+        }))
+        .filter(p => p.amountDue > 0)
+        .sort((a, b) => b.amountDue - a.amountDue)
+
+      if (arItems.length) {
+        lines.push('\n### Collections Due (AR)')
+        for (const ar of arItems) {
+          lines.push(`- ${ar.name} | Contract: $${ar.contract.toLocaleString()} | Paid: $${ar.paid.toLocaleString()} | Amount Due: $${ar.amountDue.toLocaleString()}`)
+        }
+      }
+    }
+
+    // 6. Pending agenda alerts
+    const { data: agendaTasks } = await supabase
+      .from('agenda_tasks')
+      .select('text, due_date, status, metadata')
+      .eq('org_id', orgId)
+      .eq('status', 'pending')
+      .order('due_date', { ascending: true })
+      .limit(15)
+
+    if (agendaTasks?.length) {
+      lines.push('\n### Agenda Alerts')
+      for (const task of agendaTasks) {
+        const linkedProjId = (task.metadata as any)?.linkedProjectId || null
+        const dueStr  = task.due_date ? ` | Due: ${task.due_date}` : ''
+        const projStr = linkedProjId ? ` | Project: ${projectNameById.get(linkedProjId) || linkedProjId}` : ''
+        lines.push(`- ${task.text}${dueStr}${projStr}`)
+      }
+    }
+
+  } catch (err) {
+    console.warn('[NEXUS] buildOperationalContext error — continuing with memory only:', err)
+    lines.push('\n(Live data unavailable — using conversation memory and local backup)')
+  }
+
+  lines.push('\nUse this data to answer operational questions accurately. Do not ask the user to create memory buckets for information that already exists here.')
+  return lines.join('\n')
+}
+
+/**
+ * If the user's message references a project name found in the live context,
+ * append a highlighted section for faster Claude access (Part 4).
+ */
+function maybeHighlightProject(context: string, message: string): string {
+  const lowerMsg = message.toLowerCase()
+  let matchedName = ''
+
+  for (const line of context.split('\n')) {
+    const match = line.match(/^-\s+\[[^\]]+\]\s+(.+?)\s+\|/)
+    if (match?.[1]) {
+      const name = match[1].trim()
+      if (lowerMsg.includes(name.toLowerCase())) {
+        matchedName = name
+        break
+      }
+    }
+  }
+
+  if (!matchedName) return context
+
+  const highlightedLines: string[] = []
+  for (const line of context.split('\n')) {
+    if (line.toLowerCase().includes(matchedName.toLowerCase())) {
+      highlightedLines.push(line)
+    }
+  }
+
+  if (highlightedLines.length === 0) return context
+  return context + '\n\n### Highlighted: "' + matchedName + '" (all references)\n' + highlightedLines.join('\n')
 }
 
 export interface NexusRequest {
@@ -1178,6 +1400,24 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
     // Non-critical
   }
 
+  // ── Step 1f: ECHO journal recall — inject relevant recent journal notes ──
+  // Checks voice_journal for semantically relevant entries in the last 30 days.
+  // If found, injects them so Claude can reference them in the response.
+  try {
+    const { getRecentRelevantEntries } = await import('@/services/voiceJournalService')
+    const journalHits = await getRecentRelevantEntries(query, 3)
+    if (journalHits.length > 0) {
+      const journalLines = journalHits.map(e => {
+        const date = new Date(e.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        const snippet = e.raw_transcript.length > 200 ? e.raw_transcript.slice(0, 200) + '...' : e.raw_transcript
+        return '[' + date + ']: ' + snippet
+      })
+      memoryContext += '\n\n## Relevant Journal Notes (last 30 days)\n' + journalLines.join('\n')
+    }
+  } catch {
+    // Non-critical — ECHO recall failure should never block NEXUS
+  }
+
   // ── Step 1e: Detect and save user preferences ───────────────────────────
   const detectedPref = detectPreference(request.message)
   if (detectedPref) {
@@ -1457,12 +1697,40 @@ Always combine external research WITH the user's actual operational data — nev
     enrichedMessage = enrichedMessage + researchInstruction
   }
 
+  // ── Session 10: Inject skill map context for development queries ────────
+  if (isDevelopmentQuery(request.message)) {
+    const skillContext = buildSkillMapContext()
+    if (skillContext) {
+      enrichedMessage = enrichedMessage + '\n\n' + skillContext
+    }
+  }
+
+  // ── Session 2: Build / load operational context (once per session) ────────
+  // Rebuild when orgId changes or when this is the start of a new conversation.
+  const isNewSession = request.conversationHistory.length === 0
+  if (!_operationalContext || _contextOrgId !== request.orgId || isNewSession) {
+    try {
+      _operationalContext = await buildOperationalContext(request.orgId)
+      _contextBuiltAt    = Date.now()
+      _contextOrgId      = request.orgId
+      console.log('[NEXUS] Operational context built —', _operationalContext.length, 'chars')
+    } catch (ctxErr) {
+      console.warn('[NEXUS] Operational context build failed:', ctxErr)
+      _operationalContext = ''
+    }
+  }
+
+  // Apply project-specific highlighting if the message references a known project
+  const resolvedContext = _operationalContext
+    ? maybeHighlightProject(_operationalContext, request.message)
+    : ''
+
   let agentResponse = await routeToAgent(
     intent,
     enrichedMessage,
     request.orgId,
     request.conversationHistory,
-    { isListQuery, isResearchQuery }
+    { isListQuery, isResearchQuery, operationalContext: resolvedContext }
   )
 
   // ── Step 5: Determine if confirmation is needed ─────────────────────────
@@ -1537,6 +1805,11 @@ Always combine external research WITH the user's actual operational data — nev
       // Non-critical — pattern analysis failure doesn't affect user experience
     })
   }
+
+  // ── Session 10: Passive skill signal extraction (fire-and-forget) ────────
+  // Combine user message + agent response for richer signal extraction
+  const signalText = `User: ${request.message}\nNEXUS: ${agentResponse.content.slice(0, 800)}`
+  processSkillSignals(signalText, 'nexus_chat', request.orgId)
 
   // ── Return ──────────────────────────────────────────────────────────────
 

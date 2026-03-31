@@ -6,9 +6,21 @@
  * This prompt is injected as the system message for every NEXUS Claude API call.
  */
 
-import { getModeConfig } from '@/services/nexusMode'
+import { getModeConfig, setActiveMode, getActiveMode, type NexusAgentMode } from '@/services/nexusMode'
 
-export const NEXUS_SYSTEM_PROMPT = `You are NEXUS, the AI operations manager for Power On Solutions LLC, a C-10 licensed electrical contracting business in the Coachella Valley, California. Your operator is Christian Dubon, Managing Member, 24 years old, 7 years field experience.
+export const NEXUS_SYSTEM_PROMPT = `## Owner Context
+Name: Christian Dubon
+Age: 24 | License: C-10 #1151468 | Location: Desert Hot Springs, CA
+Background: 7 years field electrical experience. Born El Salvador, relocated US 2014. Bilingual Spanish/English.
+Business: Power On Solutions LLC — solo operation, active commercial TI
+Stage: Pre-crew. Active pipeline ~$38K. In RMO negotiation with MTZ Solar.
+Goals: $150K active pipeline before hiring. Close MTZ RMO. Scale to multi-crew.
+Processing style: Give psychological explanation + specific behavioral replacement simultaneously. Depth over surface. Practical over theoretical.
+Never give generic contractor advice. Always give advice specific to this stage, this market, and this person's development arc.
+When asked strategic questions, reference the owner skill map if available.
+When asked operational questions, use pre-calculated data values — do not recalculate.
+
+You are NEXUS, the AI operations manager for Power On Solutions LLC, a C-10 licensed electrical contracting business in the Coachella Valley, California. Your operator is Christian Dubon, Managing Member, 24 years old, 7 years field experience.
 
 You have deep expertise in:
 - California electrical code (CEC), NEC 2023, CBC, Title 24
@@ -149,4 +161,57 @@ export function buildSystemPrompt(): string {
   } catch {
     return NEXUS_SYSTEM_PROMPT
   }
+}
+
+// ── Strategic Keyword Detector ────────────────────────────────────────────────
+
+const STRATEGIC_KEYWORDS = [
+  'should i',
+  'what should i focus',
+  'what should i',
+  'priority',
+  'priorities',
+  'learn',
+  'develop',
+  'ceiling',
+  'bandwidth',
+  'overwhelmed',
+  'growth',
+  'next step',
+  'next move',
+  'scale',
+  'hire',
+  'hiring',
+  'expand',
+  'what do i focus',
+  'where do i focus',
+  'where should i',
+  'strategy',
+  'strategic',
+  'am i on track',
+  'trajectory',
+]
+
+/**
+ * Detects if a user message is a strategic / development question.
+ *
+ * If so, switches NEXUS to 'strategic' mode so the next buildSystemPrompt()
+ * call picks up the strategic systemPromptAddition and owner profile context.
+ * The previous mode is returned so the caller can restore it after the response
+ * if desired (e.g. revert to 'conversational' for the next turn).
+ *
+ * Returns the previous mode if a switch was made, or null if no switch.
+ */
+export function detectAndApplyStrategicMode(userMessage: string): NexusAgentMode | null {
+  const lower = userMessage.toLowerCase()
+  const isStrategic = STRATEGIC_KEYWORDS.some(kw => lower.includes(kw))
+  if (!isStrategic) return null
+
+  const previous = getActiveMode()
+  // Only switch if not already in strategic mode
+  if (previous !== 'strategic') {
+    setActiveMode('strategic')
+    return previous
+  }
+  return null
 }

@@ -7,11 +7,12 @@
  */
 
 import { supabase } from '@/lib/supabase'
-import { buildSystemPrompt } from './systemPrompt'
+import { buildSystemPrompt, detectAndApplyStrategicMode } from './systemPrompt'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getEventContext } from '@/services/agentEventBus'
 import { getLedgerContext } from '@/services/ledgerDataBridge'
 import { getBackupData, getProjectFinancials, num } from '@/services/backupDataService'
+import { buildOwnerProfileContext } from '@/services/ownerProfileService'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
 
 // ── Status Bucket Helpers ───────────────────────────────────────────────────
@@ -602,7 +603,7 @@ export async function routeToAgent(
   userMessage:  string,
   orgId:        string,
   conversationHistory: ConversationMessage[],
-  options?: { isListQuery?: boolean; isResearchQuery?: boolean }
+  options?: { isListQuery?: boolean; isResearchQuery?: boolean; operationalContext?: string }
 ): Promise<AgentResponse> {
   const targetAgent = intent.targetAgent
   const agentName   = AGENT_DISPLAY_NAMES[targetAgent]
@@ -634,10 +635,26 @@ When a user asks if the app can do something:
 4. Never make up capabilities that don't exist
 `
 
+  // Detect strategic/development questions and temporarily switch to strategic mode.
+  // Store the previous mode so we can log the switch (mode persists until user
+  // explicitly changes it or sends a non-strategic message — acceptable UX trade-off).
+  const previousMode = detectAndApplyStrategicMode(userMessage)
+  if (previousMode) {
+    console.log(`[Router] Strategic mode activated for this response (was: ${previousMode})`)
+  }
+
+  // Owner profile — loaded from localStorage cache (no async needed in hot path)
+  const ownerProfileCtx = buildOwnerProfileContext()
+
+  // Operational context from NEXUS live data build (injected per session)
+  const operationalCtx = options?.operationalContext || ''
+
   const systemPrompt = [
     buildSystemPrompt(),
     `\n---\n\n${capabilitySummary}`,
+    ownerProfileCtx ? `\n---\n\n${ownerProfileCtx}` : '',
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',
+    operationalCtx ? `\n---\n\n${operationalCtx}` : '',
     contextData ? `\n---\n\n## Live Data Context\n${contextData}` : '',
     scopedLocalCtx ? `\n---\n\n## Local Device Data (scoped to query)\n${scopedLocalCtx}` : '',
     eventContext ? `\n---\n\n${eventContext}` : '',

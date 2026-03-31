@@ -1125,13 +1125,13 @@ export default function V15rHome() {
                 }).then(res => {
                   setAiMessages(prev => [...prev, { role: 'assistant', content: extractText(res) }])
                 }).catch(() => {
-                  setAiMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I couldn\'t process that. Try again.' }])
+                  setAiMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I couldn\'t process that. Try again." }])
                 }).finally(() => setAiLoading(false))
               }}
-              disabled={aiLoading}
-              className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white disabled:opacity-50"
+              disabled={!aiInput.trim() || aiLoading}
+              className="px-3 py-2 bg-blue-600 text-white rounded text-xs font-semibold disabled:opacity-40"
             >
-              <Send size={14} />
+              {aiLoading ? '...' : 'Send'}
             </button>
           </div>
         </div>

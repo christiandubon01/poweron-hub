@@ -14,12 +14,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
-import { processMessage, detectMode, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
+import { processMessage, detectMode, getLastContextSyncTime, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
 import { getActiveMode, setActiveMode, MODE_CONFIGS, type NexusAgentMode } from '@/services/nexusMode'
 import { MessageBubble, AgentBadge } from './MessageBubble'
 import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 // NexusPresenceOrb moved to VoiceTranscriptPanel
 import { clearConversationThread } from '@/services/nexusLearnedProfile'
+import { extractAndStoreConversationSignals, initEchoMemory } from '@/agents/echo/echoMemory'
 import { MorningBriefingCard } from './MorningBriefingCard'
 import { useAuth } from '@/hooks/useAuth'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
@@ -147,6 +148,16 @@ export function NexusChatPanel() {
   const [mode, setMode]                     = useState<NexusMode>('briefing')
   const [lastMsgMode, setLastMsgMode]       = useState<NexusMode>('briefing')
   const [agentMode, setAgentMode]           = useState<NexusAgentMode>(getActiveMode)
+  const [syncTime, setSyncTime]             = useState<number>(0)
+
+  // Update syncTime whenever operational context is rebuilt
+  // Poll every 30s to keep display current after initial build
+  useEffect(() => {
+    const tick = () => setSyncTime(getLastContextSyncTime())
+    tick() // immediate check
+    const id = setInterval(tick, 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
@@ -192,6 +203,11 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
   // Auto-focus input
   useEffect(() => {
     inputRef.current?.focus()
+  }, [])
+
+  // Initialize ECHO memory on mount (ensures owner identity anchor is seeded)
+  useEffect(() => {
+    initEchoMemory()
   }, [])
 
   // ── Send message ────────────────────────────────────────────────────────
@@ -354,6 +370,15 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
 
   // Reset to briefing mode and clear conversation
   const resetToNewAnalysis = useCallback(() => {
+    // Extract and store conversation quality signals into ECHO memory before clearing
+    if (messages.length > 0) {
+      const echoMessages = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        agent: m.agentId,
+      }))
+      extractAndStoreConversationSignals(echoMessages)
+    }
     setMessages([])
     setConversationHistory([])
     setMode('briefing')
@@ -361,7 +386,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     setError(null)
     setPendingProposal(null)
     clearConversationThread() // Clear Layer 1 conversation thread from localStorage
-  }, [])
+  }, [messages])
 
   // Trigger deep dive mode
   const triggerDeepDive = useCallback(() => {
@@ -394,6 +419,16 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
             <div className="text-[10px] text-text-3 font-mono">
               {mode === 'deepdive' ? 'Deep Dive Mode' : 'Manager Agent'}
             </div>
+            {syncTime > 0 && (() => {
+              const diffMs   = Date.now() - syncTime
+              const diffMins = Math.floor(diffMs / 60000)
+              const label    = diffMins < 1 ? 'just now' : diffMins === 1 ? '1 min ago' : `${diffMins} min ago`
+              return (
+                <div className="text-[9px] text-text-4 font-mono">
+                  Data synced: {label}
+                </div>
+              )
+            })()}
           </div>
         </div>
         <div className="flex items-center gap-2">

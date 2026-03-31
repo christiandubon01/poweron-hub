@@ -52,9 +52,12 @@ export interface Database {
           last_login_at:     string | null
           last_login_ip:     string | null
           last_login_device: string | null
-          is_active:         boolean
-          created_at:        string
-          updated_at:        string
+          is_active:             boolean
+          audit_token:           string | null
+          audit_access_enabled:  boolean
+          onboarding_completed:  boolean | null
+          created_at:            string
+          updated_at:            string
         }
         Insert: Omit<Database['public']['Tables']['profiles']['Row'], 'created_at' | 'updated_at'>
           & Partial<Pick<Database['public']['Tables']['profiles']['Row'], 'created_at' | 'updated_at'>>

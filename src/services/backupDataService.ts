@@ -555,8 +555,28 @@ export function health(p: BackupProject, d: BackupData): {
   let sc = 50 + o * 0.28 + (ds < 7 ? 15 : ds < 14 ? 5 : -20) - openR * 5
     + ((p.logs || []).length ? 10 : 0)
     + (num(p.paid) / Math.max(num(p.contract), 1)) * 8
-  sc = Math.max(0, Math.min(100, Math.round(sc)))
+
+  // Schedule variance component (only applies if plannedEnd is set)
   const reasons: string[] = []
+  if (p.plannedEnd) {
+    try {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const endDate = new Date(p.plannedEnd + 'T00:00:00')
+      if (!isNaN(endDate.getTime())) {
+        const daysLate = Math.round((today.getTime() - endDate.getTime()) / 86400000)
+        if (daysLate > 0 && p.status !== 'completed') {
+          // Behind schedule
+          if (daysLate >= 15) { sc -= 20; reasons.push(daysLate + 'd past planned end') }
+          else if (daysLate >= 8) { sc -= 10; reasons.push(daysLate + 'd past planned end') }
+          else { sc -= 5; reasons.push(daysLate + 'd past planned end') }
+        }
+        // Ahead of schedule → no penalty, no reason added
+      }
+    } catch { /* ignore date parse errors */ }
+  }
+
+  sc = Math.max(0, Math.min(100, Math.round(sc)))
   if (openR > 0) reasons.push(openR + ' RFI' + (openR > 1 ? 's' : '') + ' open')
   if (ds >= 14) reasons.push(ds + 'd no movement')
   if (!(p.logs || []).length) reasons.push('no logs yet')
@@ -1042,5 +1062,5 @@ export function restoreSnapshot(snapshotId: string): boolean {
 
 export function deleteSnapshot(snapshotId: string): void {
   const snapshots = getSnapshots().filter(s => s.id !== snapshotId)
-  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots))
+  localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots))
 }

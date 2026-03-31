@@ -1,8 +1,9 @@
 // @ts-nocheck
-import React, { useState, useCallback } from 'react'
-import { Sparkles, ChevronDown } from 'lucide-react'
+import React, { useState, useCallback, useEffect } from 'react'
+import { Sparkles, ChevronDown, BookOpen } from 'lucide-react'
 import { getBackupData, saveBackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { getJournalEntriesForProject, type JournalEntry } from '@/services/voiceJournalService'
 
 interface V15rCoordinationTabProps {
   projectId: string
@@ -24,12 +25,40 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['light', 'main', 'urgent']))
+  const [journalLinks, setJournalLinks] = useState<JournalEntry[]>([])
+  const [journalLinksOpen, setJournalLinksOpen] = useState(true)
 
   const backup = initialBackup || getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
+
+  // Load journal links for this project whenever projectId changes
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    let cancelled = false
+    const projectName = p?.name || ''
+    if (!projectName) return
+    // Merge Supabase linked entries + local coord.journal_links cross-references
+    getJournalEntriesForProject(projectName, 10).then(entries => {
+      if (!cancelled) setJournalLinks(entries)
+    }).catch(() => {
+      // Fallback to local coord.journal_links if DB fails
+      if (!cancelled && p?.coord?.journal_links) {
+        const links = (p.coord.journal_links || []).map((l: any) => ({
+          id: l.id,
+          raw_transcript: l.summary || '',
+          context_tag: 'general',
+          action_items: [],
+          created_at: l.date || new Date().toISOString(),
+          priority: l.priority,
+        }))
+        setJournalLinks(links)
+      }
+    })
+    return () => { cancelled = true }
+  }, [projectId, p?.name])
 
   const toggleSection = (key) => {
     const newOpen = new Set(openSections)
@@ -210,6 +239,86 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
               </div>
             )
           })}
+        </div>
+
+        {/* LINKED FROM JOURNAL — Session 8 */}
+        <div style={{ backgroundColor: '#232738', borderRadius: '8px', overflow: 'hidden', marginTop: '12px' }}>
+          <button
+            onClick={() => setJournalLinksOpen(o => !o)}
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              backgroundColor: 'rgba(99,102,241,0.10)',
+              border: 'none',
+              color: 'inherit',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              fontSize: '13px',
+            }}
+          >
+            <ChevronDown
+              size={16}
+              style={{
+                color: '#6366f1',
+                transform: journalLinksOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+                transition: 'transform 0.2s',
+              }}
+            />
+            <BookOpen size={14} style={{ color: '#6366f1', flexShrink: 0 }} />
+            <span style={{ color: 'var(--t1)', fontWeight: '600', flex: 1, textAlign: 'left' }}>
+              Linked from Journal
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--t3)', backgroundColor: '#1e2130', padding: '2px 8px', borderRadius: '3px' }}>
+              {journalLinks.length}
+            </span>
+          </button>
+
+          {journalLinksOpen && (
+            <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+              {journalLinks.length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--t3)', textAlign: 'center', padding: '8px 0' }}>
+                  No journal entries linked to this project yet.
+                  <br />
+                  <span style={{ fontSize: '11px', opacity: 0.7 }}>ECHO will auto-link notes that mention this project name.</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {journalLinks.map(link => {
+                    const date = new Date(link.created_at)
+                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    const snippet = link.raw_transcript.length > 160 ? link.raw_transcript.slice(0, 160) + '…' : link.raw_transcript
+                    const priorityColor = link.priority === 'high' ? '#f87171' : link.priority === 'medium' ? '#fbbf24' : '#9ca3af'
+                    return (
+                      <div
+                        key={link.id}
+                        style={{
+                          padding: '10px 12px',
+                          backgroundColor: '#1e2130',
+                          borderRadius: '6px',
+                          borderLeft: `3px solid ${priorityColor}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Journal Entry
+                          </span>
+                          <span style={{ fontSize: '10px', color: 'var(--t3)' }}>{dateStr}</span>
+                        </div>
+                        <p style={{ fontSize: '12px', color: 'var(--t2)', margin: 0, lineHeight: '1.5' }}>{snippet}</p>
+                        {link.priority && (
+                          <span style={{ fontSize: '9px', fontWeight: '700', color: priorityColor, marginTop: '4px', display: 'inline-block', textTransform: 'uppercase' }}>
+                            {link.priority} priority
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* AI PRIORITIZE BUTTON */}
