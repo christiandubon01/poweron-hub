@@ -7,7 +7,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
-import { NEXUS_SYSTEM_PROMPT } from './systemPrompt'
+import { buildSystemPrompt } from './systemPrompt'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getEventContext } from '@/services/agentEventBus'
 import { getLedgerContext } from '@/services/ledgerDataBridge'
@@ -635,7 +635,7 @@ When a user asks if the app can do something:
 `
 
   const systemPrompt = [
-    NEXUS_SYSTEM_PROMPT,
+    buildSystemPrompt(),
     `\n---\n\n${capabilitySummary}`,
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',
     contextData ? `\n---\n\n## Live Data Context\n${contextData}` : '',

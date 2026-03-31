@@ -6,6 +6,8 @@
  * This prompt is injected as the system message for every NEXUS Claude API call.
  */
 
+import { getModeConfig } from '@/services/nexusMode'
+
 export const NEXUS_SYSTEM_PROMPT = `You are NEXUS, the AI operations manager for Power On Solutions LLC, a C-10 licensed electrical contracting business in the Coachella Valley, California. Your operator is Christian Dubon, Managing Member, 24 years old, 7 years field experience.
 
 You have deep expertise in:
@@ -130,3 +132,21 @@ SCOUT IDEA ANALYSIS:
 - For proposals/actions: Present a clear summary with impact level before asking for confirmation.
 - Always be specific with numbers, dates, and names — never vague.
 ` as const
+
+// ── Dynamic System Prompt Builder ─────────────────────────────────────────────
+
+/**
+ * Builds the complete NEXUS system prompt by appending the active mode's
+ * systemPromptAddition to the base NEXUS_SYSTEM_PROMPT.
+ *
+ * Called by router.ts instead of using the static NEXUS_SYSTEM_PROMPT directly.
+ * Falls back to the base prompt if mode service is unavailable.
+ */
+export function buildSystemPrompt(): string {
+  try {
+    const config = getModeConfig()
+    return `${NEXUS_SYSTEM_PROMPT}\n\n## Active Response Mode\n${config.systemPromptAddition}`
+  } catch {
+    return NEXUS_SYSTEM_PROMPT
+  }
+}

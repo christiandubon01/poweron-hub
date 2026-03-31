@@ -15,6 +15,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
 import { processMessage, detectMode, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
+import { getActiveMode, setActiveMode, MODE_CONFIGS, type NexusAgentMode } from '@/services/nexusMode'
 import { MessageBubble, AgentBadge } from './MessageBubble'
 import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 // NexusPresenceOrb moved to VoiceTranscriptPanel
@@ -145,9 +146,20 @@ export function NexusChatPanel() {
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
   const [mode, setMode]                     = useState<NexusMode>('briefing')
   const [lastMsgMode, setLastMsgMode]       = useState<NexusMode>('briefing')
+  const [agentMode, setAgentMode]           = useState<NexusAgentMode>(getActiveMode)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
+
+  // Sync agentMode state with external mode-change events (e.g. voice commands)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<NexusAgentMode>).detail
+      if (detail) setAgentMode(detail)
+    }
+    window.addEventListener('nexus:mode-changed', handler)
+    return () => window.removeEventListener('nexus:mode-changed', handler)
+  }, [])
 
   // ── Build proactive briefing context ────────────────────────────────────
   const backup = getBackupData()
@@ -400,6 +412,52 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           </div>
         </div>
       </div>
+
+      {/* Mode Selector — owner-only */}
+      {profile?.role === 'owner' && (() => {
+        const modeColors: Record<NexusAgentMode, { pill: string; active: string; dot: string }> = {
+          proactive:      { pill: 'border-amber-500/30 hover:border-amber-500/60',   active: 'bg-amber-500/15 border-amber-500/60',   dot: 'bg-amber-400' },
+          analytical:     { pill: 'border-blue-500/30 hover:border-blue-500/60',    active: 'bg-blue-500/15 border-blue-500/60',    dot: 'bg-blue-400' },
+          coaching:       { pill: 'border-purple-500/30 hover:border-purple-500/60', active: 'bg-purple-500/15 border-purple-500/60', dot: 'bg-purple-400' },
+          conversational: { pill: 'border-teal-500/30 hover:border-teal-500/60',    active: 'bg-teal-500/15 border-teal-500/60',    dot: 'bg-teal-400' },
+          carplay:        { pill: 'border-green-500/30 hover:border-green-500/60',   active: 'bg-green-500/15 border-green-500/60',   dot: 'bg-green-400' },
+        }
+        const activeConfig = MODE_CONFIGS[agentMode]
+        const activeColors = modeColors[agentMode]
+
+        return (
+          <div className="px-5 py-2 border-b border-bg-4 bg-bg-1/60">
+            <div className="flex items-center gap-2 flex-wrap">
+              {(Object.entries(MODE_CONFIGS) as [NexusAgentMode, typeof MODE_CONFIGS[NexusAgentMode]][]).map(([key, cfg]) => {
+                const colors = modeColors[key]
+                const isActive = agentMode === key
+                return (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      setActiveMode(key)
+                      setAgentMode(key)
+                    }}
+                    className={clsx(
+                      'flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold transition-all',
+                      isActive ? colors.active : 'bg-transparent border-bg-5 text-text-4 hover:text-text-2',
+                      !isActive && colors.pill
+                    )}
+                  >
+                    {isActive && (
+                      <span className={clsx('w-1.5 h-1.5 rounded-full', colors.dot)} />
+                    )}
+                    {cfg.name}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-1 text-[9px] text-text-4 font-mono truncate">
+              {activeConfig.description}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Agent Activity — shows last 5 routed messages + live bus health */}
       <AgentActivityPanel />
