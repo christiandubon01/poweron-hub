@@ -51,6 +51,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [npStartDate, setNpStartDate] = useState(new Date().toISOString().slice(0, 10))
   const [npStatus, setNpStatus] = useState('active')
   const [npNotes, setNpNotes] = useState('')
+  const [npPlannedStart, setNpPlannedStart] = useState('')
+  const [npPlannedEnd, setNpPlannedEnd] = useState('')
 
   const backup = getBackupData()
 
@@ -68,6 +70,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   function openNewProjectModal() {
     setNpName(''); setNpClient(''); setNpContract(''); setNpType('Residential')
     setNpStartDate(new Date().toISOString().slice(0, 10)); setNpStatus('active'); setNpNotes('')
+    setNpPlannedStart(''); setNpPlannedEnd('')
     setShowNewProject(true)
   }
 
@@ -100,6 +103,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       lastMove: npStartDate,
       notes: npNotes.trim(),
       created: new Date().toISOString(),
+      plannedStart: npPlannedStart || undefined,
+      plannedEnd: npPlannedEnd || undefined,
     }
     // If converted from a lead, add conversion tracking fields
     if (prefillFromLead?.leadId) {
@@ -340,6 +345,16 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
                   <input type="number" value={npContract} onChange={e => setNpContract(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" placeholder="0" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned Start</label>
+                  <input type="date" value={npPlannedStart} onChange={e => setNpPlannedStart(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned End</label>
+                  <input type="date" value={npPlannedEnd} onChange={e => setNpPlannedEnd(e.target.value)} className="w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500" />
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3">

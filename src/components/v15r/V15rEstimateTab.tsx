@@ -464,47 +464,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         )}
       </div>
 
-      {/* SUBTAB BAR */}
+      {/* Estimate header bar */}
       <div style={{ display: 'flex', gap: '2px', marginBottom: '16px', backgroundColor: '#0f1117', borderRadius: '8px', padding: '3px', alignItems: 'center' }}>
-        <button
-          onClick={() => setSubtab('project')}
-          style={{
-            flex: 1,
-            padding: '8px 12px',
-            fontSize: '13px',
-            fontWeight: '600',
-            borderRadius: '6px',
-            border: 'none',
-            cursor: 'pointer',
-            backgroundColor: subtab === 'project' ? 'rgba(16,185,129,0.3)' : 'transparent',
-            color: subtab === 'project' ? '#fff' : '#9ca3af',
-          }}
-        >
+        <div style={{ flex: 1, padding: '8px 12px', fontSize: '13px', fontWeight: '600', color: '#fff' }}>
           Project Estimate
-        </button>
-        <button
-          onClick={() => setSubtab('service')}
-          style={{
-            flex: 1,
-            padding: '8px 12px',
-            fontSize: '13px',
-            fontWeight: '600',
-            borderRadius: '6px',
-            border: 'none',
-            cursor: 'pointer',
-            backgroundColor: subtab === 'service' ? 'rgba(234,179,8,0.3)' : 'transparent',
-            color: subtab === 'service' ? '#fff' : '#9ca3af',
-          }}
-        >
-          Service Call Estimate
-        </button>
+        </div>
         <div style={{ marginLeft: 'auto', paddingRight: '8px' }}>
           <AskAIButton onClick={() => setAiOpen(true)} />
         </div>
       </div>
 
-      {/* SERVICE CALL ESTIMATE SUBTAB */}
-      {subtab === 'service' && (
+      {/* Service Call Estimate removed — available in Field Log panel */}
+      {false && (
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           {/* TWO-BUCKET HEADER ROW */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
@@ -656,8 +627,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         </div>
       )}
 
-      {/* PROJECT ESTIMATE SUBTAB (existing content) */}
-      {subtab === 'project' && (
+      {/* PROJECT ESTIMATE (main content) */}
+      {(
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         {!hasAnyData && (
           <div

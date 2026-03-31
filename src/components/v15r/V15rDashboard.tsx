@@ -17,6 +17,7 @@ import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import ChartJS from 'chart.js/auto'
+import 'chartjs-adapter-date-fns'
 
 // Make Chart.js available on window for zoom plugin compatibility
 ;(window as any).Chart = ChartJS
@@ -584,7 +585,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
 }
 
 // ── EVR CHART COMPONENT ──
-function EVRChart({ projects, backup }: { projects: any[], backup: BackupData }) {
+function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], backup: BackupData, dateStart?: string, dateEnd?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
   const chartReady = useChartJS()
@@ -604,6 +605,15 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
+    // Filter logs by date range for accumulated revenue calc
+    const allLogs = backup.logs || []
+    const inRange = (d: string) => {
+      if (!d) return true
+      if (dateStart && d < dateStart) return false
+      if (dateEnd && d > dateEnd) return false
+      return true
+    }
+
     // Build cumulative data
     let cumIncome = 0, cumAR = 0, cumPipeline = 0
     const labels = projects.map(p => p.name?.substring(0, 15) || 'Unknown')
@@ -613,8 +623,12 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
 
     projects.forEach(p => {
       const fin = getProjectFinancials(p, backup)
-      const exposure = Math.max(0, (fin.billed || fin.contract) - fin.paid)
-      cumIncome += fin.paid || 0
+      // Calculate collected from logs in date range
+      const projLogs = allLogs.filter((l: any) => (l.projId || l.projectId || '') === p.id && inRange(l.date || ''))
+      const rangeCollected = projLogs.reduce((s: number, l: any) => s + num(l.collected || 0), 0)
+      const income = dateStart || dateEnd ? rangeCollected : (fin.paid || 0)
+      const exposure = Math.max(0, (fin.billed || fin.contract) - (fin.paid || 0))
+      cumIncome += income
       cumAR += exposure || 0
       cumPipeline += p.contract || 0
       incomeData.push(cumIncome)
@@ -703,7 +717,7 @@ function EVRChart({ projects, backup }: { projects: any[], backup: BackupData })
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup, isMobileView])
+  }, [chartReady, projects, backup, isMobileView, dateStart, dateEnd])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -1556,13 +1570,23 @@ function V15rDashboardInner() {
     .slice(0, 10)
 
   // ── EVR: Exposure vs Revenue (Top 6 by contract) ──
+  const [evrDateStart, setEvrDateStart] = useState<string>(rcaDefaultStart)
+  const [evrDateEnd, setEvrDateEnd] = useState<string>(rcaDefaultEnd)
   const evrProjects = projects
     .filter(p => p.contract > 0)
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 6)
 
-  // ── SCP: Service Calls Performance (last 8) ──
-  const scpLogs = serviceLogs.slice(-8)
+  // ── SCP: Service Calls Performance ──
+  const [scpDateStart, setScpDateStart] = useState<string>(rcaDefaultStart)
+  const [scpDateEnd, setScpDateEnd] = useState<string>(rcaDefaultEnd)
+  const scpLogs = serviceLogs.filter((l: any) => {
+    const d = l.date || ''
+    if (!d) return true
+    if (scpDateStart && d < scpDateStart) return false
+    if (scpDateEnd && d > scpDateEnd) return false
+    return true
+  }).slice(-8)
 
   // ── RCA: Revenue vs Cost Analysis (Active Projects) ──
   const [rcaSelectedProject, setRcaSelectedProject] = useState<string>('all')
@@ -1579,9 +1603,31 @@ function V15rDashboardInner() {
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
   const rcaDropdownProjects = backup.projects || []
-  const rcaProjects = rcaSelectedProject === 'all'
-    ? allRcaProjects
-    : allRcaProjects.filter(p => p.id === rcaSelectedProject)
+  // Filter projects to only those with log activity in date range
+  const rcaFilteredProjects = (() => {
+    const allLogs = backup.logs || []
+    const inRange = (d: string) => {
+      if (!d) return false
+      if (rcaDateStart && d < rcaDateStart) return false
+      if (rcaDateEnd && d > rcaDateEnd) return false
+      return true
+    }
+    if (rcaSelectedProject === 'all') {
+      return allRcaProjects.filter(p => {
+        const pLogs = allLogs.filter((l: any) => (l.projId || l.projectId || '') === p.id)
+        return pLogs.length === 0 || pLogs.some((l: any) => inRange(l.date || l.logDate || ''))
+      })
+    }
+    return allRcaProjects.filter(p => p.id === rcaSelectedProject)
+  })()
+  const rcaProjects = rcaFilteredProjects
+
+  // ── PvA: Planned vs Actual project selector ──
+  const [pvaSelectedProject, setPvaSelectedProject] = useState<string>('all')
+  const pvaActiveProjects = projects.filter(p => p.status === 'active' && (p.contract || 0) > 0)
+  const pvaProjects = pvaSelectedProject === 'all'
+    ? pvaActiveProjects
+    : pvaActiveProjects.filter(p => p.id === pvaSelectedProject)
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
@@ -1661,17 +1707,41 @@ function V15rDashboardInner() {
 
         {/* EVR: Exposure vs Revenue */}
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-          <h2 className="text-lg font-bold text-gray-100 mb-4">EVR: Exposure vs Revenue</h2>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="text-lg font-bold text-gray-100">EVR: Exposure vs Revenue</h2>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span>From:</span>
+                <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span>To:</span>
+                <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+              </div>
+            </div>
+          </div>
           <div className="relative w-full" style={{ height: '300px' }}>
             <ChartErrorBoundary>
-              <EVRChart projects={evrProjects} backup={backup} />
+              <EVRChart projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
             </ChartErrorBoundary>
           </div>
         </div>
 
         {/* SCP: Service Calls Performance */}
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-          <h2 className="text-lg font-bold text-gray-100 mb-4">SCP: Service Calls Performance</h2>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="text-lg font-bold text-gray-100">SCP: Service Calls Performance</h2>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span>From:</span>
+                <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span>To:</span>
+                <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+              </div>
+            </div>
+          </div>
           {scpLogs.length > 0 ? (
             <div className="relative w-full" style={{ height: '300px' }}>
               <ChartErrorBoundary>
@@ -1736,6 +1806,31 @@ function V15rDashboardInner() {
           </div>
         </div>
 
+        {/* PvA: Planned vs Actual Timeline */}
+        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+          <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-lg font-bold text-gray-100">Planned vs Actual Timeline</h2>
+              <p className="text-sm text-gray-400 italic mt-1">Dashed = planned schedule at contract value, solid = actual accumulated collected revenue</p>
+            </div>
+            <select
+              value={pvaSelectedProject}
+              onChange={e => setPvaSelectedProject(e.target.value)}
+              className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
+            >
+              <option value="all">All Projects</option>
+              {pvaActiveProjects.map(p => (
+                <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="relative w-full" style={{ height: '380px' }}>
+            <ChartErrorBoundary>
+              <PlannedVsActualChart projects={pvaProjects} backup={backup} />
+            </ChartErrorBoundary>
+          </div>
+        </div>
+
         {/* G6: PULSE Trend Analyzer — "Analyze trends" button + 1hr cache */}
         <div className="lg:col-span-2">
           <PulseTrendAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
@@ -1749,6 +1844,114 @@ function V15rDashboardInner() {
       </div>
     </div>
   )
+}
+
+// ── PLANNED VS ACTUAL CHART COMPONENT ──
+function PlannedVsActualChart({ projects, backup }: { projects: any[], backup: BackupData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const chartRef = useRef<any>(null)
+  const chartReady = useChartJS()
+
+  useEffect(() => {
+    if (!chartReady || !canvasRef.current || !projects.length) return
+    const Chart = (window as any).Chart
+    if (!Chart) return
+    if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null }
+    const ctx = canvasRef.current.getContext('2d')
+    if (!ctx) return
+
+    const allLogs = backup.logs || []
+    const datasets: any[] = []
+    const colors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+
+    projects.forEach((p, i) => {
+      const color = colors[i % colors.length]
+      const projLogs = allLogs
+        .filter((l: any) => (l.projId || l.projectId || '') === p.id && l.date)
+        .sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
+      const name = (p.name || 'Unknown').substring(0, 18)
+
+      // Planned line (flat from plannedStart to plannedEnd at contract value)
+      if (p.plannedStart && p.plannedEnd) {
+        datasets.push({
+          label: name + ' (Planned)',
+          data: [
+            { x: p.plannedStart, y: 0 },
+            { x: p.plannedStart, y: num(p.contract) },
+            { x: p.plannedEnd, y: num(p.contract) },
+          ],
+          borderColor: color,
+          borderDash: [6, 3],
+          borderWidth: 2,
+          fill: false,
+          tension: 0,
+          pointRadius: 2,
+        })
+      }
+
+      // Actual line (accumulated collected from logs)
+      if (projLogs.length > 0) {
+        let accum = 0
+        const points = projLogs.map((l: any) => {
+          accum += num(l.collected || 0)
+          return { x: l.date, y: accum }
+        })
+        // Add starting point at 0
+        points.unshift({ x: projLogs[0].date, y: 0 })
+        datasets.push({
+          label: name + ' (Actual)',
+          data: points,
+          borderColor: color,
+          borderWidth: 2,
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+        })
+      }
+    })
+
+    chartRef.current = new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: 'time',
+            time: { unit: 'week', displayFormats: { week: 'MMM d' } },
+            ticks: { color: '#9ca3af', font: { size: 10 } },
+            grid: { display: false },
+          },
+          y: {
+            ticks: {
+              color: '#9ca3af',
+              callback: (v: any) => {
+                const abs = Math.abs(Number(v))
+                if (abs >= 1000) return '$' + (Number(v) / 1000).toFixed(0) + 'k'
+                return '$' + Number(v)
+              }
+            },
+            grid: { color: 'rgba(255,255,255,0.05)' },
+          }
+        },
+        plugins: {
+          legend: { position: 'top', labels: { color: '#9ca3af', font: { size: 10 } } },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            callbacks: {
+              label: (ctx: any) => `${ctx.dataset.label}: $${Number(ctx.parsed.y).toLocaleString()}`
+            }
+          },
+        },
+      }
+    })
+
+    return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null } }
+  }, [chartReady, projects, backup])
+
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
 
 // ── EXPORT WITH ERROR BOUNDARY ──

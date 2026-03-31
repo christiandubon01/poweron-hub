@@ -142,6 +142,7 @@ export interface BackupProject {
   lastMove?: string; lastCollectedAt?: string; lastCollectedAmount?: number
   estimateReference?: BackupEstimateRef; phaseEstimateRows?: any[]
   lastEstimateSyncAt?: string; completionPromptSig?: string; completionDeclinedSig?: string
+  plannedStart?: string; plannedEnd?: string
 }
 
 export interface BackupPriceBookItem {

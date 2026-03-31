@@ -67,10 +67,11 @@ function formatDate(): string {
 
 function agendaStatusChip(status: string) {
   const colors: Record<string, string> = {
-    completed: 'bg-emerald-500/20 text-emerald-400',
-    canceled: 'bg-red-500/20 text-red-400',
-    'in-progress': 'bg-blue-500/20 text-blue-400',
-    pending: 'bg-gray-500/20 text-gray-400',
+    pending: 'bg-yellow-900/30 text-yellow-400',
+    active: 'bg-blue-900/30 text-blue-400',
+    done: 'bg-green-900/30 text-green-400',
+    postponed: 'bg-gray-700/30 text-gray-400',
+    declined: 'bg-red-900/30 text-red-400',
   }
   return (
     <span className={`text-[9px] px-2 py-0.5 rounded font-semibold ${colors[status] || colors.pending}`}>
@@ -80,7 +81,7 @@ function agendaStatusChip(status: string) {
 }
 
 // Status cycle order
-const STATUS_CYCLE = ['pending', 'in-progress', 'completed', 'canceled']
+const STATUS_CYCLE = ['pending', 'active', 'done', 'postponed', 'declined']
 
 // ── Service money math helper ────────────────────────────────────────────────
 
@@ -919,15 +920,13 @@ export default function V15rHome() {
                             background: t.status === 'completed' ? '#10b981' : t.status === 'canceled' ? '#ef4444' : '#3b82f6',
                           }}
                         />
-                        <div className={`text-xs flex-1 ${t.status === 'completed' ? 'line-through text-gray-600' : t.status === 'canceled' ? 'line-through text-gray-600' : 'text-gray-300'}`}>
+                        <div className={`text-xs flex-1 ${t.status === 'done' ? 'line-through text-gray-600' : t.status === 'declined' ? 'line-through text-gray-600' : 'text-gray-300'}`}>
                           {t.text}
                         </div>
                         <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          {agendaStatusChip(t.status)}
-                          <button
-                            onClick={() => cycleAgendaTaskStatus(sec.id, t.id)}
-                            className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300"
-                          >Status</button>
+                          <button onClick={() => cycleAgendaTaskStatus(sec.id, t.id)} className="cursor-pointer">
+                            {agendaStatusChip(t.status)}
+                          </button>
                           <button
                             onClick={() => editAgendaTask(sec.id, t.id)}
                             className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300"
