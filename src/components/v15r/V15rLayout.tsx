@@ -58,6 +58,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
   // H3: online/offline state
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  // Session 14: offline queue count from service worker
+  const [offlineQueueCount, setOfflineQueueCount] = useState<number>(0)
+  const [showOfflineToast, setShowOfflineToast] = useState<boolean>(false)
+  const [offlineToastMsg, setOfflineToastMsg] = useState<string>('')
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
   // CRITICAL: These MUST be declared before any useEffect that references them.
@@ -249,7 +253,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // H3: online/offline listeners
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true)
+    const handleOnline = () => {
+      setIsOnline(true)
+      // Trigger sync of any queued field logs
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SYNC_NOW' })
+      }
+    }
     const handleOffline = () => setIsOnline(false)
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
@@ -257,6 +267,39 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
     }
+  }, [])
+
+  // Session 14: listen for service worker offline queue messages
+  useEffect(() => {
+    if (!navigator.serviceWorker) return
+    const handleSWMessage = (event: MessageEvent) => {
+      if (!event.data) return
+      if (event.data.type === 'FIELD_LOG_QUEUED_OFFLINE') {
+        setOfflineQueueCount(event.data.queueLength || 1)
+        setOfflineToastMsg(`Saved offline — will sync when connected (${event.data.queueLength} pending)`)
+        setShowOfflineToast(true)
+        setTimeout(() => setShowOfflineToast(false), 5000)
+      }
+      if (event.data.type === 'FIELD_LOG_SYNC_COMPLETE') {
+        const { synced, failed } = event.data
+        setOfflineQueueCount(failed || 0)
+        if (synced > 0) {
+          setOfflineToastMsg(
+            failed > 0
+              ? `Synced ${synced} entries — ${failed} still pending`
+              : `✅ All offline entries synced (${synced})`
+          )
+          setShowOfflineToast(true)
+          setTimeout(() => setShowOfflineToast(false), 4000)
+        }
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', handleSWMessage)
+    // Ask SW for current queue length on mount
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'GET_QUEUE_LENGTH' })
+    }
+    return () => navigator.serviceWorker.removeEventListener('message', handleSWMessage)
   }, [])
 
   // poweron:show-proposals — navigate to Settings (Proposals section)
@@ -414,11 +457,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   return (
     <div className="flex h-screen text-white overflow-hidden" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-      {/* H3: Offline banner */}
+      {/* H3 + Session 14: Offline banner */}
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center gap-2 px-4 py-2 bg-yellow-500/90 text-yellow-900 text-xs font-semibold backdrop-blur-sm">
           <span>⚠</span>
-          <span>Offline — changes will sync when connection returns</span>
+          <span>Offline — field log & NEC lookup available{offlineQueueCount > 0 ? ` · ${offlineQueueCount} entries queued` : ''}</span>
+        </div>
+      )}
+
+      {/* Session 14: Offline queue toast */}
+      {showOfflineToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2.5 bg-gray-900 border border-yellow-500/50 text-yellow-300 text-xs font-medium rounded-xl shadow-xl backdrop-blur-sm flex items-center gap-2 pointer-events-none">
+          <span>📶</span>
+          <span>{offlineToastMsg}</span>
         </div>
       )}
       {/* MOBILE/TABLET OVERLAY BACKDROP */}
@@ -768,6 +819,37 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     : `Saved ${getRelativeTime(lastSaved)}`}
                 </span>
               </button>
+
+              {/* Session 14: Connection status indicator */}
+              <div
+                className="flex items-center gap-1.5 flex-shrink-0"
+                title={
+                  isOnline
+                    ? offlineQueueCount > 0
+                      ? `Online — ${offlineQueueCount} entries pending sync`
+                      : 'Online — all features available'
+                    : `Offline — field log & NEC lookup available (${offlineQueueCount} entries queued)`
+                }
+              >
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  isOnline && offlineQueueCount === 0
+                    ? 'bg-green-500'
+                    : isOnline && offlineQueueCount > 0
+                    ? 'bg-yellow-400 animate-pulse'
+                    : 'bg-red-500'
+                }`} />
+                {!isMobile && (
+                  <span className={`text-xs flex-shrink-0 ${
+                    isOnline && offlineQueueCount === 0 ? 'text-green-400' :
+                    isOnline && offlineQueueCount > 0  ? 'text-yellow-400' :
+                    'text-red-400'
+                  }`}>
+                    {isOnline && offlineQueueCount === 0 && 'Online'}
+                    {isOnline && offlineQueueCount > 0  && `Syncing (${offlineQueueCount})`}
+                    {!isOnline && 'Offline'}
+                  </span>
+                )}
+              </div>
 
               {/* Daily Target */}
               {!isMobile && (

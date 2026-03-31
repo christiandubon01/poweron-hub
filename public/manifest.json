@@ -1,13 +1,37 @@
 {
   "name": "PowerOn Hub",
   "short_name": "PowerOn",
+  "description": "Field operations dashboard for Power On Solutions LLC. Works offline for field log entry and NEC code lookup.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
   "orientation": "portrait",
+  "prefer_related_applications": false,
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ]
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "categories": ["business", "utilities", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Field Log",
+      "short_name": "Log",
+      "description": "Add a field log entry (works offline)",
+      "url": "/?view=field-log",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "NEC Lookup",
+      "short_name": "NEC",
+      "description": "Offline NEC code tables",
+      "url": "/?view=compliance",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  }
 }
