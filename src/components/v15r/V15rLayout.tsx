@@ -18,8 +18,11 @@ import {
   Zap,
   Undo2,
   Redo2,
+  Mic,
   Menu,
   X,
+  Activity,
+  ShieldAlert,
 } from 'lucide-react'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
@@ -391,7 +394,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Solar Income', icon: Calculator, view: 'income-calc' },
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
     { label: 'Team', icon: Users, view: 'team' },
+    { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
     { label: 'Settings', icon: Settings, view: 'settings' },
+    { label: 'Activity', icon: Activity, view: 'activity' },
+  ]
+
+  // NEXUS agent nav items
+  const nexusItems = [
+    { label: 'Journal', icon: Mic, view: 'journal' },
   ]
 
   // Toggle and close helpers
@@ -536,6 +546,32 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             {showLabels && <div className="px-4 py-2 text-xs font-bold text-gray-500 uppercase tracking-wider">Business</div>}
             <nav className="space-y-1">
               {businessItems.map((item) => {
+                const Icon = item.icon
+                const isActive = activeView === item.view
+                return (
+                  <button
+                    key={item.view}
+                    onClick={() => handleNavClick(item.view)}
+                    title={!showLabels ? item.label : undefined}
+                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2.5 text-sm transition-colors ${
+                      isActive
+                        ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                        : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
+                    }`}
+                  >
+                    <Icon size={18} />
+                    {showLabels && <span>{item.label}</span>}
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
+
+          {/* NEXUS Section */}
+          <div className="pt-6 border-t border-gray-700">
+            {showLabels && <div className="px-4 py-2 text-xs font-bold text-gray-500 uppercase tracking-wider">NEXUS</div>}
+            <nav className="space-y-1">
+              {nexusItems.map((item) => {
                 const Icon = item.icon
                 const isActive = activeView === item.view
                 return (

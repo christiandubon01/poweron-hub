@@ -38,6 +38,15 @@ const OhmCalculator  = lazy(() => import('@/components/ohm/Calculator').then(m =
 const ProposalFeed   = lazy(() => import('@/components/proposals/ProposalFeed').then(m => ({ default: m.ProposalFeed })))
 const VoiceSettings  = lazy(() => import('@/components/voice/VoiceSettings').then(m => ({ default: m.VoiceSettings })))
 
+// Activity log panel (lazy-loaded)
+const ActivityPanel = lazy(() => import('@/components/ActivityPanel').then(m => ({ default: m.ActivityPanel })))
+
+// GUARDIAN panel (lazy-loaded)
+const GuardianPanel = lazy(() => import('@/components/guardian/GuardianPanel').then(m => ({ default: m.GuardianPanel })))
+
+// Voice journal panel (lazy-loaded)
+const JournalPanel = lazy(() => import('@/components/JournalPanel').then(m => ({ default: m.JournalPanel })))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })))
 const OnboardingModal = lazy(() => import('@/components/onboarding/OnboardingModal'))
@@ -86,6 +95,33 @@ export function AppShell({ children }: AppShellProps) {
     }
     window.addEventListener('poweron:show-snapshots', handleSnapshotCommand)
     return () => window.removeEventListener('poweron:show-snapshots', handleSnapshotCommand)
+  }, [])
+
+  // NEXUS command "show activity" → navigate to activity panel
+  useEffect(() => {
+    function handleShowActivity() {
+      setActiveView('activity')
+    }
+    window.addEventListener('poweron:show-activity', handleShowActivity)
+    return () => window.removeEventListener('poweron:show-activity', handleShowActivity)
+  }, [])
+
+  // NEXUS command "show guardian" → navigate to guardian panel
+  useEffect(() => {
+    function handleShowGuardian() {
+      setActiveView('guardian')
+    }
+    window.addEventListener('poweron:show-guardian', handleShowGuardian)
+    return () => window.removeEventListener('poweron:show-guardian', handleShowGuardian)
+  }, [])
+
+  // NEXUS command "show journal" → navigate to voice journal panel
+  useEffect(() => {
+    function handleShowJournal() {
+      setActiveView('journal')
+    }
+    window.addEventListener('poweron:show-journal', handleShowJournal)
+    return () => window.removeEventListener('poweron:show-journal', handleShowJournal)
   }, [])
 
   // Handle navigation
@@ -181,6 +217,9 @@ export function AppShell({ children }: AppShellProps) {
       case 'calculator':      return <Suspense fallback={<PanelLoading />}><OhmCalculator /></Suspense>
       case 'scout':           return <Suspense fallback={<PanelLoading />}><ProposalFeed /></Suspense>
       case 'voice-settings':  return <Suspense fallback={<PanelLoading />}><VoiceSettings /></Suspense>
+      case 'activity':        return <Suspense fallback={<PanelLoading />}><ActivityPanel /></Suspense>
+      case 'guardian':        return <Suspense fallback={<PanelLoading />}><GuardianPanel /></Suspense>
+      case 'journal':         return <Suspense fallback={<PanelLoading />}><JournalPanel /></Suspense>
 
       default:                return <V15rHome />
     }

@@ -406,7 +406,7 @@ function CrewMembersTab() {
         .from('crew_members')
         .select('*')
         .eq('owner_id', user.id)
-        .eq('is_active', true)
+        .eq('active', true)
         .order('created_at', { ascending: false })
 
       if (!error && data) {
@@ -443,8 +443,7 @@ function CrewMembersTab() {
           phone:        addPhone.trim() || null,
           email:        addEmail.trim() || null,
           invite_token: token,
-          invited_at:   new Date().toISOString(),
-          is_active:    true,
+          active:       true,
         })
         .select()
         .single()
