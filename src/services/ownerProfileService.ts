@@ -133,6 +133,7 @@ export async function saveOwnerProfile(
       // Update existing row
       const { error } = await supabase
         .from('owner_profile' as never)
+        // @ts-ignore — owner_profile table not in generated Supabase types yet
         .update(payload)
         .eq('id', profile.id)
       if (error) throw error
@@ -140,6 +141,7 @@ export async function saveOwnerProfile(
       // Insert new row
       const { error } = await supabase
         .from('owner_profile' as never)
+        // @ts-ignore — owner_profile table not in generated Supabase types yet
         .insert(payload)
       if (error) throw error
     }

@@ -100,13 +100,14 @@ function AuditGate({ children }: { children: React.ReactNode }) {
     setAuditStatus('checking')
 
     // Validate token against Supabase profiles table (anon key read)
-    supabase
-      .from('profiles')
-      .select('id')
-      .eq('audit_token' as never, token)
-      .eq('audit_access_enabled' as never, true)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    Promise.resolve(
+      supabase
+        .from('profiles')
+        .select('id')
+        .eq('audit_token' as never, token)
+        .eq('audit_access_enabled' as never, true)
+        .maybeSingle()
+    ).then(({ data, error }) => {
         if (!error && data) {
           setAuditStatus('valid')
         } else {
