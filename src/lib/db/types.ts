@@ -282,6 +282,27 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['notifications']['Insert']>
       }
 
+      // ── Blueprint Extracts ─────────────────────────────────────────────────
+      blueprint_extracts: {
+        Row: {
+          id:               string
+          org_id:           string
+          project_id:       string
+          filename:         string
+          label:            'Full Set' | 'Electrical Only' | 'Reference Sheet'
+          extracted_text:   string | null
+          page_count:       number | null
+          electrical_flags: string[] | null
+          storage_path:     string | null
+          analyzed:         boolean
+          uploaded_at:      string
+          updated_at:       string
+        }
+        Insert: Omit<Database['public']['Tables']['blueprint_extracts']['Row'], 'id' | 'uploaded_at' | 'updated_at'>
+          & Partial<Pick<Database['public']['Tables']['blueprint_extracts']['Row'], 'id' | 'uploaded_at' | 'updated_at'>>
+        Update: Partial<Database['public']['Tables']['blueprint_extracts']['Insert']>
+      }
+
       // ── Audit Log ──────────────────────────────────────────────────────────
       audit_log: {
         Row: {

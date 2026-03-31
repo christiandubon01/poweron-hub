@@ -8,6 +8,7 @@ import V15rProgressTab from './V15rProgressTab'
 import V15rFrameworkTab from './V15rFrameworkTab'
 import V15rRFITab from './V15rRFITab'
 import V15rCoordinationTab from './V15rCoordinationTab'
+import V15rBlueprintsTab from './V15rBlueprintsTab'
 
 interface V15rProjectInnerProps {
   projectId: string
@@ -25,6 +26,7 @@ function mapExternalToInternalTab(externalTab?: string): string {
     'framework': 'framework',
     'rfi-tracker': 'rfi',
     'coordination': 'coord',
+    'blueprints': 'blueprints',
   }
   return mapping[externalTab || 'estimate'] || 'estimate'
 }
@@ -56,6 +58,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
     { id: 'framework', label: 'Framework', component: V15rFrameworkTab },
     { id: 'rfi', label: 'RFI Tracker', component: V15rRFITab },
     { id: 'coord', label: 'Coordination', component: V15rCoordinationTab },
+    { id: 'blueprints', label: '📐 Blueprints', component: V15rBlueprintsTab },
   ]
 
   const ActiveComponent = tabs.find(t => t.id === localTab)?.component || V15rEstimateTab
@@ -71,6 +74,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
         'framework': 'framework',
         'rfi': 'rfi-tracker',
         'coord': 'coordination',
+        'blueprints': 'blueprints',
       }
       onTabChange(reverseMapping[tabId] || tabId)
     }

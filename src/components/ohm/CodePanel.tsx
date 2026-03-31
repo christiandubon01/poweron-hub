@@ -17,7 +17,9 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Search, Send, Loader2, BookOpen, AlertCircle, ChevronRight,
   PlusCircle, X, Save, Library, StickyNote, Tag, ChevronDown, ChevronUp,
+  WifiOff,
 } from 'lucide-react'
+import { NecLookupPanel } from '@/components/ohm/NecLookupPanel'
 import { useAuth } from '@/hooks/useAuth'
 import * as codeSearch from '@/agents/ohm/codeSearch'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
@@ -47,7 +49,7 @@ interface SearchResult {
   tradeMatches?: Array<{ id: string; scenario: string; relevance: number }>
 }
 
-type ActiveTab = 'search' | 'ask' | 'library'
+type ActiveTab = 'search' | 'ask' | 'library' | 'nec-lookup'
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -395,6 +397,17 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
           <Library size={14} />
           Trade Library
         </button>
+        <button
+          onClick={() => setActiveTab('nec-lookup')}
+          className={`flex items-center gap-1 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'nec-lookup'
+              ? 'text-green-400 border-green-400'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          <WifiOff size={14} />
+          NEC Tables
+        </button>
       </div>
 
       {/* ── Search Articles Tab ─────────────────────────────────────────────── */}
@@ -642,6 +655,13 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
       )}
 
       {/* ── Trade Library Tab ──────────────────────────────────────────────── */}
+      {/* ── NEC Lookup (Offline) Tab ───────────────────────────────────────── */}
+      {activeTab === 'nec-lookup' && (
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-4 py-4">
+          <NecLookupPanel />
+        </div>
+      )}
+
       {activeTab === 'library' && (
         <div className="flex flex-col flex-1 min-h-0">
           {/* Library Controls */}
