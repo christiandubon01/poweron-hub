@@ -29,6 +29,7 @@ import { publish as busPublish } from '@/services/agentBus'
 import { autoSnapshot } from '@/services/snapshotService'
 import { storeEmbedding } from '@/services/embeddingService'
 import { analyzeAfterWrite } from '@/services/patternService'
+import { logActivity } from '@/services/activityLog'
 
 // ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
 function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
@@ -219,6 +220,17 @@ async function handleCreateEstimate(request: VaultRequest): Promise<VaultRespons
       marginPct: totals.marginPct,
       lineItemsCount: lineItems.length,
       orgId: request.orgId,
+    })
+
+    // Activity log (fire-and-forget)
+    logActivity({
+      agentName:   'VAULT',
+      actionType:  'estimate_saved',
+      entityType:  'estimate',
+      entityId:    inserted.id,
+      entityLabel: request.projectDescription?.slice(0, 80) || 'Estimate',
+      summary:     `VAULT saved estimate "${estimateNumber}" — $${totals.total.toFixed(0)}`,
+      details:     { total: totals.total, estimateNumber, lineItems: lineItems.length },
     })
 
     return {

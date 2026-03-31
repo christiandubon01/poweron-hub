@@ -352,19 +352,7 @@ export function initPostApprovalHook(): () => void {
       }
     }, 50)
 
-    // 2. Create auto-snapshot
-    setTimeout(async () => {
-      try {
-        const { createSnapshot } = await import('@/lib/storage')
-        if (typeof createSnapshot === 'function') {
-          await createSnapshot(`MiroFish — proposal approved — ${title} — ${new Date().toISOString()}`)
-        }
-      } catch (err) {
-        console.warn('[PostApproval] Snapshot failed:', err)
-      }
-    }, 200)
-
-    // 3. Notify the proposing agent via a targeted event
+    // 2. Notify the proposing agent via a targeted event
     // The target agent MUST check for a valid approved proposal before executing
     setTimeout(() => {
       publish(

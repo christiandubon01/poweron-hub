@@ -45,6 +45,7 @@ import {
   getUpcomingSchedule,
   type ScheduleJobInput as SvcScheduleJobInput,
 } from '@/services/chronoService'
+import { logActivity } from '@/services/activityLog'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -477,6 +478,16 @@ export async function processChronoRequest(request: ChronoRequest): Promise<Chro
         summary = r.conflict_flag
           ? `⚠️ Job "${r.job_title}" scheduled on ${r.scheduled_date} — CONFLICT: ${r.conflict_reason}`
           : `✅ Job "${r.job_title}" scheduled on ${r.scheduled_date} (crew: ${r.crew_assigned?.join(', ')})`
+
+        // Activity log (fire-and-forget)
+        logActivity({
+          agentName:   'CHRONO',
+          actionType:  'job_scheduled',
+          entityType:  'job',
+          entityLabel: r.job_title || 'Job',
+          summary:     `CHRONO scheduled "${r.job_title}" for ${r.scheduled_date}${r.conflict_flag ? ' — CONFLICT DETECTED' : ''}`,
+          details:     { job_title: r.job_title, scheduled_date: r.scheduled_date, conflict_flag: r.conflict_flag, crew: r.crew_assigned },
+        })
         break
       }
 

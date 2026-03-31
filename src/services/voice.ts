@@ -1127,3 +1127,51 @@ export function getVoiceSubsystem(): VoiceSubsystem {
   if (!_instance) _instance = new VoiceSubsystem()
   return _instance
 }
+
+// ── Context-aware silence thresholds (ms) ────────────────────────────────────
+// Longer pauses are expected on job sites and while driving.
+// These control how long the system waits after the user stops speaking
+// before treating the utterance as complete.
+
+export type VoiceContext = 'office' | 'job_site' | 'driving' | 'general'
+
+const SILENCE_THRESHOLDS: Record<VoiceContext, number> = {
+  office:   1500,  // quiet environment — respond quickly
+  job_site: 3500,  // noisy, longer pauses expected
+  driving:  2500,  // moderate noise
+  general:  2000,  // default
+}
+
+const VOICE_CONTEXT_KEY = 'nexus_voice_context'
+
+/**
+ * Returns the currently active voice context, falling back to 'general'.
+ */
+export function getVoiceContext(): VoiceContext {
+  if (typeof window === 'undefined') return 'general'
+  const stored = localStorage.getItem(VOICE_CONTEXT_KEY) as VoiceContext | null
+  if (stored && stored in SILENCE_THRESHOLDS) return stored
+  return 'general'
+}
+
+/**
+ * Sets the active voice context and persists it to localStorage.
+ * Updates the effective silence threshold used by the voice pipeline.
+ */
+export function setVoiceContext(context: VoiceContext): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(VOICE_CONTEXT_KEY, context)
+  console.log(`[Voice] Context switched to "${context}" — silence threshold: ${SILENCE_THRESHOLDS[context]}ms`)
+}
+
+/**
+ * Returns the silence threshold in ms for the currently active voice context.
+ */
+export function getActiveSilenceThreshold(): number {
+  return SILENCE_THRESHOLDS[getVoiceContext()]
+}
+
+/**
+ * Returns all available silence thresholds (for settings UI or debugging).
+ */
+export { SILENCE_THRESHOLDS }

@@ -23,6 +23,7 @@ import { publish as busPublish } from '@/services/agentBus'
 import { autoSnapshot } from '@/services/snapshotService'
 import { storeEmbedding } from '@/services/embeddingService'
 import { analyzeAfterWrite } from '@/services/patternService'
+import { logActivity } from '@/services/activityLog'
 
 // ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
 function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
@@ -179,6 +180,17 @@ async function handleProjectCreate(req: BlueprintRequest): Promise<BlueprintResp
       type,
       address,
       orgId: req.orgId,
+    })
+
+    // Activity log (fire-and-forget)
+    logActivity({
+      agentName:   'BLUEPRINT',
+      actionType:  'project_updated',
+      entityType:  'project',
+      entityId:    String(projectId),
+      entityLabel: name,
+      summary:     `BLUEPRINT updated project "${name}"`,
+      details:     { projectId, name, type, address },
     })
 
     return {
