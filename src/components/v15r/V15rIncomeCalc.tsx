@@ -20,18 +20,13 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import ChartJS from 'chart.js/auto'
 
-// ── CHART.JS LOADER HOOK ──
+;(window as any).Chart = ChartJS
+
+// ── Chart.js is now bundled — always ready ──
 function useChartJS() {
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    if ((window as any).Chart) { setReady(true); return }
-    const s = document.createElement('script')
-    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js'
-    s.onload = () => setReady(true)
-    document.head.appendChild(s)
-  }, [])
-  return ready
+  return true
 }
 
 export default function V15rIncomeCalc() {

@@ -13,6 +13,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X } from 'lucide-react'
+import { useAuth } from '@/hooks/useAuth'
 import {
   getBackupData,
   saveBackupData,
@@ -70,6 +71,9 @@ export default function V15rLeadsPanel() {
   const [aiScriptContactId, setAiScriptContactId] = useState<string | null>(null)
   const [aiScriptText, setAiScriptText] = useState('')
   const [aiScriptLoading, setAiScriptLoading] = useState(false)
+
+  let authProfile: any = null
+  try { authProfile = useAuth().profile } catch { /* auth not available */ }
 
   const backup = getBackupData()
   if (!backup) {
@@ -234,10 +238,8 @@ export default function V15rLeadsPanel() {
     setAiScriptLoading(true)
     try {
       const { processMessage } = await import('@/agents/nexus')
-      const profileRaw = localStorage.getItem('nexus_user_profile')
-      const profile = profileRaw ? JSON.parse(profileRaw) : null
-      if (!profile?.org_id) {
-        setAiScriptText('Not authenticated — import a backup or log in first.')
+      if (!authProfile?.org_id) {
+        setAiScriptText('Not authenticated — sign in first.')
         setAiScriptLoading(false)
         return
       }
@@ -247,9 +249,9 @@ export default function V15rLeadsPanel() {
         `Keep it concise, professional, and specific to an electrical contractor reaching out.`
       const result = await processMessage({
         message,
-        orgId: profile.org_id,
-        userId: profile.id,
-        userName: profile.full_name,
+        orgId: authProfile.org_id,
+        userId: authProfile.id,
+        userName: authProfile.full_name,
         conversationHistory: [],
         isVoiceCommand: false,
       })

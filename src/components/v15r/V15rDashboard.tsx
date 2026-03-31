@@ -16,6 +16,10 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import ChartJS from 'chart.js/auto'
+
+// Make Chart.js available on window for zoom plugin compatibility
+;(window as any).Chart = ChartJS
 
 // ── ERROR BOUNDARY ──
 class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
@@ -44,50 +48,9 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: Dynamically load Chart.js + zoom plugin from CDN ──
+// ── HELPER: Chart.js is now bundled via import — always ready ──
 function useChartJS() {
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    const loadZoomPlugin = () => {
-      if ((window as any).ChartZoom) {
-        const Chart = (window as any).Chart
-        if (Chart && (window as any).ChartZoom) {
-          try { Chart.register((window as any).ChartZoom) } catch { /* already registered */ }
-        }
-        setReady(true)
-        return
-      }
-      // Load hammerjs first (required by chartjs-plugin-zoom for touch/pinch)
-      const hammer = document.createElement('script')
-      hammer.src = 'https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js'
-      hammer.onload = () => {
-        const zoom = document.createElement('script')
-        zoom.src = 'https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js'
-        zoom.onload = () => {
-          const Chart = (window as any).Chart
-          if (Chart && (window as any).ChartZoom) {
-            try { Chart.register((window as any).ChartZoom) } catch { /* already registered */ }
-          }
-          setReady(true)
-        }
-        zoom.onerror = () => setReady(true) // zoom optional — still show charts
-        document.head.appendChild(zoom)
-      }
-      hammer.onerror = () => setReady(true) // hammer optional
-      document.head.appendChild(hammer)
-    }
-
-    if ((window as any).Chart) {
-      loadZoomPlugin()
-      return
-    }
-    const s = document.createElement('script')
-    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js'
-    s.onload = loadZoomPlugin
-    s.onerror = () => console.error('Failed to load Chart.js')
-    document.head.appendChild(s)
-  }, [])
-  return ready
+  return true
 }
 
 // ── CFOT CHART COMPONENT (Google Sheets match) ──

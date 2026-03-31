@@ -64,7 +64,7 @@ const CODE_ANALYSIS_SYSTEM_PROMPT = `You are SCOUT's Code Intelligence Layer, sp
 
 **Migration Context:**
 - Source: Legacy v15r PowerOn app (HTML/JS/VB.NET backend)
-- Target: PowerOn Hub v2.0 (React+TypeScript, API-first)
+- Target: PowerOn Hub v3.0 (React+TypeScript, API-first)
 - Goal: Modernize panels/features incrementally while maintaining data integrity
 
 **Architectural Patterns:**

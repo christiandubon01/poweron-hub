@@ -257,7 +257,7 @@ export function PasscodeScreen({
         {/* PowerOn branding */}
         <div className="mt-12 text-center">
           <span className="text-xs font-mono text-text-4 tracking-widest uppercase">
-            PowerOn Hub · v2.0
+            PowerOn Hub · v3.0
           </span>
         </div>
       </div>

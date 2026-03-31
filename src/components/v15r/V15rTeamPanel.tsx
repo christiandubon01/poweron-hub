@@ -28,6 +28,9 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import ChartJS from 'chart.js/auto'
+
+;(window as any).Chart = ChartJS
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -74,21 +77,9 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: Dynamically load Chart.js from CDN ──
+// ── Chart.js is now bundled — always ready ──
 function useChartJS() {
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    if ((window as any).Chart) {
-      setReady(true)
-      return
-    }
-    const s = document.createElement('script')
-    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js'
-    s.onload = () => setReady(true)
-    s.onerror = () => console.error('Failed to load Chart.js')
-    document.head.appendChild(s)
-  }, [])
-  return ready
+  return true
 }
 
 // ── COST VS PIPELINE CHART COMPONENT ──

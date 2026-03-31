@@ -85,7 +85,7 @@ function EmailSignIn() {
             </div>
             <div>
               <div className="text-sm font-bold text-text-1 leading-tight">PowerOn Hub</div>
-              <div className="text-xs text-text-3 font-mono uppercase tracking-wider">v2.0 · 11 Agents</div>
+              <div className="text-xs text-text-3 font-mono uppercase tracking-wider">v3.0 · 11 Agents</div>
             </div>
           </div>
         </div>
@@ -188,7 +188,7 @@ function EmailSignIn() {
 
         <div className="mt-12 text-center">
           <span className="text-xs font-mono text-text-4 tracking-widest uppercase">
-            PowerOn Hub · v2.0
+            PowerOn Hub · v3.0
           </span>
         </div>
       </div>

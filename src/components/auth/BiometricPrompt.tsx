@@ -224,7 +224,7 @@ export function BiometricPrompt({ isEnrollment = false, onEnroll }: BiometricPro
 
         <div className="mt-12">
           <span className="text-xs font-mono text-text-4 tracking-widest uppercase">
-            PowerOn Hub · v2.0
+            PowerOn Hub · v3.0
           </span>
         </div>
       </div>
