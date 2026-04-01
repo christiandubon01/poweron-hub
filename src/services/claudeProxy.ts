@@ -7,9 +7,9 @@
  * This centralizes all Anthropic API access in the app.
  */
 
-const PROXY_URL = '/.netlify/functions/claude'
-const DIRECT_URL = 'https://api.anthropic.com/v1/messages'
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514'
+var PROXY_URL = '/.netlify/functions/claude'
+var DIRECT_URL = 'https://api.anthropic.com/v1/messages'
+var DEFAULT_MODEL = 'claude-sonnet-4-20250514'
 
 export interface ClaudeRequest {
   messages: Array<{ role: 'user' | 'assistant'; content: string | any[] }>

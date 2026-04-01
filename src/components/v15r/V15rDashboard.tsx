@@ -276,8 +276,8 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
 }
 
 // ── G6: PULSE "Analyze Trends" — 1-hour cached AI trend analysis ──
-const PULSE_CACHE_KEY = 'pulse_trend_analysis_cache'
-const PULSE_CACHE_TTL = 60 * 60 * 1000 // 1 hour
+var PULSE_CACHE_KEY = 'pulse_trend_analysis_cache'
+var PULSE_CACHE_TTL = 60 * 60 * 1000 // 1 hour
 
 function PulseTrendAnalyzer({ backup, cfotSummary, projects }: {
   backup: BackupData
