@@ -65,7 +65,8 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!canvasRef.current || !backup) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
 

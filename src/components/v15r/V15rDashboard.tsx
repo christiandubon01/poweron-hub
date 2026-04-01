@@ -18,9 +18,10 @@ import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { ChartJS } from '@/lib/chartSetup'
 
-// ── ERROR BOUNDARY ──
-class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
-  state = { hasError: false, error: '' }
+// ── ERROR BOUNDARY (auto-retries after 2s) ──
+class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string, retries: number}> {
+  state = { hasError: false, error: '', retries: 0 }
+  _retryTimer: any = null
 
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error: error.message }
@@ -28,15 +29,24 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('ChartErrorBoundary caught error:', error, errorInfo)
+    if (this.state.retries < 3) {
+      this._retryTimer = setTimeout(() => {
+        this.setState((s: any) => ({ hasError: false, error: '', retries: s.retries + 1 }))
+      }, 2000)
+    }
+  }
+
+  componentWillUnmount() {
+    if (this._retryTimer) clearTimeout(this._retryTimer)
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center h-full bg-[var(--bg-card)] rounded-lg p-6 text-red-400">
+        <div className="flex items-center justify-center h-full bg-[var(--bg-card)] rounded-lg p-6 text-gray-400">
           <div className="text-center">
-            <p className="font-semibold mb-2">Chart Error</p>
-            <p className="text-sm">{this.state.error}</p>
+            <p className="font-semibold mb-2">{this.state.retries < 3 ? 'Loading chart...' : 'Chart unavailable'}</p>
+            {this.state.retries >= 3 && <p className="text-sm text-gray-500">{this.state.error}</p>}
           </div>
         </div>
       )
@@ -45,9 +55,17 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: Chart.js is now bundled via import — always ready ──
+// ── HELPER: check if Chart.js initialized successfully ──
 function useChartJS() {
-  return true
+  const [ready, setReady] = useState((window as any)._chartReady === true)
+  useEffect(() => {
+    if (ready) return
+    const timer = setTimeout(() => {
+      setReady((window as any)._chartReady === true)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [ready])
+  return ready
 }
 
 // ── CFOT CHART COMPONENT (Google Sheets match) ──
@@ -61,8 +79,8 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !data.length) return
 
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
 
     // Destroy existing chart
     if (chartRef.current) {
@@ -412,8 +430,8 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -503,8 +521,8 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -590,8 +608,8 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -727,8 +745,8 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !serviceLogs.length) return
 
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -850,8 +868,8 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -1888,8 +1906,8 @@ function PlannedVsActualChart({ projects, backup }: { projects: any[], backup: B
 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
-    const Chart = ChartJS
-    if (!Chart) return
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null }
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return

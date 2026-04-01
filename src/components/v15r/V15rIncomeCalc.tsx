@@ -22,9 +22,17 @@ import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ChartJS } from '@/lib/chartSetup'
 
-// Chart.js initialized synchronously at app start via chartSetup.ts
+// Check if Chart.js initialized successfully
 function useChartJS() {
-  return true
+  const [ready, setReady] = useState((window as any)._chartReady === true)
+  useEffect(() => {
+    if (ready) return
+    const timer = setTimeout(() => {
+      setReady((window as any)._chartReady === true)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [ready])
+  return ready
 }
 
 export default function V15rIncomeCalc() {
@@ -635,7 +643,8 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
 
@@ -776,7 +785,8 @@ function RevenueStreamChart({ data }) {
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     Chart.defaults.color = '#9ca3af'
 
     chartRef.current = new Chart(ctx, {
@@ -920,7 +930,8 @@ function BusinessProjectionsChart({
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     Chart.defaults.color = '#9ca3af'
 
     const electricalMonthly = electricalPipelineTotal / 12

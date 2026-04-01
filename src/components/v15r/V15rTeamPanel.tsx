@@ -75,9 +75,17 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// Chart.js initialized synchronously at app start via chartSetup.ts
+// Check if Chart.js initialized successfully
 function useChartJS() {
-  return true
+  const [ready, setReady] = useState((window as any)._chartReady === true)
+  useEffect(() => {
+    if (ready) return
+    const timer = setTimeout(() => {
+      setReady((window as any)._chartReady === true)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [ready])
+  return ready
 }
 
 // ── COST VS PIPELINE CHART COMPONENT ──
@@ -89,7 +97,8 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     if (!Chart) return
 
     if (chartRef.current) {
@@ -288,7 +297,8 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     if (!Chart) return
 
     if (chartRef.current) {
@@ -767,7 +777,8 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = ChartJS
+    const Chart = ChartJS as any
+    if (!Chart || typeof Chart.register !== 'function') return
     if (!Chart) return
 
     if (chartRef.current) {
