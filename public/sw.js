@@ -6,9 +6,9 @@
 //   - API/AI calls: network-first, graceful offline error
 //   - Supabase data GETs: stale-while-revalidate
 
-const CACHE_NAME = 'poweron-v2'
-const APP_SHELL_CACHE = 'poweron-shell-v2'
-const DATA_CACHE = 'poweron-data-v2'
+const CACHE_NAME = 'poweron-v3'
+const APP_SHELL_CACHE = 'poweron-shell-v3'
+const DATA_CACHE = 'poweron-data-v3'
 
 // Patterns for network-first (AI + API calls)
 const API_PATTERNS = [/\/api\//, /claude\.ai/, /anthropic\.com/, /netlify\/functions\//]
@@ -199,16 +199,19 @@ self.addEventListener('install', (event) => {
   )
 })
 
-// ── Activate — clean old caches ───────────────────────────────────────────────
+// ── Activate — delete ALL old caches to force fresh asset loads ──────────────
 
 self.addEventListener('activate', (event) => {
-  const VALID_CACHES = new Set([CACHE_NAME, APP_SHELL_CACHE, DATA_CACHE])
+  var VALID_CACHES = new Set([CACHE_NAME, APP_SHELL_CACHE, DATA_CACHE])
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys.filter((k) => !VALID_CACHES.has(k)).map((k) => caches.delete(k))
+    caches.keys().then(function(keys) {
+      return Promise.all(
+        keys.filter(function(k) { return !VALID_CACHES.has(k) }).map(function(k) {
+          console.log('[SW] Deleting old cache:', k)
+          return caches.delete(k)
+        })
       )
-    ).then(() => self.clients.claim())
+    }).then(function() { return self.clients.claim() })
   )
 })
 
