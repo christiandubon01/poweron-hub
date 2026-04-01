@@ -5,6 +5,9 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['chart.js', 'chart.js/auto'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

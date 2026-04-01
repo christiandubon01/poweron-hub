@@ -31,7 +31,8 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ChartErrorBoundary caught error:', error, errorInfo)
+    console.error('[ChartBoundary] caught:', error.message, error.stack)
+    console.error('[ChartBoundary] component stack:', errorInfo.componentStack)
   }
 
   render() {
