@@ -28,7 +28,7 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
     Permissions-Policy     = "camera=(self), microphone=(self), speaker-selection=(self), geolocation=(self)"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.upstash.io https://api.anthropic.com https://api.elevenlabs.io https://api.openai.com; img-src 'self' data: https://*.supabase.co; frame-src 'self' https://calendar.google.com https://*.google.com; media-src 'self' blob:"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.upstash.io https://api.anthropic.com https://api.elevenlabs.io https://api.openai.com https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' data: https://*.supabase.co; frame-src 'self' https://calendar.google.com https://*.google.com; media-src 'self' blob:"
 
 # Cache static assets aggressively
 [[headers]]
