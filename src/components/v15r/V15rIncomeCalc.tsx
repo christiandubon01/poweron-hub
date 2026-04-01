@@ -631,7 +631,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
+    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
     if (cancelled || !canvasRef.current) return
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
@@ -777,7 +777,7 @@ function RevenueStreamChart({ data }) {
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
+    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
     if (cancelled || !canvasRef.current) return
     Chart.defaults.color = '#9ca3af'
 
@@ -926,7 +926,7 @@ function BusinessProjectionsChart({
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
+    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
     if (cancelled || !canvasRef.current) return
     Chart.defaults.color = '#9ca3af'
 
