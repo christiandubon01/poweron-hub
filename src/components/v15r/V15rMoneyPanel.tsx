@@ -14,7 +14,26 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import ChartJS from 'chart.js/auto'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  DoughnutController,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+} from 'chart.js'
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  DoughnutController,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+)
 import {
   getBackupData,
   saveBackupData,
