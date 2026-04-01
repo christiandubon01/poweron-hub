@@ -18,8 +18,8 @@ import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData
 import { callClaude, extractText } from '@/services/claudeProxy'
 import ChartJS from 'chart.js/auto'
 
-// Make Chart.js available on window for zoom plugin compatibility
-;(window as any).Chart = ChartJS
+// Lazy-assign window.Chart inside first useEffect that needs it (for zoom plugin compat)
+// Removed module-level side effect to prevent minification initialization conflicts
 
 // ── ERROR BOUNDARY ──
 class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
@@ -64,7 +64,7 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !data.length) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     // Destroy existing chart
@@ -415,7 +415,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -506,7 +506,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -593,7 +593,7 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -730,7 +730,7 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !serviceLogs.length) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -853,7 +853,7 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
