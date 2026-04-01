@@ -20,42 +20,25 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarController,
-  LineController,
-  DoughnutController,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-} from 'chart.js'
+// Chart.js loaded via CDN in index.html to avoid Vite production circular dependency
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarController,
-  LineController,
-  DoughnutController,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-)
-
-// ── Chart.js is now bundled — always ready ──
+// ── HELPER: wait for Chart.js CDN to load ──
 function useChartJS() {
-  return true
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    if ((window as any).Chart) {
+      setReady(true)
+    } else {
+      const check = setInterval(() => {
+        if ((window as any).Chart) {
+          setReady(true)
+          clearInterval(check)
+        }
+      }, 50)
+      return () => clearInterval(check)
+    }
+  }, [])
+  return ready
 }
 
 export default function V15rIncomeCalc() {
@@ -666,7 +649,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
 
@@ -807,7 +790,7 @@ function RevenueStreamChart({ data }) {
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     Chart.defaults.color = '#9ca3af'
 
     chartRef.current = new Chart(ctx, {
@@ -951,7 +934,7 @@ function BusinessProjectionsChart({
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     Chart.defaults.color = '#9ca3af'
 
     const electricalMonthly = electricalPipelineTotal / 12

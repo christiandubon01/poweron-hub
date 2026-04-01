@@ -28,36 +28,7 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarController,
-  LineController,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-} from 'chart.js'
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarController,
-  LineController,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-)
+// Chart.js loaded via CDN in index.html to avoid Vite production circular dependency
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -104,9 +75,23 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── Chart.js is now bundled — always ready ──
+// ── HELPER: wait for Chart.js CDN to load ──
 function useChartJS() {
-  return true
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    if ((window as any).Chart) {
+      setReady(true)
+    } else {
+      const check = setInterval(() => {
+        if ((window as any).Chart) {
+          setReady(true)
+          clearInterval(check)
+        }
+      }, 50)
+      return () => clearInterval(check)
+    }
+  }, [])
+  return ready
 }
 
 // ── COST VS PIPELINE CHART COMPONENT ──
@@ -118,7 +103,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
@@ -317,7 +302,7 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
@@ -794,7 +779,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {

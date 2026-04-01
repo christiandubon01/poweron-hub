@@ -14,26 +14,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  DoughnutController,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
-} from 'chart.js'
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  DoughnutController,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
-)
+// Chart.js loaded via CDN in index.html to avoid Vite production circular dependency
 import {
   getBackupData,
   saveBackupData,
@@ -84,7 +65,7 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!canvasRef.current || !backup) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
 

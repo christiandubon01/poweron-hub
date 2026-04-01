@@ -30,7 +30,11 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
     rollupOptions: {
+      external: ['chart.js'],
       output: {
+        globals: {
+          'chart.js': 'Chart',
+        },
         // ── Manual chunk splitting ──────────────────────────────────────────
         // Only split npm vendor packages. Internal app modules stay in the
         // default chunk — the TDZ fix is in V15rLayout.tsx (isMobile moved

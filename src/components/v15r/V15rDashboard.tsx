@@ -16,39 +16,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarController,
-  LineController,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-} from 'chart.js'
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarController,
-  LineController,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-)
-
-// Lazy-assign window.Chart inside first useEffect that needs it (for zoom plugin compat)
-// Removed module-level side effect to prevent minification initialization conflicts
+// Chart.js loaded via CDN in index.html to avoid Vite production circular dependency
 
 // ── ERROR BOUNDARY ──
 class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
@@ -77,9 +45,23 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: Chart.js is now bundled via import — always ready ──
+// ── HELPER: wait for Chart.js CDN to load ──
 function useChartJS() {
-  return true
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    if ((window as any).Chart) {
+      setReady(true)
+    } else {
+      const check = setInterval(() => {
+        if ((window as any).Chart) {
+          setReady(true)
+          clearInterval(check)
+        }
+      }, 50)
+      return () => clearInterval(check)
+    }
+  }, [])
+  return ready
 }
 
 // ── CFOT CHART COMPONENT (Google Sheets match) ──
@@ -93,7 +75,7 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !data.length) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     // Destroy existing chart
@@ -444,7 +426,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
@@ -535,7 +517,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
@@ -622,7 +604,7 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
@@ -759,7 +741,7 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !serviceLogs.length) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
@@ -882,7 +864,7 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS
+    const Chart = (window as any).Chart
     if (!Chart) return
 
     if (chartRef.current) {
