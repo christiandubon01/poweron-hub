@@ -8,9 +8,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      'chart.js/auto': path.resolve(__dirname, 'node_modules/chart.js/dist/chart.cjs'),
-      'chart.js': path.resolve(__dirname, 'node_modules/chart.js/dist/chart.cjs'),
     },
+    dedupe: ['chart.js'],
   },
   server: {
     port: 5173,
@@ -29,6 +28,7 @@ export default defineConfig({
     },
   },
   build: {
+    target: 'es2015',
     outDir: 'dist',
     sourcemap: true,
     rollupOptions: {
