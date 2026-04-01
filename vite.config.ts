@@ -6,7 +6,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    exclude: ['chart.js', 'chart.js/auto', 'recharts'],
+    include: ['recharts'],
   },
   resolve: {
     alias: {
@@ -30,12 +30,8 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'es2015',
     outDir: 'dist',
     sourcemap: true,
-    commonjsOptions: {
-      include: [/recharts/, /node_modules/],
-    },
     rollupOptions: {
       output: {
         // ── Manual chunk splitting ──────────────────────────────────────────
