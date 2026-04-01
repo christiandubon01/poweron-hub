@@ -598,419 +598,97 @@ export default function V15rIncomeCalc() {
 // Outer ring: Revenue breakdown by job type (Solar Only, Battery Only, Panel Upgrade, Battery+Panel)
 // Inner ring: Cost ratio (RMO Fee, Installation Labor, Net Margin)
 function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, installLaborTotal, netMarginTotal }) {
-  const canvasRef = useRef(null)
-  const chartRef = useRef(null)
-
-  // Outer ring — revenue by job type
-  const outerColors = { solar: '#3b82f6', battery: '#8b5cf6', panel: '#14b8a6', batteryPanel: '#f59e0b' }
-  // Inner ring — cost ratio
-  const innerColors = { rmo: '#22c55e', labor: '#ef4444', margin: '#10b981' }
-
-  const outerSegments = [
-    { name: 'Solar Only', pct: solar, color: outerColors.solar, ring: 'outer' },
-    { name: 'Battery Only', pct: batteryOnly, color: outerColors.battery, ring: 'outer' },
-    { name: 'Panel Upgrade', pct: panel, color: outerColors.panel, ring: 'outer' },
-    { name: 'Battery+Panel', pct: batteryPanel, color: outerColors.batteryPanel, ring: 'outer' },
-  ]
-
-  const innerSegments = [
-    { name: 'RMO Fee', value: Math.max(0, rmoFeeTotal), color: innerColors.rmo, ring: 'inner' },
-    { name: 'Install Labor', value: Math.max(0, installLaborTotal), color: innerColors.labor, ring: 'inner' },
-    { name: 'Net Margin', value: Math.max(0, netMarginTotal), color: innerColors.margin, ring: 'inner' },
-  ]
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-
-    if (chartRef.current) {
-      chartRef.current.destroy()
-    }
-
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-
-    let cancelled = false
-    ;(async () => {
-    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
-    if (cancelled || !canvasRef.current) return
-    Chart.defaults.color = '#9ca3af'
-    Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
-
-    chartRef.current = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: [
-          'Solar Only', 'Battery Only', 'Panel Upgrade', 'Battery+Panel',
-          'RMO Fee', 'Install Labor', 'Net Margin'
-        ],
-        datasets: [
-          {
-            label: 'Revenue Breakdown',
-            data: [solar, batteryOnly, panel, batteryPanel],
-            backgroundColor: [outerColors.solar, outerColors.battery, outerColors.panel, outerColors.batteryPanel],
-            borderColor: '#1a1d27',
-            borderWidth: 2,
-            borderRadius: 2,
-            offset: [0, 0, 0, 0],
-          },
-          {
-            label: 'Cost Ratio',
-            data: [Math.max(0, rmoFeeTotal), Math.max(0, installLaborTotal), Math.max(0, netMarginTotal)],
-            backgroundColor: [innerColors.rmo, innerColors.labor, innerColors.margin],
-            borderColor: '#1a1d27',
-            borderWidth: 2,
-            borderRadius: 2,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        aspectRatio: 1,
-        cutout: '35%',
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: {
-              color: '#d1d5db',
-              font: { size: 12 },
-              padding: 15,
-              usePointStyle: true,
-            },
-          },
-          tooltip: {
-            backgroundColor: '#374151',
-            titleColor: '#f0f0ff',
-            bodyColor: '#e5e7eb',
-            borderColor: '#4b5563',
-            borderWidth: 1,
-            padding: 10,
-            titleFont: { weight: 'bold' },
-            callbacks: {
-              label: (context) => {
-                const datasetIdx = context.datasetIndex
-                const value = context.parsed
-                if (datasetIdx === 0) {
-                  return `${context.label}: ${value.toFixed(1)}%`
-                } else {
-                  return `${context.label}: ${fmtK(value)}`
-                }
-              },
-            },
-          },
-        },
-      },
-    })
-
-    })()
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, installLaborTotal, netMarginTotal])
-
+  const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } = require('recharts')
+  const outerData = [
+    { name: 'Solar Only', value: solar, color: '#3b82f6' },
+    { name: 'Battery Only', value: batteryOnly, color: '#8b5cf6' },
+    { name: 'Panel Upgrade', value: panel, color: '#14b8a6' },
+    { name: 'Battery+Panel', value: batteryPanel, color: '#f59e0b' },
+  ].filter(d => d.value > 0)
+  const innerData = [
+    { name: 'RMO Fee', value: rmoFeeTotal, color: '#22c55e' },
+    { name: 'Install Labor', value: installLaborTotal, color: '#ef4444' },
+    { name: 'Net Margin', value: netMarginTotal, color: '#10b981' },
+  ].filter(d => d.value > 0)
   return (
-    <div className="bg-[#232738] rounded-lg p-4">
-      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Job Mix Distribution</h3>
-
+    <div className="space-y-4">
       <div className="flex items-center justify-center">
         <div style={{ position: 'relative', maxWidth: '320px', height: '320px', width: '100%' }}>
-          <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={outerData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={120} innerRadius={50}>
+                {outerData.map((d, i) => <Cell key={i} fill={d.color} stroke="#1a1d27" strokeWidth={2} />)}
+              </Pie>
+              <Pie data={innerData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={45} innerRadius={0}>
+                {innerData.map((d, i) => <Cell key={i} fill={d.color} stroke="#1a1d27" strokeWidth={2} />)}
+              </Pie>
+              <Tooltip contentStyle={{ backgroundColor: '#374151', border: '1px solid #4b5563', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
+            </PieChart>
+          </ResponsiveContainer>
         </div>
       </div>
-
-      {/* Segment Breakdown Legend — matches Business Health Overview format */}
-      <div className="space-y-4 border-t border-gray-600 pt-4">
-        {/* Outer Ring */}
-        <div>
-          <p className="text-xs font-semibold text-gray-400 mb-2 uppercase">Revenue by Job Type (Outer Ring)</p>
-          <div className="space-y-1">
-            {outerSegments.map((seg) => (
-              <div key={seg.name} className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
-                  <span className="text-gray-300">{seg.name}</span>
-                </div>
-                <span className="text-gray-300">{seg.pct.toFixed(1)}%</span>
-              </div>
-            ))}
+      <div className="grid grid-cols-2 gap-4 text-xs">
+        {[...outerData, ...innerData].map(d => (
+          <div key={d.name} className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }} />
+            <span className="text-gray-400">{d.name}:</span>
+            <span className="text-gray-200 font-mono">{fmtK(d.value)}</span>
           </div>
-        </div>
-
-        {/* Inner Ring */}
-        <div>
-          <p className="text-xs font-semibold text-gray-400 mb-2 uppercase">Cost Ratio (Inner Ring)</p>
-          <div className="space-y-1">
-            {innerSegments.map((seg) => (
-              <div key={seg.name} className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
-                  <span className="text-gray-300">{seg.name}</span>
-                </div>
-                <span className="text-gray-300">{fmtK(seg.value)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   )
 }
 
-// Revenue Stream Stacked Area Chart
 function RevenueStreamChart({ data }) {
-  const canvasRef = useRef(null)
-  const chartRef = useRef(null)
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-
-    if (chartRef.current) {
-      chartRef.current.destroy()
-    }
-
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-
-    let cancelled = false
-    ;(async () => {
-    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
-    if (cancelled || !canvasRef.current) return
-    Chart.defaults.color = '#9ca3af'
-
-    chartRef.current = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: data.map(d => `Month ${d.month}`),
-        datasets: [
-          {
-            label: 'Electrical Pipeline Revenue',
-            data: data.map(d => d.electrical),
-            backgroundColor: 'rgba(16, 185, 129, 0.3)',
-            borderColor: '#10b981',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 4,
-            pointBackgroundColor: '#10b981'
-          },
-          {
-            label: 'RMO Revenue',
-            data: data.map(d => d.rmo),
-            backgroundColor: 'rgba(52, 211, 153, 0.3)',
-            borderColor: '#34d399',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 4,
-            pointBackgroundColor: '#34d399'
-          },
-          {
-            label: 'Installation Labor Revenue',
-            data: data.map(d => d.installLabor),
-            backgroundColor: 'rgba(234, 179, 8, 0.3)',
-            borderColor: '#eab308',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 4,
-            pointBackgroundColor: '#eab308'
-          },
-          ...(data[0]?.employeeCost > 0 ? [{
-            label: 'Employee Cost',
-            data: data.map(d => d.employeeCost),
-            backgroundColor: 'rgba(239, 68, 68, 0.3)',
-            borderColor: '#ef4444',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 4,
-            pointBackgroundColor: '#ef4444',
-            borderDash: [5, 5]
-          }] : []),
-          {
-            label: 'Combined Total',
-            data: data.map(d => d.total),
-            backgroundColor: 'rgba(255, 255, 255, 0)',
-            borderColor: '#ffffff',
-            borderWidth: 3,
-            fill: false,
-            tension: 0.4,
-            pointRadius: 5,
-            pointBackgroundColor: '#ffffff'
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            labels: { color: '#9ca3af', padding: 15, font: { size: 12 } }
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false,
-            callbacks: {
-              label: function(context) {
-                const val = context.parsed.y
-                return context.dataset.label + ': $' + val.toLocaleString('en-US', { maximumFractionDigits: 0 })
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            grid: { color: 'rgba(255,255,255,0.05)' },
-            ticks: {
-              color: '#9ca3af',
-              callback: (v) => '$' + (v / 1000).toFixed(0) + 'k'
-            }
-          },
-          x: {
-            grid: { display: false },
-            ticks: { color: '#9ca3af' }
-          }
-        }
-      }
-    })
-
-    })()
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [data])
-
+  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = require('recharts')
+  const chartData = data.map(d => ({ name: 'Mo ' + d.month, electrical: d.electrical || 0, rmo: d.rmo || 0, installLabor: d.installLabor || 0, employeeCost: d.employeeCost || 0, total: d.total || 0 }))
   return (
     <div className="bg-[#232738] rounded-lg p-4">
       <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Electrical Pipeline & Revenue Projection</h3>
       <div style={{ height: '300px' }}>
-        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+            <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+            <YAxis tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
+            <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
+            <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
+            <Line type="monotone" dataKey="electrical" name="Electrical Pipeline" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="rmo" name="RMO Revenue" stroke="#34d399" strokeWidth={2} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="installLabor" name="Install Labor" stroke="#eab308" strokeWidth={2} dot={{ r: 3 }} />
+            {chartData.some(d => d.employeeCost > 0) && <Line type="monotone" dataKey="employeeCost" name="Employee Cost" stroke="#ef4444" strokeWidth={2} strokeDasharray="5 5" dot={false} />}
+            <Line type="monotone" dataKey="total" name="Combined Total" stroke="#ffffff" strokeWidth={3} dot={{ r: 4 }} />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   )
 }
 
-// Business Projections Grouped Bar Chart
-function BusinessProjectionsChart({
-  rmoMonthly,
-  rmoAnnual,
-  installMonthly,
-  installAnnual,
-  totalMonthly,
-  totalAnnual
-}) {
-  const canvasRef = useRef(null)
-  const chartRef = useRef(null)
-  const backup = getBackupData()
-  const activeProjects = (backup?.projects || []).filter(p => resolveProjectBucket(p) === 'active')
-  const electricalPipelineTotal = activeProjects.reduce((s, p) => s + num(p.contract), 0)
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-
-    if (chartRef.current) {
-      chartRef.current.destroy()
-    }
-
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-
-    let cancelled = false
-    ;(async () => {
-    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
-    if (cancelled || !canvasRef.current) return
-    Chart.defaults.color = '#9ca3af'
-
-    const electricalMonthly = electricalPipelineTotal / 12
-
-    chartRef.current = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: ['Monthly', 'Annual (monthly equiv)', '5-Year (monthly equiv)'],
-        datasets: [
-          {
-            label: 'Electrical Pipeline',
-            data: [electricalMonthly, electricalMonthly, electricalMonthly],
-            backgroundColor: '#3b82f6',
-            borderColor: '#1d4ed8',
-            borderWidth: 1
-          },
-          {
-            label: 'RMO Revenue',
-            data: [rmoMonthly, rmoAnnual / 12, (rmoAnnual / 12) * 5],
-            backgroundColor: '#10b981',
-            borderColor: '#059669',
-            borderWidth: 1
-          },
-          {
-            label: 'Install Labor Revenue',
-            data: [installMonthly, installAnnual / 12, (installAnnual / 12) * 5],
-            backgroundColor: '#eab308',
-            borderColor: '#ca8a04',
-            borderWidth: 1
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            labels: { color: '#9ca3af', padding: 15, font: { size: 12 } }
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false,
-            callbacks: {
-              label: function(context) {
-                const val = context.parsed.y
-                const label = context.dataset.label
-                return label + ': $' + val.toLocaleString('en-US', { maximumFractionDigits: 0 })
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            grid: { color: 'rgba(255,255,255,0.05)' },
-            ticks: {
-              color: '#9ca3af',
-              callback: (v) => '$' + (v / 1000).toFixed(0) + 'k'
-            }
-          },
-          x: {
-            grid: { display: false },
-            ticks: { color: '#9ca3af' }
-          }
-        }
-      }
-    })
-
-    })()
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [rmoMonthly, rmoAnnual, installMonthly, installAnnual, totalMonthly, totalAnnual, electricalPipelineTotal])
-
+function BusinessProjectionsChart({ rmoMonthly, rmoAnnual, installMonthly, installAnnual, totalMonthly, totalAnnual, electricalPipelineTotal }) {
+  const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = require('recharts')
+  const chartData = [
+    { name: 'Monthly', electrical: electricalPipelineTotal / 12, rmo: rmoMonthly, install: installMonthly },
+    { name: 'Annual (mo)', electrical: electricalPipelineTotal / 12, rmo: rmoAnnual / 12, install: installAnnual / 12 },
+    { name: '5-Year (mo)', electrical: electricalPipelineTotal / 12, rmo: (rmoAnnual / 12) * 5, install: (installAnnual / 12) * 5 },
+  ]
   return (
     <div className="bg-[#232738] rounded-lg p-4">
       <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Business-Linked Projections</h3>
       <div style={{ height: '300px' }}>
-        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+            <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+            <YAxis tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
+            <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
+            <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
+            <Bar dataKey="electrical" name="Electrical Pipeline" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="rmo" name="RMO Revenue" fill="#10b981" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="install" name="Install Labor" fill="#eab308" radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   )

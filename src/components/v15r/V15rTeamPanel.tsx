@@ -76,424 +76,79 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
 
 
 // ── COST VS PIPELINE CHART COMPONENT ──
-function CostVsPipelineChart({ backup }: { backup: BackupData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const chartRef = useRef<any>(null)
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-
-    let cancelled = false
-    ;(async () => {
-    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
-    if (cancelled || !canvasRef.current) return
-    if (!Chart) return
-
-    if (chartRef.current) {
-      chartRef.current.destroy()
-      chartRef.current = null
-    }
-
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-
-    // Build 6-month data: last 3 months + next 3 months
-    const today = new Date()
-    const months: { date: Date; label: string }[] = []
-
-    // Last 3 months
-    for (let i = 3; i >= 1; i--) {
-      const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
-      months.push({
-        date: d,
-        label: d.toLocaleDateString('en-US', { month: 'short' })
-      })
-    }
-
-    // Current month
-    months.push({
-      date: new Date(today.getFullYear(), today.getMonth(), 1),
-      label: today.toLocaleDateString('en-US', { month: 'short' })
-    })
-
-    // Next 2 months
-    for (let i = 1; i <= 2; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth() + i, 1)
-      months.push({
-        date: d,
-        label: d.toLocaleDateString('en-US', { month: 'short' })
-      })
-    }
-
-    const labels = months.map(m => m.label)
-    const employeeCosts: number[] = []
-    const pipelineRevenues: number[] = []
-
-    const employees = backup.employees || []
-    const logs = backup.logs || []
-    const projects = backup.projects || []
-
-    // Calculate for each month
-    months.forEach((month) => {
-      const monthStart = month.date
-      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0)
-
-      // Employee costs: sum of team member costs for logs in this month
-      let monthCost = 0
-      logs.forEach(log => {
-        if (log.date) {
-          const logDate = new Date(log.date)
-          if (logDate >= monthStart && logDate <= monthEnd) {
-            const emp = employees.find(e => e.id === log.empId)
-            const costRate = num(emp?.costRate || 0)
-            monthCost += num(log.hrs || 0) * costRate
-          }
-        }
-      })
-      employeeCosts.push(monthCost)
-
-      // Pipeline revenue: sum of active project contracts active in this month
-      let monthPipeline = 0
-      projects.forEach(proj => {
-        if (proj.status === 'active' || proj.status === 'coming') {
-          monthPipeline += num(proj.contract || 0)
-        }
-      })
-      pipelineRevenues.push(monthPipeline)
-    })
-
-    // Set Chart.js defaults
-    Chart.defaults.color = '#9ca3af'
-    Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
-
-    // Compute suggestedMax for dual Y-axes: max(revenue, costs) * 1.2
-    const maxRevenue = Math.max(...pipelineRevenues, 0)
-    const maxCost = Math.max(...employeeCosts, 0)
-    const suggestedMax = Math.max(maxRevenue, maxCost) * 1.2 || 10000
-
-    // Helper: format dollar value without "-$0.2m" bug — use $200k not -$0.2m
-    const fmtAxisDollar = (v: number) => {
-      const abs = Math.abs(v)
-      const sign = v < 0 ? '-' : ''
-      if (abs >= 1000000) return sign + '$' + (abs / 1000000).toFixed(1) + 'm'
-      if (abs >= 1000) return sign + '$' + Math.round(abs / 1000) + 'k'
-      return sign + '$' + Math.round(abs)
-    }
-
-    chartRef.current = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Employee Cost',
-            data: employeeCosts,
-            backgroundColor: '#ef4444',
-            borderColor: 'rgba(239,68,68,0.5)',
-            type: 'line',
-            borderWidth: 3,
-            pointBackgroundColor: '#ef4444',
-            pointRadius: 4,
-            fill: false,
-            tension: 0.3,
-            yAxisID: 'y',
-          },
-          {
-            label: 'Pipeline Revenue',
-            data: pipelineRevenues,
-            backgroundColor: 'rgba(16,185,129,0.25)',
-            borderColor: '#10b981',
-            borderWidth: 2,
-            yAxisID: 'y1',
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            titleColor: '#fff',
-            bodyColor: '#ccc',
-            padding: 8,
-            titleFont: { size: 12 },
-            bodyFont: { size: 11 },
-            callbacks: {
-              label: (ctx: any) => {
-                const label = ctx.dataset.label || ''
-                const value = ctx.parsed.y || 0
-                return `${label}: ${fmtAxisDollar(value)}`
-              }
-            }
-          },
-          legend: {
-            labels: { color: '#9ca3af', font: { size: 12 } }
-          }
-        },
-        scales: {
-          x: {
-            ticks: { color: '#9ca3af', font: { size: 10 } },
-            grid: { display: false }
-          },
-          y: {
-            type: 'linear',
-            position: 'left',
-            suggestedMax,
-            suggestedMin: 0,
-            ticks: {
-              color: '#ef4444',
-              callback: (v: any) => fmtAxisDollar(Number(v))
-            },
-            grid: { color: 'rgba(255,255,255,0.05)' },
-            title: { display: true, text: 'Employee Cost', color: '#ef4444', font: { size: 10 } }
-          },
-          y1: {
-            type: 'linear',
-            position: 'right',
-            suggestedMax,
-            suggestedMin: 0,
-            ticks: {
-              color: '#10b981',
-              callback: (v: any) => fmtAxisDollar(Number(v))
-            },
-            grid: { drawOnChartArea: false },
-            title: { display: true, text: 'Revenue', color: '#10b981', font: { size: 10 } }
-          }
-        }
-      }
-    })
-
-    })()
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [backup])
-
-  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+function CostVsPipelineChart({ backup }) {
+  const { ResponsiveContainer, BarChart, Bar, LineChart: LC, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } = require('recharts')
+  const employees = backup.employees || []
+  const projects = backup.projects || []
+  const logs = backup.logs || []
+  const settings = backup.settings || {}
+  const now = new Date()
+  const months = []
+  for (let i = -3; i <= 2; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    months.push({ label: d.toLocaleString('en-US', { month: 'short' }), year: d.getFullYear(), month: d.getMonth() })
+  }
+  const chartData = months.map(m => {
+    const mLogs = logs.filter(l => { const d = new Date(l.date || ''); return d.getMonth() === m.month && d.getFullYear() === m.year })
+    const cost = mLogs.reduce((s, l) => { const emp = employees.find(e => e.id === l.employeeId); return s + (parseFloat(l.hrs || 0) * (emp?.costRate || 35)) }, 0)
+    const rev = projects.filter(p => p.status === 'active' || p.status === 'coming').reduce((s, p) => s + (parseFloat(p.contract || 0) / 12), 0)
+    return { name: m.label, cost, revenue: rev }
+  })
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+        <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+        <YAxis tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
+        <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
+        <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
+        <Bar dataKey="revenue" name="Pipeline Revenue" fill="rgba(16,185,129,0.25)" stroke="#10b981" radius={[3, 3, 0, 0]} />
+        <Line type="monotone" dataKey="cost" name="Employee Cost" stroke="#ef4444" strokeWidth={3} dot={{ r: 3 }} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
 }
+
 
 // ── LABOR COST VS REVENUE 12-WEEK CHART ──
-function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const chartRef = useRef<any>(null)
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-
-    let cancelled = false
-    ;(async () => {
-    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
-    if (cancelled || !canvasRef.current) return
-    if (!Chart) return
-
-    if (chartRef.current) {
-      chartRef.current.destroy()
-      chartRef.current = null
-    }
-
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-
-    const today = new Date()
-    const employees = backup.employees || []
-    const logs = backup.logs || []
-    const projects = backup.projects || []
-    const serviceLogs = backup.serviceLogs || []
-
-    // Build 12 weekly buckets going back from today
-    const weeks: { start: Date; end: Date; label: string }[] = []
-    for (let i = 11; i >= 0; i--) {
-      const end = new Date(today)
-      end.setDate(end.getDate() - i * 7)
-      const start = new Date(end)
-      start.setDate(start.getDate() - 6)
-      weeks.push({
-        start,
-        end,
-        label: `W${12 - i}`
-      })
-    }
-
-    let accumCost = 0
-    let accumRevenue = 0
-    let maxRevenue = 0
-    let maxCosts = 0
-    const accumCosts: number[] = []
-    const accumRevenues: number[] = []
-    const laborPcts: number[] = []
-
-    weeks.forEach(week => {
-      // Weekly labor cost from logs
-      let weekCost = 0
-      logs.forEach(log => {
-        if (log.date) {
-          const d = new Date(log.date)
-          if (d >= week.start && d <= week.end) {
-            const emp = employees.find(e => e.id === log.empId)
-            weekCost += num(log.hrs || 0) * num(emp?.costRate || 0)
-          }
-        }
-      })
-
-      // Weekly revenue: project payments + service collections in this week
-      let weekRevenue = 0
-      projects.forEach(p => {
-        if (p.payments && Array.isArray(p.payments)) {
-          p.payments.forEach((pay: any) => {
-            if (pay.date) {
-              const d = new Date(pay.date)
-              if (d >= week.start && d <= week.end) {
-                weekRevenue += num(pay.amount || 0)
-              }
-            }
-          })
-        }
-      })
-      serviceLogs.forEach((l: any) => {
-        if (l.date) {
-          const d = new Date(l.date)
-          if (d >= week.start && d <= week.end) {
-            weekRevenue += num(l.collected || 0)
-          }
-        }
-      })
-
-      accumCost += weekCost
-      accumRevenue += weekRevenue
-      accumCosts.push(accumCost)
-      accumRevenues.push(accumRevenue)
-      maxCosts = Math.max(maxCosts, accumCost)
-      maxRevenue = Math.max(maxRevenue, accumRevenue)
-      laborPcts.push(accumRevenue > 0 ? (accumCost / accumRevenue) * 100 : 0)
-    })
-
-    Chart.defaults.color = '#9ca3af'
-    Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
-
-    chartRef.current = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: weeks.map(w => w.label),
-        datasets: [
-          {
-            label: 'Accum. Labor Cost',
-            data: accumCosts,
-            borderColor: '#ef4444',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            borderWidth: 2.5,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4,
-            pointBackgroundColor: '#ef4444',
-            yAxisID: 'y'
-          },
-          {
-            label: 'Accum. Revenue',
-            data: accumRevenues,
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-            borderWidth: 2.5,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4,
-            pointBackgroundColor: '#10b981',
-            yAxisID: 'y'
-          },
-          {
-            label: 'Labor % of Revenue',
-            data: laborPcts,
-            borderColor: '#eab308',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            borderDash: [6, 3],
-            fill: false,
-            tension: 0.3,
-            pointRadius: 3,
-            pointBackgroundColor: '#eab308',
-            yAxisID: 'y1'
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: {
-            labels: { color: '#d1d5db', font: { size: 12 }, padding: 15, usePointStyle: true }
-          },
-          tooltip: {
-            backgroundColor: '#374151',
-            titleColor: '#f0f0ff',
-            bodyColor: '#e5e7eb',
-            borderColor: '#4b5563',
-            borderWidth: 1,
-            padding: 10,
-            callbacks: {
-              label: (context: any) => {
-                if (context.datasetIndex === 2) {
-                  return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`
-                }
-                return `${context.dataset.label}: $${Number(context.parsed.y).toLocaleString()}`
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            type: 'linear',
-            position: 'left',
-            beginAtZero: true,
-            suggestedMax: Math.max(maxRevenue, maxCosts) * 1.2,
-            grid: { color: 'rgba(255,255,255,0.05)' },
-            ticks: {
-              color: '#9ca3af',
-              callback: (v: any) => {
-                const abs = Math.abs(Number(v))
-                if (abs < 1000) return '$' + Number(v).toFixed(0)
-                return '$' + (Number(v) / 1000).toFixed(1) + 'k'
-              }
-            },
-            title: { display: true, text: 'Dollars', color: '#9ca3af', font: { size: 11 } }
-          },
-          y1: {
-            type: 'linear',
-            position: 'right',
-            beginAtZero: true,
-            max: 100,
-            grid: { drawOnChartArea: false },
-            ticks: {
-              color: '#eab308',
-              callback: (v: any) => v + '%'
-            },
-            title: { display: true, text: 'Labor %', color: '#eab308', font: { size: 11 } }
-          },
-          x: {
-            grid: { display: false },
-            ticks: { color: '#9ca3af' }
-          }
-        }
-      }
-    })
-
-    })()
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [backup])
-
-  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+function LaborCostVsRevenueChart({ backup }) {
+  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = require('recharts')
+  const employees = backup.employees || []
+  const logs = backup.logs || []
+  const serviceLogs = backup.serviceLogs || []
+  const projects = backup.projects || []
+  const now = new Date()
+  const chartData = []
+  let accumCost = 0, accumRev = 0
+  for (let w = 11; w >= 0; w--) {
+    const weekEnd = new Date(now.getTime() - w * 7 * 86400000)
+    const weekStart = new Date(weekEnd.getTime() - 7 * 86400000)
+    const wLogs = logs.filter(l => { const d = new Date(l.date || ''); return d >= weekStart && d < weekEnd })
+    const cost = wLogs.reduce((s, l) => { const emp = employees.find(e => e.id === l.employeeId); return s + (parseFloat(l.hrs || 0) * (emp?.costRate || 35)) }, 0)
+    const projRev = wLogs.reduce((s, l) => s + parseFloat(l.collected || 0), 0)
+    const svcRev = serviceLogs.filter(l => { const d = new Date(l.date || ''); return d >= weekStart && d < weekEnd }).reduce((s, l) => s + parseFloat(l.collected || 0), 0)
+    accumCost += cost
+    accumRev += projRev + svcRev
+    const pct = accumRev > 0 ? (accumCost / accumRev) * 100 : 0
+    chartData.push({ name: 'W' + (12 - w), cost: accumCost, revenue: accumRev, laborPct: Math.min(pct, 100) })
+  }
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+        <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+        <YAxis yAxisId="left" tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
+        <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => v + '%'} tick={{ fill: '#eab308', fontSize: 10 }} domain={[0, 100]} />
+        <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} />
+        <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
+        <Line yAxisId="left" type="monotone" dataKey="cost" name="Accum. Labor Cost" stroke="#ef4444" strokeWidth={2} dot={false} />
+        <Line yAxisId="left" type="monotone" dataKey="revenue" name="Accum. Revenue" stroke="#10b981" strokeWidth={2} dot={false} />
+        <Line yAxisId="right" type="monotone" dataKey="laborPct" name="Labor % of Revenue" stroke="#eab308" strokeWidth={2} strokeDasharray="6 3" dot={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
 }
+
 
 // ── EMPLOYEE COST STRUCTURE COMPONENT ──
 function EmployeeCostStructure({ backup }: { backup: BackupData }) {
@@ -762,199 +417,43 @@ function OwnerCard({ owner, backup }: { owner: EnhancedEmployee; backup: BackupD
 }
 
 // ── ENHANCED COST VS PIPELINE CHART ──
-function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const chartRef = useRef<any>(null)
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-
-    let cancelled = false
-    ;(async () => {
-    let Chart; try { const m = await import(/* @vite-ignore */ 'chart.js/auto'); Chart = m.Chart || m.default; } catch(e) { console.warn('Chart.js load failed:', e); return }
-    if (cancelled || !canvasRef.current) return
-    if (!Chart) return
-
-    if (chartRef.current) {
-      chartRef.current.destroy()
-      chartRef.current = null
-    }
-
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-
-    const today = new Date()
-    const months: { date: Date; label: string }[] = []
-
-    // Next 6 months
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth() + i, 1)
-      months.push({
-        date: d,
-        label: d.toLocaleDateString('en-US', { month: 'short' })
-      })
-    }
-
-    const labels = months.map(m => m.label)
-    const employeeCostData: number[] = []
-    const ownerDrawData: number[] = []
-    const overheadData: number[] = []
-    const revenueData: number[] = []
-
-    const employees = backup.employees || []
-    const logs = backup.logs || []
-    const projects = backup.projects || []
-    const settings = backup.settings || {}
-    const employeeCosts = settings.employeeCosts || []
-    const personalIncomeGoal = num(settings.personalIncomeGoal || 0)
-    const overheadPct = num(settings.overheadPct || 0)
-
-    const monthlyEmployeeCosts = employeeCosts.reduce((s, c) => s + num(c.amount || 0), 0)
-    const monthlyOwnerDraw = personalIncomeGoal / 12
-
-    months.forEach((month) => {
-      const monthStart = month.date
-      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0)
-
-      // Employee costs (base + logged hours × cost rate)
-      let monthLabor = monthlyEmployeeCosts
-      logs.forEach(log => {
-        if (log.date) {
-          const logDate = new Date(log.date)
-          if (logDate >= monthStart && logDate <= monthEnd) {
-            const emp = employees.find(e => e.id === log.empId)
-            const costRate = num(emp?.costRate || 0)
-            monthLabor += num(log.hrs || 0) * costRate
-          }
-        }
-      })
-      employeeCostData.push(monthLabor)
-
-      // Owner draw
-      ownerDrawData.push(monthlyOwnerDraw)
-
-      // Overhead (% of revenue)
-      let monthRevenue = 0
-      projects.forEach(proj => {
-        if (proj.status === 'active' || proj.status === 'coming') {
-          monthRevenue += num(proj.contract || 0)
-        }
-      })
-      const monthOverhead = monthRevenue * (overheadPct / 100)
-      overheadData.push(monthOverhead)
-      revenueData.push(monthRevenue)
-    })
-
-    // Calculate totals for break-even line
-    const totalMonthCost = months.map((_, i) => employeeCostData[i] + ownerDrawData[i] + overheadData[i])
-
-    Chart.defaults.color = '#9ca3af'
-    Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
-
-    chartRef.current = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Employee Costs',
-            data: employeeCostData,
-            backgroundColor: '#ef4444',
-            borderColor: 'rgba(239, 68, 68, 0.5)',
-            borderWidth: 1
-          },
-          {
-            label: 'Owner Draw',
-            data: ownerDrawData,
-            backgroundColor: '#f97316',
-            borderColor: 'rgba(249, 115, 22, 0.5)',
-            borderWidth: 1
-          },
-          {
-            label: 'Overhead',
-            data: overheadData,
-            backgroundColor: '#eab308',
-            borderColor: 'rgba(234, 179, 8, 0.5)',
-            borderWidth: 1
-          },
-          {
-            label: 'Projected Revenue',
-            data: revenueData,
-            type: 'line',
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-            borderWidth: 3,
-            fill: true,
-            tension: 0.4,
-            pointBackgroundColor: '#10b981',
-            pointBorderColor: '#fff',
-            pointBorderWidth: 2,
-            pointRadius: 5,
-            yAxisID: 'y'
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            titleColor: '#fff',
-            bodyColor: '#ccc',
-            padding: 8,
-            titleFont: { size: 12 },
-            bodyFont: { size: 11 },
-            callbacks: {
-              label: (ctx: any) => {
-                const label = ctx.dataset.label || ''
-                const value = ctx.parsed.y || 0
-                return `${label}: $${Number(value).toLocaleString()}`
-              }
-            }
-          },
-          legend: {
-            labels: { color: '#9ca3af', font: { size: 12 } }
-          }
-        },
-        scales: {
-          x: {
-            stacked: true,
-            ticks: { color: '#9ca3af', font: { size: 10 } },
-            grid: { display: false }
-          },
-          y: {
-            stacked: true,
-            ticks: {
-              color: '#9ca3af',
-              callback: (v: any) => {
-                // Fix "-$0.2m" bug — show "-$200k" instead
-                const abs = Math.abs(Number(v))
-                const sign = Number(v) < 0 ? '-' : ''
-                if (abs >= 1000000) return sign + '$' + (abs / 1000000).toFixed(1) + 'm'
-                if (abs >= 1000) return sign + '$' + Math.round(abs / 1000) + 'k'
-                return sign + '$' + Math.round(abs)
-              }
-            },
-            grid: { color: 'rgba(255,255,255,0.05)' }
-          }
-        }
-      }
-    })
-
-    })()
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [backup, backup?.settings?.employeeCosts, backup?.settings?.payrollMult, backup?.settings?.personalIncomeGoal])
-
-  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+function EnhancedCostVsPipelineChart({ backup }) {
+  const { ResponsiveContainer, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } = require('recharts')
+  const employees = backup.employees || []
+  const projects = backup.projects || []
+  const logs = backup.logs || []
+  const settings = backup.settings || {}
+  const personalIncomeGoal = parseFloat(settings.personalIncomeGoal || 0)
+  const overheadPct = parseFloat(settings.overheadPct || 30) / 100
+  const now = new Date()
+  const chartData = []
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    const label = d.toLocaleString('en-US', { month: 'short' })
+    const mLogs = logs.filter(l => { const ld = new Date(l.date || ''); return ld.getMonth() === d.getMonth() && ld.getFullYear() === d.getFullYear() })
+    const empCost = mLogs.reduce((s, l) => { const emp = employees.find(e => e.id === l.employeeId); return s + (parseFloat(l.hrs || 0) * (emp?.costRate || 35)) }, 0)
+    const revenue = projects.filter(p => p.status === 'active' || p.status === 'coming').reduce((s, p) => s + (parseFloat(p.contract || 0) / 12), 0)
+    const ownerDraw = personalIncomeGoal / 12
+    const overhead = revenue * overheadPct
+    chartData.push({ name: label, employees: empCost, ownerDraw, overhead, revenue })
+  }
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+        <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+        <YAxis tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
+        <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
+        <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
+        <Bar dataKey="employees" name="Employee Costs" stackId="costs" fill="#ef4444" />
+        <Bar dataKey="ownerDraw" name="Owner Draw" stackId="costs" fill="#f97316" />
+        <Bar dataKey="overhead" name="Overhead" stackId="costs" fill="#eab308" />
+        <Line type="monotone" dataKey="revenue" name="Projected Revenue" stroke="#10b981" strokeWidth={3} dot={{ r: 3 }} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
 }
+
 
 // ── AI INSIGHT CARD ──
 function AIInsightCard({ backup }: { backup: BackupData }) {
