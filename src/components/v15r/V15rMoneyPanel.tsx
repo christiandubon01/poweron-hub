@@ -798,7 +798,7 @@ export default function V15rMoneyPanel() {
                 <td className="py-1.5 px-1 text-right font-mono text-gray-300">{w.pendingInv || '\u2014'}</td>
                 <td className="py-1.5 px-1 text-right font-mono" style={{ color: exposure > 0 ? '#ef4444' : undefined }}>{exposure || '\u2014'}</td>
                 <td className="py-1.5 px-1 text-right font-mono font-bold" style={{ color: '#3b82f6' }}>
-                  {w.accum || '\u2014'}
+                  {w.accum ? Math.round(num(w.accum)).toLocaleString() : '\u2014'}
                   {isCurrentWeek && <span className="ml-1 text-blue-400 text-[9px]">← Current</span>}
                 </td>
               </tr>

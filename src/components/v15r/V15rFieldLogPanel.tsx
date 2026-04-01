@@ -911,7 +911,8 @@ export default function V15rFieldLogPanel() {
           for (let i = 0; i < 7; i++) {
             const d = new Date(now)
             d.setDate(d.getDate() - i)
-            const key = d.toISOString().slice(0, 10)
+            // Use local date string (YYYY-MM-DD) — matches log.date format
+            const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
             perDayData[key] = 0
           }
 
