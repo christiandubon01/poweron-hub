@@ -98,10 +98,20 @@ export default function V15rIncomeCalc() {
   const contractVal = baseSolarContractVal + batteryAdderAvg + panelUpgradeAdderAvg
 
   const baseRmoPerSys = baseSolarContractVal * (rmoFee / 100)
-  const batteryRmoPerSys = batteryAdderAvg * (num(calcRefs.batteryRmoFeePct) / 100)
-  const panelUpgradeRmoPerSys = panelUpgradeAdderAvg * (num(calcRefs.panelUpgradeRmoFeePct) / 100)
+  const batteryRmoFeePct = num(calcRefs.batteryRmoFeePct) || 3
+  const panelUpgradeRmoFeePct = num(calcRefs.panelUpgradeRmoFeePct) || 3
+  const batteryRmoPerSys = batteryAdderAvg * (batteryRmoFeePct / 100)
+  const panelUpgradeRmoPerSys = panelUpgradeAdderAvg * (panelUpgradeRmoFeePct / 100)
   const rmoPerSys = baseRmoPerSys + batteryRmoPerSys + panelUpgradeRmoPerSys
-  const monthlyBasePerSys = monthlyBaseFee / Math.max(1, panelsPerSystem)
+  // Fee per battery-specific system (raw, not attach-weighted)
+  const batteryRmoFeePerBatterySys = batteryFeePerSystem * (batteryRmoFeePct / 100)
+  // Fee per panel-upgrade-specific system (raw, not attach-weighted)
+  const panelRmoFeePerPanelSys = panelUpgradeFeePerSystem * (panelUpgradeRmoFeePct / 100)
+  // Monthly system counts by type
+  const batterySystemsPerMonth = totalProjectsPerMonth * (batteryAttachPct / 100)
+  const panelSystemsPerMonth = totalProjectsPerMonth * (panelUpgradeAttachPct / 100)
+  // Base fee spread per system using total projects/month (2000 ÷ total projects)
+  const monthlyBasePerSys = monthlyBaseFee / Math.max(1, totalProjectsPerMonth)
   const rmoRevenuePerSystemTotal = rmoPerSys + monthlyBasePerSys + (batteryFeePerSystem * (batteryAttachPct / 100)) + (panelUpgradeFeePerSystem * (panelUpgradeAttachPct / 100))
 
   const baseInstallRevenuePerSys = sysW * installPerWatt
@@ -315,8 +325,48 @@ export default function V15rIncomeCalc() {
           {/* Contract Adders + Job Mix */}
           <div className="bg-[#232738] rounded-lg p-4 space-y-3">
             <h3 className="text-sm font-semibold text-gray-200 uppercase">Contract Adders</h3>
+
+            {/* Battery Fee Add-On */}
             <InputField label="Battery Fee Add-On $" value={batteryFeePerSystem} onChange={(v) => updateField('batteryFeePerSystem', v)} />
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400 flex-1">Battery Adder RMO %</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  value={batteryRmoFeePct}
+                  onChange={(e) => updateField('batteryRmoFeePct', parseFloat(e.target.value) || 0)}
+                  className="w-20 bg-[#1a1d27] border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 text-right focus:border-cyan-500 focus:outline-none"
+                />
+                <span className="text-xs text-gray-400">%</span>
+              </div>
+            </div>
+            <div className="text-xs text-emerald-400 pl-2">
+              = ${batteryRmoFeePerBatterySys.toFixed(2)} RMO fee per battery system
+            </div>
+
+            {/* Panel Upgrade Fee */}
             <InputField label="Panel Upgrade Fee $" value={panelUpgradeFeePerSystem} onChange={(v) => updateField('panelUpgradeFeePerSystem', v)} />
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400 flex-1">Panel Upgrade RMO %</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  value={panelUpgradeRmoFeePct}
+                  onChange={(e) => updateField('panelUpgradeRmoFeePct', parseFloat(e.target.value) || 0)}
+                  className="w-20 bg-[#1a1d27] border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 text-right focus:border-cyan-500 focus:outline-none"
+                />
+                <span className="text-xs text-gray-400">%</span>
+              </div>
+            </div>
+            <div className="text-xs text-emerald-400 pl-2">
+              = ${panelRmoFeePerPanelSys.toFixed(2)} RMO fee per panel upgrade system
+            </div>
           </div>
 
           {/* Employee Cost Analysis — Collapsible */}
@@ -454,12 +504,12 @@ export default function V15rIncomeCalc() {
                 <p className="text-xs text-gray-400 mb-3">RMO Revenue Fees</p>
                 <div className="space-y-2">
                   <MetricLine label="System Size" value={`${sysKW.toFixed(2)} kW`} />
-                  <MetricLine label="RMO Fee" value={`$${baseRmoPerSys.toFixed(0)}`} green />
-                  <MetricLine label="Monthly Base Fee" value={`$${monthlyBasePerSys.toFixed(0)}`} green />
-                  <MetricLine label="Battery Fee (Wtd)" value={`$${(batteryFeePerSystem * (batteryAttachPct / 100)).toFixed(0)}`} green />
-                  <MetricLine label="Panel Upgrade (Wtd)" value={`$${(panelUpgradeFeePerSystem * (panelUpgradeAttachPct / 100)).toFixed(0)}`} green />
+                  <MetricLine label={`RMO Base Fee (DC-watt ${rmoFee}%)`} value={`$${baseRmoPerSys.toFixed(0)}`} green />
+                  <MetricLine label={`Battery Add-On RMO Fee (${batteryRmoFeePct}%)`} value={`$${batteryRmoFeePerBatterySys.toFixed(0)}`} green />
+                  <MetricLine label={`Panel Upgrade RMO Fee (${panelUpgradeRmoFeePct}%)`} value={`$${panelRmoFeePerPanelSys.toFixed(0)}`} green />
+                  <MetricLine label={`Monthly Base Fee/System (÷${totalProjectsPerMonth})`} value={`$${monthlyBasePerSys.toFixed(0)}`} green />
                   <div className="border-t border-gray-600 pt-2 mt-2">
-                    <MetricLine label="Total/System" value={`$${rmoRevenuePerSystemTotal.toFixed(0)}`} green bold />
+                    <MetricLine label="Total RMO/System" value={`$${(baseRmoPerSys + batteryRmoFeePerBatterySys + panelRmoFeePerPanelSys + monthlyBasePerSys).toFixed(0)}`} green bold />
                   </div>
                 </div>
               </div>
@@ -513,16 +563,25 @@ export default function V15rIncomeCalc() {
             <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Revenue Streams</h3>
             <div className="space-y-4">
               {/* Card 1: RMO — Power On Solutions LLC */}
-              <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
-                <h4 className="text-sm font-medium text-cyan-400">RMO — Power On Solutions LLC</h4>
-                <p className="text-2xl font-bold text-white">{fmtK(rmoMonthly)}</p>
-                <p className="text-xs text-gray-400">RMO oversight fee income</p>
-                <div className="text-xs text-gray-500 space-y-1 mt-3 pt-2 border-t border-gray-700">
-                  <div>Fee per system: {fmtK(rmoPerSys)} × {totalProjectsPerMonth} systems = {fmtK(rmoPerSys * totalProjectsPerMonth)}</div>
-                  <div>Monthly base: {fmtK(monthlyBaseFee)}</div>
-                  <div>RMO visits: {fmtK(rmoVisitCost)} × {visitsPerMonth} = {fmtK(rmoVisitCost * visitsPerMonth)}</div>
-                </div>
-              </div>
+              {(() => {
+                const rmoCardTotal = (baseRmoPerSys * totalProjectsPerMonth)
+                  + (batteryRmoFeePerBatterySys * batterySystemsPerMonth)
+                  + (panelRmoFeePerPanelSys * panelSystemsPerMonth)
+                  + monthlyBaseFee
+                return (
+                  <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
+                    <h4 className="text-sm font-medium text-cyan-400">RMO — Power On Solutions LLC</h4>
+                    <p className="text-2xl font-bold text-white">{fmtK(rmoCardTotal)}</p>
+                    <p className="text-xs text-gray-400">RMO oversight fee income</p>
+                    <div className="text-xs text-gray-500 space-y-1 mt-3 pt-2 border-t border-gray-700">
+                      <div>Base fee: {fmtK(monthlyBaseFee)}/mo</div>
+                      <div>DC-watt fee: {fmtK(baseRmoPerSys)}/system × {totalProjectsPerMonth} systems = {fmtK(baseRmoPerSys * totalProjectsPerMonth)}</div>
+                      <div>Battery adder: {fmtK(batteryRmoFeePerBatterySys)}/system × {batterySystemsPerMonth.toFixed(1)} systems = {fmtK(batteryRmoFeePerBatterySys * batterySystemsPerMonth)}</div>
+                      <div>Panel adder: {fmtK(panelRmoFeePerPanelSys)}/system × {panelSystemsPerMonth.toFixed(1)} systems = {fmtK(panelRmoFeePerPanelSys * panelSystemsPerMonth)}</div>
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Card 2: Installation — Subcontractor */}
               <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
@@ -645,7 +704,7 @@ export default function V15rIncomeCalc() {
           {/* Bottom-Line Summary */}
           <div className="bg-[#232738] rounded-lg p-4 border border-emerald-700/30">
             <p className="text-sm text-gray-300 leading-relaxed">
-              At <span className="font-semibold text-emerald-400">{totalProjectsPerMonth} systems/month</span> with <span className="font-semibold text-emerald-400">{batteryAttachPct.toFixed(0)}% battery attach</span> and <span className="font-semibold text-emerald-400">{panelUpgradeAttachPct.toFixed(0)}% panel upgrade</span> rate, projected net monthly revenue is <span className="font-bold text-lg text-emerald-400">{fmtK(totalNetMonthly)}</span>
+              At <span className="font-semibold text-emerald-400">{totalProjectsPerMonth} systems/month</span> with <span className="font-semibold text-emerald-400">{batteryAttachPct.toFixed(0)}% battery attach</span>, <span className="font-semibold text-emerald-400">{panelUpgradeAttachPct.toFixed(0)}% panel upgrade rate</span>, and <span className="font-semibold text-cyan-400">{batteryRmoFeePct}% battery adder fee</span> + <span className="font-semibold text-cyan-400">{panelUpgradeRmoFeePct}% panel adder fee</span>, projected net monthly RMO revenue is <span className="font-bold text-lg text-emerald-400">{fmtK(totalNetMonthly)}</span>
             </p>
           </div>
         </div>

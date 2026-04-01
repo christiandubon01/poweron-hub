@@ -1975,25 +1975,25 @@ export default function V15rFieldLogPanel() {
                         <span className="font-mono text-orange-400">{fmt(roll.addMileage)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between font-bold text-gray-200 border-t border-gray-700 pt-1">
-                      <span>Total Cost:</span>
-                      <span className="font-mono">{fmt(roll.totalActual)}</span>
+                    <div className="flex justify-between font-bold border-t border-gray-700 pt-1">
+                      <span className="text-gray-500">Total Cost:</span>
+                      <span className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>{fmt(roll.totalActual)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Collected:</span>
-                      <span className="font-mono text-emerald-400">{fmt(roll.collected)}</span>
+                      <span className="font-mono" style={{ color: '#1D9E75' }}>{fmt(roll.collected)}</span>
                     </div>
-                    <div className="flex justify-between font-bold" style={{ color: roll.remaining > 0 ? '#f97316' : '#10b981' }}>
-                      <span>Remaining Balance:</span>
-                      <span className="font-mono">{fmt(roll.remaining)}</span>
+                    <div className="flex justify-between font-bold">
+                      <span className="text-gray-500">Remaining Balance:</span>
+                      <span className="font-mono" style={{ color: roll.remaining <= 0 ? '#1D9E75' : (roll.remaining > 0 && daysSince(l.date) >= 30 ? '#D85A30' : '#EF9F27') }}>{fmt(roll.remaining)}</span>
                     </div>
-                    <div className="flex justify-between" style={{ color: roll.projectedProfit >= 0 ? '#10b981' : '#ef4444' }}>
-                      <span>Projected Margin:</span>
-                      <span className="font-mono font-bold">{fmt(roll.projectedProfit)}</span>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Projected Margin:</span>
+                      <span className="font-mono font-bold" style={{ color: '#378ADD' }}>{fmt(roll.projectedProfit)}</span>
                     </div>
-                    <div className="flex justify-between" style={{ color: (roll.collected - roll.totalActual) >= 0 ? '#10b981' : '#ef4444' }}>
-                      <span>Cash-Real Margin:</span>
-                      <span className="font-mono font-bold">{fmt(roll.collected - roll.totalActual)}</span>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Cash-Real Margin:</span>
+                      <span className="font-mono font-bold" style={{ color: (() => { const v = roll.collected - roll.totalActual; return v > 0 ? '#1D9E75' : v < 0 ? '#E24B4A' : 'var(--color-text-secondary)'; })() }}>{fmt(roll.collected - roll.totalActual)}</span>
                     </div>
                   </div>
 
