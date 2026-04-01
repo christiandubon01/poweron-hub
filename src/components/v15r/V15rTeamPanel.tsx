@@ -30,8 +30,6 @@ import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import ChartJS from 'chart.js/auto'
 
-;(window as any).Chart = ChartJS
-
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
   applyMultiplier?: boolean
@@ -91,7 +89,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -290,7 +288,7 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -767,7 +765,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {

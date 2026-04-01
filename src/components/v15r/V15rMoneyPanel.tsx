@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
+import ChartJS from 'chart.js/auto'
 import {
   getBackupData,
   saveBackupData,
@@ -64,19 +65,14 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!canvasRef.current || !backup) return
 
-    // Load Chart.js from CDN
-    const script = document.createElement('script')
-    script.src = 'https://cdn.jsdelivr.net/npm/chart.js'
-    script.onload = () => {
-      const Chart = (window as any).Chart
+    const Chart = ChartJS
+    const ctx = canvasRef.current?.getContext('2d')
+    if (!ctx) return
 
-      const ctx = canvasRef.current?.getContext('2d')
-      if (!ctx) return
-
-      // Destroy existing chart if any
-      if (chartRef.current) {
-        chartRef.current.destroy()
-      }
+    // Destroy existing chart if any
+    if (chartRef.current) {
+      chartRef.current.destroy()
+    }
 
       // G5 fix: use separate labels per dataset to prevent color index misalignment
       // The doughnut uses two datasets (outer ring + inner ring) — labels must align per dataset
@@ -136,17 +132,11 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
           },
         },
       })
-    }
-
-    document.head.appendChild(script)
 
     return () => {
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
-      }
-      if (script.parentNode) {
-        script.parentNode.removeChild(script)
       }
     }
   }, [backup])

@@ -22,8 +22,6 @@ import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import ChartJS from 'chart.js/auto'
 
-;(window as any).Chart = ChartJS
-
 // ── Chart.js is now bundled — always ready ──
 function useChartJS() {
   return true
@@ -628,7 +626,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
   ]
 
   useEffect(() => {
-    if (!canvasRef.current || !(window as any).Chart) return
+    if (!canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -637,7 +635,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
 
@@ -769,7 +767,7 @@ function RevenueStreamChart({ data }) {
   const chartRef = useRef(null)
 
   useEffect(() => {
-    if (!canvasRef.current || !(window as any).Chart) return
+    if (!canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -778,7 +776,7 @@ function RevenueStreamChart({ data }) {
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     Chart.defaults.color = '#9ca3af'
 
     chartRef.current = new Chart(ctx, {
@@ -913,7 +911,7 @@ function BusinessProjectionsChart({
   const electricalPipelineTotal = activeProjects.reduce((s, p) => s + num(p.contract), 0)
 
   useEffect(() => {
-    if (!canvasRef.current || !(window as any).Chart) return
+    if (!canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -922,7 +920,7 @@ function BusinessProjectionsChart({
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any).Chart
+    const Chart = ChartJS
     Chart.defaults.color = '#9ca3af'
 
     const electricalMonthly = electricalPipelineTotal / 12
