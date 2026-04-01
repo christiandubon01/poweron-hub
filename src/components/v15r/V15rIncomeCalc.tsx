@@ -631,7 +631,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
@@ -777,7 +777,7 @@ function RevenueStreamChart({ data }) {
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     Chart.defaults.color = '#9ca3af'
 
@@ -926,7 +926,7 @@ function BusinessProjectionsChart({
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     Chart.defaults.color = '#9ca3af'
 

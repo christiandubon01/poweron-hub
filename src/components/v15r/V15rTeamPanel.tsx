@@ -85,7 +85,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     if (!Chart) return
 
@@ -288,7 +288,7 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     if (!Chart) return
 
@@ -771,7 +771,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     if (!Chart) return
 

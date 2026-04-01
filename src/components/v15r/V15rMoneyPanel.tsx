@@ -66,7 +66,7 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
 
     let cancelled = false
     ;(async () => {
-    const { Chart } = await import('chart.js/auto')
+    const { Chart } = await import(/* @vite-ignore */ 'chart.js/auto')
     if (cancelled || !canvasRef.current) return
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
