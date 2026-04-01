@@ -1,3 +1,4 @@
+// PowerOn Hub V3 — build cache bust April 2026
 // @ts-nocheck
 /**
  * V15rDashboard — Graph Dashboard with pure SVG React charts
