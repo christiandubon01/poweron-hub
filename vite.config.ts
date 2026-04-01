@@ -5,12 +5,6 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  optimizeDeps: {
-    include: ['chart.js', 'chart.js/auto'],
-    esbuildOptions: {
-      target: 'es2015',
-    },
-  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -33,7 +27,6 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'es2015',
     outDir: 'dist',
     sourcemap: true,
     rollupOptions: {

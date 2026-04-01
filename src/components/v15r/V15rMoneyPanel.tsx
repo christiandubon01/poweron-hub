@@ -43,11 +43,9 @@ class ChartErrorBoundary extends React.Component {
   }
 }
 
-// ── Business Health Chart Component ──────────────────────────────────────────
+// ── Business Health Chart Component (Recharts) ──────────────────────────────
 function BusinessHealthChart({ backup }: { backup: BackupData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const chartRef = useRef<any>(null)
-
+  const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } = require('recharts')
   const projects = backup.projects || []
   const settings = backup.settings || {} as any
 
@@ -61,95 +59,15 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
   const overheadAmount = paid * overheadPct
   const profitMargin = Math.max(0, paid - overheadAmount)
 
-  useEffect(() => {
-    if (!canvasRef.current || !backup) return
-
-    // Load Chart.js from CDN
-    const script = document.createElement('script')
-    script.src = 'https://cdn.jsdelivr.net/npm/chart.js'
-    script.onload = () => {
-      const Chart = (window as any).Chart
-
-      const ctx = canvasRef.current?.getContext('2d')
-      if (!ctx) return
-
-      // Destroy existing chart if any
-      if (chartRef.current) {
-        chartRef.current.destroy()
-      }
-
-      // G5 fix: use separate labels per dataset to prevent color index misalignment
-      // The doughnut uses two datasets (outer ring + inner ring) — labels must align per dataset
-      chartRef.current = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-          // Labels array matches outer ring dataset order: Pipeline, Paid, Unbilled
-          labels: ['Pipeline', 'Paid', 'Unbilled'],
-          datasets: [
-            {
-              label: 'Revenue Breakdown',
-              data: [pipeline, paid, unbilled],
-              // G5 fix: colors indexed to match labels order exactly
-              backgroundColor: ['#22c55e', '#3b82f6', '#eab308'],
-              borderColor: '#1a1d27',
-              borderWidth: 2,
-              borderRadius: 2,
-              offset: [0, 0, 0],
-            },
-            {
-              label: 'Expense Ratio',
-              // G5 fix: inner ring labels embedded via dataset label for tooltip clarity
-              data: [overheadAmount, profitMargin],
-              // colors: Overhead=red, Profit Margin=teal (changed from duplicate green)
-              backgroundColor: ['#ef4444', '#14b8a6'],
-              borderColor: '#1a1d27',
-              borderWidth: 2,
-              borderRadius: 2,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: true,
-          cutout: '35%',
-          plugins: {
-            // G5 fix: hide built-in legend — custom HTML legend below is the source of truth
-            // This prevents color mismatches between Chart.js auto-legend and actual segment colors
-            legend: {
-              display: false,
-            },
-            tooltip: {
-              backgroundColor: '#374151',
-              titleColor: '#f0f0ff',
-              bodyColor: '#e5e7eb',
-              borderColor: '#4b5563',
-              borderWidth: 1,
-              padding: 10,
-              titleFont: { weight: 'bold' },
-              callbacks: {
-                label: (context) => {
-                  const value = fmtK(context.parsed)
-                  return `${context.label}: ${value}`
-                },
-              },
-            },
-          },
-        },
-      })
-    }
-
-    document.head.appendChild(script)
-
-    return () => {
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-      if (script.parentNode) {
-        script.parentNode.removeChild(script)
-      }
-    }
-  }, [backup])
+  const outerData = [
+    { name: 'Pipeline', value: pipeline, color: '#22c55e' },
+    { name: 'Paid', value: paid, color: '#3b82f6' },
+    { name: 'Unbilled', value: unbilled, color: '#eab308' },
+  ]
+  const innerData = [
+    { name: 'Overhead', value: overheadAmount, color: '#ef4444' },
+    { name: 'Profit Margin', value: profitMargin, color: '#14b8a6' },
+  ]
 
   // Segment breakdown for visible labels
   const segments = [
@@ -166,8 +84,18 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
 
   return (
     <div className="space-y-4">
-      <div className="h-80 flex items-center justify-center">
-        <canvas ref={canvasRef} />
+      <div className="h-80">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={outerData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={120} innerRadius={50}>
+              {outerData.map((d, i) => <Cell key={i} fill={d.color} stroke="#1a1d27" strokeWidth={2} />)}
+            </Pie>
+            <Pie data={innerData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={45} innerRadius={0}>
+              {innerData.map((d, i) => <Cell key={i} fill={d.color} stroke="#1a1d27" strokeWidth={2} />)}
+            </Pie>
+            <Tooltip contentStyle={{ backgroundColor: '#374151', border: '1px solid #4b5563', borderRadius: 8 }} formatter={(v: number) => `$${v.toLocaleString()}`} />
+          </PieChart>
+        </ResponsiveContainer>
       </div>
 
       {/* Segment Breakdown Legend */}
