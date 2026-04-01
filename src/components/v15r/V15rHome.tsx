@@ -161,7 +161,10 @@ export default function V15rHome() {
   // ── Agenda alerts (auto-generated) ─────────────────────────────────────
   const agendaAlerts: Array<{ clr: string; txt: string; id: string }> = []
   projects.forEach(p => {
+    // Skip projects with missing name or corrupted/placeholder stale days
+    if (!p.name || p.name === 'undefined') return
     const d = daysSince(p.lastMove)
+    if (d > 365) return // skip corrupted entries with extreme stale days
     if (d >= 14) {
       agendaAlerts.push({ clr: '#ef4444', txt: '📞 Call on ' + p.name + ' — ' + d + 'd stalled', id: p.id })
     } else if (d >= 7) {

@@ -345,7 +345,8 @@ export default function V15rFieldLogPanel() {
     const subtotal = labor + estMat + mileageCost
     const taxAmount = subtotal * (taxRate / 100)
     const totalQuote = subtotal + taxAmount
-    const marginPct = totalQuote > 0 ? ((taxAmount) / totalQuote * 100) : 0
+    const profit = totalQuote - estMat - mileageCost - (estHrs * (parseFloat(String(backup?.settings?.opCost)) || 35))
+    const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
 
     pushState(backup)
     const estimate = {
@@ -1440,7 +1441,7 @@ export default function V15rFieldLogPanel() {
                 const opCostTotal = estHrs * opCost
                 const totalQuote = labor + estMat + mileageCost
                 const profit = totalQuote - estMat - mileageCost - opCostTotal
-                const marginPct = totalQuote > 0 ? ((profit / totalQuote) * 100) : 0
+                const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
 
                 return (
                   <>

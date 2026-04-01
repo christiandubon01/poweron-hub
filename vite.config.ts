@@ -26,6 +26,10 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    include: ['chart.js/auto'],
+    exclude: [],
+  },
   build: {
     outDir: 'dist',
     sourcemap: true,

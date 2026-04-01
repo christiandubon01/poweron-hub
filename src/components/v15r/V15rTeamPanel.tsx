@@ -526,6 +526,8 @@ function EmployeeCostStructure({ backup }: { backup: BackupData }) {
     backup.settings.employeeCosts = costs
     backup.settings.payrollMult = payrollMult
     saveBackupData(backup)
+    // Dispatch storage event to trigger chart re-render in parent
+    window.dispatchEvent(new Event('storage'))
   }
 
   const analyzeRates = async () => {
@@ -953,7 +955,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
         chartRef.current = null
       }
     }
-  }, [chartReady, backup])
+  }, [chartReady, backup, backup?.settings?.employeeCosts, backup?.settings?.payrollMult, backup?.settings?.personalIncomeGoal])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -1356,7 +1358,7 @@ export default function V15rTeamPanel() {
           <div className="h-8 w-0.5 bg-gray-700"></div>
 
           {/* Real Employees + Hypotheticals Grid */}
-          {employees.length > 0 || hypotheticals.length > 0 ? (
+          {employees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
               {/* Real employees (non-owner) */}
               {employees
