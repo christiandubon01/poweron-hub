@@ -181,6 +181,17 @@ export default function V15rHome() {
   )
   const filteredAgendaAlerts = agendaAlerts.filter(a => !editedProjectIds.has(a.id))
 
+  // Merge alerts: interleave custom alerts at original positions (by linked project)
+  // Custom alerts linked to a project replace the AI alert at that position
+  const mergedAlerts: Array<{ type: 'ai'; data: typeof agendaAlerts[0]; idx: number } | { type: 'custom'; data: typeof loadedCustomAlerts[0]; idx: number }> = []
+  filteredAgendaAlerts.forEach((a, i) => mergedAlerts.push({ type: 'ai', data: a, idx: i }))
+  loadedCustomAlerts.forEach((a) => {
+    // Insert edited AI alerts at the position of their linked project
+    const linkedIdx = a.linkedProjectId ? filteredAgendaAlerts.findIndex(fa => fa.id === a.linkedProjectId) : -1
+    mergedAlerts.push({ type: 'custom', data: a, idx: linkedIdx >= 0 ? linkedIdx : mergedAlerts.length })
+  })
+  mergedAlerts.sort((a, b) => a.idx - b.idx)
+
   // ── Recent logs (last 4-6) ───────────────────────────────────────────────
   const recentLogs = [...logs].reverse().slice(0, 6)
 
@@ -577,10 +588,12 @@ export default function V15rHome() {
       {/* ── AGENDA ALERTS ────────────────────────────────────────────────────── */}
       <div>
         <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Alerts</h2>
-        {filteredAgendaAlerts.length > 0 || loadedCustomAlerts.length > 0 ? (
+        {mergedAlerts.length > 0 ? (
           <div className="space-y-2">
-            {/* AI-generated alerts */}
-            {filteredAgendaAlerts.map((a, i) => {
+            {/* Merged alerts (AI + custom, sorted by position) */}
+            {mergedAlerts.filter(m => m.type === 'ai').map((m) => {
+              const a = m.data as typeof agendaAlerts[0]
+              const i = m.idx
               const aiAlertId = 'ai-' + i
               const isEditing = editingAIAlertId === aiAlertId
               return (
@@ -682,8 +695,8 @@ export default function V15rHome() {
               )
             })}
 
-            {/* Custom alerts */}
-            {loadedCustomAlerts.map((a) => (
+            {/* Custom alerts (merged, sorted by position) */}
+            {mergedAlerts.filter(m => m.type === 'custom').map((m) => m.data as typeof loadedCustomAlerts[0]).map((a) => (
               <div key={a.id}>
                 {editingAlertId === a.id ? (
                   // Edit mode

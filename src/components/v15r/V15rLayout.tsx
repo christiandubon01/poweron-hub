@@ -23,6 +23,7 @@ import {
   X,
   Activity,
   ShieldAlert,
+  ChevronDown,
 } from 'lucide-react'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
@@ -536,7 +537,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     key={item.view}
                     onClick={() => handleNavClick(item.view)}
                     title={!showLabels ? item.label : undefined}
-                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2.5 text-sm transition-colors ${
+                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                       isActive
                         ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
                         : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent'
@@ -574,7 +575,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       key={item.view}
                       onClick={() => handleNavClick(item.view)}
                       title={!showLabels ? item.label : undefined}
-                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2.5 text-sm transition-colors ${
+                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                         isHighlighted
                           ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
                           : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
@@ -604,7 +605,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     key={item.view}
                     onClick={() => handleNavClick(item.view)}
                     title={!showLabels ? item.label : undefined}
-                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2.5 text-sm transition-colors ${
+                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                       isActive
                         ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
                         : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
@@ -630,7 +631,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     key={item.view}
                     onClick={() => handleNavClick(item.view)}
                     title={!showLabels ? item.label : undefined}
-                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2.5 text-sm transition-colors ${
+                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                       isActive
                         ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
                         : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
@@ -810,8 +811,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   syncStatus === 'failed' ? 'bg-red-500' :
                   'bg-gray-500'
                 }`} />
-                {/* Sync label — visible on all screen sizes */}
-                <span className={`text-xs flex-shrink-0 ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
+                {/* Sync label — hidden on mobile to prevent overflow */}
+                <span className={`text-xs flex-shrink-0 hidden md:inline ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
                   {syncStatus === 'synced' && lastSyncTime
                     ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
                     : syncStatus === 'syncing' ? 'Pending sync...'
@@ -980,7 +981,143 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             {toastMessage}
           </div>
         )}
+
+        {/* Copyright Footer */}
+        <div className="text-center text-[10px] text-gray-600 py-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+          &copy; 2026 Power On Solutions LLC &middot; PowerOn Hub V3.0
+        </div>
       </div>
+
+      {/* ── Quick Capture Floating Button (bottom-left) ── */}
+      <QuickCaptureButton backupData={backupData} onNav={onNav} setToastMessage={setToastMessage} />
     </div>
+  )
+}
+
+// ── QUICK CAPTURE COMPONENT ──────────────────────────────────────────────────
+function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData: BackupData | null, onNav: (v: string) => void, setToastMessage: (m: string | null) => void }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [domain, setDomain] = useState('Field Ops')
+  const [selectedProject, setSelectedProject] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const projects = (backupData?.projects || []).filter((p: any) => p.status === 'active')
+
+  useEffect(() => {
+    if (open && projects.length > 0 && !selectedProject) {
+      setSelectedProject(projects[0].id)
+    }
+  }, [open])
+
+  async function handleCapture() {
+    if (!text.trim()) return
+    setSaving(true)
+    try {
+      const backup = getBackupData()
+      if (!backup) return
+      if (!backup.fieldObservationCards) backup.fieldObservationCards = []
+      backup.fieldObservationCards.push({
+        id: 'foc_' + Date.now(),
+        project_id: selectedProject || 'general',
+        project_name: projects.find((p: any) => p.id === selectedProject)?.name || 'General',
+        source: 'text',
+        observed_condition: text.trim(),
+        urgency: 'before_next_mobilization',
+        status: 'open',
+        ai_summary: domain + ': ' + text.trim().slice(0, 120),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      saveBackupData(backup)
+      setToastMessage('Saved to ' + domain)
+      setTimeout(() => setToastMessage(null), 3000)
+      setText('')
+      setOpen(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const domains = ['App Dev', 'Field Ops', 'Business', 'Personal']
+
+  return (
+    <>
+      {/* Floating button — bottom-left */}
+      <button
+        onClick={() => setOpen(true)}
+        className="fixed bottom-6 left-6 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg z-50 flex items-center justify-center transition-colors"
+        title="Quick Capture"
+      >
+        <Zap size={24} />
+      </button>
+
+      {/* Bottom sheet */}
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setOpen(false)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="relative w-full max-w-lg bg-[#1a1d27] border-t border-gray-700 rounded-t-2xl p-5 space-y-4 animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Quick Capture</h3>
+              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white"><X size={18} /></button>
+            </div>
+
+            {/* Project selector */}
+            <div className="relative">
+              <select
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value)}
+                className="w-full px-3 py-2.5 text-xs bg-gray-900 border border-gray-700 rounded-lg text-gray-200 appearance-none"
+              >
+                {projects.map((p: any) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+                <option value="general">General</option>
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            </div>
+
+            {/* Domain chips */}
+            <div className="flex gap-2 flex-wrap">
+              {domains.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDomain(d)}
+                  className={`text-[10px] px-3 py-1.5 rounded-full font-semibold transition-colors ${
+                    domain === d
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+
+            {/* Text input */}
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="What did you observe or want to capture?"
+              rows={3}
+              className="w-full px-3 py-2.5 text-sm bg-gray-900 border border-gray-700 rounded-lg text-gray-200 placeholder-gray-600 resize-none"
+              autoFocus
+            />
+
+            {/* Capture button */}
+            <button
+              onClick={handleCapture}
+              disabled={!text.trim() || saving}
+              className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-bold rounded-lg transition-colors"
+            >
+              {saving ? 'Saving...' : 'Capture'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

@@ -218,6 +218,28 @@ export interface BackupCustomAlert {
   id: string; title: string; description: string; action: string; isAI: boolean; manuallyEdited?: boolean
 }
 
+export interface FieldObservationCard {
+  id: string
+  project_id: string
+  project_name?: string
+  zone?: string
+  source?: string
+  original_sequence?: string
+  observed_condition?: string
+  blocking_dependency?: string
+  revised_sequence?: string
+  urgency?: string
+  affects?: string[]
+  ai_summary?: string
+  next_action?: string
+  next_action_due?: string
+  status?: string
+  photo_ids?: string[]
+  transcript?: string
+  created_at?: string
+  updated_at?: string
+}
+
 export interface BackupData {
   logs: BackupLog[]
   projects: BackupProject[]
@@ -234,6 +256,7 @@ export interface BackupData {
   serviceLeads: any[]
   agendaSections: BackupAgendaSection[]
   customAlerts?: BackupCustomAlert[]
+  fieldObservationCards?: FieldObservationCard[]
   completedArchive: any[]
   projectDashboards: Record<string, any>
   blueprintSummaries: Record<string, any>
