@@ -462,6 +462,13 @@ function V15rDashboardInner() {
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
 
+  // ── Date defaults (must be declared before EVR/SCP/RCA useState calls) ──
+  var rcaDefaultEnd = new Date().toISOString().split('T')[0]
+  var rcaDefaultStart = (() => {
+    var d = new Date(); d.setDate(d.getDate() - 90)
+    return d.toISOString().split('T')[0]
+  })()
+
   // ── EVR: Exposure vs Revenue (Top 6 by contract) ──
   const [evrDateStart, setEvrDateStart] = useState<string>(rcaDefaultStart)
   const [evrDateEnd, setEvrDateEnd] = useState<string>(rcaDefaultEnd)
@@ -483,12 +490,6 @@ function V15rDashboardInner() {
 
   // ── RCA: Revenue vs Cost Analysis (Active Projects) ──
   const [rcaSelectedProject, setRcaSelectedProject] = useState<string>('all')
-  // G2: date range filter state (default: 90 days back → today)
-  const rcaDefaultEnd = new Date().toISOString().split('T')[0]
-  const rcaDefaultStart = (() => {
-    const d = new Date(); d.setDate(d.getDate() - 90)
-    return d.toISOString().split('T')[0]
-  })()
   const [rcaDateStart, setRcaDateStart] = useState<string>(rcaDefaultStart)
   const [rcaDateEnd, setRcaDateEnd] = useState<string>(rcaDefaultEnd)
   const allRcaProjects = projects
