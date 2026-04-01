@@ -80,7 +80,7 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
     if (!chartReady || !canvasRef.current || !data.length) return
 
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
 
     // Destroy existing chart
     if (chartRef.current) {
@@ -431,7 +431,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
     if (!chartReady || !canvasRef.current || !projects.length) return
 
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -522,7 +522,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
     if (!chartReady || !canvasRef.current || !projects.length) return
 
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -609,7 +609,7 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
     if (!chartReady || !canvasRef.current || !projects.length) return
 
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -746,7 +746,7 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
     if (!chartReady || !canvasRef.current || !serviceLogs.length) return
 
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -869,7 +869,7 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
     if (!chartReady || !canvasRef.current || !projects.length) return
 
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -1907,7 +1907,7 @@ function PlannedVsActualChart({ projects, backup }: { projects: any[], backup: B
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
     const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null }
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return

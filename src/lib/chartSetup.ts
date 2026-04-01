@@ -1,45 +1,38 @@
 // src/lib/chartSetup.ts
 // Synchronous Chart.js initialization — imported at app start in main.tsx
-// Uses named imports from chart.js (dedupe + es2015 target in vite.config.ts
-// ensures single instance and correct initialization order)
-import {
-  Chart,
-  CategoryScale,
-  LinearScale,
-  BarController,
-  BarElement,
-  LineController,
-  LineElement,
-  PointElement,
-  ArcElement,
-  DoughnutController,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js'
+// Uses namespace import to avoid TDZ on individual named bindings from circular modules
+import * as CJS from 'chart.js'
+
+let ChartConstructor: any = null
 
 try {
-  Chart.register(
-    CategoryScale,
-    LinearScale,
-    BarController,
-    BarElement,
-    LineController,
-    LineElement,
-    PointElement,
-    ArcElement,
-    DoughnutController,
-    Title,
-    Tooltip,
-    Legend,
-    Filler
-  )
-  ;(window as any)._chartReady = true
+  // Access Chart from namespace — avoids TDZ on destructured named imports
+  ChartConstructor = (CJS as any).Chart || (CJS as any).default?.Chart || CJS
+  if (ChartConstructor && typeof ChartConstructor.register === 'function') {
+    ChartConstructor.register(
+      (CJS as any).CategoryScale,
+      (CJS as any).LinearScale,
+      (CJS as any).BarController,
+      (CJS as any).BarElement,
+      (CJS as any).LineController,
+      (CJS as any).LineElement,
+      (CJS as any).PointElement,
+      (CJS as any).ArcElement,
+      (CJS as any).DoughnutController,
+      (CJS as any).Title,
+      (CJS as any).Tooltip,
+      (CJS as any).Legend,
+      (CJS as any).Filler
+    )
+    ;(window as any)._chartReady = true
+  } else {
+    console.warn('Chart.js: Chart constructor not found')
+    ;(window as any)._chartReady = false
+  }
 } catch (e) {
   console.warn('Chart.js init failed:', e)
   ;(window as any)._chartReady = false
 }
 
-export { Chart as ChartJS }
-export default Chart
+export const ChartJS = ChartConstructor
+export default ChartConstructor
