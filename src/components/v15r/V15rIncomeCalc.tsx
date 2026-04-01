@@ -20,22 +20,11 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-// Chart.js loaded via lazy dynamic import to avoid Vite production circular dependency
+import { ChartJS } from '@/lib/chartSetup'
 
-// ── HELPER: lazy dynamic import for Chart.js ──
+// Chart.js initialized synchronously at app start via chartSetup.ts
 function useChartJS() {
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    import('chart.js/auto').then((mod) => {
-      if (cancelled) return
-      const ChartJS = mod.default
-      ;(window as any)._ChartJS = ChartJS
-      setReady(true)
-    })
-    return () => { cancelled = true }
-  }, [])
-  return ready
+  return true
 }
 
 export default function V15rIncomeCalc() {
@@ -646,7 +635,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
 
@@ -787,7 +776,7 @@ function RevenueStreamChart({ data }) {
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     Chart.defaults.color = '#9ca3af'
 
     chartRef.current = new Chart(ctx, {
@@ -931,7 +920,7 @@ function BusinessProjectionsChart({
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     Chart.defaults.color = '#9ca3af'
 
     const electricalMonthly = electricalPipelineTotal / 12

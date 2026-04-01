@@ -28,7 +28,7 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-// Chart.js loaded via lazy dynamic import to avoid Vite production circular dependency
+import { ChartJS } from '@/lib/chartSetup'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -75,20 +75,9 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: lazy dynamic import for Chart.js ──
+// Chart.js initialized synchronously at app start via chartSetup.ts
 function useChartJS() {
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    import('chart.js/auto').then((mod) => {
-      if (cancelled) return
-      const ChartJS = mod.default
-      ;(window as any)._ChartJS = ChartJS
-      setReady(true)
-    })
-    return () => { cancelled = true }
-  }, [])
-  return ready
+  return true
 }
 
 // ── COST VS PIPELINE CHART COMPONENT ──
@@ -100,7 +89,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -299,7 +288,7 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -778,7 +767,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {

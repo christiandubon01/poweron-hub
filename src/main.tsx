@@ -1,3 +1,7 @@
+// ── Chart.js singleton — must initialize before any component mounts ──────
+import { ChartJS } from './lib/chartSetup'
+;(window as any).Chart = ChartJS
+
 // ── Eruda Mobile Debugger ──────────────────────────────────────────────────
 // Lazy-load Eruda ONLY when ?debug=1 is present. Uses npm package (not CDN)
 // to avoid Netlify CSP header blocks. Never loads on the production URL

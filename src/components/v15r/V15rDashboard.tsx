@@ -16,7 +16,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-// Chart.js loaded via lazy dynamic import to avoid Vite production circular dependency
+import { ChartJS } from '@/lib/chartSetup'
 
 // ── ERROR BOUNDARY ──
 class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
@@ -45,20 +45,9 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: lazy dynamic import for Chart.js ──
+// Chart.js initialized synchronously at app start via chartSetup.ts
 function useChartJS() {
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    import('chart.js/auto').then((mod) => {
-      if (cancelled) return
-      const ChartJS = mod.default
-      ;(window as any)._ChartJS = ChartJS
-      setReady(true)
-    })
-    return () => { cancelled = true }
-  }, [])
-  return ready
+  return true
 }
 
 // ── CFOT CHART COMPONENT (Google Sheets match) ──
@@ -72,7 +61,7 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !data.length) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     // Destroy existing chart
@@ -423,7 +412,7 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -514,7 +503,7 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -601,7 +590,7 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -738,7 +727,7 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !serviceLogs.length) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -861,7 +850,7 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
   useEffect(() => {
     if (!chartReady || !canvasRef.current || !projects.length) return
 
-    const Chart = (window as any)._ChartJS
+    const Chart = ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
