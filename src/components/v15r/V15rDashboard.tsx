@@ -3,6 +3,7 @@
 /**
  * V15rDashboard — Graph Dashboard with pure SVG React charts
  * Zero external chart dependencies — eliminates all TDZ/bundler conflicts
+ * Session 7: Chart Families Reorganization — 5 collapsible family sections
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react'
@@ -413,108 +414,77 @@ function PulseTrendAnalyzer({ backup, cfotSummary, projects }: {
   )
 }
 
-// ── REVENUE TIMELINE INTELLIGENCE SECTION ──
-// Renders all 4 new Revenue Timeline charts as a collapsible section.
-// Uses useMemo for data computation — charts themselves have zero hooks.
-function RevenuTimelineDashboard({ backup, projects }) {
-  const [open, setOpen] = useState(true)
+// ── CHART FAMILY — collapsible section with accent border ──
+// Collapse state persisted to localStorage per family id
+function ChartFamily({
+  id,
+  name,
+  accent,
+  chartCount,
+  summaryLabel,
+  summaryValue,
+  children,
+}: {
+  id: string
+  name: string
+  accent: string
+  chartCount: number
+  summaryLabel: string
+  summaryValue: string
+  children: React.ReactNode
+}) {
+  const lsKey = 'chart_family_open_' + id
+  const [open, setOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem(lsKey)
+      return saved === null ? true : saved === 'true'
+    } catch {
+      return true
+    }
+  })
 
-  // Compute all Revenue Timeline data
-  const weekBuckets = useMemo(() => query8WeekCashFlow(), [backup])
-  const monthBuckets = useMemo(() => queryMonthlyRevenue(6), [backup])
-  const overlapWindows = useMemo(() => queryOverlapWindows(), [backup])
-  const ganttRows = useMemo(() => queryGanttData(), [backup])
-  const allVariances = useMemo(() => queryAllQuoteVsActual(), [backup])
-  const dailyTarget = useMemo(() => getDailyTarget(), [backup])
-
-  const hasData = projects.filter(p => p.status === 'active').length > 0
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    try { localStorage.setItem(lsKey, String(next)) } catch {}
+  }
 
   return (
-    <div className="lg:col-span-2">
-      {/* Section header */}
+    <div style={{ marginBottom: '32px' }}>
+      {/* Family Header — sticky on mobile */}
       <div
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-3 cursor-pointer mb-6 pt-4 border-t border-gray-700"
+        onClick={toggle}
+        className="flex items-center justify-between cursor-pointer px-5 py-4 rounded-t-lg"
+        style={{
+          borderLeft: '3px solid ' + accent,
+          background: 'var(--bg-card)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}
       >
-        <span className="text-2xl">📅</span>
-        <div className="flex-1">
-          <h2 className="text-2xl font-bold text-gray-100">Revenue Timeline Intelligence</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Live cash flow projection · Payment schedule · Project Gantt · Quote vs actual drift
-          </p>
+        <div>
+          {open ? (
+            <>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff', letterSpacing: '0.05em' }}>{name}</div>
+              <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{chartCount} chart{chartCount !== 1 ? 's' : ''}</div>
+            </>
+          ) : (
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff' }}>
+              {name} <span style={{ color: accent, fontWeight: 400 }}>— {summaryLabel}: {summaryValue}</span>
+            </div>
+          )}
         </div>
-        <span className="text-gray-600 text-sm">{open ? '▲ Collapse' : '▼ Expand'}</span>
+        <span style={{ color: '#6b7280', fontSize: '13px', flexShrink: 0 }}>{open ? '▲ Collapse' : '▼ Expand'}</span>
       </div>
 
+      {/* Charts container */}
       {open && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-          {/* Chart 1: 8-Week Cash Flow Projection */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
-              <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
-            </div>
-            {hasData ? (
-              <div className="relative w-full" style={{ height: '300px' }}>
-                <CashFlowProjectionChart weekBuckets={weekBuckets} overlapWindows={overlapWindows} />
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
-                Add phase timeline data to active projects to see cash flow
-              </div>
-            )}
-          </div>
-
-          {/* Chart 2: Monthly Revenue Projected vs Actual */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-gray-100">Monthly Revenue — Projected vs Actual</h3>
-              <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling · Dashed amber = monthly target (dayTarget × 20 work days)</p>
-            </div>
-            {hasData ? (
-              <div className="relative w-full" style={{ height: '300px' }}>
-                <MonthlyRevenueChart monthlyBuckets={monthBuckets} dailyTarget={dailyTarget} />
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
-                No active project revenue data yet
-              </div>
-            )}
-          </div>
-
-          {/* Chart 3: Project Timeline (Gantt) — full width */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-gray-100">Project Timeline — Gantt View</h3>
-              <p className="text-xs text-gray-400 italic mt-0.5">
-                Solid = confirmed phases · Dashed = estimated · Coral zone = overlap · Green dot = payment milestone
-              </p>
-            </div>
-            {ganttRows.length > 0 ? (
-              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px' }}>
-                <ProjectTimelineChart ganttRows={ganttRows} overlapWindows={overlapWindows} />
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
-                Add confirmed phase start dates in the project Phase Timeline tab to populate this chart
-              </div>
-            )}
-          </div>
-
-          {/* Chart 4: Quote vs Actual Variance — full width */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-gray-100">Quote vs Actual — Estimating Accuracy</h3>
-              <p className="text-xs text-gray-400 italic mt-0.5">
-                Gray = quoted hours · Colored = actual · Red = over budget · Green = under · Amber = within 5%
-              </p>
-            </div>
-            <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, allVariances.reduce((s, p) => s + p.variances.length, 0) * 58 + 60) + 'px' }}>
-              <QuoteVsActualChart projectsVariance={allVariances} />
-            </div>
-          </div>
-
+        <div
+          className="rounded-b-lg"
+          style={{ border: '1px solid ' + accent + '33', borderTop: 'none', padding: '24px', background: 'var(--bg-secondary)' }}
+        >
+          {children}
         </div>
       )}
     </div>
@@ -550,19 +520,13 @@ function V15rDashboardInner() {
   const projectLogs = backup.logs || []
   const cfotSummary = (() => {
     const activeProjects = projects.filter(p => p.status === 'active')
-    // Exposure: active project contract value not yet collected
     const exposure = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
-    // Unbilled: completed work not yet invoiced (contract - billed for active projects)
     const unbilled = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.billed)), 0)
-    // Pending: service calls quoted but not yet collected
     const pending = serviceLogs
       .filter((l: any) => num(l.quoted) > 0 && num(l.collected) < num(l.quoted))
       .reduce((s: number, l: any) => s + Math.max(0, num(l.quoted) - num(l.collected)), 0)
-    // Service: total collected from serviceLogs all time
     const svcTotal = serviceLogs.reduce((s: number, l: any) => s + num(l.collected), 0)
-    // Project: total collected (paid) from projects all time
     const projTotal = projects.reduce((s: number, p: any) => s + num(p.paid), 0)
-    // Accumulative: combined
     const accumTotal = svcTotal + projTotal
     return { exposure, unbilled, pending, svcTotal, projTotal, accumTotal }
   })()
@@ -579,14 +543,14 @@ function V15rDashboardInner() {
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
 
-  // ── Date defaults (must be declared before EVR/SCP/RCA useState calls) ──
+  // ── Date defaults ──
   var rcaDefaultEnd = new Date().toISOString().split('T')[0]
   var rcaDefaultStart = (() => {
     var d = new Date(); d.setDate(d.getDate() - 90)
     return d.toISOString().split('T')[0]
   })()
 
-  // ── EVR: Exposure vs Revenue (Top 6 by contract) ──
+  // ── EVR: Exposure vs Revenue ──
   const [evrDateStart, setEvrDateStart] = useState<string>(rcaDefaultStart)
   const [evrDateEnd, setEvrDateEnd] = useState<string>(rcaDefaultEnd)
   const evrProjects = projects
@@ -605,7 +569,7 @@ function V15rDashboardInner() {
     return true
   }).slice(-8)
 
-  // ── RCA: Revenue vs Cost Analysis (Active Projects) ──
+  // ── RCA: Revenue vs Cost Analysis ──
   const [rcaSelectedProject, setRcaSelectedProject] = useState<string>('all')
   const [rcaDateStart, setRcaDateStart] = useState<string>(rcaDefaultStart)
   const [rcaDateEnd, setRcaDateEnd] = useState<string>(rcaDefaultEnd)
@@ -614,7 +578,6 @@ function V15rDashboardInner() {
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
   const rcaDropdownProjects = backup.projects || []
-  // Filter projects to only those with log activity in date range
   const rcaFilteredProjects = (() => {
     const allLogs = backup.logs || []
     const inRange = (d: string) => {
@@ -633,12 +596,36 @@ function V15rDashboardInner() {
   })()
   const rcaProjects = rcaFilteredProjects
 
-  // ── PvA: Planned vs Actual project selector ──
+  // ── PvA: Planned vs Actual ──
   const [pvaSelectedProject, setPvaSelectedProject] = useState<string>('all')
   const pvaActiveProjects = projects.filter(p => p.status === 'active' && (p.contract || 0) > 0)
   const pvaProjects = pvaSelectedProject === 'all'
     ? pvaActiveProjects
     : pvaActiveProjects.filter(p => p.id === pvaSelectedProject)
+
+  // ── Revenue Timeline data (inlined from RevenuTimelineDashboard) ──
+  const weekBuckets = useMemo(() => query8WeekCashFlow(), [backup])
+  const monthBuckets = useMemo(() => queryMonthlyRevenue(6), [backup])
+  const overlapWindows = useMemo(() => queryOverlapWindows(), [backup])
+  const ganttRows = useMemo(() => queryGanttData(), [backup])
+  const allVariances = useMemo(() => queryAllQuoteVsActual(), [backup])
+  const dailyTarget = useMemo(() => getDailyTarget(), [backup])
+
+  // ── Family summary stats ──
+  const activeCount = projects.filter(p => p.status === 'active').length
+  const accumFmt = cfotSummary.accumTotal >= 1000
+    ? '$' + (cfotSummary.accumTotal / 1000).toFixed(0) + 'k'
+    : '$' + cfotSummary.accumTotal.toFixed(0)
+  const exposureFmt = cfotSummary.exposure >= 1000
+    ? '$' + (cfotSummary.exposure / 1000).toFixed(0) + 'k'
+    : '$' + cfotSummary.exposure.toFixed(0)
+  // Monthly revenue from last monthBucket
+  const lastMonthRevenue = monthBuckets && monthBuckets.length > 0
+    ? monthBuckets[monthBuckets.length - 1]?.actual || 0
+    : 0
+  const monthRevFmt = lastMonthRevenue >= 1000
+    ? '$' + (lastMonthRevenue / 1000).toFixed(0) + 'k'
+    : '$' + lastMonthRevenue.toFixed(0)
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
@@ -651,213 +638,403 @@ function V15rDashboardInner() {
         </div>
       </div>
 
-      {/* 2x2 GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* AI ANALYSIS TOOLS — outside families */}
+      <div className="space-y-4 mb-10">
+        <PulseTrendAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
+        <NEXUSDashboardAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
+      </div>
 
-        {/* CFOT: Cash Flow Over Time */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-          <div className="mb-4">
-            <h2 className="text-[30px] font-bold text-gray-100 leading-tight">Projects Cash Flow Over Time</h2>
-            <p className="text-sm text-gray-400 italic mt-1">Accumulative vs Total Exposure — Detailed with Unbilled, Invoiced and Received</p>
-          </div>
-          <div
-            className="relative w-full"
-            style={{ height: Math.max(250, Math.round(window.innerHeight * 0.4)) + 'px' }}
-          >
-            
-              <CFOTChart data={cfotData} backup={backup} />
-          </div>
-          <div className="mt-4 grid grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
-            <div className="bg-[var(--bg-input)] p-2 rounded">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#ef4444'}}></div><span className="text-gray-500">Exposure</span></div>
-              <p className="font-bold font-mono text-red-400 mt-1">${cfotSummary.exposure.toLocaleString()}</p>
-            </div>
-            <div className="bg-[var(--bg-input)] p-2 rounded">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f87171'}}></div><span className="text-gray-500">Unbilled</span></div>
-              <p className="font-bold font-mono text-red-300 mt-1">${cfotSummary.unbilled.toLocaleString()}</p>
-            </div>
-            <div className="bg-[var(--bg-input)] p-2 rounded">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f59e0b'}}></div><span className="text-gray-500">Pending</span></div>
-              <p className="font-bold font-mono text-amber-400 mt-1">${cfotSummary.pending.toLocaleString()}</p>
-            </div>
-            <div className="bg-[var(--bg-input)] p-2 rounded">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#86efac'}}></div><span className="text-gray-500">Service $</span></div>
-              <p className="font-bold font-mono text-green-300 mt-1">${cfotSummary.svcTotal.toLocaleString()}</p>
-            </div>
-            <div className="bg-[var(--bg-input)] p-2 rounded">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#16a34a'}}></div><span className="text-gray-500">Project $</span></div>
-              <p className="font-bold font-mono text-green-500 mt-1">${cfotSummary.projTotal.toLocaleString()}</p>
-            </div>
-            <div className="bg-[var(--bg-input)] p-2 rounded">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#14532d'}}></div><span className="text-gray-500">Accum</span></div>
-              <p className="font-bold font-mono text-green-900 mt-1">${cfotSummary.accumTotal.toLocaleString()}</p>
-            </div>
-          </div>
-        </div>
+      {/* ══ FAMILY 1 — CASH FLOW ══ */}
+      <ChartFamily
+        id="cash-flow"
+        name="CASH FLOW"
+        accent="#1D9E75"
+        chartCount={3}
+        summaryLabel="Total Income"
+        summaryValue={accumFmt}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-        {/* OPP: Open Projects Pipeline */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-          <h2 className="text-lg font-bold text-gray-100 mb-4">OPP: Open Projects Pipeline</h2>
-          <div className="relative w-full" style={{ height: '300px' }}>
-            
-              <OPPChart projects={oppProjects} backup={backup} />
-          </div>
-        </div>
-
-        {/* PCD: Project Completion Distribution */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-          <h2 className="text-lg font-bold text-gray-100 mb-4">PCD: Project Completion Distribution</h2>
-          <div className="relative w-full" style={{ height: '300px' }}>
-            
-              <PCDChart projects={pcdProjects} backup={backup} />
-          </div>
-        </div>
-
-        {/* EVR: Exposure vs Revenue */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <h2 className="text-lg font-bold text-gray-100">EVR: Exposure vs Revenue</h2>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span>From:</span>
-                <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+          {/* CFOT: Cash Flow Over Time — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h2 className="text-[30px] font-bold text-gray-100 leading-tight">Projects Cash Flow Over Time</h2>
+              <p className="text-sm text-gray-400 italic mt-1">Accumulative vs Total Exposure — Detailed with Unbilled, Invoiced and Received</p>
+            </div>
+            {cfotData.length > 0 ? (
+              <div
+                className="relative w-full"
+                style={{ height: Math.max(250, Math.round(window.innerHeight * 0.4)) + 'px' }}
+              >
+                <CFOTChart data={cfotData} backup={backup} />
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span>To:</span>
-                <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Log a payment on any project to activate
+              </div>
+            )}
+            <div className="mt-4 grid grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#ef4444'}}></div><span className="text-gray-500">Exposure</span></div>
+                <p className="font-bold font-mono text-red-400 mt-1">${cfotSummary.exposure.toLocaleString()}</p>
+              </div>
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f87171'}}></div><span className="text-gray-500">Unbilled</span></div>
+                <p className="font-bold font-mono text-red-300 mt-1">${cfotSummary.unbilled.toLocaleString()}</p>
+              </div>
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f59e0b'}}></div><span className="text-gray-500">Pending</span></div>
+                <p className="font-bold font-mono text-amber-400 mt-1">${cfotSummary.pending.toLocaleString()}</p>
+              </div>
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#86efac'}}></div><span className="text-gray-500">Service $</span></div>
+                <p className="font-bold font-mono text-green-300 mt-1">${cfotSummary.svcTotal.toLocaleString()}</p>
+              </div>
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#16a34a'}}></div><span className="text-gray-500">Project $</span></div>
+                <p className="font-bold font-mono text-green-500 mt-1">${cfotSummary.projTotal.toLocaleString()}</p>
+              </div>
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#14532d'}}></div><span className="text-gray-500">Accum</span></div>
+                <p className="font-bold font-mono text-green-900 mt-1">${cfotSummary.accumTotal.toLocaleString()}</p>
               </div>
             </div>
           </div>
-          <div className="relative w-full" style={{ height: '300px' }}>
-            
-              <EVRChart projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
-          </div>
-        </div>
 
-        {/* SCP: Service Calls Performance */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <h2 className="text-lg font-bold text-gray-100">SCP: Service Calls Performance</h2>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span>From:</span>
-                <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span>To:</span>
-                <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+          {/* EVR: Exposure vs Revenue */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="text-lg font-bold text-gray-100">EVR: Exposure vs Revenue</h2>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span>From:</span>
+                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span>To:</span>
+                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                </div>
               </div>
             </div>
+            {evrProjects.length > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <EVRChart projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
+                Add projects with contract values to activate
+              </div>
+            )}
           </div>
-          {scpLogs.length > 0 ? (
-            <div className="relative w-full" style={{ height: '300px' }}>
-              
-                <SCPChart serviceLogs={scpLogs} backup={backup} />
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
-              No service call data yet
-            </div>
-          )}
-        </div>
 
-        {/* RCA: Revenue vs Cost Analysis — Active Projects */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-          <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <h2 className="text-[26px] font-bold text-gray-100 leading-tight">Revenue vs Cost Analysis — Active Projects</h2>
-              <p className="text-sm text-gray-400 italic mt-1">Collected Revenue, Labor/Material/Mileage Costs, AR Exposure &amp; Break-even — with shaded profit zones</p>
+          {/* 8-Week Cash Flow Projection */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
             </div>
-            {/* G2: date range + project filter controls */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span>From:</span>
-                <input
-                  type="date"
-                  value={rcaDateStart}
-                  onChange={e => setRcaDateStart(e.target.value)}
-                  className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
-                />
+            {activeCount > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <CashFlowProjectionChart weekBuckets={weekBuckets} overlapWindows={overlapWindows} />
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span>To:</span>
-                <input
-                  type="date"
-                  value={rcaDateEnd}
-                  onChange={e => setRcaDateEnd(e.target.value)}
-                  className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
-                />
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Log a payment on any project to activate
+              </div>
+            )}
+          </div>
+
+        </div>
+      </ChartFamily>
+
+      {/* ══ FAMILY 2 — PROJECT INTELLIGENCE ══ */}
+      <ChartFamily
+        id="project-intelligence"
+        name="PROJECT INTELLIGENCE"
+        accent="#378ADD"
+        chartCount={3}
+        summaryLabel="Active Projects"
+        summaryValue={String(activeCount)}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* Project Timeline — Gantt View — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Project Timeline — Gantt View</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">
+                Solid = confirmed phases · Dashed = estimated · Coral zone = overlap · Green dot = payment milestone
+              </p>
+            </div>
+            {ganttRows.length > 0 ? (
+              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px' }}>
+                <ProjectTimelineChart ganttRows={ganttRows} overlapWindows={overlapWindows} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
+                Enter a phase start date in any project
+              </div>
+            )}
+          </div>
+
+          {/* Planned vs Actual Timeline — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="text-lg font-bold text-gray-100">Planned vs Actual Timeline</h2>
+                <p className="text-sm text-gray-400 italic mt-1">Dashed = planned schedule at contract value, solid = actual accumulated collected revenue</p>
               </div>
               <select
-                value={rcaSelectedProject}
-                onChange={e => setRcaSelectedProject(e.target.value)}
+                value={pvaSelectedProject}
+                onChange={e => setPvaSelectedProject(e.target.value)}
                 className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
               >
                 <option value="all">All Projects</option>
-                {rcaDropdownProjects.map(p => (
+                {pvaActiveProjects.map(p => (
                   <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
                 ))}
               </select>
             </div>
+            {pvaProjects.length > 0 ? (
+              <div className="relative w-full" style={{ height: '380px' }}>
+                <PlannedVsActualChart projects={pvaProjects} backup={backup} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Confirm a phase date in Project → Phase Timeline tab
+              </div>
+            )}
           </div>
-          <div className="relative w-full" style={{ height: '420px' }}>
-            
-              <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
-          </div>
-          <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-500">
-            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(239,68,68,0.15)'}}></span> Danger zone</span>
-            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(245,158,11,0.15)'}}></span> Warning zone</span>
-            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(16,185,129,0.15)'}}></span> Profit zone</span>
-          </div>
-        </div>
 
-        {/* PvA: Planned vs Actual Timeline */}
-        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-          <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <h2 className="text-lg font-bold text-gray-100">Planned vs Actual Timeline</h2>
-              <p className="text-sm text-gray-400 italic mt-1">Dashed = planned schedule at contract value, solid = actual accumulated collected revenue</p>
+          {/* OPP: Open Projects Pipeline */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <h2 className="text-lg font-bold text-gray-100 mb-4">OPP: Open Projects Pipeline</h2>
+            {oppProjects.length > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <OPPChart projects={oppProjects} backup={backup} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Add active or upcoming projects to see your pipeline
+              </div>
+            )}
+          </div>
+
+        </div>
+      </ChartFamily>
+
+      {/* ══ FAMILY 3 — COST & LABOR ══ */}
+      <ChartFamily
+        id="cost-labor"
+        name="COST & LABOR"
+        accent="#EF9F27"
+        chartCount={3}
+        summaryLabel="AR Exposure"
+        summaryValue={exposureFmt}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* Labor Cost vs Revenue 12-Week Trend — placeholder */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="mb-4">
+              <h2 className="text-lg font-bold text-gray-100">Labor Cost vs Revenue 12-Week Trend</h2>
+              <p className="text-xs text-gray-400 italic mt-0.5">Weekly labor cost vs revenue collected over rolling 12 weeks</p>
             </div>
-            <select
-              value={pvaSelectedProject}
-              onChange={e => setPvaSelectedProject(e.target.value)}
-              className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
-            >
-              <option value="all">All Projects</option>
-              {pvaActiveProjects.map(p => (
-                <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
-              ))}
-            </select>
+            <div className="flex flex-col items-center justify-center h-48 gap-2">
+              <span className="text-[#EF9F27] text-2xl">🔧</span>
+              <span className="text-gray-500 text-sm text-center">Chart coming in next session</span>
+              <span className="text-gray-600 text-xs text-center">Log field labor hours to activate labor cost tracking</span>
+            </div>
           </div>
-          <div className="relative w-full" style={{ height: '380px' }}>
-            
-              <PlannedVsActualChart projects={pvaProjects} backup={backup} />
+
+          {/* RCA: Revenue vs Cost Analysis — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="text-[26px] font-bold text-gray-100 leading-tight">Revenue vs Cost Analysis — Active Projects</h2>
+                <p className="text-sm text-gray-400 italic mt-1">Collected Revenue, Labor/Material/Mileage Costs, AR Exposure &amp; Break-even — with shaded profit zones</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span>From:</span>
+                  <input
+                    type="date"
+                    value={rcaDateStart}
+                    onChange={e => setRcaDateStart(e.target.value)}
+                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span>To:</span>
+                  <input
+                    type="date"
+                    value={rcaDateEnd}
+                    onChange={e => setRcaDateEnd(e.target.value)}
+                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <select
+                  value={rcaSelectedProject}
+                  onChange={e => setRcaSelectedProject(e.target.value)}
+                  className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
+                >
+                  <option value="all">All Projects</option>
+                  {rcaDropdownProjects.map(p => (
+                    <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="relative w-full" style={{ height: '420px' }}>
+              <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
+            </div>
+            <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-500">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(239,68,68,0.15)'}}></span> Danger zone</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(245,158,11,0.15)'}}></span> Warning zone</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(16,185,129,0.15)'}}></span> Profit zone</span>
+            </div>
           </div>
+
+          {/* 6-Month Cost vs Pipeline Forecast — placeholder */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="mb-4">
+              <h2 className="text-lg font-bold text-gray-100">6-Month Cost vs Pipeline Forecast</h2>
+              <p className="text-xs text-gray-400 italic mt-0.5">Projected cost run rate vs pipeline value over 6 months</p>
+            </div>
+            <div className="flex flex-col items-center justify-center h-48 gap-2">
+              <span className="text-[#EF9F27] text-2xl">📋</span>
+              <span className="text-gray-500 text-sm text-center">Chart coming in next session</span>
+              <span className="text-gray-600 text-xs text-center">Pulls from Team panel — add project pipeline entries to activate</span>
+            </div>
+          </div>
+
         </div>
+      </ChartFamily>
 
-        {/* G6: PULSE Trend Analyzer — "Analyze trends" button + 1hr cache */}
-        <div className="lg:col-span-2">
-          <PulseTrendAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
+      {/* ══ FAMILY 4 — PERFORMANCE ══ */}
+      <ChartFamily
+        id="performance"
+        name="PERFORMANCE"
+        accent="#7F77DD"
+        chartCount={3}
+        summaryLabel="Service Calls"
+        summaryValue={String(scpLogs.length)}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* SCP: Service Calls Performance */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="text-lg font-bold text-gray-100">SCP: Service Calls Performance</h2>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span>From:</span>
+                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span>To:</span>
+                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                </div>
+              </div>
+            </div>
+            {scpLogs.length > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <SCPChart serviceLogs={scpLogs} backup={backup} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
+                No service call data yet
+              </div>
+            )}
+          </div>
+
+          {/* PCD: Project Completion Distribution */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <h2 className="text-lg font-bold text-gray-100 mb-4">PCD: Project Completion Distribution</h2>
+            {pcdProjects.length > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <PCDChart projects={pcdProjects} backup={backup} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Add active or upcoming projects to see completion distribution
+              </div>
+            )}
+          </div>
+
+          {/* Quote vs Actual — Estimating Accuracy — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Quote vs Actual — Estimating Accuracy</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">
+                Gray = quoted hours · Colored = actual · Red = over budget · Green = under · Amber = within 5%
+              </p>
+            </div>
+            {allVariances && allVariances.length > 0 && allVariances.some(p => p.variances && p.variances.length > 0) ? (
+              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, allVariances.reduce((s, p) => s + (p.variances ? p.variances.length : 0), 0) * 58 + 60) + 'px' }}>
+                <QuoteVsActualChart projectsVariance={allVariances} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
+                Log field hours against a phase to see estimating accuracy
+              </div>
+            )}
+          </div>
+
         </div>
+      </ChartFamily>
 
-        {/* NEXUS: AI Dashboard Analyzer */}
-        <div className="lg:col-span-2">
-          <NEXUSDashboardAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
+      {/* ══ FAMILY 5 — REVENUE INTELLIGENCE ══ */}
+      <ChartFamily
+        id="revenue-intelligence"
+        name="REVENUE INTELLIGENCE"
+        accent="#D85A30"
+        chartCount={2}
+        summaryLabel="This Month"
+        summaryValue={monthRevFmt}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* Monthly Revenue — Projected vs Actual */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Monthly Revenue — Projected vs Actual</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling · Dashed amber = monthly target (dayTarget × 20 work days)</p>
+            </div>
+            {activeCount > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <MonthlyRevenueChart monthlyBuckets={monthBuckets} dailyTarget={dailyTarget} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                No payments recorded this month yet
+              </div>
+            )}
+          </div>
+
+          {/* Solar Income Projections — link to Solar tab */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Solar Income Projections</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">Solar project revenue projections and REC income estimates</p>
+            </div>
+            <div className="flex flex-col items-center justify-center h-48 gap-3">
+              <span className="text-[#D85A30] text-3xl">☀️</span>
+              <span className="text-gray-400 text-sm text-center">Solar income data lives in the Solar tab</span>
+              <span className="text-gray-600 text-xs text-center">Open the Solar tab to view and manage solar project projections</span>
+            </div>
+          </div>
+
         </div>
+      </ChartFamily>
 
-        {/* ══ REVENUE TIMELINE INTELLIGENCE ══ */}
-        <RevenuTimelineDashboard backup={backup} projects={projects} />
-
-      </div>
     </div>
   )
 }
 
-// ── PLANNED VS ACTUAL CHART COMPONENT ──
+// ── DASHBOARD EXPORT ──
 export default function V15rDashboard() {
   return (
-    
-      <V15rDashboardInner />
+    <V15rDashboardInner />
   )
 }
-

@@ -20,6 +20,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { NecLookupPanel } from '@/components/ohm/NecLookupPanel'
+import { NecTablesPanel } from '@/components/ohm/NecTablesPanel'
 import { useAuth } from '@/hooks/useAuth'
 import * as codeSearch from '@/agents/ohm/codeSearch'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
@@ -49,7 +50,7 @@ interface SearchResult {
   tradeMatches?: Array<{ id: string; scenario: string; relevance: number }>
 }
 
-type ActiveTab = 'search' | 'ask' | 'library' | 'nec-lookup'
+type ActiveTab = 'search' | 'ask' | 'library' | 'nec-lookup' | 'nec-tables'
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -406,6 +407,17 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
           }`}
         >
           <WifiOff size={14} />
+          NEC Calculators
+        </button>
+        <button
+          onClick={() => setActiveTab('nec-tables')}
+          className={`flex items-center gap-1 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'nec-tables'
+              ? 'text-emerald-400 border-emerald-400'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          <Search size={14} />
           NEC Tables
         </button>
       </div>
@@ -655,10 +667,17 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
       )}
 
       {/* ── Trade Library Tab ──────────────────────────────────────────────── */}
-      {/* ── NEC Lookup (Offline) Tab ───────────────────────────────────────── */}
+      {/* ── NEC Calculators (Offline) Tab ─────────────────────────────────── */}
       {activeTab === 'nec-lookup' && (
         <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <NecLookupPanel />
+        </div>
+      )}
+
+      {/* ── NEC Tables Tab (Session 8) ─────────────────────────────────────── */}
+      {activeTab === 'nec-tables' && (
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-4 py-4">
+          <NecTablesPanel />
         </div>
       )}
 
