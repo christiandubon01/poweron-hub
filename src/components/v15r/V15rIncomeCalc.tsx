@@ -189,20 +189,95 @@ export default function V15rIncomeCalc() {
   const [deepAnalysis, setDeepAnalysis] = useState<string | null>(null)
   const [deepAnalysisLoading, setDeepAnalysisLoading] = useState(false)
 
-  const revenueStreamData = useMemo(() => {
-    const months = Array.from({ length: 12 }, (_, i) => {
-      const monthNum = i + 1
+  // electricalMonthData: maps each pipeline project to the actual month its revenue lands.
+  // CONFIRMED: project has a completedDate/endDate → assign contract value to that month.
+  // PROJECTED: has startDate but no completion → estimate completion = start + 30 days.
+  // ESTIMATED: no dates at all → pool distributed as rolling average across all 12 months.
+  const electricalMonthData = useMemo(() => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    const pipelineProjects = projects.filter(p => {
+      const bucket = resolveProjectBucket(p)
+      return bucket === 'active' || bucket === 'coming'
+    })
+
+    // Build 12 monthly buckets starting from current month
+    const buckets = Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
       return {
-        month: monthNum,
-        electrical: electricalPipelineTotal / 12,
-        rmo: rmoMonthly,
-        installLabor: installMonthly,
-        employeeCost: empTotalMonthly,
-        total: (electricalPipelineTotal / 12) + rmoMonthly + installMonthly
+        month: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        date: d,
+        confirmed: 0,
+        confirmedCount: 0,
+        confirmedProjects: [] as string[],
+        projected: 0,
+        projectedCount: 0,
+        estimated: 0,
+        solarRMO: rmoMonthly,
+        solarInstall: installMonthly,
       }
     })
-    return months
-  }, [electricalPipelineTotal, rmoMonthly, installMonthly, empTotalMonthly])
+
+    let unscheduledTotal = 0
+
+    for (const p of pipelineProjects) {
+      const contract = num(p.contract ?? p.contract_value ?? 0)
+      if (contract <= 0) continue
+
+      const completionDate = p.completedDate || p.endDate
+      const startDate = p.startDate || p.lastMove
+
+      if (completionDate) {
+        // CONFIRMED: has a specific completion/payment date
+        const cd = new Date(completionDate + (completionDate.includes('T') ? '' : 'T00:00:00'))
+        if (!isNaN(cd.getTime())) {
+          const idx = buckets.findIndex(b =>
+            cd.getFullYear() === b.date.getFullYear() && cd.getMonth() === b.date.getMonth()
+          )
+          if (idx >= 0) {
+            buckets[idx].confirmed += contract
+            buckets[idx].confirmedCount++
+            buckets[idx].confirmedProjects.push(p.name || 'Project')
+          } else {
+            unscheduledTotal += contract
+          }
+        } else {
+          unscheduledTotal += contract
+        }
+      } else if (startDate) {
+        // PROJECTED: estimate completion = start + 30 days (default)
+        const sd = new Date(startDate + (startDate.includes('T') ? '' : 'T00:00:00'))
+        if (!isNaN(sd.getTime())) {
+          const estCompletion = new Date(sd.getTime() + 30 * 86400000)
+          const idx = buckets.findIndex(b =>
+            estCompletion.getFullYear() === b.date.getFullYear() &&
+            estCompletion.getMonth() === b.date.getMonth()
+          )
+          if (idx >= 0) {
+            buckets[idx].projected += contract
+            buckets[idx].projectedCount++
+          } else {
+            unscheduledTotal += contract
+          }
+        } else {
+          unscheduledTotal += contract
+        }
+      } else {
+        // ESTIMATED: no dates at all → unscheduled pool
+        unscheduledTotal += contract
+      }
+    }
+
+    // Distribute unscheduled pool as rolling average across all 12 months
+    if (unscheduledTotal > 0) {
+      const monthlyEst = unscheduledTotal / 12
+      for (const b of buckets) {
+        b.estimated = monthlyEst
+      }
+    }
+
+    return buckets
+  }, [projects, rmoMonthly, installMonthly])
 
   return (
     <div className="space-y-6 p-5 min-h-screen bg-[#1a1d27]">
@@ -462,27 +537,35 @@ export default function V15rIncomeCalc() {
               </div>
 
               {/* Card 3: Electrical Projects — Monthly Net */}
-              <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
-                <h4 className="text-sm font-medium text-emerald-400">Electrical Projects — Monthly Net</h4>
-                <p className="text-2xl font-bold text-white">{fmtK(revenueStreams.projMonthlyNet)}</p>
-                <p className="text-xs text-gray-400">Paid electrical projects (3mo average)</p>
-                <div className="text-xs text-gray-500 space-y-1 mt-3 pt-2 border-t border-gray-700">
-                  <div>Pipeline total: {fmtK(electricalPipelineTotal)}</div>
-                  <div>Active projects: {activeProjects.length}</div>
-                </div>
-              </div>
+              {(() => {
+                const confirmedThisMonth = electricalMonthData[0]?.confirmed ?? 0
+                const pipelineK = Math.round(electricalPipelineTotal / 1000)
+                return (
+                  <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 space-y-2">
+                    <h4 className="text-sm font-medium text-emerald-400">Electrical Projects — Monthly Net</h4>
+                    <p className="text-2xl font-bold text-white">{fmtK(confirmedThisMonth)}</p>
+                    <p className="text-xs text-gray-400">Monthly Net (confirmed)</p>
+                    <div className="text-xs text-gray-300 space-y-1 mt-3 pt-2 border-t border-gray-700">
+                      <div className="font-medium">Pipeline (active): ${pipelineK}k — {activeProjects.length} project{activeProjects.length !== 1 ? 's' : ''}</div>
+                      {electricalMonthData[0]?.projected > 0 && (
+                        <div className="text-amber-400">Projected this month: {fmtK(electricalMonthData[0].projected)}</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Combined Total */}
               <div className="bg-gray-800/50 border border-emerald-500/30 rounded-xl p-4 flex justify-between items-center">
                 <span className="text-sm font-medium text-gray-300">Combined Monthly Revenue</span>
-                <span className="text-2xl font-bold text-emerald-400">{fmtK(rmoMonthly + installNetMonthly + revenueStreams.projMonthlyNet)}</span>
+                <span className="text-2xl font-bold text-emerald-400">{fmtK(rmoMonthly + installNetMonthly + (electricalMonthData[0]?.confirmed ?? 0))}</span>
               </div>
             </div>
           </div>
 
-          {/* Revenue Stream Stacked Area Chart */}
+          {/* Revenue Stream Chart — month-mapped pipeline data */}
           {(
-            <RevenueStreamChart data={revenueStreamData} />
+            <RevenueStreamChart data={electricalMonthData} />
           )}
 
           {/* Business-Linked Projections Grouped Bar Chart */}
@@ -494,6 +577,7 @@ export default function V15rIncomeCalc() {
               installAnnual={installMonthly * 12}
               totalMonthly={totalMonthly}
               totalAnnual={totalAnnual}
+              electricalPipelineTotal={electricalPipelineTotal}
             />
           )}
 
@@ -641,38 +725,204 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
   )
 }
 
+// RevenueStreamChart — pure SVG, zero state hooks, ref-based tooltip only.
+// Accepts electricalMonthData buckets with confirmed/projected/estimated breakdown.
+// Bar stacking (bottom → top): estimated → projected → confirmed
+// Trend line: solid green for past months, dashed amber for future months.
 function RevenueStreamChart({ data }) {
-  // recharts imported at top of file
-  const chartData = data.map(d => ({ name: 'Mo ' + d.month, electrical: d.electrical || 0, rmo: d.rmo || 0, installLabor: d.installLabor || 0, employeeCost: d.employeeCost || 0, total: d.total || 0 }))
+  var tooltipRef = useRef<HTMLDivElement>(null)
+  if (!data || !data.length) {
+    return (
+      <div className="bg-[#232738] rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Electrical Pipeline & Revenue Projection</h3>
+        <div className="flex items-center justify-center h-40 text-gray-500 text-sm">No pipeline data</div>
+      </div>
+    )
+  }
+
+  var safe = function(v: any): number { var n = Number(v); return (isNaN(n) || !isFinite(n)) ? 0 : n }
+  var fmtD = function(v: number): string { v = safe(v); return v >= 1000000 ? '$' + (v / 1000000).toFixed(1) + 'M' : v >= 1000 ? '$' + (v / 1000).toFixed(0) + 'k' : '$' + Math.round(v) }
+
+  var W = 900, H = 300, pad = { t: 30, r: 24, b: 46, l: 70 }
+  var cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
+
+  // Max value across all months (electrical stack + solar streams)
+  var maxVal = 1
+  for (var di = 0; di < data.length; di++) {
+    var d = data[di]
+    var total = safe(d.confirmed) + safe(d.projected) + safe(d.estimated) + safe(d.solarRMO) + safe(d.solarInstall)
+    if (total > maxVal) maxVal = total
+  }
+  maxVal = maxVal * 1.15
+
+  var barW = (cW / data.length) * 0.62
+  var barGap = cW / data.length
+
+  function xCenter(i: number) { return pad.l + i * barGap + barGap / 2 }
+  function yScale(v: number) { return pad.t + cH - (safe(v) / maxVal) * cH }
+
+  var now = new Date(); now.setHours(0, 0, 0, 0)
+
+  function showTip(i: number) {
+    var el = tooltipRef.current; if (!el || !data[i]) return
+    var d = data[i]
+    var conf = safe(d.confirmed), proj = safe(d.projected), est = safe(d.estimated)
+    var rmo = safe(d.solarRMO), inst = safe(d.solarInstall)
+    var total = conf + proj + est + rmo + inst
+    var html = '<b style="color:#fff;display:block;margin-bottom:6px">' + (d.month || '') + '</b>'
+    if (conf > 0) {
+      html += '<div style="color:#1D9E75">■ Confirmed: ' + fmtD(conf)
+      if (d.confirmedCount > 0) html += ' (' + d.confirmedCount + ' project' + (d.confirmedCount !== 1 ? 's' : '') + ')'
+      html += '</div>'
+      if (d.confirmedProjects && d.confirmedProjects.length > 0) {
+        html += '<div style="color:#6b7280;font-size:10px;padding-left:8px;margin-bottom:2px">' + d.confirmedProjects.slice(0, 3).join(', ') + '</div>'
+      }
+    }
+    if (proj > 0) html += '<div style="color:#f59e0b">■ Projected: ' + fmtD(proj) + (d.projectedCount > 0 ? ' (' + d.projectedCount + ')' : '') + '</div>'
+    if (est > 0) html += '<div style="color:#fbbf24;opacity:0.8">░ Estimated: ' + fmtD(est) + ' (avg)</div>'
+    if (rmo > 0) html += '<div style="color:#34d399">⁃ Solar RMO: ' + fmtD(rmo) + '</div>'
+    if (inst > 0) html += '<div style="color:#eab308">⁃ Solar Install: ' + fmtD(inst) + '</div>'
+    html += '<div style="border-top:1px solid #374151;margin-top:5px;padding-top:4px;color:#e5e7eb;font-weight:700">Total: ' + fmtD(total) + '</div>'
+    el.innerHTML = html
+    el.style.display = 'block'
+  }
+  function hideTip() { var el = tooltipRef.current; if (el) el.style.display = 'none' }
+
+  var ticks = [0, 0.25, 0.5, 0.75, 1].map(function(f) { return maxVal * f })
+
+  // Trend line: top of (confirmed + projected + estimated) per month
+  var trendPts = data.map(function(d: any, i: number) {
+    var elec = safe(d.confirmed) + safe(d.projected) + safe(d.estimated)
+    var isPast = d.date instanceof Date ? d.date < now : false
+    return { x: xCenter(i), y: yScale(elec), isPast }
+  })
+
   return (
     <div className="bg-[#232738] rounded-lg p-4">
       <h3 className="text-sm font-semibold text-gray-200 uppercase mb-4">Electrical Pipeline & Revenue Projection</h3>
-      <div style={{ height: '300px' }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-            <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-            <YAxis tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
-            <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
-            <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
-            <Line type="monotone" dataKey="electrical" name="Electrical Pipeline" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="rmo" name="RMO Revenue" stroke="#34d399" strokeWidth={2} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="installLabor" name="Install Labor" stroke="#eab308" strokeWidth={2} dot={{ r: 3 }} />
-            {chartData.some(d => d.employeeCost > 0) && <Line type="monotone" dataKey="employeeCost" name="Employee Cost" stroke="#ef4444" strokeWidth={2} strokeDasharray="5 5" dot={false} />}
-            <Line type="monotone" dataKey="total" name="Combined Total" stroke="#ffffff" strokeWidth={3} dot={{ r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
+      <div className="relative w-full" style={{ height: H + 'px' }}>
+        <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="xMidYMid meet" className="w-full h-full" style={{ display: 'block' }}>
+
+          {/* Y-axis grid + labels */}
+          {ticks.map(function(v, i) {
+            var yPos = yScale(v)
+            return (
+              <g key={i}>
+                <line x1={pad.l} y1={yPos} x2={W - pad.r} y2={yPos} stroke="rgba(255,255,255,0.05)" />
+                <text x={pad.l - 8} y={yPos + 4} textAnchor="end" fill="#9ca3af" fontSize="10">{fmtD(v)}</text>
+              </g>
+            )
+          })}
+
+          {/* Stacked bars per month */}
+          {data.map(function(d: any, i: number) {
+            var bx = xCenter(i) - barW / 2
+            var conf = safe(d.confirmed), proj = safe(d.projected), est = safe(d.estimated)
+            var yBottom = pad.t + cH
+
+            var estH = (est / maxVal) * cH
+            var projH = (proj / maxVal) * cH
+            var confH = (conf / maxVal) * cH
+
+            // Stack from bottom: estimated → projected → confirmed
+            var yEst = yBottom - estH
+            var yProj = yEst - projH
+            var yConf = yProj - confH
+
+            return (
+              <g key={i}
+                onMouseEnter={function() { showTip(i) }}
+                onMouseLeave={hideTip}
+              >
+                {/* Estimated: amber 30% opacity + dashed top border */}
+                {estH > 0.5 && (
+                  <g>
+                    <rect x={bx} y={yEst} width={barW} height={estH} fill="#f59e0b" opacity={0.3} />
+                    <line x1={bx} y1={yEst} x2={bx + barW} y2={yEst}
+                      stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4 3" opacity={0.9} />
+                  </g>
+                )}
+                {/* Projected: amber 70% opacity */}
+                {projH > 0.5 && (
+                  <rect x={bx} y={yProj} width={barW} height={projH} fill="#f59e0b" opacity={0.7} />
+                )}
+                {/* Confirmed: solid green */}
+                {confH > 0.5 && (
+                  <rect x={bx} y={yConf} width={barW} height={confH} fill="#1D9E75" opacity={1} rx={2} />
+                )}
+                {/* Invisible hit area */}
+                <rect x={bx} y={pad.t} width={barW} height={cH} fill="transparent" />
+                {/* X-axis label */}
+                <text x={xCenter(i)} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">{d.month || ''}</text>
+              </g>
+            )
+          })}
+
+          {/* Trend line: past months = solid green, future = dashed amber */}
+          {trendPts.map(function(pt, i) {
+            if (i === 0) return null
+            var prev = trendPts[i - 1]
+            var isPastSeg = prev.isPast && pt.isPast
+            var isFutureSeg = !prev.isPast && !pt.isPast
+            var isTransition = prev.isPast !== pt.isPast
+            if (isPastSeg) {
+              return <line key={'t' + i} x1={prev.x} y1={prev.y} x2={pt.x} y2={pt.y}
+                stroke="#10b981" strokeWidth="2" opacity={0.9} />
+            }
+            if (isFutureSeg || isTransition) {
+              return <line key={'t' + i} x1={prev.x} y1={prev.y} x2={pt.x} y2={pt.y}
+                stroke="#f59e0b" strokeWidth="2" strokeDasharray="5 4" opacity={0.8} />
+            }
+            return null
+          })}
+
+          {/* "Est. trend →" label at final point if it's a future point */}
+          {trendPts.length > 0 && !trendPts[trendPts.length - 1].isPast && (
+            <text x={trendPts[trendPts.length - 1].x + 6} y={trendPts[trendPts.length - 1].y + 4}
+              fill="#9ca3af" fontSize="8" opacity={0.7}>Est. trend →</text>
+          )}
+
+        </svg>
+        {/* Tooltip — ref-based DOM, no state */}
+        <div ref={tooltipRef} style={{
+          display: 'none', position: 'absolute', top: 8, right: 8,
+          background: 'rgba(15,17,23,0.96)', border: '1px solid #374151',
+          borderRadius: 8, padding: '10px 14px', fontSize: 11, zIndex: 10,
+          pointerEvents: 'none', minWidth: 210, maxWidth: 260,
+        }} />
+      </div>
+      {/* Legend */}
+      <div className="flex flex-wrap gap-4 mt-2 justify-center text-[10px] text-gray-400">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: '#1D9E75' }} />
+          Confirmed
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: '#f59e0b', opacity: 0.7 }} />
+          Projected
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: '#f59e0b', opacity: 0.3 }} />
+          Estimated
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span style={{ width: 14, height: 0, borderTop: '2px dashed #f59e0b', display: 'inline-block', verticalAlign: 'middle' }} />
+          <span>Est. trend</span>
+        </span>
       </div>
     </div>
   )
 }
 
 function BusinessProjectionsChart({ rmoMonthly, rmoAnnual, installMonthly, installAnnual, totalMonthly, totalAnnual, electricalPipelineTotal }) {
+  // NaN guard: any undefined/NaN value from missing or zero-division inputs becomes 0
+  const safe = (val: number) => (isNaN(val) || !isFinite(val)) ? 0 : val
+  const ePipeline = safe(num(electricalPipelineTotal))
   // recharts imported at top of file
   const chartData = [
-    { name: 'Monthly', electrical: electricalPipelineTotal / 12, rmo: rmoMonthly, install: installMonthly },
-    { name: 'Annual (mo)', electrical: electricalPipelineTotal / 12, rmo: rmoAnnual / 12, install: installAnnual / 12 },
-    { name: '5-Year (mo)', electrical: electricalPipelineTotal / 12, rmo: (rmoAnnual / 12) * 5, install: (installAnnual / 12) * 5 },
+    { name: 'Monthly', electrical: safe(ePipeline / 12), rmo: safe(rmoMonthly), install: safe(installMonthly) },
+    { name: 'Annual (mo)', electrical: safe(ePipeline / 12), rmo: safe(rmoAnnual / 12), install: safe(installAnnual / 12) },
+    { name: '5-Year (mo)', electrical: safe(ePipeline / 12), rmo: safe((rmoAnnual / 12) * 5), install: safe((installAnnual / 12) * 5) },
   ]
   return (
     <div className="bg-[#232738] rounded-lg p-4">

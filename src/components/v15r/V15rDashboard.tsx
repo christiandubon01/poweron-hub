@@ -16,7 +16,16 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import Charts from './charts/SVGCharts'
-var { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart } = Charts
+var { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart,
+      CashFlowProjectionChart, MonthlyRevenueChart, ProjectTimelineChart, QuoteVsActualChart } = Charts
+import {
+  query8WeekCashFlow,
+  queryMonthlyRevenue,
+  queryOverlapWindows,
+  queryGanttData,
+  queryAllQuoteVsActual,
+  getDailyTarget,
+} from '@/services/revenueTimelineQueries'
 
 // ── NEXUS AI DASHBOARD ANALYZER ──
 interface NEXUSAnalysis {
@@ -404,6 +413,114 @@ function PulseTrendAnalyzer({ backup, cfotSummary, projects }: {
   )
 }
 
+// ── REVENUE TIMELINE INTELLIGENCE SECTION ──
+// Renders all 4 new Revenue Timeline charts as a collapsible section.
+// Uses useMemo for data computation — charts themselves have zero hooks.
+function RevenuTimelineDashboard({ backup, projects }) {
+  const [open, setOpen] = useState(true)
+
+  // Compute all Revenue Timeline data
+  const weekBuckets = useMemo(() => query8WeekCashFlow(), [backup])
+  const monthBuckets = useMemo(() => queryMonthlyRevenue(6), [backup])
+  const overlapWindows = useMemo(() => queryOverlapWindows(), [backup])
+  const ganttRows = useMemo(() => queryGanttData(), [backup])
+  const allVariances = useMemo(() => queryAllQuoteVsActual(), [backup])
+  const dailyTarget = useMemo(() => getDailyTarget(), [backup])
+
+  const hasData = projects.filter(p => p.status === 'active').length > 0
+
+  return (
+    <div className="lg:col-span-2">
+      {/* Section header */}
+      <div
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-3 cursor-pointer mb-6 pt-4 border-t border-gray-700"
+      >
+        <span className="text-2xl">📅</span>
+        <div className="flex-1">
+          <h2 className="text-2xl font-bold text-gray-100">Revenue Timeline Intelligence</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Live cash flow projection · Payment schedule · Project Gantt · Quote vs actual drift
+          </p>
+        </div>
+        <span className="text-gray-600 text-sm">{open ? '▲ Collapse' : '▼ Expand'}</span>
+      </div>
+
+      {open && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* Chart 1: 8-Week Cash Flow Projection */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
+            </div>
+            {hasData ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <CashFlowProjectionChart weekBuckets={weekBuckets} overlapWindows={overlapWindows} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Add phase timeline data to active projects to see cash flow
+              </div>
+            )}
+          </div>
+
+          {/* Chart 2: Monthly Revenue Projected vs Actual */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Monthly Revenue — Projected vs Actual</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling · Dashed amber = monthly target (dayTarget × 20 work days)</p>
+            </div>
+            {hasData ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <MonthlyRevenueChart monthlyBuckets={monthBuckets} dailyTarget={dailyTarget} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                No active project revenue data yet
+              </div>
+            )}
+          </div>
+
+          {/* Chart 3: Project Timeline (Gantt) — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Project Timeline — Gantt View</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">
+                Solid = confirmed phases · Dashed = estimated · Coral zone = overlap · Green dot = payment milestone
+              </p>
+            </div>
+            {ganttRows.length > 0 ? (
+              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px' }}>
+                <ProjectTimelineChart ganttRows={ganttRows} overlapWindows={overlapWindows} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
+                Add confirmed phase start dates in the project Phase Timeline tab to populate this chart
+              </div>
+            )}
+          </div>
+
+          {/* Chart 4: Quote vs Actual Variance — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Quote vs Actual — Estimating Accuracy</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">
+                Gray = quoted hours · Colored = actual · Red = over budget · Green = under · Amber = within 5%
+              </p>
+            </div>
+            <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, allVariances.reduce((s, p) => s + p.variances.length, 0) * 58 + 60) + 'px' }}>
+              <QuoteVsActualChart projectsVariance={allVariances} />
+            </div>
+          </div>
+
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
   const backup = getBackupData()
@@ -727,6 +844,9 @@ function V15rDashboardInner() {
         <div className="lg:col-span-2">
           <NEXUSDashboardAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
         </div>
+
+        {/* ══ REVENUE TIMELINE INTELLIGENCE ══ */}
+        <RevenuTimelineDashboard backup={backup} projects={projects} />
 
       </div>
     </div>

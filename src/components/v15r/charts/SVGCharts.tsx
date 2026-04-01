@@ -383,5 +383,401 @@ function PlannedVsActualChart({ projects, backup }) {
   return <SVGLineChart data={chartData} height={340} lines={lineData} />
 }
 
-// Single default export
-export default { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart }
+// ── REVENUE TIMELINE CHART 1: 8-Week Cash Flow Projection ──
+// Grouped bars: projected (amber outline) vs actual (green fill)
+// Coral dot above bar when an overlap window falls in that week.
+function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
+  var tooltipRef = React.useRef(null)
+  if (!weekBuckets || !weekBuckets.length) return <EmptyChart />
+  var overlaps = overlapWindows || []
+  var maxVal = 1
+  for (var ci = 0; ci < weekBuckets.length; ci++) {
+    maxVal = Math.max(maxVal, weekBuckets[ci].projected || 0, weekBuckets[ci].actual || 0)
+  }
+  var W = 900, H = 300, pad = { t: 30, r: 24, b: 48, l: 70 }
+  var cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
+  var groupW = cW / weekBuckets.length
+  var barW = groupW * 0.35
+
+  function showTip(i) {
+    var el = tooltipRef.current; if (!el) return
+    var d = weekBuckets[i]
+    var delta = (d.projected || 0) - (d.actual || 0)
+    el.innerHTML = '<b style="color:#fff">' + (d.weekLabel || '') + '</b>' +
+      '<div style="color:#f59e0b">Projected: ' + fmtDollar(d.projected || 0) + '</div>' +
+      '<div style="color:#10b981">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
+      '<div style="color:' + (delta < 0 ? '#10b981' : '#9ca3af') + '">Delta: ' + (delta >= 0 ? '+' : '') + fmtDollar(delta) + '</div>'
+    el.style.display = 'block'
+  }
+  function hideTip() { if (tooltipRef.current) tooltipRef.current.style.display = 'none' }
+
+  var ticks = [0, 0.25, 0.5, 0.75, 1].map(function(f) { return maxVal * f })
+
+  return (
+    <div className="relative w-full h-full">
+      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="xMidYMid meet" className="w-full h-full" style={{ display: 'block' }}>
+        {/* Grid lines */}
+        {ticks.map(function(v, i) {
+          var yPos = pad.t + cH - (v / maxVal) * cH
+          return <g key={i}>
+            <line x1={pad.l} y1={yPos} x2={W - pad.r} y2={yPos} stroke="rgba(255,255,255,0.06)" />
+            <text x={pad.l - 8} y={yPos + 4} textAnchor="end" fill="#9ca3af" fontSize="10">{fmtDollar(v)}</text>
+          </g>
+        })}
+        {weekBuckets.map(function(d, i) {
+          var gx = pad.l + i * groupW + groupW * 0.15
+          var projH = ((d.projected || 0) / maxVal) * cH
+          var actH = ((d.actual || 0) / maxVal) * cH
+          // Check if this week has an overlap
+          var hasOverlap = overlaps.some(function(o) {
+            var os = o.overlapStart instanceof Date ? o.overlapStart : new Date(o.overlapStart)
+            var oe = o.overlapEnd instanceof Date ? o.overlapEnd : new Date(o.overlapEnd)
+            var ws = d.weekStart instanceof Date ? d.weekStart : new Date(d.weekStart)
+            var we = new Date(ws.getTime() + 6 * 86400000)
+            return os <= we && oe >= ws
+          })
+          return (
+            <g key={i} onMouseEnter={function() { showTip(i) }} onMouseLeave={hideTip}>
+              {/* Projected bar — amber outline */}
+              <rect x={gx} y={pad.t + cH - projH} width={barW} height={Math.max(projH, 1)} rx={2}
+                fill="transparent" stroke="#f59e0b" strokeWidth="2" opacity={0.9} />
+              {/* Actual bar — green fill */}
+              <rect x={gx + barW + 4} y={pad.t + cH - actH} width={barW} height={Math.max(actH, 1)} rx={2}
+                fill="#10b981" opacity={0.85} />
+              {/* Overlap dot */}
+              {hasOverlap && (
+                <circle cx={gx + barW} cy={pad.t + cH - Math.max(projH, actH) - 10} r={5} fill="#f87171" opacity={0.9} />
+              )}
+              {/* X label */}
+              <text x={gx + barW} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">
+                {(d.weekLabel || '').replace(' ', '\n')}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', top: 8, right: 8, background: 'rgba(15,17,23,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '10px 14px', fontSize: 11, zIndex: 10, pointerEvents: 'none', minWidth: 180 }} />
+      <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
+        <span className="flex items-center gap-1"><span style={{ width: 10, height: 10, border: '2px solid #f59e0b', display: 'inline-block', borderRadius: 2 }} /> Projected</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Actual</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Overlap window</span>
+      </div>
+    </div>
+  )
+}
+
+// ── REVENUE TIMELINE CHART 2: Monthly Revenue Projected vs Actual ──
+// Grouped bar chart, 6-month rolling. Dashed amber line = monthly target.
+function MonthlyRevenueChart({ monthlyBuckets, dailyTarget }) {
+  var tooltipRef = React.useRef(null)
+  if (!monthlyBuckets || !monthlyBuckets.length) return <EmptyChart />
+  var target = (dailyTarget || 0) * 20
+  var maxVal = Math.max(1, target)
+  for (var mi = 0; mi < monthlyBuckets.length; mi++) {
+    maxVal = Math.max(maxVal, monthlyBuckets[mi].projected || 0, monthlyBuckets[mi].actual || 0)
+  }
+  maxVal = maxVal * 1.1
+  var W = 900, H = 300, pad = { t: 30, r: 24, b: 48, l: 70 }
+  var cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
+  var groupW = cW / monthlyBuckets.length
+  var barW = groupW * 0.35
+
+  function showTip(i) {
+    var el = tooltipRef.current; if (!el) return
+    var d = monthlyBuckets[i]
+    el.innerHTML = '<b style="color:#fff">' + (d.month || '') + '</b>' +
+      '<div style="color:#3b82f6">Projected: ' + fmtDollar(d.projected || 0) + '</div>' +
+      '<div style="color:#10b981">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
+      (target > 0 ? '<div style="color:#f59e0b">Target: ' + fmtDollar(target) + '</div>' : '')
+    el.style.display = 'block'
+  }
+  function hideTip() { if (tooltipRef.current) tooltipRef.current.style.display = 'none' }
+
+  var ticks = [0, 0.25, 0.5, 0.75, 1].map(function(f) { return maxVal * f })
+  var targetY = pad.t + cH - (target / maxVal) * cH
+
+  return (
+    <div className="relative w-full h-full">
+      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="xMidYMid meet" className="w-full h-full" style={{ display: 'block' }}>
+        {ticks.map(function(v, i) {
+          var yPos = pad.t + cH - (v / maxVal) * cH
+          return <g key={i}>
+            <line x1={pad.l} y1={yPos} x2={W - pad.r} y2={yPos} stroke="rgba(255,255,255,0.06)" />
+            <text x={pad.l - 8} y={yPos + 4} textAnchor="end" fill="#9ca3af" fontSize="10">{fmtDollar(v)}</text>
+          </g>
+        })}
+        {/* Monthly target dashed line */}
+        {target > 0 && (
+          <line x1={pad.l} y1={targetY} x2={W - pad.r} y2={targetY}
+            stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="6 4" opacity={0.7} />
+        )}
+        {monthlyBuckets.map(function(d, i) {
+          var gx = pad.l + i * groupW + groupW * 0.15
+          var projH = ((d.projected || 0) / maxVal) * cH
+          var actH = ((d.actual || 0) / maxVal) * cH
+          return (
+            <g key={i} onMouseEnter={function() { showTip(i) }} onMouseLeave={hideTip}>
+              <rect x={gx} y={pad.t + cH - projH} width={barW} height={Math.max(projH, 1)} rx={2} fill="#3b82f6" opacity={0.8} />
+              <rect x={gx + barW + 4} y={pad.t + cH - actH} width={barW} height={Math.max(actH, 1)} rx={2} fill="#10b981" opacity={0.85} />
+              <text x={gx + barW} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">{d.month || ''}</text>
+            </g>
+          )
+        })}
+      </svg>
+      <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', top: 8, right: 8, background: 'rgba(15,17,23,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '10px 14px', fontSize: 11, zIndex: 10, pointerEvents: 'none', minWidth: 180 }} />
+      <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500" /> Projected</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Actual</span>
+        <span className="flex items-center gap-1"><span style={{ width: 16, height: 0, borderTop: '2px dashed #f59e0b', display: 'inline-block' }} /><span> Target ({fmtDollar(target)}/mo)</span></span>
+      </div>
+    </div>
+  )
+}
+
+// ── REVENUE TIMELINE CHART 3: Gantt-style Project Timeline ──
+// One row per project, phases as horizontal segments. Payment markers. Overlap zones.
+// Zero hooks — uses ref for hover tooltip only.
+function ProjectTimelineChart({ ganttRows, overlapWindows }) {
+  var tooltipRef = React.useRef(null)
+  if (!ganttRows || !ganttRows.length) return <EmptyChart />
+
+  var now = new Date(); now.setHours(0, 0, 0, 0)
+  var twelveWeeksOut = new Date(now.getTime() + 84 * 86400000)
+
+  // Determine date range from all segments
+  var minDate = now.getTime()
+  var maxDate = twelveWeeksOut.getTime()
+  ganttRows.forEach(function(row) {
+    ;(row.segments || []).forEach(function(seg) {
+      if (seg.startDate) minDate = Math.min(minDate, new Date(seg.startDate).getTime())
+      if (seg.endDate) maxDate = Math.max(maxDate, new Date(seg.endDate).getTime())
+    })
+  })
+  // Ensure at least 12 weeks span
+  maxDate = Math.max(maxDate, now.getTime() + 84 * 86400000)
+  var span = maxDate - minDate || 1
+
+  var W = 900, rowH = 34, rowGap = 8, padL = 140, padR = 30, padT = 28, padB = 32
+  var H = padT + ganttRows.length * (rowH + rowGap) + padB
+  var chartW = W - padL - padR
+
+  function dateX(d) {
+    var dt = d instanceof Date ? d : new Date(d)
+    return padL + ((dt.getTime() - minDate) / span) * chartW
+  }
+
+  // Week tick marks
+  var weekTicks = []
+  var tick = new Date(minDate)
+  tick.setDate(tick.getDate() - tick.getDay() + 1) // align to Monday
+  while (tick.getTime() <= maxDate) {
+    weekTicks.push(new Date(tick))
+    tick = new Date(tick.getTime() + 7 * 86400000)
+  }
+
+  function showTip(msg) {
+    var el = tooltipRef.current; if (!el) return
+    el.innerHTML = msg; el.style.display = 'block'
+  }
+  function hideTip() { if (tooltipRef.current) tooltipRef.current.style.display = 'none' }
+
+  return (
+    <div className="relative w-full" style={{ overflowX: 'auto' }}>
+      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="xMinYMid meet" className="w-full" style={{ display: 'block', minWidth: W + 'px' }}>
+        {/* Week grid lines and labels */}
+        {weekTicks.map(function(wt, i) {
+          var x = dateX(wt)
+          if (x < padL || x > W - padR) return null
+          return <g key={i}>
+            <line x1={x} y1={padT} x2={x} y2={H - padB} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+            <text x={x} y={padT - 6} textAnchor="middle" fill="#6b7280" fontSize="8">
+              {wt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </text>
+          </g>
+        })}
+        {/* Today line */}
+        <line x1={dateX(now)} y1={padT} x2={dateX(now)} y2={H - padB}
+          stroke="#60a5fa" strokeWidth="1" strokeDasharray="4 3" opacity={0.6} />
+        <text x={dateX(now)} y={padT - 6} textAnchor="middle" fill="#60a5fa" fontSize="8" fontWeight="600">Today</text>
+
+        {/* Overlap zones (coral shading across all rows) */}
+        {(overlapWindows || []).map(function(o, oi) {
+          var os = o.overlapStart instanceof Date ? o.overlapStart : new Date(o.overlapStart)
+          var oe = o.overlapEnd instanceof Date ? o.overlapEnd : new Date(o.overlapEnd)
+          var x1 = dateX(os), x2 = dateX(oe)
+          if (x2 < padL || x1 > W - padR) return null
+          return <rect key={oi} x={Math.max(x1, padL)} y={padT} width={Math.min(x2, W - padR) - Math.max(x1, padL)}
+            height={H - padT - padB} fill="#f87171" opacity={0.08} />
+        })}
+
+        {ganttRows.map(function(row, ri) {
+          var yBase = padT + ri * (rowH + rowGap)
+          return (
+            <g key={row.projectId || ri}>
+              {/* Project name */}
+              <text x={padL - 8} y={yBase + rowH / 2 + 4} textAnchor="end" fill="#d1d5db" fontSize="10">
+                {(row.projectName || 'Unknown').substring(0, 18)}
+              </text>
+              {/* Phase segments */}
+              {(row.segments || []).map(function(seg, si) {
+                if (!seg.startDate || !seg.endDate) return null
+                var x1 = dateX(seg.startDate), x2 = dateX(seg.endDate)
+                var segW = Math.max(x2 - x1, 4)
+                if (x2 < padL || x1 > W - padR) return null
+                var tipMsg = '<b style="color:#fff">' + row.projectName + '</b>' +
+                  '<div style="color:' + seg.color + '">' + seg.phaseName + '</div>' +
+                  (seg.estimated ? '<div style="color:#f59e0b">Estimated window</div>' : '') +
+                  (seg.paymentAmount > 0 ? '<div style="color:#10b981">Payment: ' + fmtDollar(seg.paymentAmount) + '</div>' : '')
+                return (
+                  <g key={si}
+                    onMouseEnter={function() { showTip(tipMsg) }}
+                    onMouseLeave={hideTip}
+                  >
+                    <rect x={Math.max(x1, padL)} y={yBase + 4} width={Math.min(segW, W - padR - Math.max(x1, padL))} height={rowH - 8}
+                      rx={3}
+                      fill={seg.estimated ? 'transparent' : seg.color}
+                      stroke={seg.color}
+                      strokeWidth={seg.estimated ? '1.5' : '0'}
+                      strokeDasharray={seg.estimated ? '4 3' : undefined}
+                      opacity={seg.estimated ? 0.5 : 0.8}
+                    />
+                    {/* Phase label inside bar */}
+                    {segW > 40 && (
+                      <text x={Math.max(x1, padL) + Math.min(segW, 80) / 2} y={yBase + rowH / 2 + 4}
+                        textAnchor="middle" fill="#fff" fontSize="8" fontWeight="600" opacity={0.9}>
+                        {seg.phaseName.substring(0, 8)}
+                      </text>
+                    )}
+                    {/* Payment marker circle */}
+                    {seg.paymentAmount > 0 && seg.paymentDate && (
+                      <g>
+                        <circle cx={dateX(seg.paymentDate)} cy={yBase + rowH / 2} r={5} fill="#10b981" opacity={0.9} />
+                        <text x={dateX(seg.paymentDate)} y={yBase - 2} textAnchor="middle" fill="#10b981" fontSize="7" fontWeight="600">
+                          {fmtDollar(seg.paymentAmount)}
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })}
+      </svg>
+      <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', top: 8, right: 8, background: 'rgba(15,17,23,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '10px 14px', fontSize: 11, zIndex: 10, pointerEvents: 'none', minWidth: 180 }} />
+      <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: '#10b981' }} /> Confirmed phases</span>
+        <span className="flex items-center gap-1"><span style={{ width: 10, height: 10, border: '1.5px dashed #9ca3af', display: 'inline-block', borderRadius: 2 }} /><span> Estimated</span></span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: '#f87171' }} /> Overlap zone</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: '#10b981' }} /> Payment marker</span>
+      </div>
+    </div>
+  )
+}
+
+// ── REVENUE TIMELINE CHART 4: Quote vs Actual Variance ──
+// Horizontal bar pairs per phase: quoted (gray) vs actual (colored by variance).
+// Over budget = red. Under budget = green. Within 5% = amber.
+function QuoteVsActualChart({ projectsVariance }) {
+  var tooltipRef = React.useRef(null)
+  // projectsVariance: Array<{ projectId, projectName, variances: PhaseVariance[] }>
+  var items = projectsVariance || []
+  // Flatten to display rows: one pair of bars per phase per project
+  var rows = []
+  items.forEach(function(proj) {
+    ;(proj.variances || []).forEach(function(v) {
+      var maxHrs = Math.max(v.quotedHours || 0, v.actualHours || 0, 0.1)
+      var maxMat = Math.max(v.quotedMaterials || 0, v.actualMaterials || 0, 0.1)
+      rows.push({ projectName: proj.projectName, phase: v.phase, quotedHours: v.quotedHours, actualHours: v.actualHours, quotedMaterials: v.quotedMaterials, actualMaterials: v.actualMaterials, laborVariance: v.laborVariance, materialVariance: v.materialVariance, maxHrs: maxHrs, maxMat: maxMat })
+    })
+  })
+
+  if (!rows.length) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500 text-sm text-center px-8">
+        Start logging field hours to see estimating accuracy
+      </div>
+    )
+  }
+
+  function varColor(variance, quoted) {
+    if (!quoted || quoted === 0) return '#6b7280'
+    var pct = Math.abs(variance / quoted)
+    if (pct <= 0.05) return '#f59e0b'
+    return variance > 0 ? '#ef4444' : '#10b981'
+  }
+
+  function showTip(i) {
+    var el = tooltipRef.current; if (!el) return
+    var r = rows[i]
+    el.innerHTML = '<b style="color:#fff">' + r.projectName + ' — ' + r.phase + '</b>' +
+      '<div style="color:#9ca3af">Labor: quoted ' + (r.quotedHours || 0).toFixed(1) + 'h / actual ' + (r.actualHours || 0).toFixed(1) + 'h</div>' +
+      '<div style="color:' + varColor(r.laborVariance, r.quotedHours) + '">Variance: ' + (r.laborVariance >= 0 ? '+' : '') + (r.laborVariance || 0).toFixed(1) + ' hrs</div>' +
+      (r.quotedMaterials > 0 ? '<div style="color:#9ca3af">Materials: quoted ' + fmtDollar(r.quotedMaterials) + ' / actual ' + fmtDollar(r.actualMaterials) + '</div>' : '')
+    el.style.display = 'block'
+  }
+  function hideTip() { if (tooltipRef.current) tooltipRef.current.style.display = 'none' }
+
+  var barH = 20, gap = 6, padL = 180, padR = 40
+  var W = 900, H = Math.max(200, rows.length * (barH * 2 + gap + 10) + 50)
+  var barArea = W - padL - padR
+
+  // Global max for normalization
+  var globalMax = 1
+  rows.forEach(function(r) { globalMax = Math.max(globalMax, r.maxHrs, r.maxMat / 100) })
+
+  return (
+    <div className="relative w-full h-full">
+      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="xMidYMid meet" className="w-full h-full" style={{ display: 'block' }}>
+        {rows.map(function(r, i) {
+          var yBase = 20 + i * (barH * 2 + gap + 10)
+          var quotedHrsW = (r.quotedHours / (r.maxHrs || 1)) * (barArea * 0.9)
+          var actualHrsW = (r.actualHours / (r.maxHrs || 1)) * (barArea * 0.9)
+          var hrsColor = varColor(r.laborVariance, r.quotedHours)
+          return (
+            <g key={i} onMouseEnter={function() { showTip(i) }} onMouseLeave={hideTip}>
+              {/* Label */}
+              <text x={padL - 8} y={yBase + barH + 4} textAnchor="end" fill="#d1d5db" fontSize="10">
+                {(r.projectName || '').substring(0, 14)} · {(r.phase || '').substring(0, 10)}
+              </text>
+              {/* Quoted bar (gray) */}
+              <rect x={padL} y={yBase} width={Math.max(quotedHrsW, 2)} height={barH} rx={3} fill="#374151" opacity={0.8} />
+              <text x={padL + Math.max(quotedHrsW, 2) + 6} y={yBase + barH / 2 + 4} fill="#6b7280" fontSize="9">
+                {(r.quotedHours || 0).toFixed(1)}h
+              </text>
+              {/* Actual bar (colored) */}
+              <rect x={padL} y={yBase + barH + 3} width={Math.max(actualHrsW, 2)} height={barH} rx={3} fill={hrsColor} opacity={0.85} />
+              <text x={padL + Math.max(actualHrsW, 2) + 6} y={yBase + barH + 3 + barH / 2 + 4} fill={hrsColor} fontSize="9" fontWeight="600">
+                {(r.actualHours || 0).toFixed(1)}h
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', top: 8, right: 8, background: 'rgba(15,17,23,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '10px 14px', fontSize: 11, zIndex: 10, pointerEvents: 'none', minWidth: 220 }} />
+      <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-600" /> Quoted</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Under budget</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" /> Within 5%</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500" /> Over budget</span>
+      </div>
+    </div>
+  )
+}
+
+// Single default export — all original charts + 4 new Revenue Timeline charts
+export default {
+  // Original charts (preserved)
+  CFOTChart,
+  OPPChart,
+  PCDChart,
+  EVRChart,
+  SCPChart,
+  RevenueCostChart,
+  PlannedVsActualChart,
+  // Revenue Timeline Intelligence charts (new)
+  CashFlowProjectionChart,
+  MonthlyRevenueChart,
+  ProjectTimelineChart,
+  QuoteVsActualChart,
+}
