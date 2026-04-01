@@ -3,7 +3,7 @@
  * Pure SVG chart components — zero external dependencies.
  * Replaces Chart.js to eliminate TDZ bundler conflicts.
  */
-import React, { useState, useMemo } from 'react'
+import React, { useState } from 'react'
 import { getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 
 function fmtDollar(v: number) { return v >= 1000000 ? `$${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${Math.round(v)}` }
@@ -91,14 +91,10 @@ function SVGLineChart({ data, lines, height = 280 }: {
 
 // ── CFOT CHART ──
 function CFOTChart({ data, backup }: { data: any[]; backup: BackupData }) {
-  const chartData = useMemo(() => data.map(d => {
-    const label = (() => {
-      if (!d.start) return `Wk ${d.wk ?? '?'}`
-      const dt = new Date(d.start + 'T00:00:00')
-      return isNaN(dt.getTime()) ? `Wk ${d.wk ?? '?'}` : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    })()
+  var chartData = data.map(d => {
+    var label = d.start ? (() => { var dt = new Date(d.start + 'T00:00:00'); return isNaN(dt.getTime()) ? 'Wk ' + (d.wk || '?') : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) })() : 'Wk ' + (d.wk || '?')
     return {
-      label,
+      label: label,
       exposure: num(d.totalExposure || (num(d.unbilled || 0) + num(d.pendingInv || 0) + Math.max(0, num(d.svc || 0) - num(d.svcCollected || 0)))),
       unbilled: num(d.unbilled || 0),
       pending: num(d.pendingInv || 0),
@@ -106,7 +102,7 @@ function CFOTChart({ data, backup }: { data: any[]; backup: BackupData }) {
       projPay: num(d.proj || 0),
       accum: num(d.accum || 0),
     }
-  }), [data])
+  })
 
   return <SVGLineChart data={chartData} height={350} lines={[
     { key: 'exposure', color: '#ef4444', label: 'Total Exposure', width: 3 },
@@ -202,17 +198,15 @@ function PCDChart({ projects, backup }: { projects: any[]; backup: BackupData })
 
 // ── EVR CHART ──
 function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
-  const chartData = useMemo(() => {
-    const inRange = (d: string) => { if (!d) return true; if (dateStart && d < dateStart) return false; if (dateEnd && d > dateEnd) return false; return true }
-    let cumIncome = 0, cumAR = 0, cumPipeline = 0
-    return projects.map(p => {
-      const fin = getProjectFinancials(p, backup)
-      const logs = (backup.logs || []).filter((l: any) => l.projectId === p.id && inRange(l.date))
-      const income = dateStart || dateEnd ? logs.reduce((s: number, l: any) => s + num(l.collected), 0) : fin.paid
-      cumIncome += income; cumAR += Math.max(0, fin.billed - fin.paid); cumPipeline += num(p.contract)
-      return { label: (p.name || '?').substring(0, 15), income: cumIncome, ar: cumAR, pipeline: cumPipeline }
-    })
-  }, [projects, backup, dateStart, dateEnd])
+  var inRange = function(d) { if (!d) return true; if (dateStart && d < dateStart) return false; if (dateEnd && d > dateEnd) return false; return true }
+  var cumIncome = 0, cumAR = 0, cumPipeline = 0
+  var chartData = projects.map(function(p) {
+    var fin = getProjectFinancials(p, backup)
+    var logs = (backup.logs || []).filter(function(l) { return l.projectId === p.id && inRange(l.date) })
+    var income = dateStart || dateEnd ? logs.reduce(function(s, l) { return s + num(l.collected) }, 0) : fin.paid
+    cumIncome += income; cumAR += Math.max(0, fin.billed - fin.paid); cumPipeline += num(p.contract)
+    return { label: (p.name || '?').substring(0, 15), income: cumIncome, ar: cumAR, pipeline: cumPipeline }
+  })
 
   return <SVGLineChart data={chartData} lines={[
     { key: 'income', color: '#10b981', label: 'Accumulated Income', width: 2 },
@@ -280,30 +274,29 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: BackupD
 
 // ── RCA CHART (Revenue vs Cost with zones) ──
 function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
-  const chartData = useMemo(() => {
-    const mileRate = num(backup.settings?.mileRate || 0.66)
-    const opCost = num(backup.settings?.opCost || 42.45)
-    const logs = backup.logs || []
-    const inRange = (d: string) => { if (!d) return true; if (dateStart && d < dateStart) return false; if (dateEnd && d > dateEnd) return false; return true }
-
-    if (projects.length === 1) {
-      const p = projects[0]
-      const pLogs = logs.filter((l: any) => l.projectId === p.id && inRange(l.date)).sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
-      let cc = 0, cl = 0, cm = 0, cmi = 0
-      return pLogs.map((l: any) => {
-        cc += num(l.collected); cl += num(l.hrs) * opCost; cm += num(l.mat); cmi += num(l.miles || 0) * mileRate
-        return { label: l.date ? new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?', collected: cc, labor: cl, material: cm, mileage: cmi, breakeven: cl + cm + cmi }
-      })
-    }
-    return projects.map(p => {
-      const fin = getProjectFinancials(p, backup)
-      const pLogs = logs.filter((l: any) => l.projectId === p.id && inRange(l.date))
-      const hrs = pLogs.reduce((s: number, l: any) => s + num(l.hrs), 0)
-      const mat = pLogs.reduce((s: number, l: any) => s + num(l.mat), 0)
-      const mi = pLogs.reduce((s: number, l: any) => s + num(l.miles || 0), 0)
+  var mileRate = num(backup.settings?.mileRate || 0.66)
+  var opCost = num(backup.settings?.opCost || 42.45)
+  var logs = backup.logs || []
+  var inRange = function(d) { if (!d) return true; if (dateStart && d < dateStart) return false; if (dateEnd && d > dateEnd) return false; return true }
+  var chartData
+  if (projects.length === 1) {
+    var p = projects[0]
+    var pLogs = logs.filter(function(l) { return l.projectId === p.id && inRange(l.date) }).sort(function(a, b) { return (a.date || '').localeCompare(b.date || '') })
+    var cc = 0, cl = 0, cm = 0, cmi = 0
+    chartData = pLogs.map(function(l) {
+      cc += num(l.collected); cl += num(l.hrs) * opCost; cm += num(l.mat); cmi += num(l.miles || 0) * mileRate
+      return { label: l.date ? new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?', collected: cc, labor: cl, material: cm, mileage: cmi, breakeven: cl + cm + cmi }
+    })
+  } else {
+    chartData = projects.map(function(p) {
+      var fin = getProjectFinancials(p, backup)
+      var pLogs = logs.filter(function(l) { return l.projectId === p.id && inRange(l.date) })
+      var hrs = pLogs.reduce(function(s, l) { return s + num(l.hrs) }, 0)
+      var mat = pLogs.reduce(function(s, l) { return s + num(l.mat) }, 0)
+      var mi = pLogs.reduce(function(s, l) { return s + num(l.miles || 0) }, 0)
       return { label: (p.name || '?').substring(0, 15), collected: fin.paid, labor: hrs * opCost, material: mat, mileage: mi * mileRate, breakeven: hrs * opCost + mat + mi * mileRate }
     })
-  }, [projects, backup, dateStart, dateEnd])
+  }
 
   return <SVGLineChart data={chartData} height={380} lines={[
     { key: 'collected', color: '#10b981', label: 'Collected Revenue', width: 3 },
