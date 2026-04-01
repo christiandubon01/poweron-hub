@@ -8,7 +8,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart } from './charts/SVGCharts'
+import Charts from './charts/SVGCharts'
+var { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart } = Charts
 
 // ── NEXUS AI DASHBOARD ANALYZER ──
 interface NEXUSAnalysis {

@@ -90,7 +90,7 @@ function SVGLineChart({ data, lines, height = 280 }: {
 }
 
 // ── CFOT CHART ──
-export function CFOTChart({ data, backup }: { data: any[]; backup: BackupData }) {
+function CFOTChart({ data, backup }: { data: any[]; backup: BackupData }) {
   const chartData = useMemo(() => data.map(d => {
     const label = (() => {
       if (!d.start) return `Wk ${d.wk ?? '?'}`
@@ -119,7 +119,7 @@ export function CFOTChart({ data, backup }: { data: any[]; backup: BackupData })
 }
 
 // ── OPP CHART (horizontal bars) ──
-export function OPPChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
+function OPPChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
   const [hover, setHover] = useState<number | null>(null)
   if (!projects.length) return <EmptyChart />
   const maxVal = Math.max(...projects.map(p => num(p.contract)), 1)
@@ -156,7 +156,7 @@ var phaseNames = ['Planning', 'Estimating', 'Site Prep', 'Rough-in', 'Trim', 'Fi
 var phaseColors = ['#6b7280', '#8b5cf6', '#f59e0b', '#3b82f6', '#eab308', '#10b981']
 var defaultWeights: any = { Planning: 5, Estimating: 10, 'Site Prep': 15, 'Rough-in': 30, Trim: 25, Finish: 15 }
 
-export function PCDChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
+function PCDChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
   if (!projects.length) return <EmptyChart />
   const weights = backup.settings?.phaseWeights || defaultWeights
   const barH = 24, gap = 5, padL = 130
@@ -201,7 +201,7 @@ export function PCDChart({ projects, backup }: { projects: any[]; backup: Backup
 }
 
 // ── EVR CHART ──
-export function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
+function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
   const chartData = useMemo(() => {
     const inRange = (d: string) => { if (!d) return true; if (dateStart && d < dateStart) return false; if (dateEnd && d > dateEnd) return false; return true }
     let cumIncome = 0, cumAR = 0, cumPipeline = 0
@@ -222,7 +222,7 @@ export function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: a
 }
 
 // ── SCP CHART (grouped bars) ──
-export function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: BackupData }) {
+function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: BackupData }) {
   const [hover, setHover] = useState<number | null>(null)
   if (!serviceLogs.length) return <EmptyChart />
   const mileRate = num(backup.settings?.mileRate || 0.66)
@@ -279,7 +279,7 @@ export function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: 
 }
 
 // ── RCA CHART (Revenue vs Cost with zones) ──
-export function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
+function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
   const chartData = useMemo(() => {
     const mileRate = num(backup.settings?.mileRate || 0.66)
     const opCost = num(backup.settings?.opCost || 42.45)
@@ -317,7 +317,7 @@ export function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { pro
 // ── PvA CHART ──
 var pvColors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
-export function PlannedVsActualChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
+function PlannedVsActualChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
   if (!projects.length) return <EmptyChart />
   const logs = backup.logs || []
   const allDates = new Set<string>()
@@ -351,3 +351,6 @@ export function PlannedVsActualChart({ projects, backup }: { projects: any[]; ba
 
   return <SVGLineChart data={chartData} height={340} lines={lineData} />
 }
+
+// Single default export — avoids named export bindings that cause TDZ
+export default { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart }
