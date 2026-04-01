@@ -703,13 +703,16 @@ export function getKPIs(d: BackupData) {
     .filter(p => resolveProjectBucket(p) === 'active')
     .map(p => getProjectFinancials(p, d))
   const exposure = activeProjectMoney.reduce((s, m) => s + Math.max(0, m.contract - m.paid), 0)
-  // SVC Unbilled = service entries not fully collected yet (money math, not stale payStatus)
+  // SVC Unbilled = sum of remaining balance across all service log entries
+  // (totalBillable - collected), zeroed for overpaid entries; money math only, never stale payStatus
   const svcUnbilled = serviceLogs.reduce((s, l) => {
     const quoted = num(l.quoted)
     const collected = num(l.collected)
     const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
-    const addIncome = adjustments.filter((a: any) => a && a.type === 'income').reduce((ac: number, a: any) => ac + num(a.amount), 0)
-    const totalBillable = quoted + addIncome
+    const addIncome = adjustments
+      .filter((a: any) => a && a.type === 'income')
+      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
+    const totalBillable = (quoted + addIncome) ?? 0
     return s + Math.max(0, totalBillable - collected)
   }, 0)
   const openRfis = projects.reduce((s, p) => s + (p.rfis || []).filter((r: any) => r.status !== 'answered').length, 0)
