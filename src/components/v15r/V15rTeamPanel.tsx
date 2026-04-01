@@ -28,7 +28,6 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { Chart as ChartJS } from 'chart.js/auto'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -75,30 +74,19 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// Check if Chart.js initialized successfully
-function useChartJS() {
-  const [ready, setReady] = useState((window as any)._chartReady === true)
-  useEffect(() => {
-    if (ready) return
-    const timer = setTimeout(() => {
-      setReady((window as any)._chartReady === true)
-    }, 500)
-    return () => clearTimeout(timer)
-  }, [ready])
-  return ready
-}
 
 // ── COST VS PIPELINE CHART COMPONENT ──
 function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
-  const chartReady = useChartJS()
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current) return
+    if (!canvasRef.current) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
     if (!Chart) return
 
     if (chartRef.current) {
@@ -277,13 +265,15 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, backup])
+  }, [backup])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -292,13 +282,14 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
 function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
-  const chartReady = useChartJS()
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current) return
+    if (!canvasRef.current) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
     if (!Chart) return
 
     if (chartRef.current) {
@@ -491,13 +482,15 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, backup])
+  }, [backup])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -772,13 +765,14 @@ function OwnerCard({ owner, backup }: { owner: EnhancedEmployee; backup: BackupD
 function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<any>(null)
-  const chartReady = useChartJS()
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current) return
+    if (!canvasRef.current) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
     if (!Chart) return
 
     if (chartRef.current) {
@@ -949,13 +943,15 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, backup, backup?.settings?.employeeCosts, backup?.settings?.payrollMult, backup?.settings?.personalIncomeGoal])
+  }, [backup, backup?.settings?.employeeCosts, backup?.settings?.payrollMult, backup?.settings?.personalIncomeGoal])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }

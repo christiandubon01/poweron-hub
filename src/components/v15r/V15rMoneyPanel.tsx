@@ -14,7 +14,6 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Chart as ChartJS } from 'chart.js/auto'
 import {
   getBackupData,
   saveBackupData,
@@ -65,8 +64,10 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!canvasRef.current || !backup) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') return
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
 
@@ -134,7 +135,9 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
         },
       })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
