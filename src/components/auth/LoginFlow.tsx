@@ -12,8 +12,8 @@
  *   authenticated        → children (dashboard)
  */
 
-import { useState } from 'react'
-import { Zap, Mail, ArrowRight, CheckCircle } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Zap, Mail, ArrowRight, CheckCircle, Clock } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import { PasscodeScreen } from '@/components/auth/PasscodeScreen'
@@ -27,19 +27,44 @@ function EmailSignIn() {
   const [password, setPassword] = useState('')
   const [sent, setSent]     = useState(false)
   const [loading, setLoading] = useState(false)
+  const [cooldown, setCooldown] = useState(0)
+  const cooldownRef = useRef<any>(null)
+
+  // Countdown timer for magic link cooldown
+  useEffect(() => {
+    if (cooldown <= 0) return
+    cooldownRef.current = setInterval(() => {
+      setCooldown(prev => {
+        if (prev <= 1) { clearInterval(cooldownRef.current); return 0 }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(cooldownRef.current)
+  }, [cooldown > 0])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email.trim()) return
+    if (mode === 'magic' && cooldown > 0) return
     setLoading(true)
     clearError()
 
     if (mode === 'magic') {
       await signInWithMagicLink(email.trim())
       setSent(true)
+      setCooldown(60)
     } else {
       await signInWithEmail(email.trim(), password)
     }
+    setLoading(false)
+  }
+
+  const handleResend = async () => {
+    if (cooldown > 0 || !email.trim()) return
+    setLoading(true)
+    clearError()
+    await signInWithMagicLink(email.trim())
+    setCooldown(60)
     setLoading(false)
   }
 
@@ -62,9 +87,28 @@ function EmailSignIn() {
           <p className="text-xs text-text-3">
             Click the link in your email to sign in. It expires in 1 hour.
           </p>
+
+          {/* Resend with cooldown */}
+          <div className="mt-6">
+            {cooldown > 0 ? (
+              <div className="flex items-center justify-center gap-2 text-xs text-text-3">
+                <Clock size={14} />
+                <span>Resend available in {cooldown}s</span>
+              </div>
+            ) : (
+              <button
+                onClick={handleResend}
+                disabled={loading}
+                className="text-sm text-green hover:text-green/80 transition-colors font-semibold disabled:opacity-50"
+              >
+                {loading ? 'Sending...' : 'Resend magic link'}
+              </button>
+            )}
+          </div>
+
           <button
-            onClick={() => setSent(false)}
-            className="mt-8 text-sm text-text-3 hover:text-text-2 transition-colors"
+            onClick={() => { setSent(false); setCooldown(0) }}
+            className="mt-4 text-sm text-text-3 hover:text-text-2 transition-colors"
           >
             Use a different email
           </button>
