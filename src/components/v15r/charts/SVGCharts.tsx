@@ -6,8 +6,8 @@
 import React, { useState, useMemo } from 'react'
 import { getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 
-const fmtDollar = (v: number) => v >= 1000000 ? `$${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${Math.round(v)}`
-const EMPTY = <div className="flex items-center justify-center h-full text-gray-500 text-sm">No data available</div>
+function fmtDollar(v: number) { return v >= 1000000 ? `$${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${Math.round(v)}` }
+function EmptyChart() { return <div className="flex items-center justify-center h-full text-gray-500 text-sm">No data available</div> }
 
 // ── SVG LINE CHART (reusable) ──
 function SVGLineChart({ data, lines, height = 280 }: {
@@ -16,7 +16,7 @@ function SVGLineChart({ data, lines, height = 280 }: {
   height?: number
 }) {
   const [hover, setHover] = useState<number | null>(null)
-  if (!data.length) return EMPTY
+  if (!data.length) return <EmptyChart />
 
   const W = 800, H = height, pad = { t: 30, r: 20, b: 40, l: 60 }
   const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
@@ -121,7 +121,7 @@ export function CFOTChart({ data, backup }: { data: any[]; backup: BackupData })
 // ── OPP CHART (horizontal bars) ──
 export function OPPChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
   const [hover, setHover] = useState<number | null>(null)
-  if (!projects.length) return EMPTY
+  if (!projects.length) return <EmptyChart />
   const maxVal = Math.max(...projects.map(p => num(p.contract)), 1)
   const barH = 28, gap = 6, padL = 130, padR = 70
   const W = 800, H = Math.max(200, projects.length * (barH + gap) + 40)
@@ -151,12 +151,13 @@ export function OPPChart({ projects, backup }: { projects: any[]; backup: Backup
 }
 
 // ── PCD CHART (stacked horizontal bars) ──
-const phaseNames = ['Planning', 'Estimating', 'Site Prep', 'Rough-in', 'Trim', 'Finish']
-const phaseColors = ['#6b7280', '#8b5cf6', '#f59e0b', '#3b82f6', '#eab308', '#10b981']
-const defaultWeights: any = { Planning: 5, Estimating: 10, 'Site Prep': 15, 'Rough-in': 30, Trim: 25, Finish: 15 }
+// Phase data declared as var to avoid TDZ — pure data, no function calls
+var phaseNames = ['Planning', 'Estimating', 'Site Prep', 'Rough-in', 'Trim', 'Finish']
+var phaseColors = ['#6b7280', '#8b5cf6', '#f59e0b', '#3b82f6', '#eab308', '#10b981']
+var defaultWeights: any = { Planning: 5, Estimating: 10, 'Site Prep': 15, 'Rough-in': 30, Trim: 25, Finish: 15 }
 
 export function PCDChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
-  if (!projects.length) return EMPTY
+  if (!projects.length) return <EmptyChart />
   const weights = backup.settings?.phaseWeights || defaultWeights
   const barH = 24, gap = 5, padL = 130
   const W = 800, H = Math.max(200, projects.length * (barH + gap) + 60)
@@ -223,7 +224,7 @@ export function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: a
 // ── SCP CHART (grouped bars) ──
 export function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: BackupData }) {
   const [hover, setHover] = useState<number | null>(null)
-  if (!serviceLogs.length) return EMPTY
+  if (!serviceLogs.length) return <EmptyChart />
   const mileRate = num(backup.settings?.mileRate || 0.66)
   const items = serviceLogs.slice(-8).map((l: any) => {
     const quoted = num(l.quoted), mat = num(l.materialCost || l.material), miles = num(l.mileage || 0) * mileRate
@@ -314,10 +315,10 @@ export function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { pro
 }
 
 // ── PvA CHART ──
-const pvColors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+var pvColors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
 export function PlannedVsActualChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
-  if (!projects.length) return EMPTY
+  if (!projects.length) return <EmptyChart />
   const logs = backup.logs || []
   const allDates = new Set<string>()
   projects.forEach(p => {
@@ -326,7 +327,7 @@ export function PlannedVsActualChart({ projects, backup }: { projects: any[]; ba
     logs.filter((l: any) => l.projectId === p.id && l.date).forEach((l: any) => allDates.add(l.date))
   })
   const sortedDates = [...allDates].sort()
-  if (!sortedDates.length) return EMPTY
+  if (!sortedDates.length) return <EmptyChart />
 
   const lineData: Array<{ key: string; color: string; label: string; dashed?: boolean; width?: number }> = []
   const chartData = sortedDates.map(date => {
