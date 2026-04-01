@@ -15,21 +15,20 @@ import { useReadOnly } from '@/contexts/ReadOnlyContext'
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
 
-// v15r panels — primary operational views (static imports — these are critical)
-import V15rHome from '@/components/v15r/V15rHome'
-import V15rProjectsPanel from '@/components/v15r/V15rProjectsPanel'
-import V15rProjectInner from '@/components/v15r/V15rProjectInner'
-import V15rFieldLogPanel from '@/components/v15r/V15rFieldLogPanel'
-import V15rMoneyPanel from '@/components/v15r/V15rMoneyPanel'
-import V15rIncomeCalc from '@/components/v15r/V15rIncomeCalc'
-import V15rPriceBookPanel from '@/components/v15r/V15rPriceBookPanel'
-import V15rLeadsPanel from '@/components/v15r/V15rLeadsPanel'
-import V15rTemplatesPanel from '@/components/v15r/V15rTemplatesPanel'
-import V15rSettingsPanel from '@/components/v15r/V15rSettingsPanel'
-import V15rTeamPanel from '@/components/v15r/V15rTeamPanel'
-// V15rDashboard lazy-loaded — keeps SVG charts + NEXUS analyzer out of main bundle
+// v15r panels — all lazy-loaded to keep recharts and heavy deps out of main bundle
+const V15rHome = lazy(() => import('@/components/v15r/V15rHome'))
+const V15rProjectsPanel = lazy(() => import('@/components/v15r/V15rProjectsPanel'))
+const V15rProjectInner = lazy(() => import('@/components/v15r/V15rProjectInner'))
+const V15rFieldLogPanel = lazy(() => import('@/components/v15r/V15rFieldLogPanel'))
+const V15rMoneyPanel = lazy(() => import('@/components/v15r/V15rMoneyPanel'))
+const V15rIncomeCalc = lazy(() => import('@/components/v15r/V15rIncomeCalc'))
+const V15rPriceBookPanel = lazy(() => import('@/components/v15r/V15rPriceBookPanel'))
+const V15rLeadsPanel = lazy(() => import('@/components/v15r/V15rLeadsPanel'))
+const V15rTemplatesPanel = lazy(() => import('@/components/v15r/V15rTemplatesPanel'))
+const V15rSettingsPanel = lazy(() => import('@/components/v15r/V15rSettingsPanel'))
+const V15rTeamPanel = lazy(() => import('@/components/v15r/V15rTeamPanel'))
 const V15rDashboard = lazy(() => import('@/components/v15r/V15rDashboard'))
-import V15rPricingIntelligencePanel from '@/components/v15r/V15rPricingIntelligencePanel'
+const V15rPricingIntelligencePanel = lazy(() => import('@/components/v15r/V15rPricingIntelligencePanel'))
 
 // AI agent panels — lazy-loaded so import errors don't crash the main shell
 const NexusChatPanel = lazy(() => import('@/components/nexus/NexusChatPanel').then(m => ({ default: m.NexusChatPanel })))
