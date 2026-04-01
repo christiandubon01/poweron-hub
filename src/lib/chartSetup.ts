@@ -1,8 +1,11 @@
 // src/lib/chartSetup.ts
-// Force synchronous Chart.js initialization to prevent TDZ errors
+// Force Chart.js CJS build to avoid ES module circular dependency TDZ errors
+// The resolve.alias in vite.config.ts maps 'chart.js' → 'chart.js/dist/chart.cjs'
 // Imported at app start in main.tsx before any component mounts
-import { Chart } from 'chart.js'
-import {
+import * as ChartModule from 'chart.js'
+
+const {
+  Chart,
   CategoryScale,
   LinearScale,
   BarController,
@@ -16,7 +19,7 @@ import {
   Tooltip,
   Legend,
   Filler,
-} from 'chart.js'
+} = ChartModule as any
 
 try {
   Chart.register(

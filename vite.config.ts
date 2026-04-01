@@ -8,6 +8,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      'chart.js/auto': path.resolve(__dirname, 'node_modules/chart.js/dist/chart.cjs'),
+      'chart.js': path.resolve(__dirname, 'node_modules/chart.js/dist/chart.cjs'),
     },
   },
   server: {
