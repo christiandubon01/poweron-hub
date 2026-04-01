@@ -7,6 +7,9 @@ export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
     include: ['chart.js', 'chart.js/auto'],
+    esbuildOptions: {
+      target: 'es2015',
+    },
   },
   resolve: {
     alias: {
@@ -30,6 +33,7 @@ export default defineConfig({
     },
   },
   build: {
+    target: 'es2015',
     outDir: 'dist',
     sourcemap: true,
     rollupOptions: {
