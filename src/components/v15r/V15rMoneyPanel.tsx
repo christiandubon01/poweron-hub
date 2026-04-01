@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import {
   getBackupData,
   saveBackupData,
@@ -45,7 +46,7 @@ class ChartErrorBoundary extends React.Component {
 
 // ── Business Health Chart Component (Recharts) ──────────────────────────────
 function BusinessHealthChart({ backup }: { backup: BackupData }) {
-  const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } = require('recharts')
+  // recharts imported at top of file
   const projects = backup.projects || []
   const settings = backup.settings || {} as any
 

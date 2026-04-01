@@ -15,6 +15,7 @@
  */
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, BarChart, Bar } from 'recharts'
 import { AlertCircle, TrendingUp, Sparkles, Zap, ChevronDown, ChevronRight, Users, X } from 'lucide-react'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
@@ -598,7 +599,7 @@ export default function V15rIncomeCalc() {
 // Outer ring: Revenue breakdown by job type (Solar Only, Battery Only, Panel Upgrade, Battery+Panel)
 // Inner ring: Cost ratio (RMO Fee, Installation Labor, Net Margin)
 function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, installLaborTotal, netMarginTotal }) {
-  const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } = require('recharts')
+  // recharts imported at top of file
   const outerData = [
     { name: 'Solar Only', value: solar, color: '#3b82f6' },
     { name: 'Battery Only', value: batteryOnly, color: '#8b5cf6' },
@@ -641,7 +642,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
 }
 
 function RevenueStreamChart({ data }) {
-  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = require('recharts')
+  // recharts imported at top of file
   const chartData = data.map(d => ({ name: 'Mo ' + d.month, electrical: d.electrical || 0, rmo: d.rmo || 0, installLabor: d.installLabor || 0, employeeCost: d.employeeCost || 0, total: d.total || 0 }))
   return (
     <div className="bg-[#232738] rounded-lg p-4">
@@ -667,7 +668,7 @@ function RevenueStreamChart({ data }) {
 }
 
 function BusinessProjectionsChart({ rmoMonthly, rmoAnnual, installMonthly, installAnnual, totalMonthly, totalAnnual, electricalPipelineTotal }) {
-  const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = require('recharts')
+  // recharts imported at top of file
   const chartData = [
     { name: 'Monthly', electrical: electricalPipelineTotal / 12, rmo: rmoMonthly, install: installMonthly },
     { name: 'Annual (mo)', electrical: electricalPipelineTotal / 12, rmo: rmoAnnual / 12, install: installAnnual / 12 },

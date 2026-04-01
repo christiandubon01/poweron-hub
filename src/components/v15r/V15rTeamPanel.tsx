@@ -15,6 +15,7 @@
  */
 
 import React, { useMemo, useState, useEffect, useRef } from 'react'
+import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } from 'recharts'
 import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap } from 'lucide-react'
 import {
   getBackupData,
@@ -77,7 +78,7 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
 
 // ── COST VS PIPELINE CHART COMPONENT ──
 function CostVsPipelineChart({ backup }) {
-  const { ResponsiveContainer, BarChart, Bar, LineChart: LC, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } = require('recharts')
+  // recharts imported at top of file
   const employees = backup.employees || []
   const projects = backup.projects || []
   const logs = backup.logs || []
@@ -112,7 +113,7 @@ function CostVsPipelineChart({ backup }) {
 
 // ── LABOR COST VS REVENUE 12-WEEK CHART ──
 function LaborCostVsRevenueChart({ backup }) {
-  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = require('recharts')
+  // recharts imported at top of file
   const employees = backup.employees || []
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
@@ -418,7 +419,7 @@ function OwnerCard({ owner, backup }: { owner: EnhancedEmployee; backup: BackupD
 
 // ── ENHANCED COST VS PIPELINE CHART ──
 function EnhancedCostVsPipelineChart({ backup }) {
-  const { ResponsiveContainer, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } = require('recharts')
+  // recharts imported at top of file
   const employees = backup.employees || []
   const projects = backup.projects || []
   const logs = backup.logs || []
