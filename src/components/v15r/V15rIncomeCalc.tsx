@@ -20,23 +20,20 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-// Chart.js loaded via CDN in index.html to avoid Vite production circular dependency
+// Chart.js loaded via lazy dynamic import to avoid Vite production circular dependency
 
-// ── HELPER: wait for Chart.js CDN to load ──
+// ── HELPER: lazy dynamic import for Chart.js ──
 function useChartJS() {
   const [ready, setReady] = useState(false)
   useEffect(() => {
-    if ((window as any).Chart) {
+    let cancelled = false
+    import('chart.js/auto').then((mod) => {
+      if (cancelled) return
+      const ChartJS = mod.default
+      ;(window as any)._ChartJS = ChartJS
       setReady(true)
-    } else {
-      const check = setInterval(() => {
-        if ((window as any).Chart) {
-          setReady(true)
-          clearInterval(check)
-        }
-      }, 50)
-      return () => clearInterval(check)
-    }
+    })
+    return () => { cancelled = true }
   }, [])
   return ready
 }
@@ -649,7 +646,7 @@ function JobMixChart({ solar, panel, batteryPanel, batteryOnly, rmoFeeTotal, ins
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any).Chart
+    const Chart = (window as any)._ChartJS
     Chart.defaults.color = '#9ca3af'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.05)'
 
@@ -790,7 +787,7 @@ function RevenueStreamChart({ data }) {
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any).Chart
+    const Chart = (window as any)._ChartJS
     Chart.defaults.color = '#9ca3af'
 
     chartRef.current = new Chart(ctx, {
@@ -934,7 +931,7 @@ function BusinessProjectionsChart({
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
 
-    const Chart = (window as any).Chart
+    const Chart = (window as any)._ChartJS
     Chart.defaults.color = '#9ca3af'
 
     const electricalMonthly = electricalPipelineTotal / 12

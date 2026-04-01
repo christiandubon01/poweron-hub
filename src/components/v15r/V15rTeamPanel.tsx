@@ -28,7 +28,7 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-// Chart.js loaded via CDN in index.html to avoid Vite production circular dependency
+// Chart.js loaded via lazy dynamic import to avoid Vite production circular dependency
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -75,21 +75,18 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: wait for Chart.js CDN to load ──
+// ── HELPER: lazy dynamic import for Chart.js ──
 function useChartJS() {
   const [ready, setReady] = useState(false)
   useEffect(() => {
-    if ((window as any).Chart) {
+    let cancelled = false
+    import('chart.js/auto').then((mod) => {
+      if (cancelled) return
+      const ChartJS = mod.default
+      ;(window as any)._ChartJS = ChartJS
       setReady(true)
-    } else {
-      const check = setInterval(() => {
-        if ((window as any).Chart) {
-          setReady(true)
-          clearInterval(check)
-        }
-      }, 50)
-      return () => clearInterval(check)
-    }
+    })
+    return () => { cancelled = true }
   }, [])
   return ready
 }
@@ -103,7 +100,7 @@ function CostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any).Chart
+    const Chart = (window as any)._ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -302,7 +299,7 @@ function LaborCostVsRevenueChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any).Chart
+    const Chart = (window as any)._ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
@@ -779,7 +776,7 @@ function EnhancedCostVsPipelineChart({ backup }: { backup: BackupData }) {
   useEffect(() => {
     if (!chartReady || !canvasRef.current) return
 
-    const Chart = (window as any).Chart
+    const Chart = (window as any)._ChartJS
     if (!Chart) return
 
     if (chartRef.current) {
