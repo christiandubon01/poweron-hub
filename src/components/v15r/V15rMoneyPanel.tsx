@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import { ChartJS } from '@/lib/chartSetup'
+import { Chart as ChartJS } from 'chart.js/auto'
 import {
   getBackupData,
   saveBackupData,

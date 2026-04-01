@@ -28,7 +28,7 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { ChartJS } from '@/lib/chartSetup'
+import { Chart as ChartJS } from 'chart.js/auto'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean

@@ -20,7 +20,7 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { ChartJS } from '@/lib/chartSetup'
+import { Chart as ChartJS } from 'chart.js/auto'
 
 // Check if Chart.js initialized successfully
 function useChartJS() {
