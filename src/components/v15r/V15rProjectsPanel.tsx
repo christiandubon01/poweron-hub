@@ -26,6 +26,8 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
@@ -44,6 +46,7 @@ function fmtDate(dateStr?: string): string {
 }
 
 export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, onPrefillUsed }: Props) {
+  const { isDemoMode } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [showQBImport, setShowQBImport] = useState(false)
@@ -73,7 +76,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [epPlannedStart, setEpPlannedStart] = useState('')
   const [epPlannedEnd, setEpPlannedEnd] = useState('')
 
-  const backup = getBackupData()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
 
   // Handle prefill from lead conversion
   if (prefillFromLead && !showNewProject) {

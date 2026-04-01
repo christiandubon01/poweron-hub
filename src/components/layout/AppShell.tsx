@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { getBackupData } from '@/services/backupDataService'
 import { useReadOnly } from '@/contexts/ReadOnlyContext'
+import { useDemoStore } from '@/store/demoStore'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
@@ -75,6 +76,7 @@ export function AppShell({ children }: AppShellProps) {
   const [showOnboarding, setShowOnboarding] = useState(false)
 
   const { isReadOnly } = useReadOnly()
+  const { isDemoMode, disableDemoMode } = useDemoStore()
 
   let profile = null
   try {
@@ -257,10 +259,36 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       )}
 
+      {/* Demo Mode banner — fixed below header, tapping exits demo mode */}
+      {isDemoMode && (
+        <div
+          onClick={() => disableDemoMode()}
+          style={{
+            position: 'fixed',
+            top: '64px',   /* sits just below the 64px (h-16) header bar */
+            left: 0,
+            right: 0,
+            zIndex: 9990,  /* above content (z-30 header), below modals */
+            backgroundColor: '#EF9F27',
+            color: '#000',
+            textAlign: 'center',
+            padding: '6px 16px',
+            fontWeight: 700,
+            fontSize: '12px',
+            letterSpacing: '0.04em',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+          title="Tap to exit Demo Mode"
+        >
+          ⚠ DEMO MODE — Sample data only. Tap to exit.
+        </div>
+      )}
+
       <ErrorBoundary>
         <Suspense fallback={<PanelLoading />}>
-          {/* Add top padding when audit banner is visible so content isn't hidden behind it */}
-          <div style={isReadOnly ? { paddingTop: '36px' } : undefined}>
+          {/* Add top padding when audit/demo banner is visible so content isn't hidden behind it */}
+          <div style={isReadOnly || isDemoMode ? { paddingTop: '30px' } : undefined}>
             {renderContent()}
           </div>
         </Suspense>

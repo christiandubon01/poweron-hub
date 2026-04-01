@@ -17,6 +17,8 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import Charts from './charts/SVGCharts'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 var { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart,
       CashFlowProjectionChart, MonthlyRevenueChart, ProjectTimelineChart, QuoteVsActualChart } = Charts
 import {
@@ -493,7 +495,8 @@ function ChartFamily({
 
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
-  const backup = getBackupData()
+  const { isDemoMode } = useDemoMode()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
 
   if (!backup) {
     return (

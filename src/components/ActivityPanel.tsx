@@ -13,6 +13,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { getRecentActivity, type ActivityEntry } from '@/services/activityLog'
 import { RefreshCw } from 'lucide-react'
+import { useDemoMode } from '@/store/demoStore'
 
 // ── Agent badge colours ──────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ function groupByDay(entries: ActivityEntry[]): DayGroup[] {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function ActivityPanel() {
+  const { isDemoMode } = useDemoMode()
   const [entries, setEntries]     = useState<ActivityEntry[]>([])
   const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -131,7 +133,7 @@ export function ActivityPanel() {
         }}
       >
         <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary, #f0f0f0)' }}>
-          Activity log
+          Activity log{isDemoMode ? ' — Demo Mode' : ''}
         </span>
         <button
           onClick={() => load(true)}

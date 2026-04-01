@@ -32,6 +32,8 @@ import {
 } from '@/services/backupDataService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 
 // ── Error Boundary Component ─────────────────────────────────────────────────
 class ChartErrorBoundary extends React.Component {
@@ -140,7 +142,8 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rMoneyPanel() {
-  const backup = getBackupData()
+  const { isDemoMode } = useDemoMode()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
   const [weeklyEdit, setWeeklyEdit] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
   const [showWeeklyGaps, setShowWeeklyGaps] = useState(true)

@@ -34,6 +34,8 @@ import {
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -691,7 +693,8 @@ function EmployeeCard({
 }
 
 export default function V15rTeamPanel() {
-  const backup = getBackupData()
+  const { isDemoMode } = useDemoMode()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
   if (!backup) return <NoData />
 
   const employees = (backup?.employees || []) as EnhancedEmployee[]

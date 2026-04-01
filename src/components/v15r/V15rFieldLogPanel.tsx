@@ -37,6 +37,8 @@ import { processSkillSignals } from '@/services/skillSignalExtractor'
 import QuickBooksImportModal from './QuickBooksImportModal'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -215,6 +217,7 @@ function interleaveWithGaps(entries: any[], dateField: string = 'date'): Array<{
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rFieldLogPanel() {
+  const { isDemoMode } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [activeTab, setActiveTab] = useState<'proj' | 'svc' | 'triggers'>('proj')
@@ -286,7 +289,7 @@ export default function V15rFieldLogPanel() {
   const [paymentStatus, setPaymentStatus] = useState('Unpaid')
   const [completionVariance, setCompletionVariance] = useState<any>(null)
 
-  const backup = getBackupData()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
   if (!backup) {
     return (
       <div className="flex items-center justify-center w-full h-64 bg-[var(--bg-secondary)]">

@@ -2,6 +2,8 @@
 import React, { useState, useCallback } from 'react'
 import { getBackupData, saveBackupData, getOverallCompletion, health, fmt } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 import V15rEstimateTab from './V15rEstimateTab'
 import V15rMTOTab from './V15rMTOTab'
 import V15rProgressTab from './V15rProgressTab'
@@ -34,6 +36,7 @@ function mapExternalToInternalTab(externalTab?: string): string {
 }
 
 export default function V15rProjectInner({ projectId, activeTab: propActiveTab, onTabChange, onClose }: V15rProjectInnerProps) {
+  const { isDemoMode } = useDemoMode()
   const [localTab, setLocalTab] = useState(mapExternalToInternalTab(propActiveTab))
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -44,7 +47,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
     setLocalTab(newTab)
   }, [propActiveTab])
 
-  const backup = getBackupData()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
   if (!backup) return <div className="text-red-400 p-4">No backup data</div>
 
   const p = backup.projects.find(x => x.id === projectId)

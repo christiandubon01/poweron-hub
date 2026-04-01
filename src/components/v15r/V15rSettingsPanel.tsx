@@ -29,6 +29,8 @@ import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch,
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
 import SnapshotPanel from '@/components/SnapshotPanel'
 import { ProposalQueue } from '@/components/ProposalQueue'
+import { useDemoStore } from '@/store/demoStore'
+import { DEMO_COMPANY, DEMO_OWNER, DEMO_LICENSE } from '@/services/demoDataService'
 
 function NoData() {
   return (
@@ -56,6 +58,10 @@ export default function V15rSettingsPanel() {
 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+
+  // Demo Mode store
+  const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
+  const [showDemoConfirm, setShowDemoConfirm] = useState(false)
 
   const persist = useCallback(() => {
     const data = getBackupData()
@@ -1257,6 +1263,88 @@ export default function V15rSettingsPanel() {
 
           {/* SECURITY — CHANGE PASSCODE */}
           <SecurityCard />
+
+          {/* DEMO MODE */}
+          <SettingCard title="Demo Mode">
+            <div className="space-y-4">
+              {/* Status row */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Enable Demo Mode
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Replaces all real data with generic placeholders. Your actual data is never modified.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!isDemoMode) {
+                      setShowDemoConfirm(true)
+                    } else {
+                      disableDemoMode()
+                    }
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                    isDemoMode ? 'bg-amber-500' : 'bg-gray-600'
+                  }`}
+                  title={isDemoMode ? 'Disable Demo Mode' : 'Enable Demo Mode'}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      isDemoMode ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Active status */}
+              {isDemoMode && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30">
+                  <span className="text-amber-400 text-sm">⚠</span>
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold text-amber-300">Demo Mode Active</p>
+                    <p className="text-[10px] text-amber-400/80 mt-0.5">
+                      Showing: {DEMO_COMPANY} · {DEMO_OWNER} · {DEMO_LICENSE}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => disableDemoMode()}
+                    className="text-xs text-amber-300 hover:text-amber-100 font-semibold px-2 py-1 rounded transition-colors"
+                  >
+                    Exit
+                  </button>
+                </div>
+              )}
+
+              {/* Confirmation dialog (inline) */}
+              {showDemoConfirm && !isDemoMode && (
+                <div className="rounded-lg border border-amber-500/40 p-4 space-y-3" style={{ backgroundColor: 'var(--bg-input)' }}>
+                  <p className="text-sm font-bold text-amber-300">Switch to Demo Mode?</p>
+                  <p className="text-xs text-gray-400">
+                    All panels will show sample data until you disable this. Your actual data is never modified or deleted.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        enableDemoMode()
+                        setShowDemoConfirm(false)
+                      }}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-400 text-white transition-colors"
+                    >
+                      Enable Demo Mode
+                    </button>
+                    <button
+                      onClick={() => setShowDemoConfirm(false)}
+                      className="px-3 py-2 text-xs font-semibold rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </SettingCard>
 
           {/* SYSTEM INFO */}
           <SettingCard title="System Info">

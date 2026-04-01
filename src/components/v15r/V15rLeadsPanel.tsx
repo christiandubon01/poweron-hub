@@ -27,6 +27,8 @@ import {
 import { pushState } from '@/services/undoRedoService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 
 // ── Phase colors ─────────────────────────────────────────────────────────────
 
@@ -57,6 +59,7 @@ function today() {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rLeadsPanel() {
+  const { isDemoMode } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [activeTab, setActiveTab] = useState<'gc' | 'svc' | 'weekly'>('gc')
@@ -77,7 +80,7 @@ export default function V15rLeadsPanel() {
   let authProfile: any = null
   try { authProfile = useAuth().profile } catch { /* auth not available */ }
 
-  const backup = getBackupData()
+  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
   if (!backup) {
     return (
       <div className="flex items-center justify-center w-full h-64 bg-[#1a1d27]">

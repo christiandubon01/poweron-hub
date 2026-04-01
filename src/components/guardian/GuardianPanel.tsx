@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useDemoMode } from '@/store/demoStore'
 import {
   reviewPendingLogs,
   markLogReviewed,
@@ -781,6 +782,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 ]
 
 export function GuardianPanel() {
+  const { isDemoMode } = useDemoMode()
   const [activeTab, setActiveTab] = useState<TabId>('activity')
   const { isAdmin, isOwner, isOwnerRole } = useAuth()
 
@@ -829,6 +831,11 @@ export function GuardianPanel() {
             <p className="text-gray-500 text-xs">Crew monitoring · Audit trail · Anomaly detection</p>
           </div>
         </div>
+        {isDemoMode && (
+          <div className="mt-3 px-3 py-2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-medium">
+            ⚠ Demo Mode active — system logs shown are real session data (Guardian uses live auth, not business data)
+          </div>
+        )}
       </div>
 
       {/* Tab bar */}

@@ -26,6 +26,8 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
+import { useDemoStore } from '@/store/demoStore'
+import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
 import { initEventBus } from '@/services/agentEventBus'
 import { subscribeNexusToEvents } from '@/agents/nexus'
@@ -44,6 +46,9 @@ interface V15rLayoutProps {
 export default function V15rLayout({ activeView, onNav, activeProjectId, activeProjectName, children }: V15rLayoutProps) {
   const [backupData, setBackupData] = useState<BackupData | null>(null)
   const [kpis, setKpis] = useState<any>(null)
+
+  // Demo Mode — display layer swap
+  const { isDemoMode } = useDemoStore()
   const [currentTime, setCurrentTime] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -381,14 +386,17 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Gracefully handle missing backup — render full layout with defaults instead of blocking
   const settings = backupData?.settings || {} as any
   const lastSaved = backupData?._lastSavedAt || new Date().toISOString()
-  const safeKpis = kpis || { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
+  const _rawKpis = kpis || { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
+
+  // Demo Mode: swap KPIs and company name for display only — real data unchanged
+  const safeKpis = isDemoMode ? getDemoKPIs() : _rawKpis
 
   // Calculate percentage for revenue target progress
-  const annualTarget = backupData?.settings?.annualTarget || 120000
+  const annualTarget = (isDemoMode ? 480000 : backupData?.settings?.annualTarget) || 120000
   const revenueTargetPct = Math.min(100, Math.round((safeKpis.paid / annualTarget) * 100))
 
   // SERVICE NET = Total Quoted - Material - Mileage from service calls
-  const serviceNet = (() => {
+  const serviceNet = isDemoMode ? DEMO_SERVICE_NET : (() => {
     const svcLogs = backupData?.serviceLogs || []
     const mileRate = backupData?.settings?.mileRate || 0.66
     let totalQuoted = 0, totalMaterial = 0, totalMileage = 0
@@ -439,6 +447,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
     { label: 'Team', icon: Users, view: 'team' },
     { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
+    { label: 'OHM', icon: Zap, view: 'compliance' },
     { label: 'Settings', icon: Settings, view: 'settings' },
     { label: 'Activity', icon: Activity, view: 'activity' },
   ]
@@ -505,8 +514,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   <img src={settings.logoDark} alt="Logo" style={{ height: 48, maxWidth: 160, objectFit: 'contain' }} />
                 ) : (
                   <div className="flex items-center gap-2">
-                    <Zap size={22} className="text-green-400" />
-                    <span className="text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>{settings.company || 'PowerOn Solutions'}</span>
+                    <Zap size={22} className={isDemoMode ? 'text-amber-400' : 'text-green-400'} />
+                    <span className="text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                      {isDemoMode ? DEMO_COMPANY : (settings.company || 'PowerOn Solutions')}
+                    </span>
                   </div>
                 )}
               </div>

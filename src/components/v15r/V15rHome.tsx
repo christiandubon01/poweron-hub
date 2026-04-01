@@ -48,6 +48,8 @@ import {
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 
@@ -109,6 +111,7 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rHome() {
+  const { isDemoMode } = useDemoMode()
   const [, setTick] = useState(0)
   const [calOffset, setCalOffset] = useState(0)
   const [customAlerts, setCustomAlerts] = useState<Array<{id: string, title: string, description: string, action: string, isAI: boolean, manuallyEdited?: boolean, scheduledAt?: string, linkedProjectId?: string}>>([])
@@ -128,7 +131,8 @@ export default function V15rHome() {
   const aiScrollRef = useRef<HTMLDivElement>(null)
   const aiInitRef = useRef(false)
 
-  const backup = getBackupData()
+  const _rawBackup = getBackupData()
+  const backup = isDemoMode ? getDemoBackupData() : _rawBackup
 
   if (!backup) {
     return (
