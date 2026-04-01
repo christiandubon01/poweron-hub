@@ -3,7 +3,7 @@
  * Pure SVG chart components — zero external dependencies.
  * Replaces Chart.js to eliminate TDZ bundler conflicts.
  */
-import React, { useState } from 'react'
+import React from 'react'
 import { getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 
 function fmtDollar(v: number) { return v >= 1000000 ? `$${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${Math.round(v)}` }
@@ -15,75 +15,44 @@ function SVGLineChart({ data, lines, height = 280 }: {
   lines: Array<{ key: string; color: string; label: string; dashed?: boolean; width?: number }>
   height?: number
 }) {
-  const [hover, setHover] = useState<number | null>(null)
   if (!data.length) return <EmptyChart />
 
-  const W = 800, H = height, pad = { t: 30, r: 20, b: 40, l: 60 }
-  const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
-
-  const allVals = data.flatMap(d => lines.map(l => num(d[l.key])))
-  const maxV = Math.max(...allVals, 1)
-  const minV = Math.min(...allVals, 0)
-  const range = maxV - minV || 1
-
-  const x = (i: number) => pad.l + (i / Math.max(data.length - 1, 1)) * cW
-  const y = (v: number) => pad.t + cH - ((v - minV) / range) * cH
-
-  const ticks = 5
-  const tickVals = Array.from({ length: ticks }, (_, i) => minV + (range * i) / (ticks - 1))
+  var W = 800, H = height, pad = { t: 30, r: 20, b: 40, l: 60 }
+  var cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
+  var allVals = data.flatMap(function(d) { return lines.map(function(l) { return num(d[l.key]) }) })
+  var maxV = Math.max.apply(null, allVals.concat([1]))
+  var minV = Math.min.apply(null, allVals.concat([0]))
+  var range = maxV - minV || 1
+  function x(i) { return pad.l + (i / Math.max(data.length - 1, 1)) * cW }
+  function y(v) { return pad.t + cH - ((v - minV) / range) * cH }
+  var tickVals = [0,1,2,3,4].map(function(i) { return minV + (range * i) / 4 })
 
   return (
     <div className="relative w-full h-full">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full">
-        {/* Grid lines */}
-        {tickVals.map((v, i) => (
+      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="xMidYMid meet" className="w-full h-full">
+        {tickVals.map(function(v, i) { return (
           <g key={i}>
             <line x1={pad.l} y1={y(v)} x2={W - pad.r} y2={y(v)} stroke="rgba(255,255,255,0.06)" />
             <text x={pad.l - 8} y={y(v) + 4} textAnchor="end" fill="#9ca3af" fontSize="10">{fmtDollar(v)}</text>
           </g>
-        ))}
-        {/* X labels */}
-        {data.map((d, i) => {
+        ) })}
+        {data.map(function(d, i) {
           if (data.length > 12 && i % Math.ceil(data.length / 12) !== 0 && i !== data.length - 1) return null
           return <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">{d.label}</text>
         })}
-        {/* Lines */}
-        {lines.map(line => {
-          const pts = data.map((d, i) => `${x(i)},${y(num(d[line.key]))}`).join(' ')
+        {lines.map(function(line) {
+          var pts = data.map(function(d, i) { return x(i) + ',' + y(num(d[line.key])) }).join(' ')
           return <polyline key={line.key} points={pts} fill="none" stroke={line.color}
             strokeWidth={line.width || 2} strokeDasharray={line.dashed ? '6 4' : undefined} />
         })}
-        {/* Hover column */}
-        {hover !== null && (
-          <line x1={x(hover)} y1={pad.t} x2={x(hover)} y2={H - pad.b} stroke="rgba(255,255,255,0.2)" strokeWidth={1} />
-        )}
-        {/* Invisible hover rects */}
-        {data.map((_, i) => (
-          <rect key={i} x={x(i) - cW / data.length / 2} y={pad.t} width={cW / data.length} height={cH}
-            fill="transparent" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
-        ))}
       </svg>
-      {/* Tooltip */}
-      {hover !== null && data[hover] && (
-        <div className="absolute top-2 right-2 bg-gray-900/95 border border-gray-700 rounded-lg p-3 text-xs z-10 pointer-events-none" style={{ minWidth: 160 }}>
-          <p className="font-bold text-white mb-1">{data[hover].label}</p>
-          {lines.map(l => (
-            <div key={l.key} className="flex items-center gap-2 py-0.5">
-              <div className="w-2 h-2 rounded-full" style={{ background: l.color }} />
-              <span className="text-gray-400">{l.label}:</span>
-              <span className="text-gray-200 font-mono ml-auto">{fmtDollar(num(data[hover][l.key]))}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* Legend */}
       <div className="flex flex-wrap gap-3 mt-2 justify-center">
-        {lines.map(l => (
+        {lines.map(function(l) { return (
           <div key={l.key} className="flex items-center gap-1.5 text-[10px] text-gray-400">
-            <div className="w-3 h-0.5 rounded" style={{ background: l.color, borderTop: l.dashed ? '2px dashed ' + l.color : undefined }} />
+            <div className="w-3 h-0.5 rounded" style={{ background: l.color }} />
             <span>{l.label}</span>
           </div>
-        ))}
+        ) })}
       </div>
     </div>
   )
@@ -116,7 +85,6 @@ function CFOTChart({ data, backup }: { data: any[]; backup: BackupData }) {
 
 // ── OPP CHART (horizontal bars) ──
 function OPPChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
-  const [hover, setHover] = useState<number | null>(null)
   if (!projects.length) return <EmptyChart />
   const maxVal = Math.max(...projects.map(p => num(p.contract)), 1)
   const barH = 28, gap = 6, padL = 130, padR = 70
@@ -130,11 +98,11 @@ function OPPChart({ projects, backup }: { projects: any[]; backup: BackupData })
           const w = (num(p.contract) / maxVal) * (W - padL - padR)
           const yPos = 20 + i * (barH + gap)
           return (
-            <g key={p.id || i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+            <g key={p.id || i}>
               <text x={padL - 8} y={yPos + barH / 2 + 4} textAnchor="end" fill="#d1d5db" fontSize="11">
                 {(p.name || 'Unknown').substring(0, 18)}
               </text>
-              <rect x={padL} y={yPos} width={Math.max(w, 2)} height={barH} rx={3} fill={clr} opacity={hover === i ? 1 : 0.8} />
+              <rect x={padL} y={yPos} width={Math.max(w, 2)} height={barH} rx={3} fill={clr} opacity={0.85} />
               <text x={padL + w + 8} y={yPos + barH / 2 + 4} fill="#9ca3af" fontSize="10" fontFamily="monospace">
                 {fmtDollar(num(p.contract))}
               </text>
@@ -217,7 +185,6 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; b
 
 // ── SCP CHART (grouped bars) ──
 function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: BackupData }) {
-  const [hover, setHover] = useState<number | null>(null)
   if (!serviceLogs.length) return <EmptyChart />
   const mileRate = num(backup.settings?.mileRate || 0.66)
   const items = serviceLogs.slice(-8).map((l: any) => {
@@ -245,24 +212,16 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[]; backup: BackupD
             { val: d.profit, color: '#10b981', label: 'Net Profit' },
           ]
           return (
-            <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+            <g key={i}>
               {bars.map((b, bi) => {
                 const h = (b.val / maxVal) * cH
-                return <rect key={bi} x={gx + bi * barW} y={pad.t + cH - h} width={barW - 2} height={h} rx={2} fill={b.color} opacity={hover === i ? 1 : 0.8} />
+                return <rect key={bi} x={gx + bi * barW} y={pad.t + cH - h} width={barW - 2} height={h} rx={2} fill={b.color} opacity={0.85} />
               })}
               <text x={gx + barW * 1.5} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">{d.label}</text>
             </g>
           )
         })}
       </svg>
-      {hover !== null && items[hover] && (
-        <div className="absolute top-2 right-2 bg-gray-900/95 border border-gray-700 rounded-lg p-3 text-xs z-10 pointer-events-none">
-          <p className="font-bold text-white mb-1">{items[hover].label}</p>
-          <p className="text-blue-400">Quoted: {fmtDollar(items[hover].quoted)}</p>
-          <p className="text-amber-400">Material: {fmtDollar(items[hover].material)}</p>
-          <p className="text-emerald-400">Profit: {fmtDollar(items[hover].profit)}</p>
-        </div>
-      )}
       <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500" /> Quoted</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" /> Material</span>
