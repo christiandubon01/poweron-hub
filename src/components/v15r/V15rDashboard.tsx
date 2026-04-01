@@ -6,7 +6,13 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react'
-import { BarChart3, Brain } from 'lucide-react'
+// Inline SVG icons — avoids lucide-react import which causes TDZ in Vite 5 production
+function BarChart3Icon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 3v18h18"/><path d="M13 17V9"/><path d="M18 17V5"/><path d="M8 17v-3"/></svg>
+}
+function BrainIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
+}
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import Charts from './charts/SVGCharts'
@@ -180,7 +186,7 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
     return (
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 animate-pulse">
         <div className="flex items-center gap-2 mb-4">
-          <Brain size={24} className="text-purple-400" />
+          <BrainIcon size={24} className="text-purple-400" />
           <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
         </div>
         <div className="h-20 bg-gray-700 rounded"></div>
@@ -192,7 +198,7 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
     return (
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
         <div className="flex items-center gap-2 mb-4">
-          <Brain size={24} className="text-purple-400" />
+          <BrainIcon size={24} className="text-purple-400" />
           <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
         </div>
         <p className="text-red-400 text-sm">{state.error}</p>
@@ -204,7 +210,7 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
     <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Brain size={24} className="text-purple-400" />
+          <BrainIcon size={24} className="text-purple-400" />
           <h2 className="text-[26px] font-bold text-gray-100">NEXUS Dashboard Analysis</h2>
         </div>
         <button
@@ -520,7 +526,7 @@ function V15rDashboardInner() {
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
       {/* HEADER */}
       <div className="flex items-center gap-3 mb-8">
-        <BarChart3 size={32} className="text-blue-400" />
+        <BarChart3Icon size={32} className="text-blue-400" />
         <div>
           <h1 className="text-3xl font-bold text-gray-100">Graph Dashboard</h1>
           <p className="text-gray-500 text-sm mt-1">Cash flow, pipeline, completion, and revenue analysis</p>
