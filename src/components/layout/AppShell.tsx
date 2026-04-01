@@ -27,7 +27,8 @@ import V15rLeadsPanel from '@/components/v15r/V15rLeadsPanel'
 import V15rTemplatesPanel from '@/components/v15r/V15rTemplatesPanel'
 import V15rSettingsPanel from '@/components/v15r/V15rSettingsPanel'
 import V15rTeamPanel from '@/components/v15r/V15rTeamPanel'
-import V15rDashboard from '@/components/v15r/V15rDashboard'
+// V15rDashboard lazy-loaded — keeps SVG charts + NEXUS analyzer out of main bundle
+const V15rDashboard = lazy(() => import('@/components/v15r/V15rDashboard'))
 import V15rPricingIntelligencePanel from '@/components/v15r/V15rPricingIntelligencePanel'
 
 // AI agent panels — lazy-loaded so import errors don't crash the main shell
@@ -258,10 +259,12 @@ export function AppShell({ children }: AppShellProps) {
       )}
 
       <ErrorBoundary>
-        {/* Add top padding when audit banner is visible so content isn't hidden behind it */}
-        <div style={isReadOnly ? { paddingTop: '36px' } : undefined}>
-          {renderContent()}
-        </div>
+        <Suspense fallback={<PanelLoading />}>
+          {/* Add top padding when audit banner is visible so content isn't hidden behind it */}
+          <div style={isReadOnly ? { paddingTop: '36px' } : undefined}>
+            {renderContent()}
+          </div>
+        </Suspense>
       </ErrorBoundary>
 
       {/* Floating NEXUS voice button — bottom right on all panels */}
