@@ -16,7 +16,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { BarChart3, Brain } from 'lucide-react'
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { ChartJS } from '@/lib/chartSetup'
+// Chart.js loaded dynamically inside each useEffect to avoid TDZ
 
 // ── ERROR BOUNDARY (auto-retries after 2s) ──
 class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string, retries: number}> {
@@ -55,17 +55,9 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
   }
 }
 
-// ── HELPER: check if Chart.js initialized successfully ──
+// Chart.js loaded dynamically — useChartJS is a no-op stub for API compat
 function useChartJS() {
-  const [ready, setReady] = useState((window as any)._chartReady === true)
-  useEffect(() => {
-    if (ready) return
-    const timer = setTimeout(() => {
-      setReady((window as any)._chartReady === true)
-    }, 500)
-    return () => clearTimeout(timer)
-  }, [ready])
-  return ready
+  return true
 }
 
 // ── CFOT CHART COMPONENT (Google Sheets match) ──
@@ -77,10 +69,11 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
   const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !data.length) return
-
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    if (!canvasRef.current || !data.length) return
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
 
     // Destroy existing chart
     if (chartRef.current) {
@@ -397,13 +390,15 @@ function CFOTChart({ data, backup }: { data: any[], backup: BackupData }) {
       plugins: [milestonePlugin]
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, data, backup])
+  }, [data, backup])
 
   return (
     <div className="relative w-full h-full">
@@ -428,10 +423,12 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
   const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !projects.length) return
+    if (!canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -495,13 +492,15 @@ function OPPChart({ projects, backup }: { projects: any[], backup: BackupData })
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup, isMobileView])
+  }, [projects, backup, isMobileView])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -519,10 +518,12 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
   const weights = backup.settings?.phaseWeights || defaultWeights
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !projects.length) return
+    if (!canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -587,13 +588,15 @@ function PCDChart({ projects, backup }: { projects: any[], backup: BackupData })
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup, isMobileView])
+  }, [projects, backup, isMobileView])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -606,10 +609,12 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
   const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !projects.length) return
+    if (!canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -725,13 +730,15 @@ function EVRChart({ projects, backup, dateStart, dateEnd }: { projects: any[], b
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup, isMobileView, dateStart, dateEnd])
+  }, [projects, backup, isMobileView, dateStart, dateEnd])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -743,10 +750,12 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
   const chartReady = useChartJS()
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !serviceLogs.length) return
+    if (!canvasRef.current || !serviceLogs.length) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -827,13 +836,15 @@ function SCPChart({ serviceLogs, backup }: { serviceLogs: any[], backup: BackupD
       }
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, serviceLogs, backup])
+  }, [serviceLogs, backup])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
@@ -866,10 +877,12 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
   }
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !projects.length) return
+    if (!canvasRef.current || !projects.length) return
 
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
 
     if (chartRef.current) {
       chartRef.current.destroy()
@@ -1147,13 +1160,15 @@ function RevenueCostChart({ projects, backup, dateStart, dateEnd }: { projects: 
       plugins: [zonePlugin]
     })
 
+    })()
     return () => {
+      cancelled = true
       if (chartRef.current) {
         chartRef.current.destroy()
         chartRef.current = null
       }
     }
-  }, [chartReady, projects, backup, dateStart, dateEnd])
+  }, [projects, backup, dateStart, dateEnd])
 
   // Check if selected project has no logs
   const hasData = (() => {
@@ -1905,9 +1920,11 @@ function PlannedVsActualChart({ projects, backup }: { projects: any[], backup: B
   const chartReady = useChartJS()
 
   useEffect(() => {
-    if (!chartReady || !canvasRef.current || !projects.length) return
-    const Chart = ChartJS as any
-    if (!Chart || typeof Chart.register !== 'function') { console.warn('[Chart] not ready'); return }
+    if (!canvasRef.current || !projects.length) return
+    let cancelled = false
+    ;(async () => {
+    const { Chart } = await import('chart.js/auto')
+    if (cancelled || !canvasRef.current) return
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null }
     const ctx = canvasRef.current.getContext('2d')
     if (!ctx) return
@@ -2000,8 +2017,9 @@ function PlannedVsActualChart({ projects, backup }: { projects: any[], backup: B
       }
     })
 
-    return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null } }
-  }, [chartReady, projects, backup])
+    })()
+    return () => { cancelled = true; if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null } }
+  }, [projects, backup])
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 }
