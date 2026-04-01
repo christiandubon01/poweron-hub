@@ -10,26 +10,6 @@ import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart } from './charts/SVGCharts'
 
-// ── ERROR BOUNDARY ──
-class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
-  state = { hasError: false, error: '' }
-  static getDerivedStateFromError(error: Error) { return { hasError: true, error: error.message } }
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('[ChartBoundary] caught:', error.message, error.stack)
-  }
-  render() {
-    if (this.state.hasError) return (
-      <div className="flex items-center justify-center h-full bg-[var(--bg-card)] rounded-lg p-6 text-red-400">
-        <div className="text-center">
-          <p className="font-semibold mb-2">Chart Error</p>
-          <p className="text-sm">{this.state.error}</p>
-        </div>
-      </div>
-    )
-    return this.props.children
-  }
-}
-
 // ── NEXUS AI DASHBOARD ANALYZER ──
 interface NEXUSAnalysis {
   loading: boolean
@@ -558,9 +538,8 @@ function V15rDashboardInner() {
             className="relative w-full"
             style={{ height: Math.max(250, Math.round(window.innerHeight * 0.4)) + 'px' }}
           >
-            <ChartErrorBoundary>
+            
               <CFOTChart data={cfotData} backup={backup} />
-            </ChartErrorBoundary>
           </div>
           <div className="mt-4 grid grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
             <div className="bg-[var(--bg-input)] p-2 rounded">
@@ -594,9 +573,8 @@ function V15rDashboardInner() {
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
           <h2 className="text-lg font-bold text-gray-100 mb-4">OPP: Open Projects Pipeline</h2>
           <div className="relative w-full" style={{ height: '300px' }}>
-            <ChartErrorBoundary>
+            
               <OPPChart projects={oppProjects} backup={backup} />
-            </ChartErrorBoundary>
           </div>
         </div>
 
@@ -604,9 +582,8 @@ function V15rDashboardInner() {
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
           <h2 className="text-lg font-bold text-gray-100 mb-4">PCD: Project Completion Distribution</h2>
           <div className="relative w-full" style={{ height: '300px' }}>
-            <ChartErrorBoundary>
+            
               <PCDChart projects={pcdProjects} backup={backup} />
-            </ChartErrorBoundary>
           </div>
         </div>
 
@@ -626,9 +603,8 @@ function V15rDashboardInner() {
             </div>
           </div>
           <div className="relative w-full" style={{ height: '300px' }}>
-            <ChartErrorBoundary>
+            
               <EVRChart projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
-            </ChartErrorBoundary>
           </div>
         </div>
 
@@ -649,9 +625,8 @@ function V15rDashboardInner() {
           </div>
           {scpLogs.length > 0 ? (
             <div className="relative w-full" style={{ height: '300px' }}>
-              <ChartErrorBoundary>
+              
                 <SCPChart serviceLogs={scpLogs} backup={backup} />
-              </ChartErrorBoundary>
             </div>
           ) : (
             <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
@@ -700,9 +675,8 @@ function V15rDashboardInner() {
             </div>
           </div>
           <div className="relative w-full" style={{ height: '420px' }}>
-            <ChartErrorBoundary>
+            
               <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
-            </ChartErrorBoundary>
           </div>
           <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-500">
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(239,68,68,0.15)'}}></span> Danger zone</span>
@@ -730,9 +704,8 @@ function V15rDashboardInner() {
             </select>
           </div>
           <div className="relative w-full" style={{ height: '380px' }}>
-            <ChartErrorBoundary>
+            
               <PlannedVsActualChart projects={pvaProjects} backup={backup} />
-            </ChartErrorBoundary>
           </div>
         </div>
 
@@ -754,9 +727,8 @@ function V15rDashboardInner() {
 // ── PLANNED VS ACTUAL CHART COMPONENT ──
 export default function V15rDashboard() {
   return (
-    <ChartErrorBoundary>
+    
       <V15rDashboardInner />
-    </ChartErrorBoundary>
   )
 }
 
