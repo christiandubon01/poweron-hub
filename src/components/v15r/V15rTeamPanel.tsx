@@ -8,15 +8,20 @@
  * - Labor Burden box: bill rate, cost rate, payroll multiplier, workers comp, effective loaded cost, margin
  * - Projected Monthly Cost: sum of (hours logged × loaded cost) per employee
  * - Interactive Org Pyramid: owner at top, employees below, add hypothetical positions
- * - Hypothetical positions: state-stored (not saved), show monthly cost/revenue/margin/utilization
+ * - Three employee types: Permanent (W-2), Per-Project (1099), Hypothetical (planning)
+ * - OHM compliance cards for W-2 and 1099 employees (non-blocking, shown after save)
  * - AI Hire Suggestion (NEXUS): placeholder analysis card
  * - Hours by Employee table: from backup.logs grouped by empId
  * - Full CRUD on employees
+ * - Per-Project labor cost flows into project budget automatically
  */
 
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } from 'recharts'
 import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap } from 'lucide-react'
+import AddTeamMemberModal from './AddTeamMemberModal'
+import OhmComplianceCard from './OhmComplianceCard'
+import { normalizeEmployee } from './employeeTypes'
 import {
   getBackupData,
   saveBackupData,
@@ -699,6 +704,16 @@ export default function V15rTeamPanel() {
   const [expandedHypId, setExpandedHypId] = useState<string | null>(null)
   const [costAnalysisVisible, setCostAnalysisVisible] = useState<CostAnalysisState>({})
 
+  // ── Three-type employee system (Migration 048) ──────────────────────────────
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [ohmCard, setOhmCard] = useState<{
+    show: boolean
+    employeeType: string
+    classification: string
+    name: string
+    empId: string
+  }>({ show: false, employeeType: '', classification: '', name: '', empId: '' })
+
   // Get current month for monthly calculations
   const today = new Date()
   const currentMonth = today.getMonth()
@@ -798,6 +813,50 @@ export default function V15rTeamPanel() {
     forceUpdate({})
   }
 
+  // ── Add Team Member (three-type system) ────────────────────────────────────
+  const handleAddTeamMember = (record: any) => {
+    pushState()
+    if (!backup.employees) backup.employees = []
+
+    if (record.employee_type === 'hypothetical') {
+      // Hypotheticals stay in component state (not persisted) — same as before
+      const newHyp: HypotheticalPosition = {
+        id: record.id,
+        title: record.role || record.name || 'Planned Position',
+        roleType: record.role || '',
+        billRate: record.billRate || record.hourly_rate || 0,
+        costRate: record.costRate || record.hourly_rate || 0,
+        projectedHoursMonth: 160, // default 160 hrs/month
+      }
+      setHypotheticals(prev => [...prev, newHyp])
+    } else {
+      // Permanent and per_project are saved to backup
+      backup.employees = [...backup.employees, record]
+      saveBackupData(backup)
+      forceUpdate({})
+
+      // Fire OHM compliance card (non-blocking — save already happened)
+      setOhmCard({
+        show: true,
+        employeeType: record.employee_type,
+        classification: record.classification || (record.employee_type === 'permanent' ? 'W-2' : '1099'),
+        name: record.name || record.role || 'New Employee',
+        empId: record.id,
+      })
+    }
+
+    setShowAddModal(false)
+  }
+
+  const markComplianceAcknowledged = (empId: string) => {
+    const emp = backup.employees?.find((e: any) => e.id === empId)
+    if (emp) {
+      emp.compliance_acknowledged = true
+      saveBackupData(backup)
+    }
+    setOhmCard(prev => ({ ...prev, show: false }))
+  }
+
   const addHypotheticalPosition = () => {
     if (!hypForm.title || !hypForm.roleType) {
       alert('Title and role type required')
@@ -856,28 +915,55 @@ export default function V15rTeamPanel() {
           {/* Real Employees + Hypotheticals Grid */}
           {employees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
-              {/* Real employees (non-owner) */}
+              {/* Real employees (non-owner) — style by employee_type */}
               {employees
                 .filter(e => !e.isOwner)
-                .map((emp) => (
-                  <div key={emp.id} className="text-center">
-                    <div className="bg-gray-700/30 border border-gray-700 rounded-lg px-3 py-2 hover:border-blue-600/50 transition">
-                      <div className="text-sm font-semibold text-gray-100">{emp.name}</div>
-                      <div className="text-xs text-gray-500">{emp.role || 'Team Member'}</div>
-                    </div>
-                  </div>
-                ))}
+                .map((rawEmp) => {
+                  const emp = normalizeEmployee(rawEmp)
+                  const project = projects.find(p => p.id === emp.project_id)
 
-              {/* Hypothetical positions */}
+                  // Per-project: dashed border, amber project color tag
+                  if (emp.employee_type === 'per_project') {
+                    return (
+                      <div key={emp.id} className="text-center">
+                        <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
+                          <div className="text-sm font-semibold text-amber-200">{emp.name}</div>
+                          <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
+                          {project && (
+                            <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
+                              {project.name}
+                            </div>
+                          )}
+                          <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // Permanent: solid border, role color (blue)
+                  return (
+                    <div key={emp.id} className="text-center">
+                      <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
+                        <div className="text-sm font-semibold text-blue-200">{emp.name}</div>
+                        <div className="text-xs text-blue-400/80">{emp.role || 'Team Member'}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">W-2 · {emp.status}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+
+              {/* Hypothetical positions — ghost/transparent, labeled PLANNED */}
               {hypotheticals.map((hyp) => (
                 <div key={hyp.id} className="text-center">
-                  <div className="bg-purple-700/20 border-2 border-dashed border-purple-600/60 rounded-lg px-3 py-2 relative">
-                    <div className="absolute -top-2 right-2 text-xs px-1.5 py-0.5 bg-purple-600/70 text-purple-100 rounded">Hypothetical ✨</div>
+                  <div className="bg-transparent border-2 border-dashed border-purple-600/50 rounded-lg px-3 py-2 relative opacity-75">
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 bg-[#0f1117] border border-purple-600/50 text-purple-400 rounded font-bold tracking-widest">
+                      PLANNED
+                    </div>
                     <div className="text-sm font-semibold text-purple-300 mt-1">{hyp.title}</div>
-                    <div className="text-xs text-purple-400">{hyp.roleType}</div>
+                    <div className="text-xs text-purple-400/70">{hyp.roleType}</div>
                     <button
                       onClick={() => deleteHypothetical(hyp.id)}
-                      className="mt-2 text-xs px-1 py-0.5 bg-red-600/30 text-red-300 rounded hover:bg-red-600/50"
+                      className="mt-2 text-xs px-1.5 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/40 transition"
                     >
                       Remove
                     </button>
@@ -886,74 +972,18 @@ export default function V15rTeamPanel() {
               ))}
             </div>
           ) : (
-            <div className="text-gray-500 text-sm">No employees or hypothetical positions yet</div>
+            <div className="text-gray-500 text-sm">No team members yet — add your first position below</div>
           )}
 
-          {/* Add Hypothetical Button */}
+          {/* ── Add Team Member button (replaces "Add Hypothetical Position") ── */}
           <div className="mt-4 w-full max-w-md">
-            {!showHypForm ? (
-              <button
-                onClick={() => setShowHypForm(true)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600/30 text-purple-300 rounded-lg hover:bg-purple-600/50 transition text-sm font-semibold"
-              >
-                <Plus className="w-4 h-4" />
-                Add Hypothetical Position
-              </button>
-            ) : (
-              <div className="bg-[var(--bg-input)] rounded-lg border border-purple-600/50 p-4 space-y-3">
-                <input
-                  type="text"
-                  placeholder="Position title"
-                  value={hypForm.title}
-                  onChange={(e) => setHypForm({ ...hypForm, title: e.target.value })}
-                  className="w-full bg-[var(--bg-card)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-purple-600"
-                />
-                <input
-                  type="text"
-                  placeholder="Role type (e.g., Helper, Technician)"
-                  value={hypForm.roleType}
-                  onChange={(e) => setHypForm({ ...hypForm, roleType: e.target.value })}
-                  className="w-full bg-[var(--bg-card)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-purple-600"
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="number"
-                    placeholder="Bill rate/hr"
-                    value={hypForm.billRate || ''}
-                    onChange={(e) => setHypForm({ ...hypForm, billRate: parseFloat(e.target.value) || 0 })}
-                    className="bg-[var(--bg-card)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-purple-600"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Cost rate/hr"
-                    value={hypForm.costRate || ''}
-                    onChange={(e) => setHypForm({ ...hypForm, costRate: parseFloat(e.target.value) || 0 })}
-                    className="bg-[var(--bg-card)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-purple-600"
-                  />
-                </div>
-                <input
-                  type="number"
-                  placeholder="Projected hours/month"
-                  value={hypForm.projectedHoursMonth || ''}
-                  onChange={(e) => setHypForm({ ...hypForm, projectedHoursMonth: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-[var(--bg-card)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-purple-600"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={addHypotheticalPosition}
-                    className="flex-1 px-3 py-2 bg-emerald-600/50 text-emerald-300 rounded text-sm font-semibold hover:bg-emerald-600/70"
-                  >
-                    Add
-                  </button>
-                  <button
-                    onClick={() => setShowHypForm(false)}
-                    className="flex-1 px-3 py-2 bg-gray-700/50 text-gray-300 rounded text-sm font-semibold hover:bg-gray-700/70"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600/30 text-blue-300 rounded-lg hover:bg-blue-600/50 transition text-sm font-semibold border border-blue-600/30"
+            >
+              <Plus className="w-4 h-4" />
+              + Add Team Member
+            </button>
           </div>
         </div>
       </div>
@@ -1360,6 +1390,77 @@ export default function V15rTeamPanel() {
           </div>
         </div>
       </div>
+
+      {/* ── PER-PROJECT LABOR FLOW ─────────────────────────────────────────────
+          Shows per-project employees with their linked project and computed
+          labor cost. Serves as the "labor breakdown" view for project budgets.
+      */}
+      {(() => {
+        const perProjectEmps = (backup.employees || [])
+          .map(normalizeEmployee)
+          .filter((e: any) => e.employee_type === 'per_project' && e.status !== 'Closed')
+        if (perProjectEmps.length === 0) return null
+        const payrollMult = backup.settings?.payrollMult || 1.20
+        return (
+          <div className="bg-[var(--bg-card)] rounded-lg border border-amber-700/40 p-6 mt-6">
+            <h2 className="text-lg font-bold text-amber-300 mb-1">Per-Project Labor Flow</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Per-project employee hours × hourly rate × {payrollMult}x payroll multiplier → flows into linked project labor cost
+            </p>
+            <div className="space-y-3">
+              {perProjectEmps.map((emp: any) => {
+                const project = projects.find((p: any) => p.id === emp.project_id)
+                const empLogs = (backup.logs || []).filter((l: any) => l.empId === emp.id)
+                const totalHrs = empLogs.reduce((s: number, l: any) => s + (l.hrs || 0), 0)
+                const laborCost = totalHrs * (emp.hourly_rate || emp.costRate || 0) * payrollMult
+                return (
+                  <div key={emp.id} className="flex items-center justify-between bg-amber-900/10 border border-amber-700/30 rounded-lg px-4 py-3 gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-amber-200 truncate">{emp.name}</div>
+                      <div className="text-xs text-amber-400/70">{emp.role} · {emp.classification}</div>
+                    </div>
+                    <div className="text-xs text-gray-500 text-right whitespace-nowrap">
+                      {project
+                        ? <span className="text-amber-300 font-medium">{(project as any).name}</span>
+                        : <span className="text-gray-600">No project assigned</span>
+                      }
+                    </div>
+                    <div className="text-right whitespace-nowrap">
+                      <div className="text-sm font-bold text-amber-300">
+                        ${laborCost.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </div>
+                      <div className="text-xs text-gray-500">{totalHrs.toFixed(1)} hrs logged</div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-xs text-gray-600 mt-3">
+              Labor cost = hours logged × rate × {payrollMult}x. Flows into project labor breakdown and Quote vs Actual chart.
+            </p>
+          </div>
+        )
+      })()}
+
+      {/* ── ADD TEAM MEMBER MODAL ──────────────────────────────────────────── */}
+      {showAddModal && (
+        <AddTeamMemberModal
+          projects={projects}
+          onSave={handleAddTeamMember}
+          onCancel={() => setShowAddModal(false)}
+        />
+      )}
+
+      {/* ── OHM COMPLIANCE CARD (non-blocking, shown after save) ──────────── */}
+      {ohmCard.show && (
+        <OhmComplianceCard
+          employeeType={ohmCard.employeeType as any}
+          employeeName={ohmCard.name}
+          classification={ohmCard.classification as any}
+          onDismiss={() => setOhmCard((prev: any) => ({ ...prev, show: false }))}
+          onAcknowledge={() => markComplianceAcknowledged(ohmCard.empId)}
+        />
+      )}
     </div>
   )
 }
