@@ -76,7 +76,8 @@ export function AppShell({ children }: AppShellProps) {
   const [showOnboarding, setShowOnboarding] = useState(false)
 
   const { isReadOnly } = useReadOnly()
-  const { isDemoMode, disableDemoMode, setHasHydrated } = useDemoStore()
+  const { isDemoMode, enableDemoMode, disableDemoMode, setHasHydrated } = useDemoStore()
+  const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
   let profile = null
   try {
@@ -91,6 +92,14 @@ export function AppShell({ children }: AppShellProps) {
   // real data on the first paint when demo mode is persisted in localStorage.
   useEffect(() => {
     useDemoStore.getState().setHasHydrated()
+  }, [])
+
+  // Auto-enable Demo Mode when URL contains ?demo=true (Flow B — remote sharing)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('demo') === 'true') {
+      enableDemoMode()
+    }
   }, [])
 
   // Show onboarding modal for new users
@@ -266,10 +275,10 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       )}
 
-      {/* Demo Mode banner — fixed below header, tapping exits demo mode */}
+      {/* Demo Mode banner — fixed below header, tapping opens exit confirmation */}
       {isDemoMode && (
         <div
-          onClick={() => disableDemoMode()}
+          onClick={() => setShowExitDemoModal(true)}
           style={{
             position: 'fixed',
             top: '64px',   /* sits just below the 64px (h-16) header bar */
@@ -288,7 +297,7 @@ export function AppShell({ children }: AppShellProps) {
           }}
           title="Tap to exit Demo Mode"
         >
-          ⚠ DEMO MODE — Sample data only. Tap to exit.
+          ⚠ DEMO MODE — Sample data only. Tap to exit (sign in required).
         </div>
       )}
 
@@ -311,6 +320,82 @@ export function AppShell({ children }: AppShellProps) {
         <Suspense fallback={null}>
           <OnboardingModal onComplete={() => setShowOnboarding(false)} />
         </Suspense>
+      )}
+
+      {/* Demo Mode exit confirmation modal — intercepts all exit attempts */}
+      {showExitDemoModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 99999,
+            backgroundColor: 'rgba(0,0,0,0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#111827',
+              border: '1px solid #374151',
+              borderRadius: '12px',
+              padding: '28px 24px',
+              maxWidth: '360px',
+              width: '100%',
+              boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+            }}
+          >
+            <h2 style={{ color: '#f9fafb', fontSize: '18px', fontWeight: 700, marginBottom: '10px' }}>
+              Exit Demo Mode?
+            </h2>
+            <p style={{ color: '#d1d5db', fontSize: '14px', lineHeight: '1.5', marginBottom: '8px' }}>
+              Exiting Demo Mode will reload the app and require you to sign in again.
+            </p>
+            <p style={{ color: '#9ca3af', fontSize: '12px', lineHeight: '1.5', marginBottom: '24px' }}>
+              Anyone currently viewing this demo will lose access.
+            </p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => setShowExitDemoModal(false)}
+                style={{
+                  flex: 1,
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #4b5563',
+                  backgroundColor: 'transparent',
+                  color: '#d1d5db',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Stay in Demo
+              </button>
+              <button
+                onClick={() => {
+                  disableDemoMode()
+                  try { localStorage.removeItem('poweron-demo-mode') } catch { /* ignore */ }
+                  window.location.reload()
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  backgroundColor: '#ef4444',
+                  color: '#fff',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Exit &amp; Sign In
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </V15rLayout>
   )

@@ -62,6 +62,7 @@ export default function V15rSettingsPanel() {
   // Demo Mode store
   const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
+  const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
   const persist = useCallback(() => {
     const data = getBackupData()
@@ -1282,7 +1283,7 @@ export default function V15rSettingsPanel() {
                     if (!isDemoMode) {
                       setShowDemoConfirm(true)
                     } else {
-                      disableDemoMode()
+                      setShowExitDemoModal(true)
                     }
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
@@ -1309,7 +1310,7 @@ export default function V15rSettingsPanel() {
                     </p>
                   </div>
                   <button
-                    onClick={() => disableDemoMode()}
+                    onClick={() => setShowExitDemoModal(true)}
                     className="text-xs text-amber-300 hover:text-amber-100 font-semibold px-2 py-1 rounded transition-colors"
                   >
                     Exit
@@ -1317,7 +1318,7 @@ export default function V15rSettingsPanel() {
                 </div>
               )}
 
-              {/* Confirmation dialog (inline) */}
+              {/* Confirmation dialog (inline) — enable demo */}
               {showDemoConfirm && !isDemoMode && (
                 <div className="rounded-lg border border-amber-500/40 p-4 space-y-3" style={{ backgroundColor: 'var(--bg-input)' }}>
                   <p className="text-sm font-bold text-amber-300">Switch to Demo Mode?</p>
@@ -1345,6 +1346,82 @@ export default function V15rSettingsPanel() {
               )}
             </div>
           </SettingCard>
+
+          {/* Exit Demo Mode confirmation modal — portal-style overlay */}
+          {showExitDemoModal && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 99999,
+                backgroundColor: 'rgba(0,0,0,0.65)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '16px',
+              }}
+            >
+              <div
+                style={{
+                  backgroundColor: '#111827',
+                  border: '1px solid #374151',
+                  borderRadius: '12px',
+                  padding: '28px 24px',
+                  maxWidth: '360px',
+                  width: '100%',
+                  boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+                }}
+              >
+                <h2 style={{ color: '#f9fafb', fontSize: '18px', fontWeight: 700, marginBottom: '10px' }}>
+                  Exit Demo Mode?
+                </h2>
+                <p style={{ color: '#d1d5db', fontSize: '14px', lineHeight: '1.5', marginBottom: '8px' }}>
+                  Exiting Demo Mode will reload the app and require you to sign in again.
+                </p>
+                <p style={{ color: '#9ca3af', fontSize: '12px', lineHeight: '1.5', marginBottom: '24px' }}>
+                  Anyone currently viewing this demo will lose access.
+                </p>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => setShowExitDemoModal(false)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      borderRadius: '8px',
+                      border: '1px solid #4b5563',
+                      backgroundColor: 'transparent',
+                      color: '#d1d5db',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Stay in Demo
+                  </button>
+                  <button
+                    onClick={() => {
+                      disableDemoMode()
+                      try { localStorage.removeItem('poweron-demo-mode') } catch { /* ignore */ }
+                      window.location.reload()
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      backgroundColor: '#ef4444',
+                      color: '#fff',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Exit &amp; Sign In
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* SYSTEM INFO */}
           <SettingCard title="System Info">
