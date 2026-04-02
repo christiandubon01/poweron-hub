@@ -18,7 +18,7 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } from 'recharts'
-import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap } from 'lucide-react'
+import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X } from 'lucide-react'
 import AddTeamMemberModal from './AddTeamMemberModal'
 import OhmComplianceCard from './OhmComplianceCard'
 import { normalizeEmployee } from './employeeTypes'
@@ -564,18 +564,20 @@ function EmployeeCard({
   onToggleMultiplier: (empId: string) => void
   backup?: any
 }) {
+  // 1. Base wage — what you pay the employee
+  const baseWage = num((employee as any).hourly_rate || employee.costRate)
+  // 2. Loaded cost rate — base × payroll multiplier from cost structure
+  const payrollMult = num(backup?.settings?.payrollMult || 1.20)
+  const loadedCostRate = parseFloat((baseWage * payrollMult).toFixed(2))
+  // 3. Bill rate — what you charge the customer (independent)
   const billRate = num(employee.billRate)
-  const costRate = num(employee.costRate)
+  // 4. Margin/hr — bill rate minus loaded cost
+  const marginPerHour = parseFloat((billRate - loadedCostRate).toFixed(2))
+
   const isOwner = employee.isOwner || false
-  const applyMultiplier = employee.applyMultiplier !== false ? true : isOwner ? false : true
-  const payrollMultiplier = applyMultiplier ? 1.20 : 1.0
-  const workersCompEst = applyMultiplier ? costRate * 0.08 : 0
-  const loadedCost = costRate * payrollMultiplier + workersCompEst
-  const marginPerHour = billRate - loadedCost
-  const monthlyLoadedCost = monthlyHours * loadedCost
 
   const billAmount = totalHours * billRate
-  const costAmount = totalHours * costRate
+  const costAmount = totalHours * loadedCostRate
   const margin = billAmount - costAmount
 
   const cost = backup ? calcEmployeeCost(employee, backup) : null
@@ -601,65 +603,52 @@ function EmployeeCard({
         </div>
       </div>
 
-      <div className="mb-4">
-        <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Hour Rates</div>
-        <div className="flex justify-between items-baseline text-sm mb-2">
-          <span className="text-gray-400">Bill Rate</span>
-          <span className="text-base font-bold text-emerald-400">{formatCurrency(billRate)}/hr</span>
+      {/* ── Rate block: Base Wage / Loaded Cost / Bill Rate / Margin ── */}
+      <div className="mb-4 space-y-2">
+        <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Hourly Rates</div>
+
+        {/* Base Wage */}
+        <div className="flex justify-between items-baseline text-sm">
+          <span className="text-gray-400">Base Wage</span>
+          <span className="font-semibold text-gray-200">${baseWage.toFixed(2)}/hr</span>
         </div>
-        <div className="flex justify-between items-baseline">
-          <span className="text-gray-400">Cost Rate</span>
-          <span className="text-base font-bold text-orange-400">{formatCurrency(costRate)}/hr</span>
+
+        {/* Loaded Cost Rate (amber, read-only) */}
+        <div className="flex justify-between items-baseline text-sm">
+          <span className="text-gray-400">Loaded Cost</span>
+          <span className="font-bold text-amber-400">${loadedCostRate.toFixed(2)}/hr</span>
+        </div>
+
+        {/* Bill Rate (green, independently set) */}
+        <div className="flex justify-between items-baseline text-sm">
+          <span className="text-gray-400">Bill Rate</span>
+          <span className="font-bold text-emerald-400">${billRate.toFixed(2)}/hr</span>
+        </div>
+
+        {/* Margin/hr */}
+        <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-700/50">
+          <span className="text-gray-400 flex items-center gap-1">
+            {marginPerHour < 0 && <AlertCircle className="w-3.5 h-3.5 text-red-400" />}
+            Margin/hr
+          </span>
+          <span className={`font-bold ${marginPerHour >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {marginPerHour >= 0 ? '+' : ''}${marginPerHour.toFixed(2)}
+          </span>
         </div>
       </div>
 
-      {/* Labor Burden Calculator */}
-      <div className="mb-4 pb-4 border-b border-gray-700">
-        <div className="text-xs font-semibold text-gray-500 uppercase mb-3">Labor Burden</div>
-
-        {/* Multiplier Toggle */}
-        <div className="flex justify-between items-center text-sm mb-3 pb-3 border-b border-gray-700/50">
-          <span className="text-gray-400">Apply payroll multiplier</span>
-          <button
-            onClick={() => onToggleMultiplier(employee.id)}
-            className={`w-10 h-6 rounded-full transition ${
-              applyMultiplier
-                ? 'bg-emerald-600/60'
-                : 'bg-gray-600/40'
-            } flex items-center ${applyMultiplier ? 'justify-end' : 'justify-start'} px-1`}
-          >
-            <div className="w-4 h-4 bg-gray-100 rounded-full" />
-          </button>
-        </div>
-
-        <div className="flex justify-between items-baseline text-sm mb-1">
-          <span className="text-gray-400">Payroll Multiplier</span>
-          <span className="text-gray-300">{payrollMultiplier.toFixed(2)}x</span>
-        </div>
-        {applyMultiplier && (
-          <div className="flex justify-between items-baseline text-sm mb-1">
-            <span className="text-gray-400">Workers Comp Est</span>
-            <span className="text-gray-300">{workersCompEst.toFixed(2)}/hr</span>
-          </div>
-        )}
-        <div className="flex justify-between items-baseline text-sm mb-1">
-          <span className="text-gray-400">Effective Loaded Cost</span>
-          <span className="text-amber-400 font-semibold">{formatCurrency(loadedCost)}/hr</span>
-        </div>
-        <div className="flex justify-between items-baseline text-sm">
-          <span className="text-gray-400">Margin/Hour</span>
-          <span className={marginPerHour > 0 ? 'text-emerald-400 font-semibold' : 'text-red-400 font-semibold'}>{formatCurrency(marginPerHour)}</span>
-        </div>
+      {/* Multiplier footnote */}
+      <div className="mb-4 pb-3 border-b border-gray-700 text-xs text-gray-600">
+        Loaded = base × {payrollMult.toFixed(2)}x payroll mult
       </div>
 
       {cost && (
-        <div className="mt-4 pt-4 border-t border-gray-700 space-y-1 text-xs">
-          {/* Breakdown: Base | Taxes/Insurance | Total */}
+        <div className="space-y-1 text-xs">
           <div className="bg-[var(--bg-secondary)] rounded p-2 mb-2">
             <div className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Monthly Cost Breakdown</div>
             <div className="text-gray-300 text-[11px]">
               Base: <span className="text-blue-400 font-semibold">{formatCurrency(cost.baseMonthlyCost)}</span>
-              {' | '}Taxes/Insurance: <span className="text-orange-400 font-semibold">{formatCurrency(cost.taxesAndInsurance)}</span>
+              {' | '}Taxes/Ins: <span className="text-orange-400 font-semibold">{formatCurrency(cost.taxesAndInsurance)}</span>
               {' | '}Total: <span className="text-white font-bold">{formatCurrency(cost.loadedMonthlyCost)}/mo</span>
             </div>
           </div>
@@ -674,13 +663,13 @@ function EmployeeCard({
         </div>
       )}
 
-      <div className="pt-4 border-t border-gray-700">
+      <div className="pt-4 border-t border-gray-700 mt-2">
         <div className="flex justify-between items-baseline mb-2 text-sm">
           <span className="text-gray-400">Total Billable</span>
           <span className="text-lg font-bold text-blue-400">{formatCurrency(billAmount)}</span>
         </div>
         <div className="flex justify-between items-baseline mb-2 text-sm">
-          <span className="text-gray-400">Total Cost</span>
+          <span className="text-gray-400">Total Cost (loaded)</span>
           <span className="text-lg font-bold text-orange-400">{formatCurrency(costAmount)}</span>
         </div>
         <div className="flex justify-between items-baseline pt-2 border-t border-gray-700 text-sm">
@@ -692,9 +681,137 @@ function EmployeeCard({
   )
 }
 
+// ── EMPLOYEE EDIT MODAL ──────────────────────────────────────────────────────
+function EmployeeEditModal({
+  employee,
+  payrollMult,
+  onSave,
+  onCancel,
+}: {
+  employee: EnhancedEmployee
+  payrollMult: number
+  onSave: (id: string, updates: Partial<EnhancedEmployee>) => void
+  onCancel: () => void
+}) {
+  const initBase = num((employee as any).hourly_rate || employee.costRate)
+  const initBill = num(employee.billRate)
+
+  const [baseWage, setBaseWage] = useState<number | ''>(initBase || '')
+  const [billRate, setBillRate] = useState<number | ''>(initBill || '')
+  const [billOverridden, setBillOverridden] = useState(initBill > 0 && initBill !== initBase * payrollMult * 2)
+
+  // Auto-update bill rate default when base changes (unless user overrode)
+  useEffect(() => {
+    if (!billOverridden) {
+      const base = Number(baseWage) || 0
+      const loaded = base * payrollMult
+      setBillRate(loaded > 0 ? parseFloat((loaded * 2.0).toFixed(2)) : '')
+    }
+  }, [baseWage, payrollMult, billOverridden])
+
+  const baseNum = Number(baseWage) || 0
+  const loadedCost = parseFloat((baseNum * payrollMult).toFixed(2))
+  const billNum = Number(billRate) || 0
+  const margin = parseFloat((billNum - loadedCost).toFixed(2))
+
+  const inputCls = 'w-full bg-[#1a1d27] border border-gray-700 text-gray-100 text-sm px-3 py-2.5 rounded focus:outline-none focus:border-blue-600 placeholder-gray-600'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.65)' }}>
+      <div className="w-full max-w-md bg-[#0f1117] border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+          <h2 className="text-lg font-bold text-gray-100">Edit — {employee.name}</h2>
+          <button onClick={onCancel} className="text-gray-500 hover:text-gray-300 transition">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Base Wage */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">Base Wage ($/hr)</label>
+            <input
+              type="number"
+              className={inputCls}
+              value={baseWage}
+              onChange={e => {
+                setBaseWage(parseFloat(e.target.value) || '')
+                setBillOverridden(false)
+              }}
+              placeholder="0.00"
+              step="0.01"
+              min="0"
+            />
+          </div>
+
+          {/* Loaded Cost — read-only */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">Loaded Cost ($/hr) — auto-calculated</label>
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-amber-700/40 rounded text-sm">
+              <span className="text-amber-400 font-bold">${loadedCost.toFixed(2)}</span>
+              <span className="text-gray-500 text-xs">= base × {payrollMult.toFixed(2)}x mult</span>
+            </div>
+          </div>
+
+          {/* Bill Rate */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">Bill Rate ($/hr) — what you charge customers</label>
+            <input
+              type="number"
+              className={`${inputCls} border-green-700/50 focus:border-green-500`}
+              value={billRate}
+              onChange={e => {
+                setBillRate(parseFloat(e.target.value) || '')
+                setBillOverridden(true)
+              }}
+              placeholder="0.00"
+              step="0.01"
+              min="0"
+            />
+          </div>
+
+          {/* Margin/hr preview — read-only */}
+          {billNum > 0 && (
+            <div className={`flex items-center justify-between px-3 py-2.5 rounded text-sm ${margin >= 0 ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}>
+              <span className="text-gray-400 flex items-center gap-1">
+                {margin < 0 && <AlertCircle className="w-3.5 h-3.5 text-red-400" />}
+                Margin/hr
+              </span>
+              <span className={`font-bold ${margin >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {margin >= 0 ? '+' : ''}${margin.toFixed(2)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 px-6 py-4 border-t border-gray-700">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2.5 bg-gray-700/50 text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-700 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onSave(employee.id, {
+                hourly_rate: baseNum,
+                costRate: loadedCost,
+                billRate: billNum || loadedCost * 2,
+              } as any)
+            }}
+            className="flex-1 px-4 py-2.5 bg-blue-600/70 text-blue-100 rounded-lg text-sm font-bold hover:bg-blue-600 transition"
+          >
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function V15rTeamPanel() {
-  const { isDemoMode } = useDemoMode()
-  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
+  const { isDemoMode, hasHydrated } = useDemoMode()
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) return <NoData />
 
   const employees = (backup?.employees || []) as EnhancedEmployee[]
@@ -706,6 +823,9 @@ export default function V15rTeamPanel() {
   const [hypForm, setHypForm] = useState({ title: '', roleType: '', billRate: 0, costRate: 0, projectedHoursMonth: 0 })
   const [expandedHypId, setExpandedHypId] = useState<string | null>(null)
   const [costAnalysisVisible, setCostAnalysisVisible] = useState<CostAnalysisState>({})
+
+  // ── Edit employee modal ────────────────────────────────────────────────────
+  const [editingEmployee, setEditingEmployee] = useState<EnhancedEmployee | null>(null)
 
   // ── Three-type employee system (Migration 048) ──────────────────────────────
   const [showAddModal, setShowAddModal] = useState(false)
@@ -813,6 +933,17 @@ export default function V15rTeamPanel() {
     pushState()
     backup.employees = backup.employees.filter(e => e.id !== id)
     saveBackupData(backup)
+    forceUpdate({})
+  }
+
+  const handleEditSave = (id: string, updates: Partial<EnhancedEmployee>) => {
+    pushState()
+    const emp = backup.employees?.find((e: any) => e.id === id)
+    if (emp) {
+      Object.assign(emp, updates)
+      saveBackupData(backup)
+    }
+    setEditingEmployee(null)
     forceUpdate({})
   }
 
@@ -1267,7 +1398,10 @@ export default function V15rTeamPanel() {
                     backup={backup}
                   />
                   <div className="mt-2 flex gap-2 justify-end">
-                    <button className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 flex items-center gap-1">
+                    <button
+                      onClick={() => setEditingEmployee(emp)}
+                      className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 flex items-center gap-1"
+                    >
                       <Edit2 className="w-3 h-3" /> Edit
                     </button>
                     <button
@@ -1451,6 +1585,17 @@ export default function V15rTeamPanel() {
           projects={projects}
           onSave={handleAddTeamMember}
           onCancel={() => setShowAddModal(false)}
+          payrollMult={backup.settings?.payrollMult || 1.20}
+        />
+      )}
+
+      {/* ── EDIT EMPLOYEE MODAL ───────────────────────────────────────────── */}
+      {editingEmployee && (
+        <EmployeeEditModal
+          employee={editingEmployee}
+          payrollMult={backup.settings?.payrollMult || 1.20}
+          onSave={handleEditSave}
+          onCancel={() => setEditingEmployee(null)}
         />
       )}
 

@@ -48,7 +48,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [kpis, setKpis] = useState<any>(null)
 
   // Demo Mode — display layer swap
-  const { isDemoMode } = useDemoStore()
+  const { isDemoMode, hasHydrated } = useDemoStore()
   const [currentTime, setCurrentTime] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -58,6 +58,28 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const saved = localStorage.getItem('sidebar_expanded')
     if (saved !== null) return saved === 'true'
     return window.innerWidth >= 1024
+  })
+
+  // Collapsible section states — persisted per section to localStorage
+  const [sectionWorkspace, setSectionWorkspace] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_workspace')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [sectionBusiness, setSectionBusiness] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_business')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [sectionTeam, setSectionTeam] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_team')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [sectionIntelligence, setSectionIntelligence] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_intelligence')
+    return saved !== null ? saved === 'true' : true
   })
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
@@ -389,7 +411,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const _rawKpis = kpis || { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
 
   // Demo Mode: swap KPIs and company name for display only — real data unchanged
-  const safeKpis = isDemoMode ? getDemoKPIs() : _rawKpis
+  const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _rawKpis
 
   // Calculate percentage for revenue target progress
   const annualTarget = (isDemoMode ? 480000 : backupData?.settings?.annualTarget) || 120000
@@ -438,23 +460,27 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Coordination', view: 'coordination' },
   ]
 
-  // Business nav items
+  // Business nav items (operational panels)
   const businessItems = [
     { label: 'Graph Dashboard', icon: BarChart3, view: 'graph-dashboard' },
     { label: 'Field Log', icon: ClipboardList, view: 'field-log' },
     { label: 'Money', icon: DollarSign, view: 'money' },
     { label: 'Solar Income', icon: Calculator, view: 'income-calc' },
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
-    { label: 'Team', icon: Users, view: 'team' },
-    { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
-    { label: 'OHM', icon: Zap, view: 'compliance' },
     { label: 'Settings', icon: Settings, view: 'settings' },
-    { label: 'Activity', icon: Activity, view: 'activity' },
   ]
 
-  // NEXUS agent nav items
-  const nexusItems = [
+  // Team nav items (people + compliance)
+  const teamItems = [
+    { label: 'Team', icon: Users, view: 'team' },
+    { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
+  ]
+
+  // Intelligence nav items (AI-powered panels)
+  const intelligenceItems = [
+    { label: 'OHM', icon: Zap, view: 'compliance' },
     { label: 'Journal', icon: Mic, view: 'journal' },
+    { label: 'Activity', icon: Activity, view: 'activity' },
   ]
 
   // Toggle and close helpers
@@ -536,30 +562,55 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
         {/* Sidebar content */}
         <div className="flex-1 overflow-y-auto">
+
+          {/* Helper: render a collapsible section */}
           {/* WORKSPACE Section */}
           <div className="pt-4">
-            {showLabels && <div className="px-4 py-2 text-xs font-bold text-gray-500 uppercase tracking-wider">Workspace</div>}
-            <nav className="space-y-1">
-              {workspaceItems.map((item) => {
-                const Icon = item.icon
-                const isActive = activeView === item.view
-                return (
-                  <button
-                    key={item.view}
-                    onClick={() => handleNavClick(item.view)}
-                    title={!showLabels ? item.label : undefined}
-                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
-                      isActive
-                        ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
-                        : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent'
-                    }`}
-                  >
-                    <Icon size={18} />
-                    {showLabels && <span>{item.label}</span>}
-                  </button>
-                )
-              })}
-            </nav>
+            {showLabels ? (
+              <button
+                onClick={() => {
+                  const next = !sectionWorkspace
+                  setSectionWorkspace(next)
+                  localStorage.setItem('nav_section_workspace', String(next))
+                }}
+                className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #6b7280)' }}>Workspace</span>
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted, #6b7280)',
+                    transition: 'transform 0.2s',
+                    transform: sectionWorkspace ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            ) : null}
+            {sectionWorkspace && (
+              <nav className="space-y-1">
+                {workspaceItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeView === item.view
+                  return (
+                    <button
+                      key={item.view}
+                      onClick={() => handleNavClick(item.view)}
+                      title={!showLabels ? item.label : undefined}
+                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
+                        isActive
+                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent'
+                      }`}
+                    >
+                      <Icon size={18} />
+                      {showLabels && <span>{item.label}</span>}
+                    </button>
+                  )
+                })}
+              </nav>
+            )}
           </div>
 
           {/* ACTIVE PROJECT Section (conditional) */}
@@ -606,55 +657,151 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
           {/* BUSINESS Section */}
           <div className="pt-6 border-t border-gray-700">
-            {showLabels && <div className="px-4 py-2 text-xs font-bold text-gray-500 uppercase tracking-wider">Business</div>}
-            <nav className="space-y-1">
-              {businessItems.map((item) => {
-                const Icon = item.icon
-                const isActive = activeView === item.view
-                return (
-                  <button
-                    key={item.view}
-                    onClick={() => handleNavClick(item.view)}
-                    title={!showLabels ? item.label : undefined}
-                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
-                      isActive
-                        ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
-                        : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
-                    }`}
-                  >
-                    <Icon size={18} />
-                    {showLabels && <span>{item.label}</span>}
-                  </button>
-                )
-              })}
-            </nav>
+            {showLabels ? (
+              <button
+                onClick={() => {
+                  const next = !sectionBusiness
+                  setSectionBusiness(next)
+                  localStorage.setItem('nav_section_business', String(next))
+                }}
+                className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #6b7280)' }}>Business</span>
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted, #6b7280)',
+                    transition: 'transform 0.2s',
+                    transform: sectionBusiness ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            ) : null}
+            {sectionBusiness && (
+              <nav className="space-y-1">
+                {businessItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeView === item.view
+                  return (
+                    <button
+                      key={item.view}
+                      onClick={() => handleNavClick(item.view)}
+                      title={!showLabels ? item.label : undefined}
+                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
+                        isActive
+                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
+                      }`}
+                    >
+                      <Icon size={18} />
+                      {showLabels && <span>{item.label}</span>}
+                    </button>
+                  )
+                })}
+              </nav>
+            )}
           </div>
 
-          {/* NEXUS Section */}
+          {/* TEAM Section */}
           <div className="pt-6 border-t border-gray-700">
-            {showLabels && <div className="px-4 py-2 text-xs font-bold text-gray-500 uppercase tracking-wider">NEXUS</div>}
-            <nav className="space-y-1">
-              {nexusItems.map((item) => {
-                const Icon = item.icon
-                const isActive = activeView === item.view
-                return (
-                  <button
-                    key={item.view}
-                    onClick={() => handleNavClick(item.view)}
-                    title={!showLabels ? item.label : undefined}
-                    className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
-                      isActive
-                        ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
-                        : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
-                    }`}
-                  >
-                    <Icon size={18} />
-                    {showLabels && <span>{item.label}</span>}
-                  </button>
-                )
-              })}
-            </nav>
+            {showLabels ? (
+              <button
+                onClick={() => {
+                  const next = !sectionTeam
+                  setSectionTeam(next)
+                  localStorage.setItem('nav_section_team', String(next))
+                }}
+                className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #6b7280)' }}>Team</span>
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted, #6b7280)',
+                    transition: 'transform 0.2s',
+                    transform: sectionTeam ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            ) : null}
+            {sectionTeam && (
+              <nav className="space-y-1">
+                {teamItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeView === item.view
+                  return (
+                    <button
+                      key={item.view}
+                      onClick={() => handleNavClick(item.view)}
+                      title={!showLabels ? item.label : undefined}
+                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
+                        isActive
+                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
+                      }`}
+                    >
+                      <Icon size={18} />
+                      {showLabels && <span>{item.label}</span>}
+                    </button>
+                  )
+                })}
+              </nav>
+            )}
           </div>
+
+          {/* INTELLIGENCE Section */}
+          <div className="pt-6 border-t border-gray-700">
+            {showLabels ? (
+              <button
+                onClick={() => {
+                  const next = !sectionIntelligence
+                  setSectionIntelligence(next)
+                  localStorage.setItem('nav_section_intelligence', String(next))
+                }}
+                className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #6b7280)' }}>Intelligence</span>
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted, #6b7280)',
+                    transition: 'transform 0.2s',
+                    transform: sectionIntelligence ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            ) : null}
+            {sectionIntelligence && (
+              <nav className="space-y-1">
+                {intelligenceItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeView === item.view
+                  return (
+                    <button
+                      key={item.view}
+                      onClick={() => handleNavClick(item.view)}
+                      title={!showLabels ? item.label : undefined}
+                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
+                        isActive
+                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
+                      }`}
+                    >
+                      <Icon size={18} />
+                      {showLabels && <span>{item.label}</span>}
+                    </button>
+                  )
+                })}
+              </nav>
+            )}
+          </div>
+
         </div>
       </aside>
 

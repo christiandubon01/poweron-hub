@@ -19,8 +19,8 @@
  * OHM compliance card fires AFTER save for types 1 & 2. Does not block save.
  */
 
-import React, { useState } from 'react'
-import { X, User, Briefcase, Lightbulb, ChevronRight } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { X, User, Briefcase, Lightbulb, ChevronRight, AlertTriangle } from 'lucide-react'
 import type { EmployeeType, ExtendedEmployee } from './employeeTypes'
 
 interface Project {
@@ -33,6 +33,7 @@ interface AddTeamMemberModalProps {
   projects: Project[]
   onSave: (employee: Partial<ExtendedEmployee>) => void
   onCancel: () => void
+  payrollMult?: number
 }
 
 // ── Type option cards ─────────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ export default function AddTeamMemberModal({
   projects,
   onSave,
   onCancel,
+  payrollMult = 1.20,
 }: AddTeamMemberModalProps) {
   const [step, setStep] = useState<'select' | 'form'>('select')
   const [selectedType, setSelectedType] = useState<EmployeeType | null>(null)
@@ -97,7 +99,9 @@ export default function AddTeamMemberModal({
   // Form state
   const [name, setName] = useState('')
   const [role, setRole] = useState('')
-  const [hourlyRate, setHourlyRate] = useState<number | ''>('')
+  const [hourlyRate, setHourlyRate] = useState<number | ''>('')   // base wage
+  const [billRate, setBillRate] = useState<number | ''>('')        // bill rate (independent)
+  const [billRateOverridden, setBillRateOverridden] = useState(false)
   const [hireDate, setHireDate] = useState('')
   const [separationDate, setSeparationDate] = useState('')
   const [status, setStatus] = useState<'Active' | 'Inactive' | 'Closed'>('Active')
@@ -106,6 +110,21 @@ export default function AddTeamMemberModal({
   const [estimatedEndDate, setEstimatedEndDate] = useState('')
   const [projectId, setProjectId] = useState('')
   const [startMonth, setStartMonth] = useState('')
+
+  // Auto-calculate bill rate default when base wage changes (unless user has overridden it)
+  useEffect(() => {
+    if (!billRateOverridden) {
+      const base = Number(hourlyRate) || 0
+      const loaded = base * payrollMult
+      setBillRate(loaded > 0 ? parseFloat((loaded * 2.0).toFixed(2)) : '')
+    }
+  }, [hourlyRate, payrollMult, billRateOverridden])
+
+  // Derived read-only values
+  const baseWageNum = Number(hourlyRate) || 0
+  const loadedCostRate = parseFloat((baseWageNum * payrollMult).toFixed(2))
+  const billRateNum = Number(billRate) || 0
+  const marginPerHour = parseFloat((billRateNum - loadedCostRate).toFixed(2))
 
   const activeProjects = projects.filter(
     p => p.status === 'active' || p.status === 'coming' || !p.status
@@ -132,13 +151,17 @@ export default function AddTeamMemberModal({
       return
     }
 
+    const baseWage = Number(hourlyRate) || 0
+    const loadedCost = parseFloat((baseWage * payrollMult).toFixed(2))
+    const finalBillRate = Number(billRate) || loadedCost * 2.0
+
     const record: Partial<ExtendedEmployee> = {
       id: 'emp-' + Date.now(),
       employee_type: selectedType,
-      hourly_rate: Number(hourlyRate) || 0,
-      // Map hourly_rate to billRate/costRate for backward compat
-      billRate: Number(hourlyRate) || 0,
-      costRate: Number(hourlyRate) || 0,
+      hourly_rate: baseWage,
+      // costRate stores the loaded cost rate; billRate is the independent customer-facing rate
+      costRate: loadedCost,
+      billRate: finalBillRate,
       status,
       classification,
       compliance_acknowledged: false,
@@ -242,17 +265,53 @@ export default function AddTeamMemberModal({
                     onChange={e => setHireDate(e.target.value)}
                   />
                 </Field>
-                <Field label="Hourly Rate ($/hr)">
+                <Field label="Base Wage ($/hr)">
                   <input
                     type="number"
                     className={inputCls}
                     value={hourlyRate}
-                    onChange={e => setHourlyRate(parseFloat(e.target.value) || '')}
+                    onChange={e => {
+                      setHourlyRate(parseFloat(e.target.value) || '')
+                      setBillRateOverridden(false)
+                    }}
                     placeholder="0.00"
                     step="0.01"
                     min="0"
                   />
                 </Field>
+                {baseWageNum > 0 && (
+                  <>
+                    <Field label="Loaded Cost ($/hr) — read only">
+                      <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-amber-700/40 rounded text-sm">
+                        <span className="text-amber-400 font-bold">${loadedCostRate.toFixed(2)}</span>
+                        <span className="text-gray-500 text-xs">= base × {payrollMult}x payroll multiplier</span>
+                      </div>
+                    </Field>
+                    <Field label="Bill Rate ($/hr) — what you charge customers">
+                      <input
+                        type="number"
+                        className={`${inputCls} border-green-700/50 focus:border-green-500`}
+                        value={billRate}
+                        onChange={e => {
+                          setBillRate(parseFloat(e.target.value) || '')
+                          setBillRateOverridden(true)
+                        }}
+                        placeholder="0.00"
+                        step="0.01"
+                        min="0"
+                      />
+                    </Field>
+                    {billRateNum > 0 && (
+                      <div className={`flex items-center gap-2 px-3 py-2 rounded text-sm ${marginPerHour >= 0 ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}>
+                        {marginPerHour < 0 && <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />}
+                        <span className="text-gray-400 text-xs">Margin/hr:</span>
+                        <span className={`font-bold text-sm ${marginPerHour >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {marginPerHour >= 0 ? '+' : ''}${marginPerHour.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
                 {/* Classification: W-2 only for permanent */}
                 <Field label="Classification">
                   <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-gray-700 rounded text-sm text-gray-300">
@@ -318,17 +377,53 @@ export default function AddTeamMemberModal({
                     onChange={e => setEstimatedEndDate(e.target.value)}
                   />
                 </Field>
-                <Field label="Hourly Rate ($/hr)">
+                <Field label="Base Wage ($/hr)">
                   <input
                     type="number"
                     className={inputCls}
                     value={hourlyRate}
-                    onChange={e => setHourlyRate(parseFloat(e.target.value) || '')}
+                    onChange={e => {
+                      setHourlyRate(parseFloat(e.target.value) || '')
+                      setBillRateOverridden(false)
+                    }}
                     placeholder="0.00"
                     step="0.01"
                     min="0"
                   />
                 </Field>
+                {baseWageNum > 0 && (
+                  <>
+                    <Field label="Loaded Cost ($/hr) — read only">
+                      <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-amber-700/40 rounded text-sm">
+                        <span className="text-amber-400 font-bold">${loadedCostRate.toFixed(2)}</span>
+                        <span className="text-gray-500 text-xs">= base × {payrollMult}x payroll multiplier</span>
+                      </div>
+                    </Field>
+                    <Field label="Bill Rate ($/hr) — what you charge customers">
+                      <input
+                        type="number"
+                        className={`${inputCls} border-green-700/50 focus:border-green-500`}
+                        value={billRate}
+                        onChange={e => {
+                          setBillRate(parseFloat(e.target.value) || '')
+                          setBillRateOverridden(true)
+                        }}
+                        placeholder="0.00"
+                        step="0.01"
+                        min="0"
+                      />
+                    </Field>
+                    {billRateNum > 0 && (
+                      <div className={`flex items-center gap-2 px-3 py-2 rounded text-sm ${marginPerHour >= 0 ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}>
+                        {marginPerHour < 0 && <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />}
+                        <span className="text-gray-400 text-xs">Margin/hr:</span>
+                        <span className={`font-bold text-sm ${marginPerHour >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {marginPerHour >= 0 ? '+' : ''}${marginPerHour.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
                 <Field label="Classification">
                   <select
                     className={inputCls}

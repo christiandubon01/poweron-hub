@@ -495,8 +495,8 @@ function ChartFamily({
 
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
-  const { isDemoMode } = useDemoMode()
-  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
+  const { isDemoMode, hasHydrated } = useDemoMode()
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
 
   if (!backup) {
     return (

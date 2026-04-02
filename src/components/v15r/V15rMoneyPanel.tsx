@@ -142,8 +142,8 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rMoneyPanel() {
-  const { isDemoMode } = useDemoMode()
-  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
+  const { isDemoMode, hasHydrated } = useDemoMode()
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   const [weeklyEdit, setWeeklyEdit] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
   const [showWeeklyGaps, setShowWeeklyGaps] = useState(true)

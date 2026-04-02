@@ -36,6 +36,13 @@ function loadPersistedDemoMode(): boolean {
 interface DemoState {
   isDemoMode: boolean
 
+  /**
+   * True once the store has confirmed its persisted value has been loaded.
+   * Panels must check `hasHydrated` before trusting `isDemoMode` so they
+   * don't render real data on the first paint when demo mode is active.
+   */
+  hasHydrated: boolean
+
   /** Toggle demo mode on/off */
   toggleDemoMode: () => void
 
@@ -44,12 +51,21 @@ interface DemoState {
 
   /** Disable demo mode */
   disableDemoMode: () => void
+
+  /** Called once by AppShell after mount to signal hydration is complete */
+  setHasHydrated: () => void
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────
 
 export const useDemoStore = create<DemoState>((set, get) => ({
   isDemoMode: loadPersistedDemoMode(),
+
+  // Starts false; AppShell sets it to true in its first useEffect so panels
+  // know hydration is complete before checking isDemoMode.
+  hasHydrated: false,
+
+  setHasHydrated: () => set({ hasHydrated: true }),
 
   toggleDemoMode: () => {
     const next = !get().isDemoMode
@@ -75,6 +91,6 @@ export const useDemoStore = create<DemoState>((set, get) => ({
 // ── Convenience hook ─────────────────────────────────────────────────────────
 
 export function useDemoMode() {
-  const { isDemoMode, toggleDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
-  return { isDemoMode, toggleDemoMode, enableDemoMode, disableDemoMode }
+  const { isDemoMode, hasHydrated, toggleDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
+  return { isDemoMode, hasHydrated, toggleDemoMode, enableDemoMode, disableDemoMode }
 }

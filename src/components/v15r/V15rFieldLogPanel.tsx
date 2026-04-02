@@ -217,7 +217,7 @@ function interleaveWithGaps(entries: any[], dateField: string = 'date'): Array<{
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rFieldLogPanel() {
-  const { isDemoMode } = useDemoMode()
+  const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [activeTab, setActiveTab] = useState<'proj' | 'svc' | 'triggers'>('proj')
@@ -289,7 +289,7 @@ export default function V15rFieldLogPanel() {
   const [paymentStatus, setPaymentStatus] = useState('Unpaid')
   const [completionVariance, setCompletionVariance] = useState<any>(null)
 
-  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) {
     return (
       <div className="flex items-center justify-center w-full h-64 bg-[var(--bg-secondary)]">

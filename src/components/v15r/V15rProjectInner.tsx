@@ -36,7 +36,7 @@ function mapExternalToInternalTab(externalTab?: string): string {
 }
 
 export default function V15rProjectInner({ projectId, activeTab: propActiveTab, onTabChange, onClose }: V15rProjectInnerProps) {
-  const { isDemoMode } = useDemoMode()
+  const { isDemoMode, hasHydrated } = useDemoMode()
   const [localTab, setLocalTab] = useState(mapExternalToInternalTab(propActiveTab))
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -47,7 +47,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
     setLocalTab(newTab)
   }, [propActiveTab])
 
-  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) return <div className="text-red-400 p-4">No backup data</div>
 
   const p = backup.projects.find(x => x.id === projectId)

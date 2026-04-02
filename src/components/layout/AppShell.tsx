@@ -76,7 +76,7 @@ export function AppShell({ children }: AppShellProps) {
   const [showOnboarding, setShowOnboarding] = useState(false)
 
   const { isReadOnly } = useReadOnly()
-  const { isDemoMode, disableDemoMode } = useDemoStore()
+  const { isDemoMode, disableDemoMode, setHasHydrated } = useDemoStore()
 
   let profile = null
   try {
@@ -85,6 +85,13 @@ export function AppShell({ children }: AppShellProps) {
   } catch (e) {
     console.warn('[AppShell] useAuth failed, continuing without profile:', e)
   }
+
+  // Signal that demo store hydration is complete.
+  // Panels gate their data-source decision on `hasHydrated` to avoid rendering
+  // real data on the first paint when demo mode is persisted in localStorage.
+  useEffect(() => {
+    useDemoStore.getState().setHasHydrated()
+  }, [])
 
   // Show onboarding modal for new users
   useEffect(() => {

@@ -111,7 +111,7 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rHome() {
-  const { isDemoMode } = useDemoMode()
+  const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
   const [calOffset, setCalOffset] = useState(0)
   const [customAlerts, setCustomAlerts] = useState<Array<{id: string, title: string, description: string, action: string, isAI: boolean, manuallyEdited?: boolean, scheduledAt?: string, linkedProjectId?: string}>>([])
@@ -132,7 +132,7 @@ export default function V15rHome() {
   const aiInitRef = useRef(false)
 
   const _rawBackup = getBackupData()
-  const backup = isDemoMode ? getDemoBackupData() : _rawBackup
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : _rawBackup
 
   if (!backup) {
     return (
@@ -398,6 +398,57 @@ export default function V15rHome() {
 
   // ── Compute calendar URL with offset ──────────────────────────────────
   const gcalUrl = backup.settings?.gcalUrl ? `${backup.settings.gcalUrl}&mode=WEEK` : null
+
+  // ── Daily Motivation Data ──────────────────────────────────────────────
+  const MOTIVATION_PHRASES = [
+    { quote: '"El que tenga miedo a morir, que no nazca."', attr: '— Ya sabes quien.' },
+    { quote: '"No hay atajo que no tenga su precio."', attr: '— El camino lo defines tú.' },
+    { quote: '"Más vale solo que mal acompañado — pero mejor rodeado de los correctos."', attr: '— Piénsalo.' },
+    { quote: '"El éxito no llega a los que esperan. Llega a los que construyen."', attr: '— Tú sabes por qué estás aquí.' },
+    { quote: '"Camarón que se duerme, se lo lleva la corriente."', attr: '— No te duermas.' },
+    { quote: '"La diferencia entre el sueño y la realidad se llama trabajo."', attr: '— A trabajar.' },
+    { quote: '"El hierro se forja en caliente."', attr: '— Este es tu momento.' },
+    { quote: '"No cuentes los días, haz que los días cuenten."', attr: '— Cada hora importa.' },
+    { quote: '"El que no arriesga, no cruza el mar."', attr: '— Tú ya cruzaste.' },
+    { quote: '"Primero Dios, después tú mismo."', attr: '— Nadie más lo hará por ti.' },
+    { quote: '"El trabajo duro supera al talento cuando el talento no trabaja duro."', attr: '— Recuérdalo.' },
+    { quote: '"No esperes el momento perfecto. Toma el momento y hazlo perfecto."', attr: '— Ahora.' },
+    { quote: '"Lo que no te mata, te hace más fuerte — y más listo."', attr: '— Sigue adelante.' },
+    { quote: '"Vale más una hora de acción que mil horas de intención."', attr: '— Muévete.' },
+    { quote: '"El que madruga, Dios lo ayuda — el que no, también trabaja más."', attr: '— Tú decides.' },
+    { quote: '"La disciplina es elegir entre lo que quieres ahora y lo que quieres más."', attr: '— ¿Qué eliges?' },
+    { quote: '"No hay sueño pequeño — solo pasos pequeños."', attr: '— Da el siguiente.' },
+    { quote: '"El dolor de hoy es la fuerza de mañana."', attr: '— Aguanta.' },
+    { quote: '"Más sudor en el entrenamiento, menos sangre en la batalla."', attr: '— Prepárate.' },
+    { quote: '"El que persevera, alcanza — y el que no, busca excusas."', attr: '— Sin excusas.' },
+    { quote: '"La vida no te da lo que mereces. Te da lo que negocias."', attr: '— Negocia fuerte.' },
+    { quote: '"Cae siete veces, levántate ocho."', attr: '— Siempre uno más.' },
+    { quote: '"El mundo es de los que se levantan antes."', attr: '— Ya estás despierto.' },
+    { quote: '"No le digas a Dios cuán grande es tu problema. Dile a tu problema cuán grande es tu Dios."', attr: '— Fe primero.' },
+    { quote: '"El éxito es la suma de pequeños esfuerzos repetidos día tras día."', attr: '— Hoy cuenta.' },
+    { quote: '"Si puedes soñarlo, puedes construirlo."', attr: '— Tú ya lo estás construyendo.' },
+    { quote: '"El que no vive para servir, no sirve para vivir."', attr: '— Hazlo con propósito.' },
+    { quote: '"Haz hoy lo que otros no quieren, para tener mañana lo que otros no pueden."', attr: '— Sin atajos.' },
+    { quote: '"La grandeza no se hereda — se construye."', attr: '— Bloque a bloque.' },
+    { quote: '"El camino de mil millas comienza con un solo paso."', attr: '— Ya diste el primero.' },
+    { quote: '"No busques la aprobación de nadie. Busca los resultados."', attr: '— Los números no mienten.' },
+  ]
+  const _motivNow = new Date()
+  const _motivStart = new Date(_motivNow.getFullYear(), 0, 0)
+  const _motivDayOfYear = Math.floor((_motivNow.getTime() - _motivStart.getTime()) / (1000 * 60 * 60 * 24))
+  const _motivPhrase = MOTIVATION_PHRASES[_motivDayOfYear % MOTIVATION_PHRASES.length]
+  const _motivHr = _motivNow.getHours()
+  const _motivGreeting = _motivHr >= 5 && _motivHr < 12
+    ? 'Good morning, Christian'
+    : _motivHr >= 12 && _motivHr < 18
+    ? 'Good afternoon, Christian'
+    : 'Good evening, Christian'
+  const _motivFireLine = _motivHr >= 5 && _motivHr < 12
+    ? "Let's go build something today."
+    : _motivHr >= 12 && _motivHr < 18
+    ? "The day isn't over — keep pushing."
+    : 'Rest well. Tomorrow we go again.'
+  const _motivFullQuote = `${_motivPhrase.quote} ${_motivPhrase.attr}`
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -1039,6 +1090,25 @@ export default function V15rHome() {
           </div>
         )}
       </div>
+
+      {/* ── Daily Motivation Card ── */}
+      {!isDemoMode && (
+        <div style={{ borderLeft: '3px solid #1D9E75', backgroundColor: '#1e2235', borderRadius: 8, padding: 16 }}>
+          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>{_motivGreeting}</div>
+          <div style={{ fontSize: 16, color: '#f9fafb', fontStyle: 'italic', fontWeight: 400, marginBottom: 6 }}>{_motivPhrase.quote}</div>
+          <div style={{ fontSize: 12, color: '#1D9E75', marginBottom: 10 }}>{_motivPhrase.attr}</div>
+          <div style={{ fontSize: 13, color: '#EF9F27', fontWeight: 500 }}>{_motivFireLine}</div>
+          <div
+            style={{ fontSize: 11, color: '#6b7280', marginTop: 10, cursor: 'pointer' }}
+            onClick={() => {
+              setAiInput(`Who said this? ${_motivFullQuote}`)
+              setAiPanelOpen(true)
+            }}
+          >
+            Ask NEXUS who said this →
+          </div>
+        </div>
+      )}
 
       {/* ── AI Daily Assistant Floating Button ── */}
       <button

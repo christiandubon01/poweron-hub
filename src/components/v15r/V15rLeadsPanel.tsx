@@ -59,7 +59,7 @@ function today() {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rLeadsPanel() {
-  const { isDemoMode } = useDemoMode()
+  const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [activeTab, setActiveTab] = useState<'gc' | 'svc' | 'weekly'>('gc')
@@ -80,7 +80,7 @@ export default function V15rLeadsPanel() {
   let authProfile: any = null
   try { authProfile = useAuth().profile } catch { /* auth not available */ }
 
-  const backup = isDemoMode ? getDemoBackupData() : getBackupData()
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) {
     return (
       <div className="flex items-center justify-center w-full h-64 bg-[#1a1d27]">
