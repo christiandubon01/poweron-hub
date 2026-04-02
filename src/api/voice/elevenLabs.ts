@@ -102,9 +102,19 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
     ? request.text.slice(0, MAX_TEXT_LENGTH) + '...'
     : request.text
 
-  const voiceId = request.voice_id || DEFAULT_VOICE_ID
+  // FIX: read voice_id fresh from localStorage at CALL TIME — never captured at import/mount.
+  // Falls back to request.voice_id, then DEFAULT_VOICE_ID.
+  const voiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
+    || request.voice_id
+    || DEFAULT_VOICE_ID
 
-  console.log('[ElevenLabs] Using voice ID:', voiceId)
+  // FIX: read speech_rate fresh from localStorage at CALL TIME — never captured at import/mount.
+  const rate = typeof window !== 'undefined'
+    ? parseFloat(localStorage.getItem('nexus_speech_rate') || String(request.speed ?? 1.0))
+    : (request.speed ?? 1.0)
+
+  console.log('[ElevenLabs] Using voice ID:', voiceId, '(localStorage:', typeof window !== 'undefined' ? localStorage.getItem('nexus_voice_id') : 'N/A', ')')
+  console.log('[ElevenLabs] Using speech rate:', rate)
   console.log(`[ElevenLabs] Synthesizing ${text.length} chars with voice ${voiceId}...`)
 
   const response = await fetch(
@@ -122,11 +132,11 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,
-          style: 0.5,
-          use_speaker_boost: true,
+          // FIX: speed belongs inside voice_settings for eleven_turbo_v2_5.
+          // Previously was top-level (ignored by the model). Now correctly placed.
+          speed: rate,
           ...(request.voice_settings || {}),
         },
-        ...(request.speed && request.speed !== 1.0 ? { speed: request.speed } : {}),
       }),
     }
   )
@@ -142,10 +152,9 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
   const audioBlob = await response.blob()
   const audioUrl = URL.createObjectURL(audioBlob)
 
-  // Estimate duration from word count
+  // Estimate duration from word count (use the resolved rate)
   const words = text.split(/\s+/).length
-  const speed = request.speed || 1.0
-  const durationSeconds = (words / WORDS_PER_MINUTE) * 60 / speed
+  const durationSeconds = (words / WORDS_PER_MINUTE) * 60 / rate
 
   const result: TTSResponse = {
     audioBlob,
@@ -154,7 +163,7 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
     charactersProcessed: text.length,
   }
 
-  console.log(`[ElevenLabs] Synthesized ~${result.durationSeconds}s audio (${(audioBlob.size / 1024).toFixed(0)}KB)`)
+  console.log(`[ElevenLabs] Response OK — ~${result.durationSeconds}s audio (${(audioBlob.size / 1024).toFixed(0)}KB), voice: ${voiceId}`)
 
   return result
 }

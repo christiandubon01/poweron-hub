@@ -557,6 +557,7 @@ export class VoiceSubsystem {
     }
 
     const audioBlob = new Blob(this.audioChunks, { type: this.getSupportedMimeType() })
+    console.log('[Voice] Blob captured — size:', audioBlob.size, 'bytes, type:', audioBlob.type)
     this.cleanupRecording()
 
     try {
@@ -565,14 +566,24 @@ export class VoiceSubsystem {
       const preprocessor = getAudioPreprocessor()
 
       const analysis = await preprocessor.analyze(audioBlob)
+      console.log('[Voice] Audio analysis — duration:', analysis.durationSeconds.toFixed(2), 's, hasVoiceActivity:', analysis.hasVoiceActivity, 'rms:', analysis.rmsLevel?.toFixed(4))
       if (this.currentSession) {
         this.currentSession.audioDurationSeconds = analysis.durationSeconds
         this.currentSession.noiseLevel = analysis.estimatedNoiseDb
       }
 
+      // Guard: too short to transcribe
+      if (analysis.durationSeconds < 0.5) {
+        console.log('[Voice] Recording too short:', analysis.durationSeconds.toFixed(2), 's — skipping Whisper')
+        this.setStatus('inactive')
+        this.emit('error', { error: 'Too short — speak for at least half a second, then pause.' })
+        return
+      }
+
       if (!analysis.hasVoiceActivity) {
         console.log('[Voice] No voice activity detected')
         this.setStatus('inactive')
+        this.emit('error', { error: 'No speech detected. Speak clearly into the mic and try again.' })
         return
       }
 
@@ -584,14 +595,17 @@ export class VoiceSubsystem {
       })
 
       // Step 2: Transcribe with Whisper
+      console.log('[Whisper] Sending audio to proxy — size:', processedAudio.size, 'bytes, type:', processedAudio.type)
       const whisperResult = await transcribeWithWhisper(processedAudio, {
         language: this.preferences.asrLanguage,
         noiseDb: analysis.estimatedNoiseDb,
       })
+      console.log('[Whisper] Response received — text length:', whisperResult.text?.length, 'text:', whisperResult.text?.substring(0, 80))
 
       if (!whisperResult.text || whisperResult.text.trim().length === 0) {
-        console.log('[Voice] Empty transcription')
+        console.log('[Voice] Empty transcription from Whisper')
         this.setStatus('inactive')
+        this.emit('error', { error: 'No speech recognized. Try speaking closer to the mic.' })
         return
       }
 
@@ -603,18 +617,21 @@ export class VoiceSubsystem {
         this.currentSession.language = whisperResult.language
       }
 
+      console.log('[Voice] Emitting transcript_ready — text:', whisperResult.text.substring(0, 80))
       this.emit('transcript_ready', { text: whisperResult.text, confidence })
 
       // Step 3-5: Route, execute, respond
       await this.executeVoicePipeline(whisperResult.text)
     } catch (err) {
-      console.error('[Voice] Pipeline error:', err)
+      // FIX: always pass error as string so QuickCaptureButton can display it
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error('[Voice] Pipeline error:', errMsg)
       if (this.currentSession) {
         this.currentSession.status = 'error'
-        this.currentSession.error = err instanceof Error ? err.message : 'Unknown error'
+        this.currentSession.error = errMsg
       }
       this.setStatus('error')
-      this.emit('error', { error: err })
+      this.emit('error', { error: errMsg })
     }
   }
 
@@ -720,8 +737,7 @@ export class VoiceSubsystem {
       const speechRate = typeof window !== 'undefined'
         ? parseFloat(localStorage.getItem('nexus_speech_rate') || '1.0')
         : 1.0
-      console.log('[ElevenLabs] Using voice ID:', activeVoiceId)
-      console.log('[ElevenLabs] Using speech rate:', speechRate)
+      console.log('[ElevenLabs] Firing TTS call — voice_id:', activeVoiceId, ', rate:', speechRate)
       debugPush(`TTS voice ID: ${activeVoiceId}, rate: ${speechRate}`)
 
       const ttsResult = await synthesizeWithElevenLabs({
@@ -919,7 +935,9 @@ export class VoiceSubsystem {
       audio.autoplay = false
       audio.src = url
       audio.volume = 1.0
-      audio.playbackRate = this.preferences.ttsSpeed
+      // playbackRate = 1.0 — ElevenLabs already generates audio at the correct speed
+      // via voice_settings.speed; applying playbackRate would double the effect.
+      audio.playbackRate = 1.0
       document.body.appendChild(audio)
       this.currentAudio = audio
 

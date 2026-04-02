@@ -238,10 +238,6 @@ export interface FieldObservationCard {
   transcript?: string
   created_at?: string
   updated_at?: string
-  /** Quick Capture routing metadata */
-  routing?: 'ai' | 'manual' | 'direct'
-  ai_confidence?: 'high' | 'medium' | 'low' | null
-  ai_reasoning?: string | null
 }
 
 export interface BackupData {

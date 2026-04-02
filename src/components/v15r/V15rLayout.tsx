@@ -1225,6 +1225,7 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
           setText(transcript)
           setRecording(false)
           setSilenceCountdown(null)
+          setVoiceError(null)  // FIX: clear any prior error state on successful transcript
           setOpen(true)   // ensure sheet is visible when transcript arrives
         }
       }
@@ -1485,10 +1486,12 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
         ;(async () => {
           try {
             const voiceId = localStorage.getItem('nexus_voice_id') || 'pNInz6obpgDQGcFmaJgB'
-            console.log('[QuickCapture] TTS confirm — voice:', voiceId)
+            const speechRate = parseFloat(localStorage.getItem('nexus_speech_rate') || '1.0')
+            console.log('[QuickCapture] TTS confirm — voice:', voiceId, 'rate:', speechRate)
             const ttsResult = await synthesizeWithElevenLabs({
               text: 'Captured. ' + capturedText.slice(0, 80),
               voice_id: voiceId,
+              speed: speechRate,
             })
             const audio = new Audio(ttsResult.audioUrl)
             audio.play().catch(() => {})
