@@ -34,6 +34,8 @@ import { subscribeNexusToEvents } from '@/agents/nexus'
 import { subscribeLedgerToEvents } from '@/agents/ledger'
 import { initPulseBusSubscriptions } from '@/agents/pulse'
 import { initSparkBusListeners } from '@/agents/spark'
+import { getVoiceSubsystem, unlockAudioContext } from '@/services/voice'
+import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
 
 interface V15rLayoutProps {
   activeView: string
@@ -1159,6 +1161,8 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
   const [domain, setDomain] = useState('Field Ops')
   const [selectedProject, setSelectedProject] = useState('')
   const [saving, setSaving] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const voiceUnsubRef = useRef<(() => void) | null>(null)
 
   const projects = (backupData?.projects || []).filter((p: any) => p.status === 'active')
 
@@ -1168,9 +1172,45 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
     }
   }, [open])
 
+  // Subscribe to voice events — transcript_ready populates the textarea
+  useEffect(() => {
+    const voice = getVoiceSubsystem()
+    const unsub = voice.on((event: any) => {
+      if (event.type === 'transcript_ready' && event.transcript) {
+        setText(event.transcript)
+        setRecording(false)
+        setOpen(true)  // ensure sheet is open when transcript arrives
+      }
+      if (event.type === 'status_changed') {
+        if (event.status === 'recording') setRecording(true)
+        if (['idle', 'error', 'speaking'].includes(event.status)) setRecording(false)
+      }
+      if (event.type === 'error') {
+        setRecording(false)
+      }
+    })
+    voiceUnsubRef.current = unsub
+    return () => { voiceUnsubRef.current?.() }
+  }, [])
+
+  // MUST call unlockAudioContext synchronously at the top of the tap handler (iOS requirement)
+  function handleMicTap() {
+    unlockAudioContext()  // synchronous — must be first, in the tap callback, not inside async
+    const voice = getVoiceSubsystem()
+    if (recording) {
+      voice.stopRecording()
+      setRecording(false)
+    } else {
+      setOpen(true)
+      voice.startRecording('normal')
+      setRecording(true)
+    }
+  }
+
   async function handleCapture() {
     if (!text.trim()) return
     setSaving(true)
+    const capturedText = text.trim()
     try {
       const backup = getBackupData()
       if (!backup) return
@@ -1180,10 +1220,10 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
         project_id: selectedProject || 'general',
         project_name: projects.find((p: any) => p.id === selectedProject)?.name || 'General',
         source: 'text',
-        observed_condition: text.trim(),
+        observed_condition: capturedText,
         urgency: 'before_next_mobilization',
         status: 'open',
-        ai_summary: domain + ': ' + text.trim().slice(0, 120),
+        ai_summary: domain + ': ' + capturedText.slice(0, 120),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -1192,6 +1232,25 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       setTimeout(() => setToastMessage(null), 3000)
       setText('')
       setOpen(false)
+
+      // Non-blocking ElevenLabs TTS confirmation — voice_id read at call time from localStorage
+      ;(async () => {
+        try {
+          const voiceId = localStorage.getItem('nexus_voice_id') || 'pNInz6obpgDQGcFmaJgB'
+          const ttsResult = await synthesizeWithElevenLabs({
+            text: 'Captured. ' + capturedText.slice(0, 80),
+            voice_id: voiceId,
+          })
+          const audio = new Audio(ttsResult.audioUrl)
+          audio.play().catch(() => {})
+        } catch {
+          // WebSpeech fallback
+          try {
+            const u = new SpeechSynthesisUtterance('Captured.')
+            window.speechSynthesis?.speak(u)
+          } catch { /* ignore */ }
+        }
+      })()
     } finally {
       setSaving(false)
     }
@@ -1220,7 +1279,21 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-white">Quick Capture</h3>
-              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white"><X size={18} /></button>
+              <div className="flex items-center gap-2">
+                {/* Mic button — unlockAudioContext must be called synchronously in handleMicTap */}
+                <button
+                  onClick={handleMicTap}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                    recording
+                      ? 'bg-red-500 text-white animate-pulse'
+                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                  title={recording ? 'Stop recording' : 'Dictate observation'}
+                >
+                  <Mic size={16} />
+                </button>
+                <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white"><X size={18} /></button>
+              </div>
             </div>
 
             {/* Project selector */}

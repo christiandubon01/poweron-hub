@@ -207,12 +207,17 @@ export function VoiceSettings() {
 
         const data = (rows as any[])?.[0] || null
 
+        // localStorage is the source of truth for voice_id and speed —
+        // the user may have changed these since last Supabase save.
+        const lsVoiceId = localStorage.getItem('nexus_voice_id') || null
+        const lsSpeed = localStorage.getItem('nexus_speech_rate') ? parseFloat(localStorage.getItem('nexus_speech_rate')!) : null
+
         if (data) {
           const d = data as any
           setPrefs({
             enabled: d.enabled ?? true,
-            tts_voice_id: d.tts_voice_id || DEFAULT_PREFS.tts_voice_id,
-            tts_speed: d.tts_speed ?? 1.0,
+            tts_voice_id: lsVoiceId || d.tts_voice_id || DEFAULT_PREFS.tts_voice_id,
+            tts_speed: lsSpeed ?? d.tts_speed ?? 1.0,
             asr_language: d.asr_language || 'en-US',
             noise_suppression_strength: d.noise_suppression_strength ?? 0.7,
             wake_word_enabled: d.wake_word_enabled ?? true,
@@ -221,6 +226,13 @@ export function VoiceSettings() {
             push_to_talk_enabled: d.push_to_talk_enabled ?? false,
             push_to_talk_key: d.push_to_talk_key || 'Space',
           })
+        } else if (lsVoiceId || lsSpeed !== null) {
+          // No Supabase row yet — seed from localStorage
+          setPrefs(prev => ({
+            ...prev,
+            ...(lsVoiceId ? { tts_voice_id: lsVoiceId } : {}),
+            ...(lsSpeed !== null ? { tts_speed: lsSpeed } : {}),
+          }))
         }
       } catch {
         // No preferences yet — use defaults
@@ -587,11 +599,8 @@ function APIVoiceCard({ voice, selected, previewing, previewLoading, previewFail
           )}>
             {voice.name}
           </span>
-          <p className={clsx(
-            'text-xs capitalize truncate',
-            previewFailed ? 'text-red-400' : 'text-gray-500',
-          )}>
-            {previewFailed ? 'Preview unavailable' : gender}
+          <p className="text-xs capitalize truncate text-gray-500">
+            {gender}
           </p>
         </div>
         {selected && (
