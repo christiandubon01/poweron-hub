@@ -38,6 +38,7 @@ import { initPulseBusSubscriptions } from '@/agents/pulse'
 import { initSparkBusListeners } from '@/agents/spark'
 import { getVoiceSubsystem, unlockAudioContext } from '@/services/voice'
 import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
+import { callClaude, extractText as claudeExtractText } from '@/services/claudeProxy'
 
 interface V15rLayoutProps {
   activeView: string
@@ -1168,6 +1169,21 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
   const [silenceCountdown, setSilenceCountdown] = useState<number | null>(null)  // null = not in silence, >0 = countdown
   const [muted, setMuted] = useState(() => localStorage.getItem('nexus_mute') === 'true')
 
+  // ── General tab AI routing state ──────────────────────────────────────────
+  type RoutingState = 'idle' | 'routing' | 'confirm' | 'manual_override'
+  const [routingState, setRoutingState] = useState<RoutingState>('idle')
+  const [routingResult, setRoutingResult] = useState<{
+    project_id: string | null
+    project_name: string | null
+    category: string
+    confidence: 'high' | 'medium' | 'low'
+    reasoning: string
+  } | null>(null)
+  const [routingError, setRoutingError] = useState<string | null>(null)
+  const [manualRouteProjectId, setManualRouteProjectId] = useState('')
+  const [manualRouteCategory, setManualRouteCategory] = useState('Field Ops')
+  const routingAbortRef = useRef<AbortController | null>(null)
+
   const voiceUnsubRef = useRef<(() => void) | null>(null)
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const analyserStreamRef = useRef<MediaStream | null>(null)
@@ -1183,6 +1199,14 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       setSelectedProject(projects[0].id)
     }
   }, [open])
+
+  // Reset routing state whenever the domain tab changes
+  useEffect(() => {
+    setRoutingState('idle')
+    setRoutingResult(null)
+    setRoutingError(null)
+    routingAbortRef.current?.abort()
+  }, [domain])
 
   // ── Voice event subscription ───────────────────────────────────────────────
   // BUG FIX: voice.ts emit() wraps all data under event.data, NOT at event root level.
@@ -1348,31 +1372,112 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
     })
   }
 
+  // ── AI routing for General tab ────────────────────────────────────────────
+  async function routeWithAI() {
+    const noteText = text.trim()
+    if (!noteText) return
+
+    setRoutingState('routing')
+    setRoutingError(null)
+
+    const abortCtrl = new AbortController()
+    routingAbortRef.current = abortCtrl
+
+    // 3-second hard timeout — fall back to manual if exceeded
+    const timeoutId = setTimeout(() => {
+      abortCtrl.abort()
+      setRoutingState('manual_override')
+      setRoutingError('Auto-routing unavailable — please route manually')
+    }, 3000)
+
+    try {
+      const projectsList = projects.map((p: any) => ({ id: p.id, name: p.name }))
+      const response = await callClaude({
+        system: 'You are a routing assistant for an electrical contractor\'s operations platform. Given a note, return ONLY a JSON object with no markdown, no explanation: {"project_id": "uuid or null", "project_name": "string or null", "category": "App Dev|Field Ops|Business|Personal", "confidence": "high|medium|low", "reasoning": "one sentence max"}',
+        messages: [{ role: 'user', content: `Projects available: ${JSON.stringify(projectsList)}. Note to classify: "${noteText}"` }],
+        max_tokens: 200,
+        signal: abortCtrl.signal,
+      })
+      clearTimeout(timeoutId)
+      const responseText = claudeExtractText(response)
+      // Strip any markdown code fences if present
+      const cleaned = responseText.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim()
+      const parsed = JSON.parse(cleaned)
+      setRoutingResult(parsed)
+      setRoutingState('confirm')
+    } catch (err: any) {
+      clearTimeout(timeoutId)
+      if (err?.name === 'AbortError') return // timeout already handled
+      console.warn('[QuickCapture] AI routing failed:', err?.message)
+      setRoutingState('manual_override')
+      setRoutingError('Auto-routing unavailable — please route manually')
+    }
+  }
+
   async function handleCapture() {
     if (!text.trim()) return
+
+    // General tab: if routing hasn't started yet, kick off AI routing instead of saving
+    if (domain === 'General' && routingState === 'idle') {
+      await routeWithAI()
+      return
+    }
+
     setSaving(true)
     const capturedText = text.trim()
+
+    // Determine routing metadata based on domain + routing state
+    let saveProjectId = selectedProject || 'general'
+    let saveProjectName = projects.find((p: any) => p.id === selectedProject)?.name || 'General'
+    let saveDomain = domain
+    let saveRouting: 'ai' | 'manual' | 'direct' = 'direct'
+    let saveAiConfidence: 'high' | 'medium' | 'low' | null = null
+    let saveAiReasoning: string | null = null
+
+    if (domain === 'General') {
+      if (routingState === 'confirm' && routingResult) {
+        saveProjectId = routingResult.project_id || 'general'
+        saveProjectName = routingResult.project_name || 'General'
+        saveDomain = routingResult.category
+        saveRouting = 'ai'
+        saveAiConfidence = routingResult.confidence
+        saveAiReasoning = routingResult.reasoning
+      } else if (routingState === 'manual_override') {
+        saveProjectId = manualRouteProjectId || 'general'
+        saveProjectName = projects.find((p: any) => p.id === manualRouteProjectId)?.name || 'General'
+        saveDomain = manualRouteCategory
+        saveRouting = 'manual'
+      }
+    }
+
     try {
       const backup = getBackupData()
       if (!backup) return
       if (!backup.fieldObservationCards) backup.fieldObservationCards = []
       backup.fieldObservationCards.push({
         id: 'foc_' + Date.now(),
-        project_id: selectedProject || 'general',
-        project_name: projects.find((p: any) => p.id === selectedProject)?.name || 'General',
+        project_id: saveProjectId,
+        project_name: saveProjectName,
         source: 'text',
         observed_condition: capturedText,
         urgency: 'before_next_mobilization',
         status: 'open',
-        ai_summary: domain + ': ' + capturedText.slice(0, 120),
+        ai_summary: saveDomain + ': ' + capturedText.slice(0, 120),
+        routing: saveRouting,
+        ai_confidence: saveAiConfidence,
+        ai_reasoning: saveAiReasoning,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       saveBackupData(backup)
-      setToastMessage('Saved to ' + domain)
+      setToastMessage('Saved to ' + saveDomain)
       setTimeout(() => setToastMessage(null), 3000)
       setText('')
       setOpen(false)
+      // Reset routing state
+      setRoutingState('idle')
+      setRoutingResult(null)
+      setRoutingError(null)
 
       // Non-blocking ElevenLabs TTS confirmation — only when NOT muted
       // voice_id read at call time from localStorage (never at load time)
@@ -1403,7 +1508,12 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
     }
   }
 
-  const domains = ['App Dev', 'Field Ops', 'Business', 'Personal']
+  const domains = ['App Dev', 'Field Ops', 'Business', 'Personal', 'General']
+
+  // Context-aware project selector logic
+  const showProjectSelector = domain === 'Field Ops' || domain === 'Business'
+  const projectRequired = domain === 'Field Ops'
+  const captureDisabled = !text.trim() || saving || (projectRequired && !selectedProject) || routingState === 'routing'
 
   return (
     <>
@@ -1418,7 +1528,7 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
 
       {/* Bottom sheet */}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => { setOpen(false); setRoutingState('idle'); setRoutingResult(null); setRoutingError(null) }}>
           <div className="absolute inset-0 bg-black/40" />
           <div
             className="relative w-full max-w-lg bg-[#1a1d27] border-t border-gray-700 rounded-t-2xl p-5 space-y-4 animate-slide-up"
@@ -1462,7 +1572,7 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
                 >
                   <Mic size={16} />
                 </button>
-                <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white"><X size={18} /></button>
+                <button onClick={() => { setOpen(false); setRoutingState('idle'); setRoutingResult(null); setRoutingError(null) }} className="text-gray-400 hover:text-white"><X size={18} /></button>
               </div>
             </div>
 
@@ -1474,20 +1584,25 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
               </div>
             )}
 
-            {/* Project selector */}
-            <div className="relative">
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                className="w-full px-3 py-2.5 text-xs bg-gray-900 border border-gray-700 rounded-lg text-gray-200 appearance-none"
-              >
-                {projects.map((p: any) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-                <option value="general">General</option>
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
-            </div>
+            {/* Project selector — visible only for Field Ops (required) and Business (optional) */}
+            {showProjectSelector && (
+              <div className="relative">
+                <select
+                  value={selectedProject}
+                  onChange={(e) => setSelectedProject(e.target.value)}
+                  className="w-full px-3 py-2.5 text-xs bg-gray-900 border border-gray-700 rounded-lg text-gray-200 appearance-none"
+                >
+                  {!projectRequired && <option value="">No specific project</option>}
+                  {projects.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                {projectRequired && !selectedProject && (
+                  <p className="text-[10px] text-amber-400 mt-1 pl-1">⚠ Select a project before capturing</p>
+                )}
+              </div>
+            )}
 
             {/* Domain chips */}
             <div className="flex gap-2 flex-wrap">
@@ -1516,14 +1631,99 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
               autoFocus
             />
 
-            {/* Capture button */}
-            <button
-              onClick={handleCapture}
-              disabled={!text.trim() || saving}
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-bold rounded-lg transition-colors"
-            >
-              {saving ? 'Saving...' : 'Capture'}
-            </button>
+            {/* AI Routing Result UI — General tab only, shown after user taps Capture */}
+            {domain === 'General' && routingState !== 'idle' && (
+              <div className="space-y-2">
+                {routingState === 'routing' && (
+                  <div className="px-3 py-2.5 text-xs text-gray-300 bg-gray-800/60 border border-gray-700 rounded-lg flex items-center gap-2">
+                    <span className="inline-block animate-spin text-emerald-400 font-bold">⟳</span>
+                    <span>NEXUS is routing your note…</span>
+                  </div>
+                )}
+
+                {routingState === 'confirm' && routingResult && (
+                  <div className={`px-3 py-2.5 rounded-lg border ${
+                    routingResult.confidence === 'high'
+                      ? 'bg-emerald-950/40 border-emerald-800/60'
+                      : routingResult.confidence === 'medium'
+                      ? 'bg-yellow-950/40 border-yellow-800/60'
+                      : 'bg-gray-800/60 border-gray-700'
+                  }`}>
+                    <p className="text-xs font-semibold text-gray-100 mb-0.5">
+                      NEXUS suggests: {routingResult.project_name || 'No specific project'} → {routingResult.category}
+                    </p>
+                    <p className="text-[10px] text-gray-400 italic mb-2">{routingResult.reasoning}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleCapture}
+                        disabled={saving}
+                        className="flex-1 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors"
+                      >
+                        {saving ? 'Saving…' : 'Confirm'}
+                      </button>
+                      <button
+                        onClick={() => { setRoutingState('manual_override'); setManualRouteProjectId(''); setManualRouteCategory('Field Ops') }}
+                        className="flex-1 py-2 text-xs font-bold bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg transition-colors"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {routingState === 'manual_override' && (
+                  <div className="space-y-2">
+                    {routingError && (
+                      <div className="px-3 py-2 text-xs text-amber-300 bg-amber-950/40 border border-amber-900/50 rounded-lg flex items-center gap-2">
+                        <span className="flex-shrink-0">⚠</span>
+                        <span>{routingError}</span>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <select
+                          value={manualRouteProjectId}
+                          onChange={(e) => setManualRouteProjectId(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-gray-900 border border-gray-700 rounded-lg text-gray-200 appearance-none"
+                        >
+                          <option value="">No specific project</option>
+                          {projects.map((p: any) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                      </div>
+                      <div className="relative flex-1">
+                        <select
+                          value={manualRouteCategory}
+                          onChange={(e) => setManualRouteCategory(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-gray-900 border border-gray-700 rounded-lg text-gray-200 appearance-none"
+                        >
+                          {['App Dev', 'Field Ops', 'Business', 'Personal'].map((cat) => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Capture button — hidden when routing confirm UI is active (uses Confirm button instead) */}
+            {!(domain === 'General' && routingState === 'confirm') && (
+              <button
+                onClick={handleCapture}
+                disabled={captureDisabled}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-bold rounded-lg transition-colors"
+              >
+                {saving ? 'Saving…'
+                  : routingState === 'routing' ? 'Routing…'
+                  : domain === 'General' && routingState === 'idle' ? 'Capture & Route'
+                  : 'Capture'}
+              </button>
+            )}
           </div>
         </div>
       )}
