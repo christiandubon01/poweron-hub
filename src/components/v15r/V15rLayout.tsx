@@ -24,6 +24,8 @@ import {
   Activity,
   ShieldAlert,
   ChevronDown,
+  VolumeX,
+  Volume2,
 } from 'lucide-react'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { useDemoStore } from '@/store/demoStore'
@@ -1162,7 +1164,17 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
   const [selectedProject, setSelectedProject] = useState('')
   const [saving, setSaving] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [silenceCountdown, setSilenceCountdown] = useState<number | null>(null)  // null = not in silence, >0 = countdown
+  const [muted, setMuted] = useState(() => localStorage.getItem('nexus_mute') === 'true')
+
   const voiceUnsubRef = useRef<(() => void) | null>(null)
+  const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const analyserStreamRef = useRef<MediaStream | null>(null)
+  const analyserCtxRef = useRef<AudioContext | null>(null)
+  const silenceStartRef = useRef<number | null>(null)
+  const wasRecordingRef = useRef(false)
+  const transcriptArrivedRef = useRef(false)
 
   const projects = (backupData?.projects || []).filter((p: any) => p.status === 'active')
 
@@ -1172,39 +1184,168 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
     }
   }, [open])
 
-  // Subscribe to voice events — transcript_ready populates the textarea
+  // ── Voice event subscription ───────────────────────────────────────────────
+  // BUG FIX: voice.ts emit() wraps all data under event.data, NOT at event root level.
+  // event structure: { type, session, data: { text, confidence } }  ← must use event.data?.text
+  // Previously was checking event.transcript (undefined) and event.status (undefined).
   useEffect(() => {
     const voice = getVoiceSubsystem()
     const unsub = voice.on((event: any) => {
-      if (event.type === 'transcript_ready' && event.transcript) {
-        setText(event.transcript)
-        setRecording(false)
-        setOpen(true)  // ensure sheet is open when transcript arrives
+      const evData = event.data as any
+
+      if (event.type === 'transcript_ready') {
+        const transcript = evData?.text
+        console.log('[QuickCapture] transcript_ready received, text:', transcript?.substring(0, 60))
+        if (transcript) {
+          transcriptArrivedRef.current = true
+          setText(transcript)
+          setRecording(false)
+          setSilenceCountdown(null)
+          setOpen(true)   // ensure sheet is visible when transcript arrives
+        }
       }
+
       if (event.type === 'status_changed') {
-        if (event.status === 'recording') setRecording(true)
-        if (['idle', 'error', 'speaking'].includes(event.status)) setRecording(false)
+        // FIX: status is at event.data.status, not event.status
+        // FIX: valid statuses are 'inactive', 'responding' — not 'idle'/'speaking'
+        const st: string = evData?.status || ''
+        console.log('[QuickCapture] status_changed:', st)
+        if (st === 'recording') {
+          wasRecordingRef.current = true
+          setRecording(true)
+        } else {
+          // Any non-recording status clears the mic active state
+          setRecording(false)
+          setSilenceCountdown(null)
+          if (st === 'transcribing') {
+            console.log('[QuickCapture] transcribing — waiting for transcript_ready')
+          }
+          // If pipeline returned to inactive without delivering a transcript, inform user
+          if ((st === 'inactive' || st === 'complete') && wasRecordingRef.current && !transcriptArrivedRef.current) {
+            console.log('[QuickCapture] Pipeline ended without transcript — likely no voice activity')
+            setVoiceError('No speech detected. Speak clearly and try again.')
+            setTimeout(() => setVoiceError(null), 4000)
+          }
+          if (st === 'inactive' || st === 'complete') {
+            wasRecordingRef.current = false
+            transcriptArrivedRef.current = false
+          }
+        }
       }
+
       if (event.type === 'error') {
+        const errMsg = typeof evData?.error === 'string' ? evData.error : 'Voice error — check mic permission'
+        console.log('[QuickCapture] voice error:', errMsg)
         setRecording(false)
+        setSilenceCountdown(null)
+        wasRecordingRef.current = false
+        transcriptArrivedRef.current = false
+        stopSilenceDetection()
+        setVoiceError(errMsg)
+        setTimeout(() => setVoiceError(null), 5000)
       }
     })
     voiceUnsubRef.current = unsub
-    return () => { voiceUnsubRef.current?.() }
+    return () => {
+      voiceUnsubRef.current?.()
+      stopSilenceDetection()
+    }
   }, [])
 
-  // MUST call unlockAudioContext synchronously at the top of the tap handler (iOS requirement)
-  function handleMicTap() {
-    unlockAudioContext()  // synchronous — must be first, in the tap callback, not inside async
+  // ── Silence detection — AudioContext AnalyserNode ─────────────────────────
+  // Request a second getUserMedia purely for level analysis. Gracefully degrades.
+  function startSilenceDetection() {
+    if (!navigator.mediaDevices?.getUserMedia) return
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      analyserStreamRef.current = stream
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        analyserCtxRef.current = ctx
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        const source = ctx.createMediaStreamSource(stream)
+        source.connect(analyser)
+        const dataArray = new Uint8Array(analyser.frequencyBinCount)
+        silenceStartRef.current = null
+
+        silenceTimerRef.current = setInterval(() => {
+          analyser.getByteFrequencyData(dataArray)
+          const avg = dataArray.reduce((a, v) => a + v, 0) / dataArray.length  // 0–255 scale
+          console.log('[QuickCapture] audio level avg:', avg.toFixed(1))
+
+          if (avg < 8) {   // below silence threshold
+            if (silenceStartRef.current === null) {
+              silenceStartRef.current = Date.now()
+            }
+            const elapsed = Date.now() - silenceStartRef.current
+            const remaining = Math.max(0, 2500 - elapsed) / 1000
+            setSilenceCountdown(remaining)
+            if (elapsed >= 2500) {
+              console.log('[QuickCapture] Auto-stop: 2.5s silence detected')
+              stopSilenceDetection()
+              getVoiceSubsystem().stopRecording()
+            }
+          } else {
+            // Audio detected — reset silence timer
+            silenceStartRef.current = null
+            setSilenceCountdown(null)
+          }
+        }, 100)
+      } catch (ctxErr) {
+        console.warn('[QuickCapture] AnalyserNode setup failed:', ctxErr)
+        stream.getTracks().forEach(t => t.stop())
+        analyserStreamRef.current = null
+      }
+    }).catch(err => {
+      console.warn('[QuickCapture] Silence detection getUserMedia failed (graceful):', err)
+    })
+  }
+
+  function stopSilenceDetection() {
+    if (silenceTimerRef.current) {
+      clearInterval(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+    if (analyserStreamRef.current) {
+      analyserStreamRef.current.getTracks().forEach(t => t.stop())
+      analyserStreamRef.current = null
+    }
+    if (analyserCtxRef.current && analyserCtxRef.current.state !== 'closed') {
+      analyserCtxRef.current.close().catch(() => {})
+      analyserCtxRef.current = null
+    }
+    silenceStartRef.current = null
+    setSilenceCountdown(null)
+  }
+
+  // ── handleMicTap — unlockAudioContext MUST be first synchronous call ──────
+  async function handleMicTap() {
+    unlockAudioContext()  // synchronous — iOS AudioContext gate, must be first in tap handler
     const voice = getVoiceSubsystem()
     if (recording) {
+      console.log('[QuickCapture] Manual stop recording')
+      stopSilenceDetection()
       voice.stopRecording()
-      setRecording(false)
+      // recording state cleared by status_changed event
     } else {
+      console.log('[QuickCapture] Starting recording')
       setOpen(true)
-      voice.startRecording('normal')
-      setRecording(true)
+      setVoiceError(null)
+      transcriptArrivedRef.current = false
+      wasRecordingRef.current = false
+      await voice.startRecording('normal')
+      // After startRecording resolves, status_changed 'recording' has already fired
+      startSilenceDetection()
     }
+  }
+
+  // ── Mute toggle — localStorage 'nexus_mute' ───────────────────────────────
+  function toggleMute() {
+    setMuted(prev => {
+      const next = !prev
+      localStorage.setItem('nexus_mute', String(next))
+      return next
+    })
   }
 
   async function handleCapture() {
@@ -1233,24 +1374,30 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       setText('')
       setOpen(false)
 
-      // Non-blocking ElevenLabs TTS confirmation — voice_id read at call time from localStorage
-      ;(async () => {
-        try {
-          const voiceId = localStorage.getItem('nexus_voice_id') || 'pNInz6obpgDQGcFmaJgB'
-          const ttsResult = await synthesizeWithElevenLabs({
-            text: 'Captured. ' + capturedText.slice(0, 80),
-            voice_id: voiceId,
-          })
-          const audio = new Audio(ttsResult.audioUrl)
-          audio.play().catch(() => {})
-        } catch {
-          // WebSpeech fallback
+      // Non-blocking ElevenLabs TTS confirmation — only when NOT muted
+      // voice_id read at call time from localStorage (never at load time)
+      if (!muted) {
+        ;(async () => {
           try {
-            const u = new SpeechSynthesisUtterance('Captured.')
-            window.speechSynthesis?.speak(u)
-          } catch { /* ignore */ }
-        }
-      })()
+            const voiceId = localStorage.getItem('nexus_voice_id') || 'pNInz6obpgDQGcFmaJgB'
+            console.log('[QuickCapture] TTS confirm — voice:', voiceId)
+            const ttsResult = await synthesizeWithElevenLabs({
+              text: 'Captured. ' + capturedText.slice(0, 80),
+              voice_id: voiceId,
+            })
+            const audio = new Audio(ttsResult.audioUrl)
+            audio.play().catch(() => {})
+          } catch {
+            // WebSpeech fallback
+            try {
+              const u = new SpeechSynthesisUtterance('Captured.')
+              window.speechSynthesis?.speak(u)
+            } catch { /* ignore */ }
+          }
+        })()
+      } else {
+        console.log('[QuickCapture] TTS muted — skipping capture confirmation')
+      }
     } finally {
       setSaving(false)
     }
@@ -1277,10 +1424,33 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
             className="relative w-full max-w-lg bg-[#1a1d27] border-t border-gray-700 rounded-t-2xl p-5 space-y-4 animate-slide-up"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Header row */}
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">Quick Capture</h3>
-              <div className="flex items-center gap-2">
-                {/* Mic button — unlockAudioContext must be called synchronously in handleMicTap */}
+              <div className="flex items-center gap-2 min-w-0">
+                <h3 className="text-sm font-bold text-white flex-shrink-0">Quick Capture</h3>
+                {/* Listening / countdown indicator */}
+                {recording && (
+                  <span className="text-[11px] text-red-400 animate-pulse truncate">
+                    {silenceCountdown !== null
+                      ? `Stopping in ${silenceCountdown.toFixed(1)}s…`
+                      : '● Listening…'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Mute toggle — suppresses TTS confirmation on Capture */}
+                <button
+                  onClick={toggleMute}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                    muted
+                      ? 'bg-gray-800 text-amber-400 hover:bg-gray-700'
+                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                  title={muted ? 'TTS muted — tap to unmute' : 'Mute TTS confirmation'}
+                >
+                  {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                </button>
+                {/* Mic button — unlockAudioContext called synchronously at top of handleMicTap */}
                 <button
                   onClick={handleMicTap}
                   className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
@@ -1295,6 +1465,14 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
                 <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white"><X size={18} /></button>
               </div>
             </div>
+
+            {/* Voice error banner — shows inside Quick Capture panel, not just NEXUS */}
+            {voiceError && (
+              <div className="px-3 py-2 text-xs text-red-300 bg-red-950/40 border border-red-900/50 rounded-lg flex items-center gap-2">
+                <span className="flex-shrink-0">⚠</span>
+                <span>{voiceError}</span>
+              </div>
+            )}
 
             {/* Project selector */}
             <div className="relative">
