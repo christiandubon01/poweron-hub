@@ -22,6 +22,7 @@ interface VoicePrefs {
   enabled: boolean
   tts_voice_id: string
   tts_speed: number
+  tts_language: string
   asr_language: string
   noise_suppression_strength: number
   wake_word_enabled: boolean
@@ -31,10 +32,17 @@ interface VoicePrefs {
   push_to_talk_key: string
 }
 
+/** Normalise any en-US variant to the canonical 'en' we send to ElevenLabs */
+function normaliseLang(lang: string | null | undefined): string {
+  if (!lang) return 'en'
+  return lang.toLowerCase().startsWith('en') ? 'en' : lang
+}
+
 const DEFAULT_PREFS: VoicePrefs = {
   enabled: true,
   tts_voice_id: AVAILABLE_VOICES[0]?.voice_id || '',
   tts_speed: 1.0,
+  tts_language: 'en',
   asr_language: 'en',
   noise_suppression_strength: 0.7,
   wake_word_enabled: true,
@@ -214,11 +222,15 @@ export function VoiceSettings() {
 
         if (data) {
           const d = data as any
+          const normalisedTtsLang = normaliseLang(d.tts_language)
+          const normalisedAsrLang = normaliseLang(d.asr_language)
+
           setPrefs({
             enabled: d.enabled ?? true,
             tts_voice_id: lsVoiceId || d.tts_voice_id || DEFAULT_PREFS.tts_voice_id,
             tts_speed: lsSpeed ?? d.tts_speed ?? 1.0,
-            asr_language: d.asr_language || 'en',
+            tts_language: normalisedTtsLang,
+            asr_language: normalisedAsrLang,
             noise_suppression_strength: d.noise_suppression_strength ?? 0.7,
             wake_word_enabled: d.wake_word_enabled ?? true,
             wake_word_phrase: d.wake_word_phrase || 'Hey NEXUS',
@@ -226,6 +238,24 @@ export function VoiceSettings() {
             push_to_talk_enabled: d.push_to_talk_enabled ?? false,
             push_to_talk_key: d.push_to_talk_key || 'Space',
           })
+
+          // If Supabase had en-US, patch it back immediately to 'en' so it never re-appears
+          if (
+            d.tts_language !== normalisedTtsLang ||
+            d.asr_language !== normalisedAsrLang
+          ) {
+            supabase
+              .from('voice_preferences' as never)
+              .upsert({
+                org_id: orgId,
+                user_id: userId,
+                tts_language: normalisedTtsLang,
+                asr_language: normalisedAsrLang,
+                updated_at: new Date().toISOString(),
+              })
+              .then(() => console.log('[VoiceSettings] Patched tts_language/asr_language to canonical "en"'))
+              .catch((e: unknown) => console.warn('[VoiceSettings] Patch language failed:', e))
+          }
         } else if (lsVoiceId || lsSpeed !== null) {
           // No Supabase row yet — seed from localStorage
           setPrefs(prev => ({
@@ -249,12 +279,18 @@ export function VoiceSettings() {
 
     setSaving(true)
     try {
+      // Always normalise language codes before saving — never write 'en-US' to Supabase
+      const safeTtsLang = normaliseLang(prefs.tts_language)
+      const safeAsrLang = normaliseLang(prefs.asr_language)
+
       await supabase
         .from('voice_preferences' as never)
         .upsert({
           org_id: orgId,
           user_id: userId,
           ...prefs,
+          tts_language: safeTtsLang,
+          asr_language: safeAsrLang,
           updated_at: new Date().toISOString(),
         })
 
