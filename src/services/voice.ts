@@ -868,7 +868,9 @@ export class VoiceSubsystem {
       // iOS requires: set src, call load(), append to DOM, then play
       const audio = new Audio()
       audio.src = audioUrl
-      audio.playbackRate = this.preferences.ttsSpeed
+      // playbackRate = 1.0 — ElevenLabs already generates audio at the correct speed
+      // via voice_settings.speed; applying playbackRate here would double the effect.
+      audio.playbackRate = 1.0
       audio.load() // critical for iOS — forces buffering before play
       document.body.appendChild(audio) // required for iOS WebView audio playback
       audio.onended = () => {

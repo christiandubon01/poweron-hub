@@ -16,7 +16,7 @@ import { Volume2, Mic, Radio, Shield, Save, Loader2, Check, Play, Square, AlertC
 import { clsx } from 'clsx'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
-import { AVAILABLE_VOICES, type ElevenLabsVoice, fetchElevenLabsVoices, type ElevenLabsAPIVoice } from '@/api/voice/elevenLabs'
+import { AVAILABLE_VOICES, type ElevenLabsVoice, fetchElevenLabsVoices, type ElevenLabsAPIVoice, synthesizeWithElevenLabs, revokeAudioUrl } from '@/api/voice/elevenLabs'
 
 interface VoicePrefs {
   enabled: boolean
@@ -133,8 +133,43 @@ export function VoiceSettings() {
     }
 
     if (!voice.preview_url) {
-      // No preview URL — try Web Speech fallback directly
-      speakPreviewFallback(voice.name, voice.voice_id)
+      // No preview URL — call ElevenLabs TTS directly with this voice's ID so it sounds genuinely different
+      setPreviewLoading(voice.voice_id)
+      setPreviewError(null)
+      synthesizeWithElevenLabs({
+        text: `This is ${voice.name}. I am your NEXUS voice assistant for Power On Solutions.`,
+        voice_id: voice.voice_id,
+        model_id: 'eleven_turbo_v2_5',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      })
+        .then(result => {
+          setPreviewLoading(null)
+          const audio = document.createElement('audio')
+          audio.playsInline = true
+          audio.src = result.audioUrl
+          audio.oncanplaythrough = () => {
+            setPreviewingVoice(voice.voice_id)
+            audio.play().catch(() => {
+              revokeAudioUrl(result.audioUrl)
+              speakPreviewFallback(voice.name, voice.voice_id)
+            })
+          }
+          audio.onended = () => {
+            setPreviewingVoice(null)
+            revokeAudioUrl(result.audioUrl)
+          }
+          audio.onerror = () => {
+            setPreviewLoading(null)
+            revokeAudioUrl(result.audioUrl)
+            speakPreviewFallback(voice.name, voice.voice_id)
+          }
+          audio.load()
+          previewAudioRef.current = audio
+        })
+        .catch(() => {
+          setPreviewLoading(null)
+          speakPreviewFallback(voice.name, voice.voice_id)
+        })
       return
     }
 
@@ -316,11 +351,37 @@ export function VoiceSettings() {
       console.log('[VoiceSettings] Selected voice:', voiceName, value)
       setVoiceUpdated(true)
       setTimeout(() => setVoiceUpdated(false), 3000)
+      // Immediate Supabase sync — fire-and-forget, localStorage is source of truth at TTS call time
+      if (orgId && userId) {
+        supabase
+          .from('voice_preferences' as never)
+          .upsert({
+            org_id: orgId,
+            user_id: userId,
+            tts_voice_id: value,
+            updated_at: new Date().toISOString(),
+          })
+          .then(() => console.log('[VoiceSettings] Supabase voice_id synced:', value))
+          .catch((e: unknown) => console.warn('[VoiceSettings] Supabase voice_id sync failed:', e))
+      }
     }
     // Persist speech rate to localStorage immediately
     if (key === 'tts_speed' && typeof value === 'number') {
       localStorage.setItem('nexus_speech_rate', String(value))
       console.log('[VoiceSettings] Speech rate updated:', value)
+      // Immediate Supabase sync — fire-and-forget
+      if (orgId && userId) {
+        supabase
+          .from('voice_preferences' as never)
+          .upsert({
+            org_id: orgId,
+            user_id: userId,
+            tts_speed: value,
+            updated_at: new Date().toISOString(),
+          })
+          .then(() => console.log('[VoiceSettings] Supabase tts_speed synced:', value))
+          .catch((e: unknown) => console.warn('[VoiceSettings] Supabase tts_speed sync failed:', e))
+      }
     }
   }
 
@@ -399,17 +460,17 @@ export function VoiceSettings() {
           </label>
           <input
             type="range"
-            min={0.7}
-            max={1.3}
+            min={0.5}
+            max={2.0}
             step={0.05}
             value={prefs.tts_speed}
             onChange={e => update('tts_speed', parseFloat(e.target.value))}
             className="w-full mt-2 accent-emerald-500"
           />
           <div className="flex justify-between text-xs text-gray-600 mt-1">
-            <span>0.7x Slow</span>
+            <span>0.5x Slow</span>
             <span>1.0x Normal</span>
-            <span>1.3x Fast</span>
+            <span>2.0x Fast</span>
           </div>
         </div>
       </Section>
