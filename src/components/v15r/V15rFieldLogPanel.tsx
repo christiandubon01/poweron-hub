@@ -2162,7 +2162,7 @@ export default function V15rFieldLogPanel() {
               className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
                 triggerBucket === bucket
                   ? 'bg-blue-600 text-white'
-                  : 'bg-[#232738] text-gray-400 hover:text-gray-200 border border-gray-700'
+                  : 'bg-[var(--bg-card)] text-gray-400 hover:text-gray-200 border border-gray-700'
               }`}
             >
               {bucket === 'all' ? 'All' : bucket === 'projects' ? 'Projects' : 'Service Calls'}
@@ -2172,7 +2172,7 @@ export default function V15rFieldLogPanel() {
             <select
               value={triggerJobId}
               onChange={e => setTriggerJobId(e.target.value)}
-              className="bg-[#232738] border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none"
+              className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
             >
               <option value="all">All {triggerBucket === 'projects' ? 'Projects' : 'Service Calls'}</option>
               {jobOptions.map(j => (

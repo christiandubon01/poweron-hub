@@ -497,7 +497,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   }
 
   return (
-    <div className="flex h-screen text-white overflow-hidden" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
       {/* H3 + Session 14: Offline banner */}
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center gap-2 px-4 py-2 bg-yellow-500/90 text-yellow-900 text-xs font-semibold backdrop-blur-sm">
@@ -605,7 +605,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       title={!showLabels ? item.label : undefined}
                       className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                         isActive
-                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          ? 'bg-emerald-500/15 dark:bg-gray-800 border-l-2 border-[#10b981] text-emerald-800 dark:text-white'
                           : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent'
                       }`}
                     >
@@ -644,7 +644,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       title={!showLabels ? item.label : undefined}
                       className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                         isHighlighted
-                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          ? 'bg-emerald-500/15 dark:bg-gray-800 border-l-2 border-[#10b981] text-emerald-800 dark:text-white'
                           : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
                       }`}
                     >
@@ -696,7 +696,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       title={!showLabels ? item.label : undefined}
                       className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                         isActive
-                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          ? 'bg-emerald-500/15 dark:bg-gray-800 border-l-2 border-[#10b981] text-emerald-800 dark:text-white'
                           : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
                       }`}
                     >
@@ -745,7 +745,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       title={!showLabels ? item.label : undefined}
                       className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                         isActive
-                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          ? 'bg-emerald-500/15 dark:bg-gray-800 border-l-2 border-[#10b981] text-emerald-800 dark:text-white'
                           : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
                       }`}
                     >
@@ -794,7 +794,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       title={!showLabels ? item.label : undefined}
                       className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
                         isActive
-                          ? 'bg-gray-800 border-l-2 border-[#10b981] text-white'
+                          ? 'bg-emerald-500/15 dark:bg-gray-800 border-l-2 border-[#10b981] text-emerald-800 dark:text-white'
                           : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
                       }`}
                     >
@@ -1531,13 +1531,13 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
         <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => { setOpen(false); setRoutingState('idle'); setRoutingResult(null); setRoutingError(null) }}>
           <div className="absolute inset-0 bg-black/40" />
           <div
-            className="relative w-full max-w-lg bg-[#1a1d27] border-t border-gray-700 rounded-t-2xl p-5 space-y-4 animate-slide-up"
+            className="relative w-full max-w-lg border-t border-gray-700 rounded-t-2xl p-5 space-y-4 animate-slide-up" style={{ backgroundColor: 'var(--bg-card)' }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header row */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 min-w-0">
-                <h3 className="text-sm font-bold text-white flex-shrink-0">Quick Capture</h3>
+                <h3 className="text-sm font-bold flex-shrink-0" style={{ color: 'var(--text-primary)' }}>Quick Capture</h3>
                 {/* Listening / countdown indicator */}
                 {recording && (
                   <span className="text-[11px] text-red-400 animate-pulse truncate">

@@ -714,11 +714,11 @@ function EmployeeEditModal({
   const billNum = Number(billRate) || 0
   const margin = parseFloat((billNum - loadedCost).toFixed(2))
 
-  const inputCls = 'w-full bg-[#1a1d27] border border-gray-700 text-gray-100 text-sm px-3 py-2.5 rounded focus:outline-none focus:border-blue-600 placeholder-gray-600'
+  const inputCls = 'w-full bg-[var(--bg-input)] border border-gray-700 text-[var(--text-primary)] text-sm px-3 py-2.5 rounded focus:outline-none focus:border-blue-600 placeholder-gray-600'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.65)' }}>
-      <div className="w-full max-w-md bg-[#0f1117] border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-md bg-[var(--bg-primary)] border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
           <h2 className="text-lg font-bold text-gray-100">Edit — {employee.name}</h2>
           <button onClick={onCancel} className="text-gray-500 hover:text-gray-300 transition">
@@ -747,7 +747,7 @@ function EmployeeEditModal({
           {/* Loaded Cost — read-only */}
           <div>
             <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">Loaded Cost ($/hr) — auto-calculated</label>
-            <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-amber-700/40 rounded text-sm">
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-input)] border border-amber-700/40 rounded text-sm">
               <span className="text-amber-400 font-bold">${loadedCost.toFixed(2)}</span>
               <span className="text-gray-500 text-xs">= base × {payrollMult.toFixed(2)}x mult</span>
             </div>
@@ -1090,7 +1090,7 @@ export default function V15rTeamPanel() {
               {hypotheticals.map((hyp) => (
                 <div key={hyp.id} className="text-center">
                   <div className="bg-transparent border-2 border-dashed border-purple-600/50 rounded-lg px-3 py-2 relative opacity-75">
-                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 bg-[#0f1117] border border-purple-600/50 text-purple-400 rounded font-bold tracking-widest">
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 bg-[var(--bg-primary)] border border-purple-600/50 text-purple-400 rounded font-bold tracking-widest">
                       PLANNED
                     </div>
                     <div className="text-sm font-semibold text-purple-300 mt-1">{hyp.title}</div>
@@ -1477,7 +1477,7 @@ export default function V15rTeamPanel() {
                   const isNegativeCost = log.cost < 0
 
                   return (
-                    <tr key={log.id} className="hover:bg-[#282f3f] transition">
+                    <tr key={log.id} className="hover:bg-[var(--bg-card)] transition">
                       <td className="px-4 py-3 text-gray-100 font-semibold">{log.employeeName}</td>
                       <td className="px-4 py-3 text-gray-400">{log.projectName}</td>
                       <td className={`px-4 py-3 text-right font-semibold ${isNegativeHours ? 'text-orange-400' : 'text-gray-300'}`}>
@@ -1509,17 +1509,17 @@ export default function V15rTeamPanel() {
             </ChartErrorBoundary>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-3">
-            <div className="bg-[#1e2130] rounded p-2 text-center">
+            <div className="bg-[var(--bg-card)] rounded p-2 text-center">
               <p className="text-[10px] text-gray-400 uppercase">Labor Cost</p>
               <div className="w-3 h-0.5 bg-red-500 mx-auto mt-1 mb-1 rounded" />
               <p className="text-xs text-gray-300">Accumulative</p>
             </div>
-            <div className="bg-[#1e2130] rounded p-2 text-center">
+            <div className="bg-[var(--bg-card)] rounded p-2 text-center">
               <p className="text-[10px] text-gray-400 uppercase">Revenue</p>
               <div className="w-3 h-0.5 bg-emerald-500 mx-auto mt-1 mb-1 rounded" />
               <p className="text-xs text-gray-300">Accumulative</p>
             </div>
-            <div className="bg-[#1e2130] rounded p-2 text-center">
+            <div className="bg-[var(--bg-card)] rounded p-2 text-center">
               <p className="text-[10px] text-gray-400 uppercase">Labor %</p>
               <div className="w-3 h-0.5 bg-yellow-500 mx-auto mt-1 mb-1 rounded border-dashed" />
               <p className="text-xs text-gray-300">of Revenue</p>

@@ -302,7 +302,7 @@ export default function V15rSettingsPanel() {
                   className={`flex items-center gap-3 px-4 py-2 rounded font-medium transition-colors ${
                     currentTheme === 'dark'
                       ? 'bg-gray-800 text-gray-100 border border-gray-700'
-                      : 'bg-blue-900/30 text-blue-300 border border-blue-700'
+                      : 'bg-sky-100 text-blue-700 border border-sky-300'
                   }`}
                 >
                   {currentTheme === 'dark' ? (

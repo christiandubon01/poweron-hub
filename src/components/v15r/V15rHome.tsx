@@ -1151,9 +1151,9 @@ export default function V15rHome() {
 
       {/* ── AI Slide-in Panel ── */}
       {aiPanelOpen && (
-        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full bg-[#1a1d2e] border-l border-gray-700 shadow-2xl flex flex-col">
+        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full border-l border-gray-700 shadow-2xl flex flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#151827]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700" style={{ backgroundColor: 'var(--bg-secondary)' }}>
             <div>
               <h3 className="text-sm font-bold text-gray-100">Good {getGreeting()}, Christian</h3>
               <p className="text-[10px] text-gray-500">{formatDate()}</p>
@@ -1168,7 +1168,7 @@ export default function V15rHome() {
               </div>
             )}
             {aiMessages.map((msg, i) => (
-              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[#232738] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
+              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[var(--bg-card)] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
                 {msg.content}
               </div>
             ))}
@@ -1198,7 +1198,7 @@ export default function V15rHome() {
                 }
               }}
               placeholder="Ask about your day..."
-              className="flex-1 bg-[#232738] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
+              className="flex-1 bg-[var(--bg-card)] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
             />
             <button
               onClick={() => {

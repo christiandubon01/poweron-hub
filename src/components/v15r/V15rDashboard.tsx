@@ -711,11 +711,11 @@ function V15rDashboardInner() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>From:</span>
-                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>To:</span>
-                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
                 </div>
               </div>
             </div>
@@ -790,7 +790,7 @@ function V15rDashboardInner() {
               <select
                 value={pvaSelectedProject}
                 onChange={e => setPvaSelectedProject(e.target.value)}
-                className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
+                className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none min-w-[180px]"
               >
                 <option value="all">All Projects</option>
                 {pvaActiveProjects.map(p => (
@@ -864,7 +864,7 @@ function V15rDashboardInner() {
                     type="date"
                     value={rcaDateStart}
                     onChange={e => setRcaDateStart(e.target.value)}
-                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
+                    className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
                   />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
@@ -873,13 +873,13 @@ function V15rDashboardInner() {
                     type="date"
                     value={rcaDateEnd}
                     onChange={e => setRcaDateEnd(e.target.value)}
-                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
+                    className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
                   />
                 </div>
                 <select
                   value={rcaSelectedProject}
                   onChange={e => setRcaSelectedProject(e.target.value)}
-                  className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
+                  className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none min-w-[180px]"
                 >
                   <option value="all">All Projects</option>
                   {rcaDropdownProjects.map(p => (
@@ -932,11 +932,11 @@ function V15rDashboardInner() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>From:</span>
-                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>To:</span>
-                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
+                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
                 </div>
               </div>
             </div>
