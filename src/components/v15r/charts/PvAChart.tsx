@@ -15,8 +15,7 @@ export default function PvAChart({ projects, backup }: { projects: any[]; backup
   projects.forEach(p => {
     if (p.plannedStart) allDates.add(p.plannedStart)
     if (p.plannedEnd) allDates.add(p.plannedEnd)
-    // FIX: field is projId, not projectId
-    logs.filter((l: any) => (l.projId || l.projectId || '') === p.id && l.date).forEach((l: any) => allDates.add(l.date))
+    logs.filter((l: any) => l.projectId === p.id && l.date).forEach((l: any) => allDates.add(l.date))
   })
   const sortedDates = [...allDates].sort()
 
@@ -33,9 +32,9 @@ export default function PvAChart({ projects, backup }: { projects: any[]; backup
       if (p.plannedStart && p.plannedEnd && date >= p.plannedStart && date <= p.plannedEnd) {
         row[`p${i}_planned`] = contract
       }
-      // Actual: cumulative collected up to this date — FIX: use projId || projectId
+      // Actual: cumulative collected up to this date
       const cumCollected = logs
-        .filter((l: any) => (l.projId || l.projectId || '') === p.id && l.date && l.date <= date)
+        .filter((l: any) => l.projectId === p.id && l.date && l.date <= date)
         .reduce((s: number, l: any) => s + num(l.collected), 0)
       if (cumCollected > 0) {
         row[`p${i}_actual`] = cumCollected

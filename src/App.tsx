@@ -22,6 +22,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useAuth } from '@/hooks/useAuth'
 import { ReadOnlyContext } from '@/contexts/ReadOnlyContext'
 import { supabase } from '@/lib/supabase'
+import { useDemoStore } from '@/store/demoStore'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
 const CrewPortal = lazy(() =>
@@ -140,6 +141,42 @@ function AuditGate({ children }: { children: React.ReactNode }) {
 }
 
 
+// ── DemoGate — checks for ?demo=true in URL ───────────────────────────────────
+// If ?demo=true is present, bypasses the normal auth/passcode flow entirely
+// and renders AppShell in demo mode with the amber banner.
+// Demo mode state is stored in localStorage via demoStore so it survives the
+// render, but the URL param is the trigger that activates it before any pin gate.
+
+function DemoGate({ children }: { children: React.ReactNode }) {
+  // Evaluate ?demo=true synchronously so it is stable on first render.
+  // We also call enableDemoMode() inside the lazy initializer so the
+  // demoStore flag is set before AppShell's first paint — no amber-banner flash.
+  const [isDemoUrl] = useState<boolean>(() => {
+    const params = new URLSearchParams(window.location.search)
+    const isDemoParam = params.get('demo') === 'true'
+    if (isDemoParam) {
+      // Synchronously enable demo mode so AppShell sees isDemoMode=true on
+      // its very first render (avoids a brief flash where the banner is missing).
+      useDemoStore.getState().enableDemoMode()
+    }
+    return isDemoParam
+  })
+
+  if (isDemoUrl) {
+    // Skip all auth — render AppShell directly. The amber demo banner is
+    // rendered inside AppShell when isDemoMode is true in demoStore.
+    return (
+      <ErrorBoundary>
+        <AppShell />
+      </ErrorBoundary>
+    )
+  }
+
+  // Not a demo URL — normal auth flow
+  return <>{children}</>
+}
+
+
 // ── App (root) ────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -164,15 +201,19 @@ export default function App() {
             }
           />
 
-          {/* All other routes — audit gate + auth-gated */}
+          {/* All other routes — audit gate + demo gate + auth-gated */}
           <Route
             path="/*"
             element={
               <AuditGate>
-                <LoginFlow>
-                  {/* LoginFlow renders children only when status === 'authenticated' */}
-                  <AuthenticatedRoot />
-                </LoginFlow>
+                {/* DemoGate: if ?demo=true, bypass LoginFlow and render AppShell
+                    directly in demo mode — no passcode required */}
+                <DemoGate>
+                  <LoginFlow>
+                    {/* LoginFlow renders children only when status === 'authenticated' */}
+                    <AuthenticatedRoot />
+                  </LoginFlow>
+                </DemoGate>
               </AuditGate>
             }
           />

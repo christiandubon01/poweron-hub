@@ -16,22 +16,11 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
 }
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-// SVGCharts kept as reference only — use individual Recharts chart files below
 import Charts from './charts/SVGCharts'
-// Individual Recharts-based chart components (fixed projId bug, scroll-to-zoom, full-width)
-import CFOTChartR from './charts/CFOTChart'
-import EVRChartR from './charts/EVRChart'
-import RCAChartR from './charts/RCAChart'
-import PvAChartR from './charts/PvAChart'
-import OPPChartR from './charts/OPPChart'
-import PCDChartR from './charts/PCDChart'
-import SCPChartR from './charts/SCPChart'
-import LaborTrendChart from './charts/LaborTrendChart'
-import SixMonthForecastChart from './charts/SixMonthForecastChart'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
-// Keep SVG chart destructures for charts that have no Recharts alternative (Gantt, Monthly Revenue, QuoteVsActual)
-var { MonthlyRevenueChart, ProjectTimelineChart, QuoteVsActualChart, CashFlowProjectionChart } = Charts
+var { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart,
+      CashFlowProjectionChart, MonthlyRevenueChart, ProjectTimelineChart, QuoteVsActualChart } = Charts
 import {
   query8WeekCashFlow,
   queryMonthlyRevenue,
@@ -521,24 +510,13 @@ function V15rDashboardInner() {
   const weeklyData = backup.weeklyData || []
 
   // ── CFOT: Cash Flow Over Time ──
-  // Compute running accum in case weeklyData[].accum is 0/missing
-  let cfotRunningAccum = 0
-  const cfotData = weeklyData.slice(-52).map(w => {
-    const svc = num(w.svc || 0)
-    const proj = num(w.proj || 0)
-    const storedAccum = num(w.accum || 0)
-    if (storedAccum > cfotRunningAccum) cfotRunningAccum = storedAccum
-    else cfotRunningAccum += svc + proj
-    return {
-      wk: w.wk,
-      svc,
-      proj,
-      accum: storedAccum > 0 ? storedAccum : cfotRunningAccum,
-      start: w.start,
-      unbilled: num(w.unbilled || 0),
-      pendingInv: num(w.pendingInv || 0),
-    }
-  })
+  const cfotData = weeklyData.slice(-52).map(w => ({
+    wk: w.wk,
+    svc: w.svc || 0,
+    proj: w.proj || 0,
+    accum: w.accum || 0,
+    start: w.start
+  }))
 
   // ── CFOT Summary Boxes — computed directly from backup data ──
   const serviceLogs = backup.serviceLogs || []
@@ -689,9 +667,9 @@ function V15rDashboardInner() {
             {cfotData.length > 0 ? (
               <div
                 className="relative w-full"
-                style={{ height: Math.max(300, Math.round(window.innerHeight * 0.42)) + 'px' }}
+                style={{ height: Math.max(250, Math.round(window.innerHeight * 0.4)) + 'px' }}
               >
-                <CFOTChartR data={cfotData} backup={backup} />
+                <CFOTChart data={cfotData} backup={backup} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
@@ -733,17 +711,17 @@ function V15rDashboardInner() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>From:</span>
-                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>To:</span>
-                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
               </div>
             </div>
             {evrProjects.length > 0 ? (
-              <div className="relative w-full" style={{ height: '320px' }}>
-                <EVRChartR projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <EVRChart projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
@@ -758,49 +736,15 @@ function V15rDashboardInner() {
               <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
               <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
             </div>
-            {(() => {
-              // FIX 3: Always show 8-week chart — if projected is all-zero, inject baseline from avg weekly collection
-              const now = new Date(); now.setHours(0,0,0,0)
-              const allLogs = backup.logs || []
-              // Last 4 weeks of actual collection
-              const fourWeeksAgo = new Date(now.getTime() - 28 * 86400000)
-              const recentCollected = allLogs.reduce((s: number, l: any) => {
-                const d = l.date ? new Date(l.date + 'T00:00:00') : null
-                return d && d >= fourWeeksAgo && d <= now ? s + num(l.collected) : s
-              }, 0)
-              const avgWeeklyRate = recentCollected / 4
-
-              // Augment weekBuckets: if projected=0 on future weeks, use avgWeeklyRate as baseline
-              const augmented = (weekBuckets || []).map((b: any) => {
-                const ws = b.weekStart instanceof Date ? b.weekStart : new Date(b.weekStart)
-                const isFuture = ws > now
-                const hasProjected = (b.projected || 0) > 0
-                return {
-                  ...b,
-                  projected: hasProjected ? b.projected : (isFuture && avgWeeklyRate > 0 ? avgWeeklyRate : b.projected || 0),
-                  _isBaseline: !hasProjected && isFuture && avgWeeklyRate > 0,
-                }
-              })
-
-              const hasAnyData = augmented.some((b: any) => (b.projected || 0) > 0 || (b.actual || 0) > 0)
-              if (!hasAnyData) {
-                return (
-                  <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
-                    Log payments or set phase dates on active projects to activate
-                  </div>
-                )
-              }
-              return (
-                <div className="relative w-full" style={{ height: '300px' }}>
-                  <CashFlowProjectionChart weekBuckets={augmented} overlapWindows={overlapWindows} />
-                  {avgWeeklyRate > 0 && !weekBuckets.some((b: any) => (b.projected || 0) > 0) && (
-                    <div className="absolute bottom-6 left-0 right-0 text-center text-[10px] text-blue-400">
-                      Dashed bars = baseline projection from avg ${Math.round(avgWeeklyRate).toLocaleString()}/week (last 4 weeks)
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
+            {activeCount > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <CashFlowProjectionChart weekBuckets={weekBuckets} overlapWindows={overlapWindows} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Log a payment on any project to activate
+              </div>
+            )}
           </div>
 
         </div>
@@ -815,11 +759,10 @@ function V15rDashboardInner() {
         summaryLabel="Active Projects"
         summaryValue={String(activeCount)}
       >
-        {/* FIX 4: Each chart in its own clearly defined container, min-height, no overlap */}
-        <div className="flex flex-col gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Project Timeline — Gantt View */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6" style={{ minHeight: '280px' }}>
+          {/* Project Timeline — Gantt View — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4">
               <h3 className="text-lg font-bold text-gray-100">Project Timeline — Gantt View</h3>
               <p className="text-xs text-gray-400 italic mt-0.5">
@@ -827,18 +770,18 @@ function V15rDashboardInner() {
               </p>
             </div>
             {ganttRows.length > 0 ? (
-              <div style={{ width: '100%', minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px', overflowX: 'auto' }}>
+              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px' }}>
                 <ProjectTimelineChart ganttRows={ganttRows} overlapWindows={overlapWindows} />
               </div>
             ) : (
-              <div className="flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '120px' }}>
+              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
                 Enter a phase start date in any project
               </div>
             )}
           </div>
 
-          {/* Planned vs Actual Timeline */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6" style={{ minHeight: '460px' }}>
+          {/* Planned vs Actual Timeline — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
               <div>
                 <h2 className="text-lg font-bold text-gray-100">Planned vs Actual Timeline</h2>
@@ -847,7 +790,7 @@ function V15rDashboardInner() {
               <select
                 value={pvaSelectedProject}
                 onChange={e => setPvaSelectedProject(e.target.value)}
-                className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none min-w-[180px]"
+                className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
               >
                 <option value="all">All Projects</option>
                 {pvaActiveProjects.map(p => (
@@ -856,25 +799,25 @@ function V15rDashboardInner() {
               </select>
             </div>
             {pvaProjects.length > 0 ? (
-              <div style={{ width: '100%', height: '380px' }}>
-                <PvAChartR projects={pvaProjects} backup={backup} />
+              <div className="relative w-full" style={{ height: '380px' }}>
+                <PlannedVsActualChart projects={pvaProjects} backup={backup} />
               </div>
             ) : (
-              <div className="flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '200px' }}>
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
                 Confirm a phase date in Project → Phase Timeline tab
               </div>
             )}
           </div>
 
           {/* OPP: Open Projects Pipeline */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6" style={{ minHeight: '340px' }}>
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <h2 className="text-lg font-bold text-gray-100 mb-4">OPP: Open Projects Pipeline</h2>
             {oppProjects.length > 0 ? (
-              <div style={{ width: '100%', height: '300px' }}>
-                <OPPChartR projects={oppProjects} backup={backup} />
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <OPPChart projects={oppProjects} backup={backup} />
               </div>
             ) : (
-              <div className="flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '200px' }}>
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
                 Add active or upcoming projects to see your pipeline
               </div>
             )}
@@ -894,14 +837,16 @@ function V15rDashboardInner() {
       >
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* FIX 5: Labor Cost vs Revenue 12-Week Trend — live chart from logged hours */}
+          {/* Labor Cost vs Revenue 12-Week Trend — placeholder */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-gray-100">Labor Cost vs Revenue 12-Week Trend</h2>
               <p className="text-xs text-gray-400 italic mt-0.5">Weekly labor cost vs revenue collected over rolling 12 weeks</p>
             </div>
-            <div className="relative w-full" style={{ height: '280px' }}>
-              <LaborTrendChart backup={backup} />
+            <div className="flex flex-col items-center justify-center h-48 gap-2">
+              <span className="text-[#EF9F27] text-2xl">🔧</span>
+              <span className="text-gray-500 text-sm text-center">Chart coming in next session</span>
+              <span className="text-gray-600 text-xs text-center">Log field labor hours to activate labor cost tracking</span>
             </div>
           </div>
 
@@ -919,7 +864,7 @@ function V15rDashboardInner() {
                     type="date"
                     value={rcaDateStart}
                     onChange={e => setRcaDateStart(e.target.value)}
-                    className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
                   />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
@@ -928,13 +873,13 @@ function V15rDashboardInner() {
                     type="date"
                     value={rcaDateEnd}
                     onChange={e => setRcaDateEnd(e.target.value)}
-                    className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
                   />
                 </div>
                 <select
                   value={rcaSelectedProject}
                   onChange={e => setRcaSelectedProject(e.target.value)}
-                  className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none min-w-[180px]"
+                  className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
                 >
                   <option value="all">All Projects</option>
                   {rcaDropdownProjects.map(p => (
@@ -943,9 +888,8 @@ function V15rDashboardInner() {
                 </select>
               </div>
             </div>
-            {/* FIX 6: Use Recharts RCA (full width, fixed projId bug, profit zones, scroll-to-zoom) */}
             <div className="relative w-full" style={{ height: '420px' }}>
-              <RCAChartR projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
+              <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
             </div>
             <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-500">
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(239,68,68,0.15)'}}></span> Danger zone</span>
@@ -954,14 +898,16 @@ function V15rDashboardInner() {
             </div>
           </div>
 
-          {/* FIX 7: 6-Month Cost vs Pipeline Forecast — live from projects pipeline + burn rate */}
+          {/* 6-Month Cost vs Pipeline Forecast — placeholder */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-gray-100">6-Month Cost vs Pipeline Forecast</h2>
-              <p className="text-xs text-gray-400 italic mt-0.5">Monthly burn rate vs pipeline value — active &amp; coming projects · Dashed = baseline projection</p>
+              <p className="text-xs text-gray-400 italic mt-0.5">Projected cost run rate vs pipeline value over 6 months</p>
             </div>
-            <div className="relative w-full" style={{ height: '280px' }}>
-              <SixMonthForecastChart backup={backup} />
+            <div className="flex flex-col items-center justify-center h-48 gap-2">
+              <span className="text-[#EF9F27] text-2xl">📋</span>
+              <span className="text-gray-500 text-sm text-center">Chart coming in next session</span>
+              <span className="text-gray-600 text-xs text-center">Pulls from Team panel — add project pipeline entries to activate</span>
             </div>
           </div>
 
@@ -986,17 +932,17 @@ function V15rDashboardInner() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>From:</span>
-                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>To:</span>
-                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
               </div>
             </div>
             {scpLogs.length > 0 ? (
               <div className="relative w-full" style={{ height: '300px' }}>
-                <SCPChartR serviceLogs={scpLogs} backup={backup} />
+                <SCPChart serviceLogs={scpLogs} backup={backup} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
@@ -1010,7 +956,7 @@ function V15rDashboardInner() {
             <h2 className="text-lg font-bold text-gray-100 mb-4">PCD: Project Completion Distribution</h2>
             {pcdProjects.length > 0 ? (
               <div className="relative w-full" style={{ height: '300px' }}>
-                <PCDChartR projects={pcdProjects} backup={backup} />
+                <PCDChart projects={pcdProjects} backup={backup} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
