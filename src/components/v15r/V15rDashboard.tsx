@@ -15,24 +15,12 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
-import { BarChart, Bar, XAxis as RXAxis, YAxis as RYAxis, CartesianGrid as RCGrid, Tooltip as RTooltip, Legend as RLegend, ResponsiveContainer as RRC } from 'recharts'
 import { callClaude, extractText } from '@/services/claudeProxy'
-// SVGCharts kept as reference only — use individual Recharts chart files below
 import Charts from './charts/SVGCharts'
-// Individual Recharts-based chart components (fixed projId bug, scroll-to-zoom, full-width)
-import CFOTChartR from './charts/CFOTChart'
-import EVRChartR from './charts/EVRChart'
-import RCAChartR from './charts/RCAChart'
-import PvAChartR from './charts/PvAChart'
-import OPPChartR from './charts/OPPChart'
-import PCDChartR from './charts/PCDChart'
-import SCPChartR from './charts/SCPChart'
-import LaborTrendChart from './charts/LaborTrendChart'
-import SixMonthForecastChart from './charts/SixMonthForecastChart'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
-// Keep SVG chart destructures for charts that have no Recharts alternative (Gantt, Monthly Revenue, QuoteVsActual)
-var { MonthlyRevenueChart, ProjectTimelineChart, QuoteVsActualChart, CashFlowProjectionChart } = Charts
+var { CFOTChart, OPPChart, PCDChart, EVRChart, SCPChart, RevenueCostChart, PlannedVsActualChart,
+      CashFlowProjectionChart, MonthlyRevenueChart, ProjectTimelineChart, QuoteVsActualChart } = Charts
 import {
   query8WeekCashFlow,
   queryMonthlyRevenue,
@@ -505,84 +493,6 @@ function ChartFamily({
   )
 }
 
-// ── TEAM HOURS PERFORMANCE CHART ──
-// Recharts bar chart showing hours logged per team member
-// this week, this month, and rolling 12 weeks. Uses backup.logs[].emp + .hrs.
-function TeamHoursChart({ backup }: { backup: BackupData }) {
-  const logs = backup.logs || []
-  const now = new Date(); now.setHours(0,0,0,0)
-  const todayStr = now.toISOString().split('T')[0]
-
-  // Week boundaries (Mon–Sun)
-  const weekDay = now.getDay(); const diffToMon = weekDay === 0 ? -6 : 1 - weekDay
-  const weekStart = new Date(now); weekStart.setDate(now.getDate() + diffToMon)
-  const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6)
-  const weekStartStr = weekStart.toISOString().split('T')[0]
-  const weekEndStr = weekEnd.toISOString().split('T')[0]
-
-  // Month boundaries
-  const monthStartStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
-  const monthEndStr = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]
-
-  // 12-week boundary
-  const twelveWeeksAgo = new Date(now); twelveWeeksAgo.setDate(now.getDate() - 83)
-  const twelveWeeksStr = twelveWeeksAgo.toISOString().split('T')[0]
-
-  // Accumulate hours per member
-  const memberMap: Record<string, { thisWeek: number; thisMonth: number; rolling12: number }> = {}
-  for (const log of logs) {
-    const d = log.date || log.logDate || ''
-    const hrs = (log.hrs || 0) as number
-    if (!d || hrs <= 0) continue
-    const member = (log.emp || log.empName || 'Owner').trim() || 'Owner'
-    if (!memberMap[member]) memberMap[member] = { thisWeek: 0, thisMonth: 0, rolling12: 0 }
-    if (d >= weekStartStr && d <= weekEndStr) memberMap[member].thisWeek += hrs
-    if (d >= monthStartStr && d <= monthEndStr) memberMap[member].thisMonth += hrs
-    if (d >= twelveWeeksStr && d <= todayStr) memberMap[member].rolling12 += hrs
-  }
-
-  const chartData = Object.entries(memberMap)
-    .map(([name, v]) => ({ name, thisWeek: +v.thisWeek.toFixed(1), thisMonth: +v.thisMonth.toFixed(1), rolling12: +v.rolling12.toFixed(1) }))
-    .sort((a, b) => b.rolling12 - a.rolling12)
-
-  const MEMBER_COLORS = ['#3b82f6','#10b981','#f59e0b','#a855f7','#ef4444','#06b6d4','#84cc16']
-
-  return (
-    <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2" style={{ width: '100%', minWidth: 0 }}>
-      <div className="mb-4">
-        <h3 className="text-lg font-bold text-gray-100">Team Hours Performance</h3>
-        <p className="text-xs text-gray-400 italic mt-0.5">
-          Hours logged per team member — this week · this month · rolling 12 weeks · Logs without a name attributed to "Owner"
-        </p>
-      </div>
-      {chartData.length > 0 ? (
-        <div style={{ position: 'relative', width: '100%', minWidth: 0, height: '320px' }}>
-          <RRC width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
-              <RCGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <RXAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 11 }} />
-              <RYAxis tickFormatter={(v) => `${v}h`} tick={{ fill: '#9ca3af', fontSize: 11 }} width={44} />
-              <RTooltip
-                contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }}
-                formatter={(v: number, name: string) => [`${v}h`, name === 'thisWeek' ? 'This Week' : name === 'thisMonth' ? 'This Month' : 'Rolling 12wk']}
-              />
-              <RLegend wrapperStyle={{ color: '#d1d5db', fontSize: 12 }} />
-              <Bar dataKey="thisWeek" name="This Week" fill="#3b82f6" opacity={0.85} radius={[3,3,0,0]} />
-              <Bar dataKey="thisMonth" name="This Month" fill="#10b981" opacity={0.75} radius={[3,3,0,0]} />
-              <Bar dataKey="rolling12" name="Rolling 12wk" fill="#f59e0b" opacity={0.65} radius={[3,3,0,0]} />
-            </BarChart>
-          </RRC>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center h-36 gap-2 text-center">
-          <span className="text-gray-500 text-sm">No hours logged yet.</span>
-          <span className="text-gray-600 text-xs">Log labor hours in Field Log to activate team tracking.</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
   const { isDemoMode, hasHydrated } = useDemoMode()
@@ -600,24 +510,13 @@ function V15rDashboardInner() {
   const weeklyData = backup.weeklyData || []
 
   // ── CFOT: Cash Flow Over Time ──
-  // Compute running accum in case weeklyData[].accum is 0/missing
-  let cfotRunningAccum = 0
-  const cfotData = weeklyData.slice(-52).map(w => {
-    const svc = num(w.svc || 0)
-    const proj = num(w.proj || 0)
-    const storedAccum = num(w.accum || 0)
-    if (storedAccum > cfotRunningAccum) cfotRunningAccum = storedAccum
-    else cfotRunningAccum += svc + proj
-    return {
-      wk: w.wk,
-      svc,
-      proj,
-      accum: storedAccum > 0 ? storedAccum : cfotRunningAccum,
-      start: w.start,
-      unbilled: num(w.unbilled || 0),
-      pendingInv: num(w.pendingInv || 0),
-    }
-  })
+  const cfotData = weeklyData.slice(-52).map(w => ({
+    wk: w.wk,
+    svc: w.svc || 0,
+    proj: w.proj || 0,
+    accum: w.accum || 0,
+    start: w.start
+  }))
 
   // ── CFOT Summary Boxes — computed directly from backup data ──
   const serviceLogs = backup.serviceLogs || []
@@ -635,15 +534,15 @@ function V15rDashboardInner() {
     return { exposure, unbilled, pending, svcTotal, projTotal, accumTotal }
   })()
 
-  // ── OPP: Active projects by contract value — skip unnamed/ghost projects ──
+  // ── OPP: Active projects by contract value ──
   const oppProjects = projects
-    .filter(p => (p.status === 'active' || p.status === 'coming') && p.name && p.name.trim())
+    .filter(p => p.status === 'active' || p.status === 'coming')
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 8)
 
-  // ── PCD: Project Completion Distribution by Phase — skip unnamed/ghost projects ──
+  // ── PCD: Project Completion Distribution by Phase ──
   const pcdProjects = projects
-    .filter(p => (p.status === 'active' || p.status === 'coming') && p.name && p.name.trim())
+    .filter(p => p.status === 'active' || p.status === 'coming')
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
 
@@ -654,11 +553,11 @@ function V15rDashboardInner() {
     return d.toISOString().split('T')[0]
   })()
 
-  // ── EVR: Exposure vs Revenue — skip unnamed/ghost projects ──
+  // ── EVR: Exposure vs Revenue ──
   const [evrDateStart, setEvrDateStart] = useState<string>(rcaDefaultStart)
   const [evrDateEnd, setEvrDateEnd] = useState<string>(rcaDefaultEnd)
   const evrProjects = projects
-    .filter(p => p.contract > 0 && p.name && p.name.trim())
+    .filter(p => p.contract > 0)
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 6)
 
@@ -678,10 +577,10 @@ function V15rDashboardInner() {
   const [rcaDateStart, setRcaDateStart] = useState<string>(rcaDefaultStart)
   const [rcaDateEnd, setRcaDateEnd] = useState<string>(rcaDefaultEnd)
   const allRcaProjects = projects
-    .filter(p => p.status === 'active' && (p.contract || 0) > 0 && p.name && p.name.trim())
+    .filter(p => p.status === 'active' && (p.contract || 0) > 0)
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
-  const rcaDropdownProjects = (backup.projects || []).filter((p: any) => p.name && p.name.trim())
+  const rcaDropdownProjects = backup.projects || []
   const rcaFilteredProjects = (() => {
     const allLogs = backup.logs || []
     const inRange = (d: string) => {
@@ -700,23 +599,16 @@ function V15rDashboardInner() {
   })()
   const rcaProjects = rcaFilteredProjects
 
-  // ── PvA: Planned vs Actual — skip unnamed/ghost projects ──
+  // ── PvA: Planned vs Actual ──
   const [pvaSelectedProject, setPvaSelectedProject] = useState<string>('all')
-  const pvaActiveProjects = projects.filter(p => p.status === 'active' && (p.contract || 0) > 0 && p.name && p.name.trim())
+  const pvaActiveProjects = projects.filter(p => p.status === 'active' && (p.contract || 0) > 0)
   const pvaProjects = pvaSelectedProject === 'all'
     ? pvaActiveProjects
     : pvaActiveProjects.filter(p => p.id === pvaSelectedProject)
 
-  // ── Monthly Revenue offset state (for scrolling history) ──
-  const [monthlyOffset, setMonthlyOffset] = useState<number>(0)
-  // ── Solar Income activation state ──
-  const [solarActivated, setSolarActivated] = useState<boolean>(false)
-  const [solarRmoRate, setSolarRmoRate] = useState<string>('')
-  const [solarInstallRate, setSolarInstallRate] = useState<string>('')
-
   // ── Revenue Timeline data (inlined from RevenuTimelineDashboard) ──
   const weekBuckets = useMemo(() => query8WeekCashFlow(), [backup])
-  const monthBuckets = useMemo(() => queryMonthlyRevenue(6, monthlyOffset), [backup, monthlyOffset])
+  const monthBuckets = useMemo(() => queryMonthlyRevenue(6), [backup])
   const overlapWindows = useMemo(() => queryOverlapWindows(), [backup])
   const ganttRows = useMemo(() => queryGanttData(), [backup])
   const allVariances = useMemo(() => queryAllQuoteVsActual(), [backup])
@@ -767,16 +659,17 @@ function V15rDashboardInner() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           {/* CFOT: Cash Flow Over Time — full width */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2" style={{ width: '100%', minWidth: 0 }}>
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4">
               <h2 className="text-[30px] font-bold text-gray-100 leading-tight">Projects Cash Flow Over Time</h2>
               <p className="text-sm text-gray-400 italic mt-1">Accumulative vs Total Exposure — Detailed with Unbilled, Invoiced and Received</p>
             </div>
             {cfotData.length > 0 ? (
               <div
-                style={{ position: 'relative', width: '100%', minWidth: 0, height: Math.max(300, Math.round(window.innerHeight * 0.42)) + 'px' }}
+                className="relative w-full"
+                style={{ height: Math.max(250, Math.round(window.innerHeight * 0.4)) + 'px' }}
               >
-                <CFOTChartR data={cfotData} backup={backup} />
+                <CFOTChart data={cfotData} backup={backup} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
@@ -818,17 +711,17 @@ function V15rDashboardInner() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>From:</span>
-                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>To:</span>
-                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
               </div>
             </div>
             {evrProjects.length > 0 ? (
-              <div className="relative w-full" style={{ height: '320px' }}>
-                <EVRChartR projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <EVRChart projects={evrProjects} backup={backup} dateStart={evrDateStart} dateEnd={evrDateEnd} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
@@ -843,49 +736,15 @@ function V15rDashboardInner() {
               <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
               <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
             </div>
-            {(() => {
-              // FIX 3: Always show 8-week chart — if projected is all-zero, inject baseline from avg weekly collection
-              const now = new Date(); now.setHours(0,0,0,0)
-              const allLogs = backup.logs || []
-              // Last 4 weeks of actual collection
-              const fourWeeksAgo = new Date(now.getTime() - 28 * 86400000)
-              const recentCollected = allLogs.reduce((s: number, l: any) => {
-                const d = l.date ? new Date(l.date + 'T00:00:00') : null
-                return d && d >= fourWeeksAgo && d <= now ? s + num(l.collected) : s
-              }, 0)
-              const avgWeeklyRate = recentCollected / 4
-
-              // Augment weekBuckets: if projected=0 on future weeks, use avgWeeklyRate as baseline
-              const augmented = (weekBuckets || []).map((b: any) => {
-                const ws = b.weekStart instanceof Date ? b.weekStart : new Date(b.weekStart)
-                const isFuture = ws > now
-                const hasProjected = (b.projected || 0) > 0
-                return {
-                  ...b,
-                  projected: hasProjected ? b.projected : (isFuture && avgWeeklyRate > 0 ? avgWeeklyRate : b.projected || 0),
-                  _isBaseline: !hasProjected && isFuture && avgWeeklyRate > 0,
-                }
-              })
-
-              const hasAnyData = augmented.some((b: any) => (b.projected || 0) > 0 || (b.actual || 0) > 0)
-              if (!hasAnyData) {
-                return (
-                  <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
-                    Log payments or set phase dates on active projects to activate
-                  </div>
-                )
-              }
-              return (
-                <div className="relative w-full" style={{ height: '300px' }}>
-                  <CashFlowProjectionChart weekBuckets={augmented} overlapWindows={overlapWindows} />
-                  {avgWeeklyRate > 0 && !weekBuckets.some((b: any) => (b.projected || 0) > 0) && (
-                    <div className="absolute bottom-6 left-0 right-0 text-center text-[10px] text-blue-400">
-                      Dashed bars = baseline projection from avg ${Math.round(avgWeeklyRate).toLocaleString()}/week (last 4 weeks)
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
+            {activeCount > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <CashFlowProjectionChart weekBuckets={weekBuckets} overlapWindows={overlapWindows} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+                Log a payment on any project to activate
+              </div>
+            )}
           </div>
 
         </div>
@@ -900,11 +759,10 @@ function V15rDashboardInner() {
         summaryLabel="Active Projects"
         summaryValue={String(activeCount)}
       >
-        {/* FIX 4: Each chart in its own clearly defined container, min-height, no overlap */}
-        <div className="flex flex-col gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Project Timeline — Gantt View (isolated card, no height bleed into PvA) */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6" style={{ minHeight: '280px', overflow: 'hidden' }}>
+          {/* Project Timeline — Gantt View — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4">
               <h3 className="text-lg font-bold text-gray-100">Project Timeline — Gantt View</h3>
               <p className="text-xs text-gray-400 italic mt-0.5">
@@ -912,20 +770,18 @@ function V15rDashboardInner() {
               </p>
             </div>
             {ganttRows.length > 0 ? (
-              <div style={{ width: '100%', maxHeight: '400px', overflowY: 'auto', overflowX: 'auto' }}>
-                <div style={{ width: '100%', minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px' }}>
-                  <ProjectTimelineChart ganttRows={ganttRows} overlapWindows={overlapWindows} />
-                </div>
+              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, ganttRows.length * 48 + 80) + 'px' }}>
+                <ProjectTimelineChart ganttRows={ganttRows} overlapWindows={overlapWindows} />
               </div>
             ) : (
-              <div className="flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '120px' }}>
+              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
                 Enter a phase start date in any project
               </div>
             )}
           </div>
 
-          {/* Planned vs Actual Timeline */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6" style={{ minHeight: '460px' }}>
+          {/* Planned vs Actual Timeline — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
               <div>
                 <h2 className="text-lg font-bold text-gray-100">Planned vs Actual Timeline</h2>
@@ -934,7 +790,7 @@ function V15rDashboardInner() {
               <select
                 value={pvaSelectedProject}
                 onChange={e => setPvaSelectedProject(e.target.value)}
-                className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none min-w-[180px]"
+                className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
               >
                 <option value="all">All Projects</option>
                 {pvaActiveProjects.map(p => (
@@ -943,25 +799,25 @@ function V15rDashboardInner() {
               </select>
             </div>
             {pvaProjects.length > 0 ? (
-              <div style={{ width: '100%', height: '380px' }}>
-                <PvAChartR projects={pvaProjects} backup={backup} />
+              <div className="relative w-full" style={{ height: '380px' }}>
+                <PlannedVsActualChart projects={pvaProjects} backup={backup} />
               </div>
             ) : (
-              <div className="flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '200px' }}>
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
                 Confirm a phase date in Project → Phase Timeline tab
               </div>
             )}
           </div>
 
           {/* OPP: Open Projects Pipeline */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6" style={{ minHeight: '340px' }}>
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <h2 className="text-lg font-bold text-gray-100 mb-4">OPP: Open Projects Pipeline</h2>
             {oppProjects.length > 0 ? (
-              <div style={{ width: '100%', height: '300px' }}>
-                <OPPChartR projects={oppProjects} backup={backup} />
+              <div className="relative w-full" style={{ height: '300px' }}>
+                <OPPChart projects={oppProjects} backup={backup} />
               </div>
             ) : (
-              <div className="flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '200px' }}>
+              <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
                 Add active or upcoming projects to see your pipeline
               </div>
             )}
@@ -981,30 +837,21 @@ function V15rDashboardInner() {
       >
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Row 1a: Labor Cost vs Revenue 12-Week Trend (50% width) */}
+          {/* Labor Cost vs Revenue 12-Week Trend — placeholder */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-gray-100">Labor Cost vs Revenue 12-Week Trend</h2>
               <p className="text-xs text-gray-400 italic mt-0.5">Weekly labor cost vs revenue collected over rolling 12 weeks</p>
             </div>
-            <div className="relative w-full" style={{ height: '280px' }}>
-              <LaborTrendChart backup={backup} />
+            <div className="flex flex-col items-center justify-center h-48 gap-2">
+              <span className="text-[#EF9F27] text-2xl">🔧</span>
+              <span className="text-gray-500 text-sm text-center">Chart coming in next session</span>
+              <span className="text-gray-600 text-xs text-center">Log field labor hours to activate labor cost tracking</span>
             </div>
           </div>
 
-          {/* Row 1b: 6-Month Cost vs Pipeline Forecast (50% width) */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-            <div className="mb-4">
-              <h2 className="text-lg font-bold text-gray-100">6-Month Cost vs Pipeline Forecast</h2>
-              <p className="text-xs text-gray-400 italic mt-0.5">Monthly burn rate vs pipeline value — active &amp; coming projects · Dashed = baseline projection</p>
-            </div>
-            <div className="relative w-full" style={{ height: '280px' }}>
-              <SixMonthForecastChart backup={backup} />
-            </div>
-          </div>
-
-          {/* Row 2: RCA Revenue vs Cost Analysis — full width */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2" style={{ width: '100%', minWidth: 0 }}>
+          {/* RCA: Revenue vs Cost Analysis — full width */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
               <div>
                 <h2 className="text-[26px] font-bold text-gray-100 leading-tight">Revenue vs Cost Analysis — Active Projects</h2>
@@ -1017,7 +864,7 @@ function V15rDashboardInner() {
                     type="date"
                     value={rcaDateStart}
                     onChange={e => setRcaDateStart(e.target.value)}
-                    className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
                   />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
@@ -1026,28 +873,41 @@ function V15rDashboardInner() {
                     type="date"
                     value={rcaDateEnd}
                     onChange={e => setRcaDateEnd(e.target.value)}
-                    className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+                    className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none"
                   />
                 </div>
                 <select
                   value={rcaSelectedProject}
                   onChange={e => setRcaSelectedProject(e.target.value)}
-                  className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none min-w-[180px]"
+                  className="bg-[#232738] border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 outline-none min-w-[180px]"
                 >
                   <option value="all">All Projects</option>
-                  {rcaDropdownProjects.filter((p: any) => p.name && p.name.trim()).map((p: any) => (
-                    <option key={p.id} value={p.id}>{p.name.substring(0, 30)}</option>
+                  {rcaDropdownProjects.map(p => (
+                    <option key={p.id} value={p.id}>{(p.name || 'Unknown').substring(0, 30)}</option>
                   ))}
                 </select>
               </div>
             </div>
-            <div style={{ position: 'relative', width: '100%', minWidth: 0, height: '420px' }}>
-              <RCAChartR projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
+            <div className="relative w-full" style={{ height: '420px' }}>
+              <RevenueCostChart projects={rcaProjects} backup={backup} dateStart={rcaDateStart} dateEnd={rcaDateEnd} />
             </div>
             <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-500">
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(239,68,68,0.15)'}}></span> Danger zone</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(245,158,11,0.15)'}}></span> Warning zone</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{background:'rgba(16,185,129,0.15)'}}></span> Profit zone</span>
+            </div>
+          </div>
+
+          {/* 6-Month Cost vs Pipeline Forecast — placeholder */}
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="mb-4">
+              <h2 className="text-lg font-bold text-gray-100">6-Month Cost vs Pipeline Forecast</h2>
+              <p className="text-xs text-gray-400 italic mt-0.5">Projected cost run rate vs pipeline value over 6 months</p>
+            </div>
+            <div className="flex flex-col items-center justify-center h-48 gap-2">
+              <span className="text-[#EF9F27] text-2xl">📋</span>
+              <span className="text-gray-500 text-sm text-center">Chart coming in next session</span>
+              <span className="text-gray-600 text-xs text-center">Pulls from Team panel — add project pipeline entries to activate</span>
             </div>
           </div>
 
@@ -1072,17 +932,17 @@ function V15rDashboardInner() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>From:</span>
-                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={scpDateStart} onChange={e => setScpDateStart(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-400">
                   <span>To:</span>
-                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
+                  <input type="date" value={scpDateEnd} onChange={e => setScpDateEnd(e.target.value)} className="bg-[#232738] border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 focus:border-blue-500 outline-none" />
                 </div>
               </div>
             </div>
             {scpLogs.length > 0 ? (
               <div className="relative w-full" style={{ height: '300px' }}>
-                <SCPChartR serviceLogs={scpLogs} backup={backup} />
+                <SCPChart serviceLogs={scpLogs} backup={backup} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-64 text-gray-500 text-sm">
@@ -1096,7 +956,7 @@ function V15rDashboardInner() {
             <h2 className="text-lg font-bold text-gray-100 mb-4">PCD: Project Completion Distribution</h2>
             {pcdProjects.length > 0 ? (
               <div className="relative w-full" style={{ height: '300px' }}>
-                <PCDChartR projects={pcdProjects} backup={backup} />
+                <PCDChart projects={pcdProjects} backup={backup} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
@@ -1106,7 +966,7 @@ function V15rDashboardInner() {
           </div>
 
           {/* Quote vs Actual — Estimating Accuracy — full width */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2" style={{ width: '100%', minWidth: 0 }}>
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4">
               <h3 className="text-lg font-bold text-gray-100">Quote vs Actual — Estimating Accuracy</h3>
               <p className="text-xs text-gray-400 italic mt-0.5">
@@ -1114,7 +974,7 @@ function V15rDashboardInner() {
               </p>
             </div>
             {allVariances && allVariances.length > 0 && allVariances.some(p => p.variances && p.variances.length > 0) ? (
-              <div style={{ position: 'relative', width: '100%', minWidth: 0, minHeight: '200px', height: Math.max(200, allVariances.reduce((s, p) => s + (p.variances ? p.variances.length : 0), 0) * 58 + 60) + 'px' }}>
+              <div className="relative w-full" style={{ minHeight: '200px', height: Math.max(200, allVariances.reduce((s, p) => s + (p.variances ? p.variances.length : 0), 0) * 58 + 60) + 'px' }}>
                 <QuoteVsActualChart projectsVariance={allVariances} />
               </div>
             ) : (
@@ -1123,9 +983,6 @@ function V15rDashboardInner() {
               </div>
             )}
           </div>
-
-          {/* Team Hours Performance — full width */}
-          <TeamHoursChart backup={backup} />
 
         </div>
       </ChartFamily>
@@ -1142,37 +999,13 @@ function V15rDashboardInner() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           {/* Monthly Revenue — Projected vs Actual */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2" style={{ width: '100%', minWidth: 0 }}>
-            <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <h3 className="text-lg font-bold text-gray-100">Monthly Revenue — Projected vs Actual</h3>
-                <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling · Dashed amber = monthly target (dayTarget × 20 work days)</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setMonthlyOffset(o => o - 6)}
-                  className="px-3 py-1.5 text-xs bg-[var(--bg-input)] border border-gray-600 rounded hover:border-gray-400 text-gray-300 transition-colors"
-                  title="Scroll back 6 months"
-                >← Back</button>
-                <span className="text-xs text-gray-500 min-w-[90px] text-center">
-                  {monthlyOffset === 0 ? 'Current period' : monthlyOffset < 0 ? `${Math.abs(monthlyOffset)}mo ago` : `+${monthlyOffset}mo`}
-                </span>
-                <button
-                  onClick={() => setMonthlyOffset(o => Math.min(0, o + 6))}
-                  disabled={monthlyOffset >= 0}
-                  className="px-3 py-1.5 text-xs bg-[var(--bg-input)] border border-gray-600 rounded hover:border-gray-400 text-gray-300 transition-colors disabled:opacity-40"
-                  title="Scroll forward to current period"
-                >Next →</button>
-                {monthlyOffset !== 0 && (
-                  <button
-                    onClick={() => setMonthlyOffset(0)}
-                    className="px-3 py-1.5 text-xs bg-blue-800 border border-blue-600 rounded hover:bg-blue-700 text-blue-200 transition-colors"
-                  >Reset</button>
-                )}
-              </div>
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-gray-100">Monthly Revenue — Projected vs Actual</h3>
+              <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling · Dashed amber = monthly target (dayTarget × 20 work days)</p>
             </div>
-            {(activeCount > 0 || monthlyOffset < 0) ? (
-              <div style={{ position: 'relative', width: '100%', minWidth: 0, height: '300px' }}>
+            {activeCount > 0 ? (
+              <div className="relative w-full" style={{ height: '300px' }}>
                 <MonthlyRevenueChart monthlyBuckets={monthBuckets} dailyTarget={dailyTarget} />
               </div>
             ) : (
@@ -1182,69 +1015,17 @@ function V15rDashboardInner() {
             )}
           </div>
 
-          {/* Solar Income Projections — activate prompt */}
+          {/* Solar Income Projections — link to Solar tab */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
             <div className="mb-4">
               <h3 className="text-lg font-bold text-gray-100">Solar Income Projections</h3>
-              <p className="text-xs text-gray-400 italic mt-0.5">RMO fee + install labor revenue projections from solar panel data</p>
+              <p className="text-xs text-gray-400 italic mt-0.5">Solar project revenue projections and REC income estimates</p>
             </div>
-            {!solarActivated ? (
-              <div className="flex flex-col items-center justify-center gap-4 py-8">
-                <span style={{ fontSize: '2.5rem' }}>☀️</span>
-                <div className="text-center">
-                  <p className="text-gray-200 font-semibold text-base">Activate Solar Income Tracking?</p>
-                  <p className="text-gray-500 text-xs mt-1">Enter your rates below to generate projections from Solar Income panel data</p>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md mt-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400">RMO Fee Rate (%)</label>
-                    <input
-                      type="number"
-                      value={solarRmoRate}
-                      onChange={e => setSolarRmoRate(e.target.value)}
-                      placeholder="e.g. 15"
-                      className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-sm text-[var(--text-primary)] focus:border-amber-500 outline-none"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400">Install Labor Rate ($/watt)</label>
-                    <input
-                      type="number"
-                      value={solarInstallRate}
-                      onChange={e => setSolarInstallRate(e.target.value)}
-                      placeholder="e.g. 0.45"
-                      className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-sm text-[var(--text-primary)] focus:border-amber-500 outline-none"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    if (solarRmoRate && solarInstallRate) setSolarActivated(true)
-                  }}
-                  disabled={!solarRmoRate || !solarInstallRate}
-                  className="mt-2 px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Activate Solar Tracking
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-4 text-xs text-gray-400">
-                    <span className="bg-amber-900/40 border border-amber-700/60 rounded px-2 py-1 text-amber-300">RMO: {solarRmoRate}%</span>
-                    <span className="bg-amber-900/40 border border-amber-700/60 rounded px-2 py-1 text-amber-300">Install: ${solarInstallRate}/watt</span>
-                  </div>
-                  <button
-                    onClick={() => { setSolarActivated(false); setSolarRmoRate(''); setSolarInstallRate('') }}
-                    className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-                  >Reset rates</button>
-                </div>
-                <div className="flex items-center justify-center h-48 gap-3 flex-col">
-                  <span className="text-gray-400 text-sm text-center">Solar projections active — configure systems in the Solar Income tab to generate chart data.</span>
-                  <span className="text-gray-600 text-xs text-center">Rates: {solarRmoRate}% RMO · ${solarInstallRate}/watt install</span>
-                </div>
-              </div>
-            )}
+            <div className="flex flex-col items-center justify-center h-48 gap-3">
+              <span className="text-[#D85A30] text-3xl">☀️</span>
+              <span className="text-gray-400 text-sm text-center">Solar income data lives in the Solar tab</span>
+              <span className="text-gray-600 text-xs text-center">Open the Solar tab to view and manage solar project projections</span>
+            </div>
           </div>
 
         </div>

@@ -133,11 +133,12 @@ export function VoiceSettings() {
     }
 
     if (!voice.preview_url) {
-      // No preview URL — call ElevenLabs TTS directly with this voice's ID so it sounds genuinely different
+      // No preview URL — call ElevenLabs TTS directly with this voice's ID so it sounds genuinely different.
+      // FIX: use short, neutral phrase so preview is fast and low-cost.
       setPreviewLoading(voice.voice_id)
       setPreviewError(null)
       synthesizeWithElevenLabs({
-        text: `This is ${voice.name}. I am your NEXUS voice assistant for Power On Solutions.`,
+        text: 'Ready when you are.',
         voice_id: voice.voice_id,
         model_id: 'eleven_turbo_v2_5',
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },

@@ -70,28 +70,6 @@ export const AVAILABLE_VOICES: ElevenLabsVoice[] = [
     gender: 'female',
     settings: { stability: 0.65, similarity_boost: 0.85 },
   },
-  // Primary NEXUS voices — wired by voice_id, always present even if API fetch fails
-  {
-    voice_id: 'gOkFV1JMCt0G0n9xmBwV',
-    name: 'Oxley',
-    category: 'premade',
-    gender: 'male',
-    settings: { stability: 0.5, similarity_boost: 0.75 },
-  },
-  {
-    voice_id: 'NFG5qt843uXKj4pFvR7C',
-    name: 'Adam Stone',
-    category: 'premade',
-    gender: 'male',
-    settings: { stability: 0.5, similarity_boost: 0.75 },
-  },
-  {
-    voice_id: '6WjhCXzqp2hnSqFtrG8P',
-    name: 'Marcus',
-    category: 'premade',
-    gender: 'male',
-    settings: { stability: 0.5, similarity_boost: 0.75 },
-  },
 ]
 
 export const DEFAULT_VOICE_ID = AVAILABLE_VOICES[0].voice_id // Adam
@@ -276,18 +254,7 @@ export async function fetchElevenLabsVoices(): Promise<ElevenLabsAPIVoice[]> {
 
     const json = await response.json() as { voices: ElevenLabsAPIVoice[] }
     console.log(`[ElevenLabs] Fetched ${json.voices.length} voices from API`)
-    // Merge AVAILABLE_VOICES so Oxley/Adam Stone/Marcus are always present.
-    // API voices take priority (they carry preview_url); AVAILABLE_VOICES fill any gaps.
-    const apiVoiceIds = new Set(json.voices.map((v: ElevenLabsAPIVoice) => v.voice_id))
-    const guaranteedVoices: ElevenLabsAPIVoice[] = AVAILABLE_VOICES
-      .filter(v => !apiVoiceIds.has(v.voice_id))
-      .map(v => ({
-        voice_id: v.voice_id,
-        name: v.name,
-        category: v.category,
-        labels: { gender: v.gender },
-      }))
-    return [...json.voices, ...guaranteedVoices]
+    return json.voices
   } catch (err) {
     console.warn('[ElevenLabs] Failed to fetch voices, using hardcoded fallback:', err)
     return AVAILABLE_VOICES.map(v => ({

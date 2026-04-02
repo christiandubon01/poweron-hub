@@ -1481,8 +1481,10 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       setRoutingError(null)
 
       // Non-blocking ElevenLabs TTS confirmation — only when NOT muted
-      // voice_id read at call time from localStorage (never at load time)
-      if (!muted) {
+      // FIX: re-read nexus_mute fresh from localStorage at CALL TIME (not stale component state)
+      // This catches mute toggles from other components (NexusDrawerPanel, etc.)
+      const isMutedNow = localStorage.getItem('nexus_mute') === 'true'
+      if (!isMutedNow) {
         ;(async () => {
           try {
             const voiceId = localStorage.getItem('nexus_voice_id') || 'pNInz6obpgDQGcFmaJgB'
@@ -1504,7 +1506,7 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
           }
         })()
       } else {
-        console.log('[QuickCapture] TTS muted — skipping capture confirmation')
+        console.log('[QuickCapture] TTS muted (nexus_mute=true at call time) — skipping capture confirmation')
       }
     } finally {
       setSaving(false)

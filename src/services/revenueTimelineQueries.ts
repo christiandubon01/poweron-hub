@@ -99,10 +99,10 @@ export function query8WeekCashFlow(): WeekBucket[] {
 }
 
 /** Get monthly revenue comparison from current local state */
-export function queryMonthlyRevenue(months: number = 6, startMonthOffset: number = 0): MonthBucket[] {
+export function queryMonthlyRevenue(months: number = 6): MonthBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return getMonthlyRevenueComparison(backup.projects || [], backup.logs || [], months, startMonthOffset)
+  return getMonthlyRevenueComparison(backup.projects || [], backup.logs || [], months)
 }
 
 /** Get overlap windows from current local state */

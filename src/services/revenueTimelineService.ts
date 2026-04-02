@@ -311,10 +311,8 @@ export function get8WeekCashFlow(
   now.setHours(0, 0, 0, 0)
   const weekStart = startOfWeek(now)
 
-  // Window: 3 weeks back + current + 4 weeks forward = 8 weeks
-  // This shows historical actuals alongside future projections
   const buckets: WeekBucket[] = []
-  for (let w = -3; w < 5; w++) {
+  for (let w = 0; w < 8; w++) {
     const ws = addDays(weekStart, w * 7)
     const we = addDays(ws, 6)
     buckets.push({
@@ -370,14 +368,13 @@ export function get8WeekCashFlow(
 export function getMonthlyRevenueComparison(
   allProjects: any[],
   logs: any[],
-  months: number = 6,
-  startMonthOffset: number = 0  // 0 = current month, negative = scroll back into history
+  months: number = 6
 ): MonthBucket[] {
   const now = new Date()
   const buckets: MonthBucket[] = []
 
   for (let m = 0; m < months; m++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + startMonthOffset + m, 1)
+    const d = new Date(now.getFullYear(), now.getMonth() + m, 1)
     buckets.push({
       month: monthKey(d),
       projected: 0,
@@ -387,16 +384,17 @@ export function getMonthlyRevenueComparison(
 
   const activeProjects = allProjects.filter(p => p.status === 'active')
 
-  // Projected (only relevant for current/future months)
+  // Projected
   for (const project of activeProjects) {
     const schedule = getPhasePaymentSchedule(project, allProjects)
     for (const event of schedule) {
       if (!event.date) continue
       for (let i = 0; i < months; i++) {
-        const bucketDate = new Date(now.getFullYear(), now.getMonth() + startMonthOffset + i, 1)
+        const bucketYear = now.getFullYear()
+        const bucketMonth = now.getMonth() + i
         if (
-          event.date.getFullYear() === bucketDate.getFullYear() &&
-          event.date.getMonth() === bucketDate.getMonth()
+          event.date.getFullYear() === new Date(bucketYear, bucketMonth, 1).getFullYear() &&
+          event.date.getMonth() === new Date(bucketYear, bucketMonth, 1).getMonth()
         ) {
           buckets[i].projected += event.amount
           break
@@ -405,17 +403,18 @@ export function getMonthlyRevenueComparison(
     }
   }
 
-  // Actual: from logs (all logs, including historical)
+  // Actual: from logs
   for (const log of logs) {
     const logDate = parseDate(log.date || log.logDate)
     if (!logDate) continue
     const collected = n(log.paymentsCollected || log.collected)
     if (collected === 0) continue
     for (let i = 0; i < months; i++) {
-      const bucketDate = new Date(now.getFullYear(), now.getMonth() + startMonthOffset + i, 1)
+      const bucketYear = now.getFullYear()
+      const bucketMonth = now.getMonth() + i
       if (
-        logDate.getFullYear() === bucketDate.getFullYear() &&
-        logDate.getMonth() === bucketDate.getMonth()
+        logDate.getFullYear() === new Date(bucketYear, bucketMonth, 1).getFullYear() &&
+        logDate.getMonth() === new Date(bucketYear, bucketMonth, 1).getMonth()
       ) {
         buckets[i].actual += collected
         break
