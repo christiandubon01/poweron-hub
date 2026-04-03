@@ -189,10 +189,10 @@ function DemoModeBanner() {
     <div
       style={{
         position: 'fixed',
-        top: 0,
+        top: '64px',   /* sits below the 64px (h-16) header bar — must not cover hamburger */
         left: 0,
         right: 0,
-        zIndex: 10000,
+        zIndex: 40,    /* below nav z-50; max banner z-index per layout spec */
         backgroundColor: '#ca8a04',
         color: '#fff',
         textAlign: 'center',

@@ -591,7 +591,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
       {/* LEFT SIDEBAR */}
       <aside
-        className={`fixed left-0 top-0 h-screen flex flex-col z-50 transition-all duration-300 ${
+        className={`fixed left-0 top-0 h-screen flex flex-col z-[60] transition-all duration-300 ${
           isMobile
             ? (sidebarOpen ? 'translate-x-0' : '-translate-x-full')
             : ''
@@ -881,7 +881,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       {/* MAIN LAYOUT */}
       <div className="flex flex-col flex-1 transition-all duration-300" style={{ marginLeft: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224) }}>
         {/* TOP BAR - TWO ROWS */}
-        <header className="fixed top-0 right-0 flex flex-col z-30 transition-all duration-300" style={{ left: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224), backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
+        <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224), backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
             {/* LEFT: Hamburger + KPI Pills */}
