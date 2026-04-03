@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { Sparkles, FileText } from 'lucide-react'
+import { Sparkles, FileText, Search } from 'lucide-react'
 import { getBackupData, saveBackupData, num, fmt } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { exportMaterialSummaryPDF } from '@/services/mtoExportService'
@@ -97,6 +97,16 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const getPBItem = (matId: string) => {
     if (!matId) return null
     return (backup.priceBook || []).find(x => x.id === matId)
+  }
+
+  // Returns true if any price book item name contains the given text (case-insensitive).
+  // Used to decide whether to show the Google search button on a row.
+  const hasPBNameMatch = (name: string): boolean => {
+    if (!name || !name.trim()) return false
+    const lower = name.toLowerCase().trim()
+    return (backup.priceBook || []).some((item: any) =>
+      item.name && item.name.toLowerCase().includes(lower)
+    )
   }
 
   // ── Derived flags ───────────────────────────────────────────────────
@@ -196,6 +206,11 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     // ── Bug 4: secondary row visibility ─────────────────────────────
     const isRowFocused = focusedRowId === r.id
     const isRowHovered = hoveredRowId === r.id
+
+    // ── Google search button visibility ─────────────────────────────
+    // Show when item name has text AND no price book item name matches it.
+    const nameHasText = !!(r.name && r.name.trim())
+    const showSearchBtn = nameHasText && !hasPBNameMatch(r.name)
     // Show inputs if there is any committed OR locally-typed placement, or a note, or the row is focused
     const hasPlacementVal = !!(localVal.trim())
     const hasNoteVal = !!(r.note && r.note.trim())
@@ -221,20 +236,53 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       >
         {/* Item Title + inline placement/note fields */}
         <td style={{ padding: '8px' }}>
-          <input
-            type="text"
-            value={r.name || ''}
-            onChange={e => editMTORow(r.id, 'name', e.target.value)}
-            onMouseDown={e => e.stopPropagation()}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--t1)',
-              width: '100%',
-              fontSize: '12px',
-              display: 'block',
-            }}
-          />
+          {/* Name input + optional Google search button — inline flex row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <input
+              type="text"
+              value={r.name || ''}
+              onChange={e => editMTORow(r.id, 'name', e.target.value)}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--t1)',
+                flex: 1,
+                minWidth: 0,
+                fontSize: '12px',
+              }}
+            />
+            {showSearchBtn && (
+              <button
+                title="Search this item online"
+                onClick={() => {
+                  window.open(
+                    'https://www.google.com/search?q=' + encodeURIComponent(r.name.trim()),
+                    '_blank'
+                  )
+                }}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                  padding: '2px 6px',
+                  background: 'none',
+                  border: 'none',
+                  borderRadius: '3px',
+                  color: isRowHovered ? 'rgba(148,163,184,0.85)' : 'rgba(148,163,184,0.3)',
+                  cursor: 'pointer',
+                  fontSize: '10px',
+                  flexShrink: 0,
+                  transition: 'color 0.15s',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Search size={10} />
+                Search
+              </button>
+            )}
+          </div>
 
           {/* Bug 4: Hover hint — only shown when row is hovered, has no values, and is not focused */}
           {showAddHint && (
