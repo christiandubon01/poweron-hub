@@ -379,6 +379,25 @@ export function evaluateRules(
  * @param action - Human-readable label for what triggered this audit (e.g. "Manual Run Audit")
  * @param result - The violations array returned by evaluateRules()
  */
+// ── Crew Field Log (stub for MorningBriefingCard) ─────────────────────────────
+
+export interface CrewFieldLog {
+  id: string
+  crewMemberId: string
+  crewMemberName: string
+  projectId: string
+  date: string
+  hoursLogged: number
+  notes?: string
+  status: 'pending' | 'reviewed' | 'flagged'
+}
+
+export function reviewPendingLogs(logs: CrewFieldLog[]): CrewFieldLog[] {
+  return logs.filter(log => log.status === 'pending')
+}
+
+// ── generateAuditEntry ─────────────────────────────────────────────────────────
+
 export function generateAuditEntry(
   action: string,
   result: GuardianViolation[],
