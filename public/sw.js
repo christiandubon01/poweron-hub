@@ -116,9 +116,40 @@ async function updateQueuedLogRetries(id, retries) {
   })
 }
 
+// ── Purge stale queue entries ─────────────────────────────────────────────────
+// Removes items older than 24 hours or with more than 5 failed retries.
+// This prevents the queue from accumulating unreplayable stale requests.
+
+const QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
+const QUEUE_MAX_RETRIES = 5
+
+async function purgeStaleQueueEntries() {
+  let queued
+  try {
+    queued = await getQueuedLogs()
+  } catch {
+    return
+  }
+  if (!queued || queued.length === 0) return
+  const now = Date.now()
+  for (const record of queued) {
+    const tooOld = (now - (record.timestamp || 0)) > QUEUE_MAX_AGE_MS
+    const tooManyRetries = (record.retries || 0) >= QUEUE_MAX_RETRIES
+    if (tooOld || tooManyRetries) {
+      try {
+        await deleteQueuedLog(record.id)
+        console.log(`[SW] Purged stale queue entry id=${record.id} (retries=${record.retries}, age=${Math.round((now - record.timestamp) / 60000)}min)`)
+      } catch (_) {}
+    }
+  }
+}
+
 // ── Sync queued field logs to Supabase ───────────────────────────────────────
 
 async function syncQueuedFieldLogs() {
+  // First remove any stale or exhausted entries before attempting sync
+  await purgeStaleQueueEntries()
+
   let queued
   try {
     queued = await getQueuedLogs()
@@ -261,9 +292,14 @@ self.addEventListener('fetch', (event) => {
   if (!url.startsWith('http')) return
   if (url.includes('chrome-extension')) return
 
-  // ── POST to Supabase or field-log endpoints — intercept when offline ──────
+  // ── POST to dedicated field-log endpoints — intercept when offline ────────
+  // NOTE: Supabase REST API calls (supabase.co/rest/v1/) are intentionally
+  // excluded here. The app-state upsert from syncToSupabase() must NOT be
+  // offline-queued — it carries a full state snapshot with an auth token that
+  // expires, and replaying a stale snapshot would overwrite fresher data.
+  // The app has its own 30-second periodic retry for Supabase sync.
+  // Only custom field-log HTTP paths (non-Supabase) are queued offline.
   if (method === 'POST' && (
-    SUPABASE_PATTERNS.some(p => p.test(url)) ||
     url.includes('/field-log') ||
     url.includes('/logs') ||
     url.includes('/serviceLogs')

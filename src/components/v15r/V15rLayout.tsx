@@ -285,13 +285,37 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // ── Active connectivity check — verifies Supabase is reachable, not just
+  //    that navigator.onLine is true (which only reflects local network status).
+  const checkActualConnectivity = async (): Promise<boolean> => {
+    if (!navigator.onLine) return false
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 4000)
+      // HEAD request to Supabase REST root — any HTTP response means reachable
+      const res = await fetch(
+        'https://edxxbtyugohtowvslbfo.supabase.co/rest/v1/',
+        { method: 'HEAD', signal: controller.signal, cache: 'no-store' }
+      )
+      clearTimeout(timeoutId)
+      return res.status < 600 // any valid HTTP response = Supabase reachable
+    } catch {
+      return false
+    }
+  }
+
   // H3: online/offline listeners
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true)
-      // Trigger sync of any queued field logs
-      if (navigator.serviceWorker?.controller) {
+    const handleOnline = async () => {
+      // Confirm Supabase is actually reachable before declaring online
+      const actuallyOnline = await checkActualConnectivity()
+      setIsOnline(actuallyOnline)
+      if (actuallyOnline && navigator.serviceWorker?.controller) {
         navigator.serviceWorker.controller.postMessage({ type: 'SYNC_NOW' })
+        // Also re-check queue length after flush attempt
+        setTimeout(() => {
+          navigator.serviceWorker?.controller?.postMessage({ type: 'GET_QUEUE_LENGTH' })
+        }, 2000)
       }
     }
     const handleOffline = () => setIsOnline(false)
@@ -301,6 +325,27 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
     }
+  }, [])
+
+  // Flush SW queue on app focus (visibilitychange) — ensures the queue drains
+  // even when the device stayed online throughout and the 'online' event
+  // never fired to trigger SYNC_NOW.
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return
+      // Ask SW for current queue length first
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'GET_QUEUE_LENGTH' })
+      }
+      // If online, flush any pending SW queue entries
+      const online = await checkActualConnectivity()
+      setIsOnline(online)
+      if (online && navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SYNC_NOW' })
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [])
 
   // Session 14: listen for service worker offline queue messages
@@ -327,6 +372,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           setTimeout(() => setShowOfflineToast(false), 4000)
         }
       }
+      // Handle QUEUE_LENGTH response from GET_QUEUE_LENGTH request
+      if (event.data.type === 'QUEUE_LENGTH') {
+        setOfflineQueueCount(event.data.length || 0)
+      }
     }
     navigator.serviceWorker.addEventListener('message', handleSWMessage)
     // Ask SW for current queue length on mount
@@ -334,6 +383,22 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       navigator.serviceWorker.controller.postMessage({ type: 'GET_QUEUE_LENGTH' })
     }
     return () => navigator.serviceWorker.removeEventListener('message', handleSWMessage)
+  }, [])
+
+  // Periodic SW queue flush — every 60s, if items are pending and device is online,
+  // send SYNC_NOW to drain the queue without requiring an offline→online transition.
+  useEffect(() => {
+    if (!navigator.serviceWorker) return
+    const flushInterval = setInterval(async () => {
+      if (!navigator.serviceWorker?.controller) return
+      // Always refresh queue length
+      navigator.serviceWorker.controller.postMessage({ type: 'GET_QUEUE_LENGTH' })
+      // If there are queued items and we're online, flush them
+      if (navigator.onLine) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SYNC_NOW' })
+      }
+    }, 60_000)
+    return () => clearInterval(flushInterval)
   }, [])
 
   // poweron:show-proposals — navigate to Settings (Proposals section)
