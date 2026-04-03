@@ -9,7 +9,14 @@
  *
  * All values are intentionally generic — no real company or personal data.
  * This file may receive additive exports in future sessions; never delete exports.
+ *
+ * E13 | n8n Automation Layer additions:
+ *   - mockAutomationRules : 5 rules, one per trigger type, mix of active/inactive
+ *   - mockAutomationLog   : 10 log entries, mix of success and failed
  */
+
+// ── E13 type imports ──────────────────────────────────────────────────────────
+import type { AutomationRule, AutomationLog } from '../types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -178,5 +185,142 @@ export const demoInvoices: MockInvoice[] = [
     status: 'overdue',
     issuedDate: new Date(_now - 45 * _day).toISOString().slice(0, 10),
     dueDate: new Date(_now - 15 * _day).toISOString().slice(0, 10),
+  },
+]
+
+// ── mockAutomationRules ───────────────────────────────────────────────────────
+// 5 rules, one per trigger type, mix of active / inactive
+
+export const mockAutomationRules: AutomationRule[] = [
+  {
+    id: 'rule_1',
+    name: 'Lead Intake Processor',
+    trigger: 'lead_intake',
+    active: true,
+    lastRun: new Date(_now - 2 * _day).toISOString(),
+    nextRun: new Date(_now + 1 * _day).toISOString(),
+    runCount: 42,
+  },
+  {
+    id: 'rule_2',
+    name: 'Invoice Follow-Up Reminder',
+    trigger: 'invoice_followup',
+    active: true,
+    lastRun: new Date(_now - 1 * _day).toISOString(),
+    nextRun: new Date(_now + 6 * _day).toISOString(),
+    runCount: 18,
+  },
+  {
+    id: 'rule_3',
+    name: 'Daily Briefing Summary',
+    trigger: 'daily_briefing',
+    active: true,
+    lastRun: new Date(_now - 0.5 * _day).toISOString(),
+    nextRun: new Date(_now + 0.5 * _day).toISOString(),
+    runCount: 61,
+  },
+  {
+    id: 'rule_4',
+    name: 'Receipt OCR & Categorizer',
+    trigger: 'receipt_processing',
+    active: false,
+    lastRun: new Date(_now - 7 * _day).toISOString(),
+    nextRun: undefined,
+    runCount: 9,
+  },
+  {
+    id: 'rule_5',
+    name: 'Google Business Review Monitor',
+    trigger: 'review_monitor',
+    active: false,
+    lastRun: new Date(_now - 14 * _day).toISOString(),
+    nextRun: undefined,
+    runCount: 3,
+  },
+]
+
+// ── mockAutomationLog ─────────────────────────────────────────────────────────
+// 10 entries, mix of success and failed, most-recent first
+
+export const mockAutomationLog: AutomationLog[] = [
+  {
+    id: 'log_1',
+    ruleId: 'rule_3',
+    ruleName: 'Daily Briefing Summary',
+    triggeredAt: new Date(_now - 0.5 * _day).toISOString(),
+    status: 'success',
+    message: 'Briefing email dispatched to owner inbox.',
+  },
+  {
+    id: 'log_2',
+    ruleId: 'rule_1',
+    ruleName: 'Lead Intake Processor',
+    triggeredAt: new Date(_now - 1 * _day).toISOString(),
+    status: 'success',
+    message: '3 new leads imported from web form.',
+  },
+  {
+    id: 'log_3',
+    ruleId: 'rule_2',
+    ruleName: 'Invoice Follow-Up Reminder',
+    triggeredAt: new Date(_now - 1 * _day).toISOString(),
+    status: 'failed',
+    message: 'SMTP connection timed out. Retry scheduled.',
+  },
+  {
+    id: 'log_4',
+    ruleId: 'rule_3',
+    ruleName: 'Daily Briefing Summary',
+    triggeredAt: new Date(_now - 1.5 * _day).toISOString(),
+    status: 'success',
+    message: 'Briefing email dispatched to owner inbox.',
+  },
+  {
+    id: 'log_5',
+    ruleId: 'rule_4',
+    ruleName: 'Receipt OCR & Categorizer',
+    triggeredAt: new Date(_now - 2 * _day).toISOString(),
+    status: 'failed',
+    message: 'OCR service unavailable — quota exceeded.',
+  },
+  {
+    id: 'log_6',
+    ruleId: 'rule_1',
+    ruleName: 'Lead Intake Processor',
+    triggeredAt: new Date(_now - 2 * _day).toISOString(),
+    status: 'success',
+    message: '1 new lead imported from web form.',
+  },
+  {
+    id: 'log_7',
+    ruleId: 'rule_5',
+    ruleName: 'Google Business Review Monitor',
+    triggeredAt: new Date(_now - 3 * _day).toISOString(),
+    status: 'success',
+    message: 'No new reviews detected.',
+  },
+  {
+    id: 'log_8',
+    ruleId: 'rule_2',
+    ruleName: 'Invoice Follow-Up Reminder',
+    triggeredAt: new Date(_now - 7 * _day).toISOString(),
+    status: 'success',
+    message: 'Follow-up sent for 2 overdue invoices.',
+  },
+  {
+    id: 'log_9',
+    ruleId: 'rule_3',
+    ruleName: 'Daily Briefing Summary',
+    triggeredAt: new Date(_now - 8 * _day).toISOString(),
+    status: 'failed',
+    message: 'Supabase webhook returned 503.',
+  },
+  {
+    id: 'log_10',
+    ruleId: 'rule_4',
+    ruleName: 'Receipt OCR & Categorizer',
+    triggeredAt: new Date(_now - 10 * _day).toISOString(),
+    status: 'success',
+    message: '5 receipts processed and categorized.',
   },
 ]
