@@ -1775,6 +1775,44 @@ Always combine external research WITH the user's actual operational data — nev
     })()
   }
 
+  // ── Step 4e: Shape response based on intentType ──────────────────────────
+  // Adjusts NEXUS response content to match command vs insight vs action vs ambiguous intent.
+  //
+  // command:   Appends persistent-storage confirmation ("Got it — I'll always X going forward.")
+  //            These are messages with signals like "always", "from now on", "going forward".
+  // insight:   No modification — NEXUS answers the question directly, no storage prompt.
+  //            These are information queries ("how is the job going?", "what do you think?").
+  // action:    No modification — agent response already confirms the completed action.
+  //            These are imperative requests ("send", "create", "schedule", etc.).
+  // ambiguous: Appends one-line offer to persist as a persistent preference.
+  //            NEXUS answers first, then asks if this should be remembered going forward.
+  //
+  // NOTE: If user replies "yes" to an ambiguous prompt → UI should re-submit as a command.
+  //       If user replies "no" or ignores → the insight answer already stands.
+  {
+    const iType = intent.intentType
+    if (iType === 'command') {
+      // Derive a plain summary of what the user wants NEXUS to always do
+      const commandBody = request.message
+        .replace(/\b(always|from now on|remember that|make sure you|going forward|set it so that|every time|i want you to always|keep doing|permanently|by default)\b[,:\s]*/gi, '')
+        .trim()
+        .replace(/^[,\s]+/, '')
+        .toLowerCase()
+      const confirmLine = commandBody.length > 3
+        ? `\n\nGot it — I'll always ${commandBody} going forward.`
+        : `\n\nGot it — I'll keep that in mind going forward.`
+      agentResponse = { ...agentResponse, content: agentResponse.content + confirmLine }
+    } else if (iType === 'ambiguous') {
+      // Answer first (already done above), then offer to convert to a persistent preference
+      agentResponse = {
+        ...agentResponse,
+        content: agentResponse.content + '\n\nWas this a one-time question or should I remember this going forward?',
+      }
+    }
+    // 'insight': no suffix — NEXUS answers directly, no storage prompt
+    // 'action':  no suffix — agent already confirms what was done
+  }
+
   // ── Step 5: Determine if confirmation is needed ─────────────────────────
   const needsConfirmation =
     intent.requiresConfirmation ||

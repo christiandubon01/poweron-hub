@@ -20,9 +20,12 @@ export const TARGET_AGENTS = [
 
 export const IMPACT_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const
 
+export const INTENT_TYPES = ['command', 'insight', 'action', 'ambiguous'] as const
+
 export type IntentCategory   = typeof INTENT_CATEGORIES[number]
 export type TargetAgent      = typeof TARGET_AGENTS[number]
 export type ImpactLevel      = typeof IMPACT_LEVELS[number]
+export type IntentType       = typeof INTENT_TYPES[number]
 
 export interface Entity {
   type:   string
@@ -38,6 +41,8 @@ export interface ClassifiedIntent {
   requiresConfirmation: boolean
   impactLevel:          ImpactLevel
   reasoning:            string
+  /** Whether the user issued a persistent command, a one-time insight query, an immediate action, or something ambiguous. */
+  intentType:           IntentType
 }
 
 // ── Conversation message type ───────────────────────────────────────────────
@@ -113,6 +118,7 @@ function validateIntent(raw: unknown): { data: ClassifiedIntent } | { error: str
       requiresConfirmation: obj.requiresConfirmation,
       impactLevel:          obj.impactLevel,
       reasoning:            obj.reasoning,
+      intentType:           'ambiguous' as IntentType, // Default — classifyIntent overrides with detectIntentType
     }
   }
 }
@@ -227,6 +233,40 @@ const AGENT_KEYWORDS: Record<TargetAgent, AgentKeywords> = {
       'overview', 'summary', 'briefing', 'overall',
     ],
   },
+}
+
+// ── Intent type detection ────────────────────────────────────────────────────
+// Determines whether the user's message is a persistent command (should be
+// stored and always applied), a one-time insight query (answer only, no storage),
+// an immediate action request, or ambiguous (answer first, then offer to persist).
+
+const COMMAND_SIGNALS = /\b(always|from now on|remember that|make sure you|going forward|set it so that|every time|i want you to always|keep doing|permanently|by default)\b/i
+const INSIGHT_SIGNALS = /^(how is|how are|what is|what are|what was|what were|what's|tell me|analyze|give me|what do you think|can you check|show me|explain|summarize|who is|who are|when is|when are|where is|where are|how much|how many|why is|why are|do you know|is there|are there)/i
+const ACTION_SIGNALS  = /^(send|create|add|schedule|log|update|mark|delete|remove|set|book|assign|save|record|post|submit|complete|close|open|generate|make|run|start|stop|cancel|draft|invite|move|copy|archive|export|import|sync|approve|reject|apply|call|email|text|notify)\b/i
+
+/**
+ * Detect whether the user's message is a persistent command, a one-time
+ * insight request, an immediate action, or ambiguous.
+ *
+ * Priority: command > action > insight > ambiguous
+ * - command:   Contains persistent-instruction signals ("always", "from now on", etc.)
+ * - action:    Starts with an imperative action verb ("send", "create", "add", etc.)
+ * - insight:   Starts with a question phrase or ends with "?" ("how is", "what is", etc.)
+ * - ambiguous: Does not clearly match any of the above
+ */
+function detectIntentType(message: string): IntentType {
+  const trimmed = message.trim()
+
+  // Command signals take priority — these indicate a persistent instruction to store
+  if (COMMAND_SIGNALS.test(trimmed)) return 'command'
+
+  // Action signals — imperative verbs requesting an immediate one-off task
+  if (ACTION_SIGNALS.test(trimmed)) return 'action'
+
+  // Insight signals — questions or information requests (one-time, no storage)
+  if (INSIGHT_SIGNALS.test(trimmed) || trimmed.endsWith('?')) return 'insight'
+
+  return 'ambiguous'
 }
 
 // ── Classifier prompt for fallback ──────────────────────────────────────────
@@ -530,6 +570,10 @@ export async function classifyIntent(
 ): Promise<ClassifiedIntent> {
   console.log('[Classifier] Running classification for:', message)
 
+  // Detect intent type once — applied to every classification path below
+  const intentType = detectIntentType(message)
+  console.log(`[Classifier] Intent type → ${intentType}`)
+
   const categoryMap: Record<TargetAgent, IntentCategory> = {
     vault: 'estimating',
     pulse: 'dashboard',
@@ -566,6 +610,7 @@ export async function classifyIntent(
       requiresConfirmation: guaranteed.agent === 'ledger' || guaranteed.agent === 'vault',
       impactLevel: impactMap[guaranteed.agent],
       reasoning: guaranteed.reasoning,
+      intentType,
     }
   }
 
@@ -591,6 +636,7 @@ export async function classifyIntent(
       requiresConfirmation: finalAgent === 'ledger' || finalAgent === 'vault',
       impactLevel: impactMap[finalAgent],
       reasoning: tier1.reasoning,
+      intentType,
     }
   }
 
@@ -606,6 +652,7 @@ export async function classifyIntent(
       requiresConfirmation: false,
       impactLevel: 'LOW',
       reasoning: tier2.reasoning,
+      intentType,
     }
   }
 
@@ -620,7 +667,8 @@ export async function classifyIntent(
     // Some keyword signal exists — try Claude for nuanced classification
     try {
       console.log(`[Classifier] Tier 3 Claude fallback (maxScore: ${maxScore.toFixed(2)})`)
-      return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+      const tier3Result = await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+      return { ...tier3Result, intentType }
     } catch (error) {
       console.error('[Classifier] Claude fallback failed:', error)
     }
@@ -638,13 +686,15 @@ export async function classifyIntent(
       requiresConfirmation: false,
       impactLevel: 'LOW',
       reasoning: `Routed to NEXUS general handler (${wordCount}-word input, no strong keyword match)`,
+      intentType,
     }
   }
 
   // Very short input with no matches — still try Claude
   try {
     console.log('[Classifier] Short input Claude fallback')
-    return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+    const shortResult = await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+    return { ...shortResult, intentType }
   } catch (error) {
     console.error('[Classifier] All classification failed:', error)
     return {
@@ -655,6 +705,7 @@ export async function classifyIntent(
       requiresConfirmation: false,
       impactLevel: 'LOW',
       reasoning: 'Routed to NEXUS for general assistance.',
+      intentType,
     }
   }
 }
