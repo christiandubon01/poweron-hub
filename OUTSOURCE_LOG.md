@@ -137,3 +137,36 @@ Each entry follows this structure:
 - Accepted: Yes
 - Notes: SW auth bypass confirmed. PIN SHA-256 hashed.
   authStore.ts not touched. Clean.
+
+### Entry 010
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B4 — CHANGELOG and OUTSOURCE_LOG creation
+- Commit Hash: 4990bf7
+- Files Changed: CHANGELOG.md, OUTSOURCE_LOG.md
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Two new audit documents created. No existing files modified.
+
+### Entry 011
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B5 — Demo mode banner z-index fix
+- Commit Hash: fe6a6f4
+- Files Changed: src/App.tsx, src/components/v15r/V15rLayout.tsx, src/components/v15r/V15rSettingsPanel.tsx
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Banner moved below header. Nav z-index raised. Sidebar z-index raised. Hamburger button now accessible on iPhone and iPad.
+
+### Entry 012
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B6 — Logout button and session security
+- Commit Hash: a5b27bf
+- Files Changed: src/components/v15r/V15rLayout.tsx, src/components/v15r/V15rSettingsPanel.tsx
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Sign Out button added to sidebar and Settings. PIN change toast with Sign Out Everywhere added. Session persistence already configured — no change needed.
