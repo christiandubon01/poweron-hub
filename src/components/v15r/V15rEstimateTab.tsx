@@ -1131,20 +1131,60 @@ Return ONLY valid JSON, no other text.`
                   return (
                     <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
                       <td style={{ padding: '8px' }}>
-                        <input
-                          type="text"
+                        <textarea
                           value={r.desc || ''}
                           onChange={e => editLaborRow(r.id, 'desc', e.target.value)}
+                          rows={1}
+                          onInput={e => {
+                            const el = e.currentTarget
+                            el.style.height = 'auto'
+                            el.style.height = el.scrollHeight + 'px'
+                          }}
                           style={{
                             background: 'transparent',
                             border: 'none',
                             color: 'var(--t1)',
                             width: '100%',
                             fontSize: '13px',
+                            resize: 'none',
+                            overflow: 'hidden',
+                            lineHeight: '1.4',
+                            padding: '0',
+                            fontFamily: 'inherit',
+                            display: 'block',
                           }}
                         />
                       </td>
-                      <td style={{ padding: '8px', fontSize: '12px', color: 'var(--t3)' }}>{emp.name}</td>
+                      <td style={{ padding: '8px', fontSize: '12px' }}>
+                        {(() => {
+                          const teamRoster = backup.employees || []
+                          return (
+                            <select
+                              value={r.empId || 'me'}
+                              onChange={e => editLaborRow(r.id, 'empId', e.target.value)}
+                              title={teamRoster.length === 0 ? 'Add crew in Team settings' : undefined}
+                              style={{
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                color: 'var(--t2)',
+                                fontSize: '12px',
+                                borderRadius: '4px',
+                                padding: '2px 4px',
+                                width: '100%',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <option value="me">Owner / Me</option>
+                              {teamRoster.map(e => (
+                                <option key={e.id} value={e.id}>{e.name}</option>
+                              ))}
+                              {teamRoster.length === 0 && (
+                                <option disabled value="">— Add crew in Team settings</option>
+                              )}
+                            </select>
+                          )
+                        })()}
+                      </td>
                       <td style={{ padding: '8px', textAlign: 'right' }}>
                         <input
                           type="number"

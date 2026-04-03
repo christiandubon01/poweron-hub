@@ -1,8 +1,9 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, FileText } from 'lucide-react'
 import { getBackupData, saveBackupData, num, fmt } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { exportMaterialSummaryPDF } from '@/services/mtoExportService'
 
 interface V15rMTOTabProps {
   projectId: string
@@ -169,7 +170,16 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
                               type="number"
                               value={r.qty || 0}
                               onChange={e => editMTORow(r.id, 'qty', e.target.value)}
-                              step="0.01"
+                              step="1"
+                              onKeyDown={e => {
+                                if (e.key === 'ArrowUp') {
+                                  e.preventDefault()
+                                  editMTORow(r.id, 'qty', Math.floor(num(r.qty || 0)) + 1)
+                                } else if (e.key === 'ArrowDown') {
+                                  e.preventDefault()
+                                  editMTORow(r.id, 'qty', Math.max(0, Math.ceil(num(r.qty || 0)) - 1))
+                                }
+                              }}
                               style={{
                                 background: 'transparent',
                                 border: 'none',
@@ -232,11 +242,37 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
           )
         })}
 
+        {/* EXPORT BUTTONS ROW */}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
+
+          {/* MATERIAL SUMMARY PDF EXPORT */}
+          <button
+            onClick={() => exportMaterialSummaryPDF(p, backup.priceBook || [])}
+            style={{
+              padding: '10px 16px',
+              backgroundColor: 'rgba(16,185,129,0.15)',
+              color: '#10b981',
+              border: '1px solid rgba(16,185,129,0.3)',
+              borderRadius: '6px',
+              fontSize: '13px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <FileText size={14} />
+            Material Summary PDF
+          </button>
+
+        </div>
+
         {/* AI SUGGEST BUTTON */}
         <button
           onClick={() => alert('AI Suggest Materials placeholder')}
           style={{
-            marginTop: '16px',
+            marginTop: '10px',
             padding: '10px 16px',
             backgroundColor: 'rgba(139,92,246,0.2)',
             color: '#a78bfa',
