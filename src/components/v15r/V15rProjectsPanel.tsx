@@ -19,6 +19,7 @@ import {
   resolveProjectBucket,
   daysSince,
   fmtK,
+  fmt,
   pct,
   num,
   syncAllProjectFinanceBuckets,
@@ -62,6 +63,11 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [npNotes, setNpNotes] = useState('')
   const [npPlannedStart, setNpPlannedStart] = useState('')
   const [npPlannedEnd, setNpPlannedEnd] = useState('')
+
+  // Collect modal state
+  const [collectProject, setCollectProject] = useState<BackupProject | null>(null)
+  const [collectPartialInput, setCollectPartialInput] = useState('')
+  const [collectLoggingPartial, setCollectLoggingPartial] = useState(false)
 
   // Edit Project modal state
   const [showEditProject, setShowEditProject] = useState(false)
@@ -207,7 +213,34 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     persist()
   }
 
-  // Group projects by bucket
+  // ── Collection payment handlers ───────────────────────────────────────────
+
+  function handleMarkFullPayment(p: BackupProject) {
+    const fin = getProjectFinancials(p, backup)
+    pushState()
+    p.paid = num(fin.contract)
+    p.lastCollectedAt = new Date().toISOString()
+    p.lastCollectedAmount = num(fin.contract)
+    saveBackupData(backup)
+    setCollectProject(null)
+    forceUpdate()
+  }
+
+  function handleLogPartialPayment(p: BackupProject) {
+    const amount = num(collectPartialInput)
+    if (!amount || amount <= 0) return
+    pushState()
+    p.paid = num(p.paid || 0) + amount
+    p.lastCollectedAt = new Date().toISOString()
+    p.lastCollectedAmount = amount
+    saveBackupData(backup)
+    setCollectPartialInput('')
+    setCollectLoggingPartial(false)
+    setCollectProject(null)
+    forceUpdate()
+  }
+
+  // ── Group projects by bucket
   const active = projects.filter(p => resolveProjectBucket(p) === 'active')
   const coming = projects.filter(p => resolveProjectBucket(p) === 'coming')
   const completed = projects.filter(p => resolveProjectBucket(p) === 'completed')
@@ -288,6 +321,14 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
               {fin.paid >= fin.contract ? 'Fully Paid' : 'Balance Pending'}
             </span>
           )}
+          {bucket === 'completed' && fin.contract - fin.paid > 0 && (
+            <button
+              onClick={e => { e.stopPropagation(); setCollectProject(p); setCollectPartialInput(''); setCollectLoggingPartial(false) }}
+              className="text-[9px] px-2 py-0.5 rounded font-bold bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 hover:bg-yellow-400/30 transition-colors"
+            >
+              💰 Collect
+            </button>
+          )}
         </div>
 
         {/* Actions */}
@@ -360,7 +401,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     )
   }
 
-  const inputCls = "w-full px-3 py-2 bg-[#1a1d27] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+  const inputCls = "w-full px-3 py-2 bg-[var(--bg-input)] border border-gray-600 rounded text-sm text-[var(--text-primary)] focus:outline-none focus:border-emerald-500"
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
@@ -404,7 +445,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       {/* New Project Modal */}
       {showNewProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#232738] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-[var(--bg-card)] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">New Project</h3>
               <button onClick={() => setShowNewProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
@@ -468,7 +509,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       {/* Edit Project Modal */}
       {showEditProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#232738] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-[var(--bg-card)] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Edit Project</h3>
               <button onClick={() => setShowEditProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
@@ -528,6 +569,116 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           </div>
         </div>
       )}
+      {/* ── Collect Payment Modal ────────────────────────────────────────────── */}
+      {collectProject && (() => {
+        const cp = collectProject
+        const cfin = getProjectFinancials(cp, backup)
+        const outstanding = Math.max(0, num(cfin.contract) - num(cfin.paid))
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setCollectProject(null)}>
+            <div
+              className="bg-[var(--bg-card)] border border-yellow-500/30 rounded-xl w-full max-w-sm mx-4 p-5 shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-bold text-yellow-300">💰 Collect Payment</h3>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{cp.name}</p>
+                </div>
+                <button onClick={() => setCollectProject(null)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
+              </div>
+
+              {/* Financial summary */}
+              <div className="space-y-2 mb-4">
+                <div className="flex justify-between items-center py-1.5 border-b border-gray-700/50">
+                  <span className="text-[11px] text-gray-400">Total Contract Value</span>
+                  <span className="text-[11px] font-mono text-gray-200">{fmt(cfin.contract)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-gray-700/50">
+                  <span className="text-[11px] text-gray-400">Amount Collected</span>
+                  <span className="text-[11px] font-mono text-emerald-400">{fmt(cfin.paid)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 rounded-lg px-2" style={{ backgroundColor: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)' }}>
+                  <span className="text-[11px] font-semibold text-yellow-300">Outstanding Balance</span>
+                  <span className="text-[13px] font-bold font-mono text-yellow-300">{fmt(outstanding)}</span>
+                </div>
+              </div>
+
+              {/* Partial payment input */}
+              {collectLoggingPartial && (
+                <div className="mb-4 p-3 rounded-lg bg-[var(--bg-input)] border border-gray-600">
+                  <label className="text-[10px] text-gray-400 uppercase font-bold block mb-1.5">Amount Received ($)</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={collectPartialInput}
+                      onChange={e => setCollectPartialInput(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-yellow-500"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => handleLogPartialPayment(cp)}
+                      className="px-3 py-2 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 text-xs font-bold hover:bg-yellow-500/30"
+                    >
+                      Log
+                    </button>
+                    <button
+                      onClick={() => { setCollectLoggingPartial(false); setCollectPartialInput('') }}
+                      className="px-2 py-2 rounded bg-gray-700/50 text-gray-400 text-xs hover:bg-gray-600/50"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              {!collectLoggingPartial && (
+                <div className="flex flex-col gap-2 mb-3">
+                  <button
+                    onClick={() => handleMarkFullPayment(cp)}
+                    className="w-full py-2.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 transition-colors"
+                  >
+                    ✓ Mark Full Payment Received
+                  </button>
+                  <button
+                    onClick={() => setCollectLoggingPartial(true)}
+                    className="w-full py-2.5 rounded-lg bg-yellow-500/15 text-yellow-300 border border-yellow-500/30 text-xs font-bold hover:bg-yellow-500/25 transition-colors"
+                  >
+                    + Log Partial Payment
+                  </button>
+                </div>
+              )}
+
+              {/* Follow-up link */}
+              <div className="border-t border-gray-700/50 pt-3 space-y-2">
+                <button
+                  onClick={() => { setCollectProject(null); window.dispatchEvent(new CustomEvent('poweron:show-money')) }}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 underline-offset-2 hover:underline w-full text-left"
+                >
+                  Need to follow up? → Open Money / AR tab
+                </button>
+
+                {/* LEDGER AI stub */}
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/15">
+                  <span className="text-[10px] text-gray-400 flex-1">Want me to draft a payment follow-up message?</span>
+                  <button
+                    className="px-2.5 py-1 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/25 cursor-not-allowed opacity-60"
+                    title="LEDGER AI — coming soon"
+                    disabled
+                  >
+                    ✦ LEDGER <span className="text-[8px] opacity-70">(soon)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

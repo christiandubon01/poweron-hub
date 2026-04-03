@@ -30,6 +30,7 @@ import {
   Mic,
   MicOff,
 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 import {
   getBackupData,
   saveBackupData,
@@ -57,7 +58,10 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 
 function getGreeting(): string {
   const hr = new Date().getHours()
-  return hr < 12 ? 'morning' : hr < 17 ? 'afternoon' : 'evening'
+  if (hr >= 5 && hr < 12) return 'morning'
+  if (hr >= 12 && hr < 17) return 'afternoon'
+  if (hr >= 17 && hr < 21) return 'evening'
+  return 'night'
 }
 
 function formatDate(): string {
@@ -130,6 +134,30 @@ export default function V15rHome() {
   const [aiRecording, setAiRecording] = useState(false)
   const aiScrollRef = useRef<HTMLDivElement>(null)
   const aiInitRef = useRef(false)
+
+  // ── User first name from Supabase profile ──
+  const [firstName, setFirstName] = useState<string>('')
+
+  useEffect(() => {
+    async function fetchUserName() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single()
+        if (profile?.full_name) {
+          const first = profile.full_name.trim().split(/\s+/)[0]
+          if (first) setFirstName(first)
+        }
+      } catch {
+        // silently ignore — name is optional; fall back to no-name greeting
+      }
+    }
+    fetchUserName()
+  }, [])
 
   const _rawBackup = getBackupData()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : _rawBackup
@@ -438,11 +466,13 @@ export default function V15rHome() {
   const _motivDayOfYear = Math.floor((_motivNow.getTime() - _motivStart.getTime()) / (1000 * 60 * 60 * 24))
   const _motivPhrase = MOTIVATION_PHRASES[_motivDayOfYear % MOTIVATION_PHRASES.length]
   const _motivHr = _motivNow.getHours()
-  const _motivGreeting = _motivHr >= 5 && _motivHr < 12
-    ? 'Good morning, Christian'
-    : _motivHr >= 12 && _motivHr < 18
-    ? 'Good afternoon, Christian'
-    : 'Good evening, Christian'
+  const _motivPeriod = _motivHr >= 5 && _motivHr < 12 ? 'morning'
+    : _motivHr >= 12 && _motivHr < 17 ? 'afternoon'
+    : _motivHr >= 17 && _motivHr < 21 ? 'evening'
+    : 'night'
+  const _motivGreeting = firstName
+    ? `Good ${_motivPeriod}, ${firstName}`
+    : `Good ${_motivPeriod}`
   const _motivFireLine = _motivHr >= 5 && _motivHr < 12
     ? "Let's go build something today."
     : _motivHr >= 12 && _motivHr < 18
@@ -459,7 +489,7 @@ export default function V15rHome() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-100">
-            Good {getGreeting()} ⚡
+            Good {getGreeting()}{firstName ? `, ${firstName}` : ''} ⚡
           </h1>
           <p className="text-xs text-gray-500 mt-1">{formatDate()}</p>
         </div>
@@ -1139,7 +1169,7 @@ export default function V15rHome() {
               const text = extractText(res)
               setAiMessages([{ role: 'assistant', content: text }])
             }).catch(() => {
-              setAiMessages([{ role: 'assistant', content: `Good ${getGreeting()}, Christian. I couldn't reach the AI service right now. Your dashboard data is above — check the service jobs needing attention first.` }])
+              setAiMessages([{ role: 'assistant', content: `Good ${getGreeting()}${firstName ? `, ${firstName}` : ''}. I couldn't reach the AI service right now. Your dashboard data is above — check the service jobs needing attention first.` }])
             }).finally(() => setAiLoading(false))
           }
         }}
@@ -1151,11 +1181,11 @@ export default function V15rHome() {
 
       {/* ── AI Slide-in Panel ── */}
       {aiPanelOpen && (
-        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full bg-[#1a1d2e] border-l border-gray-700 shadow-2xl flex flex-col">
+        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full border-l border-gray-700 shadow-2xl flex flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#151827]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700" style={{ backgroundColor: 'var(--bg-secondary)' }}>
             <div>
-              <h3 className="text-sm font-bold text-gray-100">Good {getGreeting()}, Christian</h3>
+              <h3 className="text-sm font-bold text-gray-100">Good {getGreeting()}{firstName ? `, ${firstName}` : ''}</h3>
               <p className="text-[10px] text-gray-500">{formatDate()}</p>
             </div>
             <button onClick={() => { setAiPanelOpen(false); aiInitRef.current = false; setAiMessages([]) }} className="text-gray-400 hover:text-white"><X size={18} /></button>
@@ -1168,7 +1198,7 @@ export default function V15rHome() {
               </div>
             )}
             {aiMessages.map((msg, i) => (
-              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[#232738] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
+              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[var(--bg-card)] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
                 {msg.content}
               </div>
             ))}
@@ -1198,7 +1228,7 @@ export default function V15rHome() {
                 }
               }}
               placeholder="Ask about your day..."
-              className="flex-1 bg-[#232738] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
+              className="flex-1 bg-[var(--bg-card)] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
             />
             <button
               onClick={() => {
