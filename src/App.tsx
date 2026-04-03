@@ -22,7 +22,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useAuth } from '@/hooks/useAuth'
 import { ReadOnlyContext } from '@/contexts/ReadOnlyContext'
 import { supabase } from '@/lib/supabase'
-import { useDemoStore } from '@/store/demoStore'
+import { useDemoStore, DemoProvider } from '@/store/demoStore'
 import { ModeProvider } from '@/store/modeContext'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
@@ -178,6 +178,37 @@ function DemoGate({ children }: { children: React.ReactNode }) {
 }
 
 
+// ── DemoModeBanner — full-width banner above nav when demo is active ───────────
+// Rendered inside BrowserRouter so it can use hooks.
+// Background: #ca8a04 (Tailwind yellow-700), white text, no close button.
+
+function DemoModeBanner() {
+  const { isDemoMode } = useDemoStore()
+  if (!isDemoMode) return null
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 10000,
+        backgroundColor: '#ca8a04',
+        color: '#fff',
+        textAlign: 'center',
+        padding: '7px 16px',
+        fontWeight: 700,
+        fontSize: '12px',
+        letterSpacing: '0.05em',
+        pointerEvents: 'none',
+      }}
+    >
+      ⚠ DEMO MODE ACTIVE — Data shown is not real
+    </div>
+  )
+}
+
+
 // ── App (root) ────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -190,7 +221,10 @@ export default function App() {
 
   return (
     <ModeProvider>
+    <DemoProvider>
     <BrowserRouter>
+      {/* Demo Mode banner — full-width, above nav, no close button */}
+      <DemoModeBanner />
       <ErrorBoundary>
         <Routes>
           {/* Invite accept route — no auth required, crew member claims invite */}
@@ -222,6 +256,7 @@ export default function App() {
         </Routes>
       </ErrorBoundary>
     </BrowserRouter>
+    </DemoProvider>
     </ModeProvider>
   )
 }

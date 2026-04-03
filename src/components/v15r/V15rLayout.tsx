@@ -474,6 +474,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Solar Income', icon: Calculator, view: 'income-calc' },
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
     { label: 'Settings', icon: Settings, view: 'settings' },
+    { label: 'Demo Mode', icon: Zap, view: 'demo-mode' },
   ]
 
   // Team nav items (people + compliance)

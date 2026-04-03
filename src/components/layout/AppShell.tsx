@@ -52,6 +52,9 @@ const JournalPanel = lazy(() => import('@/components/JournalPanel').then(m => ({
 // Agent Mode Selector view (lazy-loaded)
 const AgentModeSelector = lazy(() => import('@/views/AgentModeSelector').then(m => ({ default: m.AgentModeSelector })))
 
+// Demo Mode view (lazy-loaded) — E3 | Demo Mode
+const DemoModeView = lazy(() => import('@/views/DemoMode').then(m => ({ default: m.DemoMode })))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })))
 const OnboardingModal = lazy(() => import('@/components/onboarding/OnboardingModal'))
@@ -245,6 +248,9 @@ export function AppShell({ children }: AppShellProps) {
       case 'guardian':        return <Suspense fallback={<PanelLoading />}><GuardianPanel /></Suspense>
       case 'journal':         return <Suspense fallback={<PanelLoading />}><JournalPanel /></Suspense>
       case 'agent-mode-selector': return <Suspense fallback={<PanelLoading />}><AgentModeSelector /></Suspense>
+
+      // E3 | Demo Mode settings view
+      case 'demo-mode':       return <Suspense fallback={<PanelLoading />}><DemoModeView /></Suspense>
 
       default:                return <V15rHome />
     }

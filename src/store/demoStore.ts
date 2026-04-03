@@ -1,6 +1,8 @@
 // @ts-nocheck
 /**
- * demoStore.ts — Demo Mode state (Zustand).
+ * demoStore.ts — Demo Mode state (Zustand) + React context bridge.
+ *
+ * E3 | Demo Mode: added DemoContext + DemoProvider for tree-wide injection.
  *
  * Responsibilities:
  *   - Holds a single boolean: isDemoMode
@@ -18,6 +20,7 @@
  */
 
 import { create } from 'zustand'
+import React, { createContext, useContext, useEffect } from 'react'
 
 // ── Storage key — unique, no conflict with auth or data stores ───────────────
 const DEMO_MODE_KEY = 'poweron-demo-mode'
@@ -84,6 +87,14 @@ export const useDemoStore = create<DemoState>((set, get) => ({
   disableDemoMode: () => {
     try { localStorage.setItem(DEMO_MODE_KEY, 'false') } catch { /* ignore */ }
     set({ isDemoMode: false })
+    // Remove ?demo=true from URL without a page reload
+    try {
+      const url = new URL(window.location.href)
+      if (url.searchParams.has('demo')) {
+        url.searchParams.delete('demo')
+        window.history.replaceState({}, '', url.toString())
+      }
+    } catch { /* ignore */ }
     try { window.dispatchEvent(new CustomEvent('poweron:demo-mode-changed', { detail: { isDemoMode: false } })) } catch { /* ignore */ }
   },
 }))
@@ -93,4 +104,39 @@ export const useDemoStore = create<DemoState>((set, get) => ({
 export function useDemoMode() {
   const { isDemoMode, hasHydrated, toggleDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
   return { isDemoMode, hasHydrated, toggleDemoMode, enableDemoMode, disableDemoMode }
+}
+
+// ── React Context bridge (E3 | Demo Mode) ────────────────────────────────────
+// Allows consuming components to read demo state via useContext(DemoContext)
+// in addition to the existing useDemoStore() Zustand hook.
+
+export const DemoContext = createContext<DemoState | null>(null)
+
+/**
+ * DemoProvider — wraps the app to expose demo mode state via React context.
+ * Also checks ?demo=true on mount and auto-enables demo mode if present.
+ * Pair with DemoContext for consumption or continue using useDemoStore().
+ */
+export function DemoProvider({ children }: { children: React.ReactNode }) {
+  const store = useDemoStore()
+
+  useEffect(() => {
+    // Auto-enable from URL param (backup in case DemoGate hasn't handled it yet)
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('demo') === 'true') {
+      store.enableDemoMode()
+    }
+  }, [])
+
+  return React.createElement(DemoContext.Provider, { value: store }, children)
+}
+
+/** Hook to consume DemoContext (alternative to useDemoStore) */
+export function useDemoContext(): DemoState {
+  const ctx = useContext(DemoContext)
+  if (!ctx) {
+    // Fall back to direct store access if used outside DemoProvider
+    return useDemoStore.getState()
+  }
+  return ctx
 }
