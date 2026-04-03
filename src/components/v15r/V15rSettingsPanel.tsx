@@ -16,11 +16,12 @@
  */
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen } from 'lucide-react'
+import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut } from 'lucide-react'
 import { getLocalSkillMap, getLocalSkillSignals, getLocalDevelopmentLog, calculateDevelopmentRate, IDEAL_PROFILE, SKILL_DOMAINS } from '@/services/skillSignalExtractor'
 import type { SkillDomain, StoredSkillSignal } from '@/services/skillSignalExtractor'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
 import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense, type OpenPermit } from '@/services/ownerProfileService'
@@ -302,7 +303,7 @@ export default function V15rSettingsPanel() {
                   className={`flex items-center gap-3 px-4 py-2 rounded font-medium transition-colors ${
                     currentTheme === 'dark'
                       ? 'bg-gray-800 text-gray-100 border border-gray-700'
-                      : 'bg-blue-900/30 text-blue-300 border border-blue-700'
+                      : 'bg-sky-100 text-blue-700 border border-sky-300'
                   }`}
                 >
                   {currentTheme === 'dark' ? (
@@ -1633,14 +1634,18 @@ const CODE_LEN = 6
 
 function SecurityCard() {
   const { user, profile } = useAuth()
-  const [showModal, setShowModal]           = useState(false)
-  const [currentCode, setCurrentCode]       = useState('')
-  const [newCode, setNewCode]               = useState('')
-  const [confirmCode, setConfirmCode]       = useState('')
-  const [step, setStep]                     = useState<'current' | 'new' | 'confirm'>('current')
-  const [error, setError]                   = useState<string | null>(null)
-  const [saving, setSaving]                 = useState(false)
-  const [successToast, setSuccessToast]     = useState(false)
+  const signOut = useAuthStore(s => s.signOut)
+  const [showModal, setShowModal]                   = useState(false)
+  const [currentCode, setCurrentCode]               = useState('')
+  const [newCode, setNewCode]                       = useState('')
+  const [confirmCode, setConfirmCode]               = useState('')
+  const [step, setStep]                             = useState<'current' | 'new' | 'confirm'>('current')
+  const [error, setError]                           = useState<string | null>(null)
+  const [saving, setSaving]                         = useState(false)
+  const [successToast, setSuccessToast]             = useState(false)
+  const [showSignoutEverywhere, setShowSignoutEverywhere] = useState(false)
+  const [signingOutAll, setSigningOutAll]           = useState(false)
+  const [showDeviceLogoutConfirm, setShowDeviceLogoutConfirm] = useState(false)
 
   function openModal() {
     setShowModal(true)
@@ -1692,7 +1697,11 @@ function SecurityCard() {
       if (result.success) {
         closeModal()
         setSuccessToast(true)
-        setTimeout(() => setSuccessToast(false), 3000)
+        setShowSignoutEverywhere(true)
+        setTimeout(() => {
+          setSuccessToast(false)
+          setShowSignoutEverywhere(false)
+        }, 12000)
       } else {
         setError(result.error || 'Failed to save passcode')
       }
@@ -1714,6 +1723,25 @@ function SecurityCard() {
         </div>
       )}
 
+      {showSignoutEverywhere && (
+        <div className="mb-3 px-3 py-2 rounded text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-700/40 flex items-center justify-between gap-3">
+          <span>PIN updated. Sign out of other devices?</span>
+          <button
+            disabled={signingOutAll}
+            onClick={async () => {
+              setSigningOutAll(true)
+              await supabase.auth.signOut({ scope: 'global' })
+              setSigningOutAll(false)
+              setShowSignoutEverywhere(false)
+            }}
+            className="flex-shrink-0 px-2 py-1 rounded text-xs font-bold bg-yellow-700/50 hover:bg-yellow-700/80 text-yellow-100 transition-colors flex items-center gap-1"
+          >
+            {signingOutAll ? <Loader2 size={10} className="animate-spin" /> : null}
+            Sign Out Everywhere
+          </button>
+        </div>
+      )}
+
       <div className="space-y-3">
         <p className="text-xs text-gray-400">
           Change the 6-digit passcode used to unlock the app.
@@ -1725,7 +1753,53 @@ function SecurityCard() {
           <Lock size={14} />
           Change Passcode
         </button>
+
+        <button
+          onClick={() => setShowDeviceLogoutConfirm(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-red-900/20 text-red-400 border border-red-700/30 hover:bg-red-900/40 transition-colors"
+        >
+          <LogOut size={14} />
+          Sign Out of This Device
+        </button>
       </div>
+
+      {/* Device logout confirm dialog */}
+      {showDeviceLogoutConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowDeviceLogoutConfirm(false) }}
+        >
+          <div
+            className="w-full max-w-xs mx-4 rounded-2xl p-6 space-y-5"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-secondary)' }}
+          >
+            <div className="flex items-center gap-3">
+              <LogOut size={20} className="text-red-400 flex-shrink-0" />
+              <h3 className="text-base font-bold text-gray-100">Sign out of PowerOn Hub?</h3>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeviceLogoutConfirm(false)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-gray-400 hover:text-gray-200 transition-colors"
+                style={{ backgroundColor: 'var(--bg-input)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setShowDeviceLogoutConfirm(false)
+                  localStorage.removeItem('poweron_pin_hash')
+                  await signOut()
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Change Passcode Modal */}
       {showModal && (

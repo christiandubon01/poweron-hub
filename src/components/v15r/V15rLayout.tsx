@@ -27,7 +27,9 @@ import {
   VolumeX,
   Volume2,
   Layers,
+  LogOut,
 } from 'lucide-react'
+import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { useDemoStore } from '@/store/demoStore'
 import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
@@ -87,6 +89,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const saved = localStorage.getItem('nav_section_intelligence')
     return saved !== null ? saved === 'true' : true
   })
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const signOut = useAuthStore(s => s.signOut)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
@@ -876,6 +880,57 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           </div>
 
         </div>
+
+        {/* ── Logout Button — pinned to sidebar bottom ────────────────── */}
+        <div className="border-t border-gray-700 px-2 py-3 flex-shrink-0">
+          <button
+            onClick={() => setShowLogoutConfirm(true)}
+            title={!showLabels ? 'Sign Out' : undefined}
+            className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors rounded text-gray-400 hover:text-red-400 hover:bg-red-500/10 border-l-2 border-transparent hover:border-red-500`}
+          >
+            <LogOut size={18} />
+            {showLabels && <span>Sign Out</span>}
+          </button>
+        </div>
+
+        {/* ── Logout Confirm Dialog ───────────────────────────────────── */}
+        {showLogoutConfirm && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowLogoutConfirm(false) }}
+          >
+            <div
+              className="w-full max-w-xs mx-4 rounded-2xl p-6 space-y-5"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-secondary)' }}
+            >
+              <div className="flex items-center gap-3">
+                <LogOut size={20} className="text-red-400 flex-shrink-0" />
+                <h3 className="text-base font-bold text-gray-100">Sign out of PowerOn Hub?</h3>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-gray-400 hover:text-gray-200 transition-colors"
+                  style={{ backgroundColor: 'var(--bg-input)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowLogoutConfirm(false)
+                    localStorage.removeItem('poweron_pin_hash')
+                    await signOut()
+                  }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </aside>
 
       {/* MAIN LAYOUT */}
