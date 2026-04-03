@@ -238,6 +238,10 @@ export interface FieldObservationCard {
   transcript?: string
   created_at?: string
   updated_at?: string
+  /** Quick Capture routing metadata */
+  routing?: 'ai' | 'manual' | 'direct'
+  ai_confidence?: 'high' | 'medium' | 'low' | null
+  ai_reasoning?: string | null
 }
 
 export interface BackupData {
@@ -335,6 +339,9 @@ export function getBackupData(): BackupData | null {
 export function saveBackupData(data: BackupData): void {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) }
   catch (err) { console.error('[backupDataService] Failed to save:', err) }
+  // Notify same-tab listeners (e.g. V15rLayout KPI bar) that data has changed.
+  // window.storage only fires for cross-tab writes, so we dispatch a custom event here.
+  try { window.dispatchEvent(new CustomEvent('poweron-data-saved')) } catch { /* ignore */ }
   // ISSUE 4: Keep poweron_v2 price book in sync to prevent dual-storage divergence
   try {
     const v2Raw = localStorage.getItem('poweron_v2')
@@ -689,8 +696,18 @@ export function getKPIs(d: BackupData) {
   const logs = d.logs || []
   const serviceLogs = d.serviceLogs || []
   syncAllProjectFinanceBuckets(d)
-  // Pipeline = project contracts + service quoted (matches HTML updateStrip grossRevenue)
-  const projectContract = projects.reduce((s, p) => s + num(p.contract), 0)
+  // Pipeline = active/coming project contracts + open service calls quoted
+  // Excludes: completed+collected projects, deleted projects, lost/rejected estimates
+  const projectContract = projects
+    .filter(p => {
+      const s = (p.status || '').toLowerCase()
+      // Exclude explicitly completed, deleted, lost, or rejected projects
+      if (s === 'deleted' || s === 'lost' || s === 'rejected') return false
+      // Exclude completed bucket (status=completed OR 100% overall completion)
+      return resolveProjectBucket(p) !== 'completed'
+    })
+    .reduce((s, p) => s + num(p.contract), 0)
+  // Service calls total: all calls (open + partial); fully-collected ones still part of pipeline history
   const svcQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
   const pipeline = projectContract + svcQuoted
   // Paid / Cash Received = project paid + service collected (matches HTML cashReceived)

@@ -315,11 +315,16 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
             </span>
           )}
           {bucket === 'completed' && (
-            <span className={`text-[9px] px-2 py-0.5 rounded font-semibold ${
-              fin.paid >= fin.contract ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'
-            }`}>
-              {fin.paid >= fin.contract ? 'Fully Paid' : 'Balance Pending'}
-            </span>
+            fin.AR > 0 ? (
+              <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                    title={`Outstanding balance: ${fmtK(fin.AR)}`}>
+                🚨 UNPAID {fmtK(fin.AR)}
+              </span>
+            ) : (
+              <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-emerald-500/20 text-emerald-400">
+                ✓ Fully Paid
+              </span>
+            )
           )}
           {bucket === 'completed' && fin.contract - fin.paid > 0 && (
             <button

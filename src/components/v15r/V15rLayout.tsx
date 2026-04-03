@@ -122,13 +122,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
     refresh()
 
-    // Listen for storage changes from other components (e.g., Field Log saves)
+    // Listen for storage changes from other tabs (cross-tab)
     const handleStorageChange = () => refresh()
     window.addEventListener('storage', handleStorageChange)
 
-    // Clean up listener on unmount
+    // Listen for same-tab saves dispatched by saveBackupData (e.g. status changes, deletions)
+    // so the pipeline KPI in the header updates in real time without a page reload.
+    const handleDataSaved = () => refresh()
+    window.addEventListener('poweron-data-saved', handleDataSaved)
+
+    // Clean up listeners on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      window.removeEventListener('poweron-data-saved', handleDataSaved)
     }
   }, [])
 
