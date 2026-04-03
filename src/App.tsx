@@ -23,6 +23,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { ReadOnlyContext } from '@/contexts/ReadOnlyContext'
 import { supabase } from '@/lib/supabase'
 import { useDemoStore } from '@/store/demoStore'
+import { ModeProvider } from '@/store/modeContext'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
 const CrewPortal = lazy(() =>
@@ -188,6 +189,7 @@ export default function App() {
   }, [initialize])
 
   return (
+    <ModeProvider>
     <BrowserRouter>
       <ErrorBoundary>
         <Routes>
@@ -220,5 +222,6 @@ export default function App() {
         </Routes>
       </ErrorBoundary>
     </BrowserRouter>
+    </ModeProvider>
   )
 }
