@@ -192,3 +192,47 @@ Each entry follows this structure:
 - Scope Verified: Yes
 - Accepted: Yes
 - Notes: Two sequence conflicts found (031, 046). Resolved by renaming to 049. No SQL changes — rename only.
+
+### Entry 015
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B8 — Pipeline logic + Estimate Overview + RFI stage fields
+- Commit Hash: d4525e6
+- Files Changed: backupDataService.ts, V15rLayout.tsx, V15rEstimateTab.tsx, V15rProjectsPanel.tsx, V15rRFITab.tsx
+- Scope Verified: Yes — backupDataService.ts change reviewed and accepted (getKPIs filter + event dispatch only)
+- Accepted: Yes
+- Notes: Pipeline now filters active projects only. WON box reads active project contracts. RFI closure bug fixed — reads fresh localStorage on every edit.
+
+### Entry 016
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B9 — Home greeting + Progress layout + Collection routing
+- Commit Hash: 450b277
+- Files Changed: V15rHome.tsx, V15rProgressTab.tsx, V15rProjectsPanel.tsx, AppShell.tsx
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Greeting now time-aware with first name from profiles.full_name. Progress tab redesigned to two-column layout. Collect badge and payment modal added to completed projects.
+
+### Entry 015
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B8 — Pipeline logic + Estimate Overview + RFI stage fields
+- Commit Hash: d4525e6
+- Files Changed: backupDataService.ts, V15rLayout.tsx, V15rEstimateTab.tsx, V15rProjectsPanel.tsx, V15rRFITab.tsx
+- Scope Verified: Yes — backupDataService.ts reviewed and accepted
+- Accepted: Yes
+- Notes: Pipeline filters active projects only. WON box reads active contracts. RFI closure bug fixed.
+
+### Entry 016
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B9 — Home greeting + Progress layout + Collection routing
+- Commit Hash: 450b277
+- Files Changed: V15rHome.tsx, V15rProgressTab.tsx, V15rProjectsPanel.tsx, AppShell.tsx
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Time-aware greeting with first name. Progress two-column layout. Collect badge and payment modal added.
