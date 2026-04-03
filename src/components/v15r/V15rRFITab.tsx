@@ -49,6 +49,8 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       else if (field === 'directedTo') rfi.directedTo = String(value)
       else if (field === 'response') rfi.response = String(value)
       else if (field === 'costImpact') rfi.costImpact = String(value)
+      else if (field === 'stageRecorded') rfi.stageRecorded = String(value)
+      else if (field === 'stageApplies') rfi.stageApplies = String(value)
     }
     saveBackupData(backup)
     forceUpdate()
@@ -176,6 +178,60 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                     <span style={{ fontSize: '11px', color: 'var(--t3)' }}>
                       {r.submitted} · {r.directedTo || '—'}
                     </span>
+                  </div>
+
+                  {/* Stage Recorded / Stage Applies dropdowns */}
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                      <span style={{ fontSize: '11px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>Stage Recorded</span>
+                      <select
+                        value={r.stageRecorded || ''}
+                        onChange={e => editRFI(r.id, 'stageRecorded', e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '4px 6px',
+                          backgroundColor: '#1e2130',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '4px',
+                          color: r.stageRecorded ? 'var(--t1)' : 'var(--t3)',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">—</option>
+                        <option value="Estimating">Estimating</option>
+                        <option value="Underground">Underground</option>
+                        <option value="Rough-In">Rough-In</option>
+                        <option value="Trim">Trim</option>
+                        <option value="Finish">Finish</option>
+                        <option value="General">General</option>
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                      <span style={{ fontSize: '11px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>Stage Applies</span>
+                      <select
+                        value={r.stageApplies || ''}
+                        onChange={e => editRFI(r.id, 'stageApplies', e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '4px 6px',
+                          backgroundColor: '#1e2130',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '4px',
+                          color: r.stageApplies ? 'var(--t1)' : 'var(--t3)',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">—</option>
+                        <option value="Estimating">Estimating</option>
+                        <option value="Underground">Underground</option>
+                        <option value="Rough-In">Rough-In</option>
+                        <option value="Trim">Trim</option>
+                        <option value="Finish">Finish</option>
+                        <option value="General">General</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div style={{ marginBottom: '8px' }}>
