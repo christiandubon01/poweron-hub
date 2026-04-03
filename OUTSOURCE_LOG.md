@@ -170,3 +170,25 @@ Each entry follows this structure:
 - Scope Verified: Yes
 - Accepted: Yes
 - Notes: Sign Out button added to sidebar and Settings. PIN change toast with Sign Out Everywhere added. Session persistence already configured — no change needed.
+
+### Entry 013
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B7 — Demo user invite flow
+- Commit Hash: ab09314
+- Files Changed: src/components/admin/DemoInvite.tsx, src/hooks/useDemoLimits.ts, src/services/demoDataService.ts, src/components/v15r/V15rTeamPanel.tsx, src/components/v15r/V15rSettingsPanel.tsx, src/App.tsx, supabase/migrations/049_add_demo_tier_columns.sql
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Schema migration renamed from 031 to 049 to avoid sequence conflict. Migration applied directly via Supabase SQL Editor. Demo data auto-population: 3 projects + 5 service calls per invited user.
+
+### Entry 014
+- Date: 2026-04-03
+- Developer: Console / Christian Dubon
+- Agreement: Internal — no NDA required
+- Session: Migration sequence fix — renamed 031 to 049
+- Commit Hash: 62adc26
+- Files Changed: supabase/migrations/049_add_demo_tier_columns.sql
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Two sequence conflicts found (031, 046). Resolved by renaming to 049. No SQL changes — rename only.
