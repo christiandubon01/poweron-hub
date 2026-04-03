@@ -215,9 +215,16 @@ const AGENT_KEYWORDS: Record<TargetAgent, AgentKeywords> = {
       'morning briefing', 'daily summary', 'status update', 'how\'s business',
       'what\'s going on', 'moving forward', 'from now on', 'remember that',
       'i prefer', 'i want you to', 'going forward', 'keep in mind',
+      // Project status / "how is the job going" type questions — NEXUS owns these
+      'how is the job', 'how are the jobs', 'how are my jobs', 'how are we doing',
+      'how is business', 'how are things', 'project health', 'job health',
+      'how is the project', 'how are the projects', 'project overview',
+      'business overview', 'overall status', 'give me an overview',
     ],
     single: [
       'hi', 'hello', 'help', 'general', 'preference',
+      // Project status is NEXUS territory — broad overview words score here
+      'overview', 'summary', 'briefing', 'overall',
     ],
   },
 }
@@ -263,14 +270,39 @@ interface GuaranteedRoute {
   minScore: number
 }
 
+// ── NEXUS-FIRST ROUTING DESIGN ───────────────────────────────────────────────
+// Guaranteed routes cover SPECIALIST-ONLY terms — terms that unambiguously
+// require a specific domain agent's data.
+//
+// General terms ('project', 'job', 'status', 'how is', 'money', 'cash', 'revenue')
+// are intentionally excluded here. Those reach NEXUS directly and NEXUS synthesizes
+// a conversational response before any specialist detail is appended.
+//
+// LEDGER is only triggered by EXPLICIT billing/collection vocabulary:
+//   invoice, overdue, balance due, who owes, accounts receivable, billing, collections
+// NOT by: 'money', 'cash', 'revenue', 'paid', 'job going', 'project status'
+//
+// BLUEPRINT is only triggered by document/workflow-specific terms:
+//   rfi, punch list, change order, coordination item, submittal
+// NOT by: 'project', 'job', 'status', 'operations', 'phase', 'active jobs'
+// ─────────────────────────────────────────────────────────────────────────────
+
 const GUARANTEED_ROUTES: GuaranteedRoute[] = [
-  { keywords: ['project', 'job', 'status', 'operations', 'week', 'attention', 'active jobs', 'phase', 'permit', 'rfi', 'punch list'], agent: 'blueprint', minScore: 0.5 },
+  // Blueprint: only document/workflow-specific keywords — NOT general project status terms
+  { keywords: ['rfi', 'punch list', 'change order', 'coordination item', 'submittal'], agent: 'blueprint', minScore: 0.5 },
+  // OHM: electrical code — unchanged
   { keywords: ['nec', 'code requirement', 'title 24', 'cec', 'install', 'wire', 'breaker', 'panel', 'site', 'afci', 'gfci', 'conductor', 'ampacity'], agent: 'ohm', minScore: 0.5 },
-  { keywords: ['money', 'invoice', 'paid', 'collect', 'ar', 'cash', 'revenue', 'pipeline', 'overdue', 'receivable', 'balance due', 'who owes'], agent: 'ledger', minScore: 0.5 },
+  // LEDGER: ONLY explicit billing/collection terms — NOT general financial terms like money/cash/revenue/paid
+  { keywords: ['invoice', 'overdue', 'balance due', 'who owes', 'accounts receivable', 'billing', 'collections', 'ar aging'], agent: 'ledger', minScore: 0.5 },
+  // VAULT: estimating-specific terms — unchanged
   { keywords: ['estimate', 'quote', 'mto', 'material', 'takeoff', 'price', 'bid', 'pricing', 'cost', 'markup', 'price book'], agent: 'vault', minScore: 0.5 },
+  // CHRONO: scheduling-specific terms — unchanged
   { keywords: ['schedule', 'crew', 'calendar', 'book', 'dispatch', 'appointment', 'agenda', 'reminder', 'tomorrow', 'next week'], agent: 'chrono', minScore: 0.5 },
+  // SPARK: marketing/lead-specific terms — unchanged
   { keywords: ['lead', 'gc', 'contact', 'marketing', 'outreach', 'prospect', 'referral', 'campaign', 'review', 'yelp'], agent: 'spark', minScore: 0.5 },
-  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker', 'visual', 'visualization', 'chart', 'graph', 'numbers', 'analytics', 'data', 'metrics'], agent: 'pulse', minScore: 0.5 },
+  // PULSE: analytics/dashboard-specific terms — unchanged
+  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker', 'visual', 'visualization', 'chart', 'graph', 'analytics', 'metrics'], agent: 'pulse', minScore: 0.5 },
+  // SCOUT: research/analysis terms — unchanged
   { keywords: ['research', 'analyze', 'pattern', 'optimization', 'improvement', 'scout'], agent: 'scout', minScore: 0.5 },
 ]
 

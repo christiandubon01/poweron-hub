@@ -467,21 +467,25 @@ export function detectMode(message: string, requestedMode?: NexusMode): NexusMod
 
 const BRIEFING_FORMAT_INSTRUCTION = `
 ## Response Format — BRIEFING MODE
-Format your response as a concise briefing:
-- Max 5 bullet points using 🔴 (critical/urgent), 🟡 (needs attention), 🟢 (on track)
-- Each bullet: [Emoji] [Agent domain] — [one line max]
-- Priority score: HIGH / MEDIUM / LOW
-- Top 3 action items numbered (1. 2. 3.)
-- Be direct, specific with dollar amounts and names.
+Respond in natural, flowing prose — not bullet lists. 3-5 sentences maximum.
+
+Your response must cover three things in order, woven into natural language:
+1. What is the current state — use real project names, actual dollar amounts, real task names, actual days since last movement. Never say "your project" when you know the project name. Never say "outstanding AR" when you know the client and the amount.
+2. Why it matters — what risk, delay, or opportunity does this create right now?
+3. What should happen next — a specific, actionable recommendation.
+
+Do NOT produce lists of numbers the user can already see on their dashboard. Explain what those numbers mean and what to do about them.
 `
 
 const DEEP_DIVE_FORMAT_INSTRUCTION = `
 ## Response Format — DEEP DIVE MODE
-Provide a full per-agent breakdown:
-- Organize by agent domain (LEDGER, PULSE, BLUEPRINT, etc.) with clear headers
-- Each section: status, key numbers, risks, and recommended actions
-- Use concrete data — dollar amounts, project names, percentages
-- End with a consolidated priority action list
+Respond in narrative prose, organized by theme (not by agent). Write in paragraphs, not bullet lists.
+
+Each paragraph should cover: the specific situation (named projects, named clients, real amounts), why it matters for the business, and the recommended action. Connect the dots across domains — if a cash flow gap is linked to a project phase stall, say that explicitly.
+
+End with a direct summary sentence: "The most urgent item is [specific thing] — here's why and what to do about it."
+
+Use real data throughout: actual project names, actual dollar amounts, actual days, actual customer names.
 `
 
 // ── List Query Detection ────────────────────────────────────────────────────
@@ -523,35 +527,22 @@ That's all 11. What would you like to know about any of them?"
 
 const OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION = `
 ## Response Format — OPERATIONAL BRIEFING
-You are generating a full operational briefing. Pull data from ALL agent domains and respond in this EXACT structure:
+You are generating a full operational briefing. Write in natural, connected prose — not a structured bullet dump. The goal is to give Christian a crisp picture of the business that he can act on, not a list of numbers he already knows.
 
-OPENING (1 sentence):
-Start with: "I've pulled from [list agent names used] — here's your full operational picture across projects and service calls."
+Your response must flow like this:
 
-PROJECTS BUCKET:
-- Current phase status: [X projects active, Y stuck in estimating, Z completed]
-- Cash flow exposure: [top 2-3 projects by outstanding AR with dollar amounts]
-- Ghost time eaters: [coordination gaps, RFI items, phase mismatches — be specific]
-- Critical insight: [one specific pattern you detected in the data]
-- Action: [one specific thing to do this week]
+PARAGRAPH 1 — Projects: Describe the active project situation by naming the specific projects, their current phase, what's moving and what's stalled. If a project has been sitting in a phase without logged movement for more than a week, name it and say how many days it's been stuck. Connect phase stalls to cash flow risk — if a project is stalled at rough-in and there's $X in materials on that phase with little logged hours, say so.
 
-SERVICE CALLS BUCKET (default: last 30 days):
-- Collection rate: [X% collected, $Y outstanding]
-- Top overdue: [customer name, dollar amount, days overdue]
-- Overhead flag: [any pattern in gas/material/labor costs]
-- Action: [one specific follow-up]
+PARAGRAPH 2 — Collections/Service: Describe the open service call and AR situation. Name the specific customers with outstanding balances, the actual amounts, and how long they've been outstanding. If there's a pattern (e.g., three jobs from the same week all uncollected), call it out.
 
-MILESTONE:
-"At your current trajectory, closing [gap 1], [gap 2], and [gap 3] puts you at 30% operational improvement by approximately [calculated month based on data]. Keep close eye on: follow-up cadence, audit logging, entry consistency."
+PARAGRAPH 3 — What needs to happen: Give one or two specific actions for today. Not generic — name the project, the customer, or the task.
 
-HANDOFF:
-"Tell me what you want to dive deeper into — projects, collections, overhead breakdown, or milestone plan."
+CLOSING (1 sentence): Offer to go deeper into the area that has the most risk.
 
-CRITICAL RULES:
-- Use real project names, real customer names, real dollar amounts from the data provided.
-- Never use placeholder text — if data is missing, say "no data available for this section."
-- Keep each section tight — 2-4 lines max per section.
-- Format with clean section headers for chat display.
+RULES:
+- Use real project names, real customer names, real dollar amounts, real days from the data.
+- Never use placeholder text — if data is missing, say "I don't have [specific data] — want me to flag that gap?"
+- Never produce a bullet-list of numbers without explaining what each number means and what to do about it.
 `
 
 const BRANCH_FORMAT_INSTRUCTION = `
@@ -1570,7 +1561,38 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
 
   console.log(`[NEXUS] Classified → ${intent.targetAgent} (${intent.category}, ${intent.confidence.toFixed(2)})`)
 
-  // ── Step 3b: Check for interview triggers ─────────────────────────────
+  // ── Step 3b: NEXUS routing overrides — enforce correct agent boundaries ──
+  //
+  // RULE: Project status / overview questions always stay with NEXUS.
+  //       LEDGER handles ONLY explicit billing, invoice, AR, and collections queries.
+  //       If a question like "how is the job going?" slipped through to LEDGER
+  //       (e.g. via keyword collision on 'collect', 'cash', 'revenue'), redirect it.
+  //
+  // Explicit LEDGER keywords: invoice, overdue, balance due, who owes me, billing,
+  //   accounts receivable, ar aging, collections, unpaid invoice.
+  // General financial words that should NOT guarantee LEDGER routing:
+  //   money, cash, revenue, paid, pipeline — these are too broad.
+  //
+  // ROUTE MAP (per spec):
+  //   Project status/progress/health   → NEXUS responds directly
+  //   Money owed, invoices, collections → NEXUS responds, LEDGER supplements
+  //   Compliance, NEC, code            → NEXUS responds, OHM supplements
+  //   Scheduling, dates, crew          → NEXUS responds, CHRONO supplements
+  //   Estimate, pricing, materials     → NEXUS responds, VAULT supplements
+  //   Leads, pipeline, marketing       → NEXUS responds, SPARK supplements
+  //   Improvement suggestion detected  → NEXUS responds first, SCOUT logs silently
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const PROJECT_STATUS_PATTERNS = /\bhow\s+(?:is|are|'s)\s+(?:the|my|our)?\s*(?:job|jobs|project|projects|business|things|it\s+going)\b|\bhow\s+are\s+we\s+doing\b/i
+  const LEDGER_EXPLICIT_KEYWORDS = /\b(?:invoice|invoices|overdue|balance\s+due|who\s+owes|accounts\s+receivable|ar\s+aging|billing|collections|unpaid\s+invoice)\b/i
+
+  if (intent.targetAgent === 'ledger' && PROJECT_STATUS_PATTERNS.test(query) && !LEDGER_EXPLICIT_KEYWORDS.test(query)) {
+    console.log('[NEXUS] Routing override: project status question redirected from LEDGER → NEXUS')
+    intent.targetAgent = 'nexus'
+    intent.category = 'general'
+  }
+
+  // ── Step 3c: Check for interview triggers ─────────────────────────────
   const interviewDef = checkInterviewTrigger(request.message, intent.targetAgent)
   if (interviewDef && !request.isVoiceCommand) {
     console.log(`[NEXUS] Interview triggered for ${interviewDef.agentName}`)
@@ -1732,6 +1754,26 @@ Always combine external research WITH the user's actual operational data — nev
     request.conversationHistory,
     { isListQuery, isResearchQuery, operationalContext: resolvedContext }
   )
+
+  // ── Step 4b: SCOUT improvement detection — silent background logging ────
+  // Per NEXUS routing spec: when an improvement suggestion is detected,
+  // NEXUS has already responded to the question first (above).
+  // SCOUT now logs the improvement silently — no response interruption.
+  // This is fire-and-forget; any failure is non-critical.
+  const SCOUT_IMPROVEMENT_PATTERNS = /\b(?:improvement|improve|enhance|add\s+a\s+feature|suggest|i\s+want\s+to\s+add|could\s+you\s+add|wish\s+the\s+app|feature\s+request|would\s+be\s+nice|better\s+if|what\s+if\s+you)\b/i
+  if (SCOUT_IMPROVEMENT_PATTERNS.test(query) && intent.targetAgent !== 'scout') {
+    // Fire-and-forget — SCOUT logs the improvement idea without blocking the response
+    ;(async () => {
+      try {
+        const { routeToAgent: scoutRoute } = await import('./router')
+        const scoutIntent = { ...intent, targetAgent: 'scout' as const, category: 'analysis' as const }
+        const scoutResult = await scoutRoute(scoutIntent, `[SILENT IMPROVEMENT LOG] User message: ${query}`, request.orgId, [], {})
+        console.log('[NEXUS] SCOUT logged improvement silently:', scoutResult.content?.substring(0, 100))
+      } catch (scoutErr) {
+        console.warn('[NEXUS] SCOUT silent log failed (non-critical):', scoutErr)
+      }
+    })()
+  }
 
   // ── Step 5: Determine if confirmation is needed ─────────────────────────
   const needsConfirmation =
