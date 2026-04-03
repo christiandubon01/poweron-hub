@@ -236,3 +236,14 @@ Each entry follows this structure:
 - Scope Verified: Yes
 - Accepted: Yes
 - Notes: Time-aware greeting with first name. Progress two-column layout. Collect badge and payment modal added.
+
+### Entry 017
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: B10 — MTO Google search button
+- Commit Hash: 64fc361
+- Files Changed: src/components/v15r/V15rMTOTab.tsx
+- Scope Verified: Yes — one file only
+- Accepted: Yes
+- Notes: Search button appears inline when item not in price book. Opens Google search in new tab. Disappears on price book match. No new dependencies.
