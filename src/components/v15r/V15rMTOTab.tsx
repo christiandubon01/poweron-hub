@@ -25,6 +25,16 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [showConfirm, setShowConfirm] = useState(false)
   const [pendingBulkPlacement, setPendingBulkPlacement] = useState('')
 
+  // ── Placement local state (Bugs 1+2+3) ─────────────────────────────
+  // localPlacements holds per-row typed value before onBlur / Enter commit.
+  // onChange updates ONLY this local state — no data write, no grouping re-trigger.
+  // onBlur and onEnter commit the value to the actual row data.
+  const [localPlacements, setLocalPlacements] = useState<Record<string, string>>({})
+
+  // ── Row focus / hover tracking (Bug 4) ─────────────────────────────
+  const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
+  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
+
   // Global mouseup ends drag-select
   const handleMouseUp = useCallback(() => setIsSelecting(false), [])
   useEffect(() => {
@@ -78,6 +88,8 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     pushState()
     p.mtoRows = (p.mtoRows || []).filter(r => r.id !== rowId)
     setSelectedIds(prev => { const n = new Set(prev); n.delete(rowId); return n })
+    // Clean up local placement state for the deleted row
+    setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
     saveBackupData(backup)
     forceUpdate()
   }
@@ -89,6 +101,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
 
   // ── Derived flags ───────────────────────────────────────────────────
   const hasAnyRows = allRows.length > 0
+  // IMPORTANT: grouping reads ONLY from committed row data, never from localPlacements
   const hasAnyPlacement = allRows.some(r => r.placement && r.placement.trim())
   const existingPlacements: string[] = [...new Set(allRows.map(r => r.placement).filter(Boolean))]
 
@@ -166,11 +179,37 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     const lt = num(r.qty || 0) * cu * (1 + waste)
     const isSelected = selectedIds.has(r.id)
 
+    // ── Bug 1+2+3: local placement value ────────────────────────────
+    // localVal shows the typed value; committed r.placement is the source of truth for grouping.
+    const localVal = localPlacements[r.id] !== undefined ? localPlacements[r.id] : (r.placement || '')
+
+    // Commit placement to data layer (onBlur / Enter).
+    // Reads from e.target.value to always have the latest DOM value.
+    const commitPlacement = (domValue: string) => {
+      if (domValue !== (r.placement || '')) {
+        editMTORow(r.id, 'placement', domValue)
+      }
+      // Remove local override; row will read from r.placement on next render
+      setLocalPlacements(prev => { const n = { ...prev }; delete n[r.id]; return n })
+    }
+
+    // ── Bug 4: secondary row visibility ─────────────────────────────
+    const isRowFocused = focusedRowId === r.id
+    const isRowHovered = hoveredRowId === r.id
+    // Show inputs if there is any committed OR locally-typed placement, or a note, or the row is focused
+    const hasPlacementVal = !!(localVal.trim())
+    const hasNoteVal = !!(r.note && r.note.trim())
+    const hasAnySecondaryValue = hasPlacementVal || hasNoteVal
+    const showSecondaryInputs = hasAnySecondaryValue || isRowFocused
+    // Show the "+Add" hint only when hovered but secondary is hidden
+    const showAddHint = !showSecondaryInputs && isRowHovered
+
     return (
       <tr
         key={r.id}
         onMouseDown={e => handleRowMouseDown(e, r.id)}
-        onMouseEnter={() => handleRowMouseEnter(r.id)}
+        onMouseEnter={() => { handleRowMouseEnter(r.id); setHoveredRowId(r.id) }}
+        onMouseLeave={() => setHoveredRowId(null)}
         style={{
           borderBottom: '1px solid var(--bdr2)',
           userSelect: 'none',
@@ -196,43 +235,81 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
               display: 'block',
             }}
           />
-          {/* Secondary row: placement + note */}
-          <div style={{ display: 'flex', gap: '4px', marginTop: '3px' }}>
-            <input
-              type="text"
-              value={r.placement || ''}
-              onChange={e => editMTORow(r.id, 'placement', e.target.value)}
+
+          {/* Bug 4: Hover hint — only shown when row is hovered, has no values, and is not focused */}
+          {showAddHint && (
+            <div
+              onClick={() => setFocusedRowId(r.id)}
               onMouseDown={e => e.stopPropagation()}
-              placeholder="Zone/Placement"
-              title="Optional zone or location tag"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '3px',
-                color: r.placement ? '#86efac' : 'var(--t3)',
-                width: '50%',
+                marginTop: '3px',
                 fontSize: '10px',
-                padding: '2px 5px',
+                color: 'rgba(255,255,255,0.25)',
+                cursor: 'pointer',
+                padding: '2px 0',
               }}
-            />
-            <input
-              type="text"
-              value={r.note || ''}
-              onChange={e => editMTORow(r.id, 'note', e.target.value)}
-              onMouseDown={e => e.stopPropagation()}
-              placeholder="Field note"
-              title="Optional field note"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '3px',
-                color: 'var(--t3)',
-                width: '50%',
-                fontSize: '10px',
-                padding: '2px 5px',
+            >
+              + Add placement / note
+            </div>
+          )}
+
+          {/* Bug 4: Secondary inputs — hidden when both empty and not focused */}
+          {showSecondaryInputs && (
+            <div
+              style={{ display: 'flex', gap: '4px', marginTop: '3px' }}
+              onFocus={() => setFocusedRowId(r.id)}
+              onBlur={e => {
+                // Only clear focus if focus moved entirely outside this wrapper
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                  setFocusedRowId(null)
+                }
               }}
-            />
-          </div>
+            >
+              {/* Bug 1+2+3: placement uses local state; commits on blur/Enter */}
+              <input
+                type="text"
+                value={localVal}
+                onChange={e => setLocalPlacements(prev => ({ ...prev, [r.id]: e.target.value }))}
+                onBlur={e => commitPlacement(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    commitPlacement((e.target as HTMLInputElement).value);
+                    (e.target as HTMLInputElement).blur()
+                  }
+                }}
+                onMouseDown={e => e.stopPropagation()}
+                placeholder="Zone/Placement"
+                title="Optional zone or location tag"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '3px',
+                  color: localVal.trim() ? '#86efac' : 'var(--t3)',
+                  width: '50%',
+                  fontSize: '10px',
+                  padding: '2px 5px',
+                }}
+              />
+              <input
+                type="text"
+                value={r.note || ''}
+                onChange={e => editMTORow(r.id, 'note', e.target.value)}
+                onMouseDown={e => e.stopPropagation()}
+                placeholder="Field note"
+                title="Optional field note"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '3px',
+                  color: 'var(--t3)',
+                  width: '50%',
+                  fontSize: '10px',
+                  padding: '2px 5px',
+                }}
+              />
+            </div>
+          )}
         </td>
 
         <td style={{ padding: '8px', fontSize: '11px', color: 'var(--t3)' }}>
@@ -540,6 +617,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
                   <option key={pl} value={pl} />
                 ))}
               </datalist>
+              {/* UX Fix: renamed from "Apply" to "Move to Placement →" for clarity */}
               <button
                 onClick={applyBulkAssign}
                 style={{
@@ -553,7 +631,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
                   cursor: 'pointer',
                 }}
               >
-                Apply
+                Move to Placement →
               </button>
             </div>
 
