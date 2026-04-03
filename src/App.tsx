@@ -24,6 +24,7 @@ import { ReadOnlyContext } from '@/contexts/ReadOnlyContext'
 import { supabase } from '@/lib/supabase'
 import { useDemoStore, DemoProvider } from '@/store/demoStore'
 import { ModeProvider } from '@/store/modeContext'
+import { useDemoLimits } from '@/hooks/useDemoLimits'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
 const CrewPortal = lazy(() =>
@@ -209,6 +210,167 @@ function DemoModeBanner() {
 }
 
 
+// ── DemoTierGate — enforces demo access rules for invited beta users ───────────
+//
+// Non-blocking banner when projectsRemaining === 0:
+//   Shows at top of Projects page with contact button. (Banner injected here
+//   so it's visible app-wide — component gates itself to demo users only.)
+//
+// Full-screen overlay when demo is expired:
+//   Replaces app content entirely with a message + contact button.
+//
+// Renders nothing for non-demo users (isLoading guard avoids flash).
+
+const CONTACT_WHATSAPP = 'https://wa.me/17603399888?text=Hi%20Christian%2C%20I%27d%20like%20to%20learn%20about%20full%20access%20to%20Power%20On%20Hub.'
+const CONTACT_EMAIL    = 'mailto:swatish.3103@gmail.com?subject=Power%20On%20Hub%20Full%20Access'
+
+function DemoTierGate({ children }: { children: React.ReactNode }) {
+  const { isDemoUser, projectsRemaining, isExpired, daysRemaining, isLoading } = useDemoLimits()
+
+  // Don't gate non-demo users or while loading
+  if (!isDemoUser || isLoading) return <>{children}</>
+
+  // ── Full-screen expiry message ─────────────────────────────────────────────
+  if (isExpired) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#0f1117',
+          padding: '32px',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚡</div>
+        <h1 style={{ color: '#f3f4f6', fontSize: '24px', fontWeight: 700, marginBottom: '12px' }}>
+          Your demo access has expired.
+        </h1>
+        <p style={{ color: '#9ca3af', fontSize: '15px', maxWidth: '380px', lineHeight: 1.6, marginBottom: '32px' }}>
+          Reach out to learn about full access to Power On Hub for your business.
+        </p>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <a
+            href={CONTACT_WHATSAPP}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '12px 24px',
+              borderRadius: '12px',
+              backgroundColor: '#16a34a',
+              color: '#fff',
+              fontWeight: 700,
+              fontSize: '14px',
+              textDecoration: 'none',
+            }}
+          >
+            💬 WhatsApp Christian
+          </a>
+          <a
+            href={CONTACT_EMAIL}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '12px 24px',
+              borderRadius: '12px',
+              backgroundColor: '#374151',
+              color: '#d1d5db',
+              fontWeight: 600,
+              fontSize: '14px',
+              textDecoration: 'none',
+            }}
+          >
+            ✉ Send Email
+          </a>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Non-blocking project limit banner ──────────────────────────────────────
+  // Shown at top of app when demo user has used all project slots.
+  // Does NOT block app usage — just a floating notice.
+  const showLimitBanner = projectsRemaining === 0
+
+  return (
+    <>
+      {showLimitBanner && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '64px',
+            left: 0,
+            right: 0,
+            zIndex: 41,
+            backgroundColor: '#1d4ed8',
+            color: '#eff6ff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '16px',
+            padding: '8px 16px',
+            fontSize: '13px',
+            fontWeight: 600,
+            flexWrap: 'wrap',
+            textAlign: 'center',
+          }}
+        >
+          <span>You've reached your demo project limit. Contact Christian to upgrade your access.</span>
+          <a
+            href={CONTACT_WHATSAPP}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              padding: '4px 14px',
+              borderRadius: '8px',
+              backgroundColor: '#16a34a',
+              color: '#fff',
+              textDecoration: 'none',
+              fontSize: '12px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            💬 WhatsApp
+          </a>
+        </div>
+      )}
+      {/* Days remaining hint — subtle, shown only when > 0 days left */}
+      {!showLimitBanner && daysRemaining <= 5 && daysRemaining > 0 && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '64px',
+            left: 0,
+            right: 0,
+            zIndex: 41,
+            backgroundColor: '#92400e',
+            color: '#fef3c7',
+            textAlign: 'center',
+            padding: '6px 16px',
+            fontSize: '12px',
+            fontWeight: 600,
+            pointerEvents: 'none',
+          }}
+        >
+          ⏳ Your demo access expires in {daysRemaining} day{daysRemaining !== 1 ? 's' : ''}.
+        </div>
+      )}
+      {children}
+    </>
+  )
+}
+
+
 // ── App (root) ────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -247,7 +409,10 @@ export default function App() {
                 <DemoGate>
                   <LoginFlow>
                     {/* LoginFlow renders children only when status === 'authenticated' */}
-                    <AuthenticatedRoot />
+                    {/* DemoTierGate enforces project limits and expiry for beta demo users */}
+                    <DemoTierGate>
+                      <AuthenticatedRoot />
+                    </DemoTierGate>
                   </LoginFlow>
                 </DemoGate>
               </AuditGate>

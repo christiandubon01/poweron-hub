@@ -877,3 +877,264 @@ export function getDemoBackupData(): BackupData {
 export function invalidateDemoCache(): void {
   _cachedDemoData = null
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// B7 — DEMO USER INVITE: populateDemoData
+// Writes real Supabase records for an invited beta demo user.
+// Creates 3 specific projects + 5 service calls tailored to their new account.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * populateDemoData — Seeds a newly invited beta demo user's account.
+ *
+ * Creates:
+ *   - 3 fictitious electrical projects in Supabase `projects` table
+ *   - 5 service call entries stored in `app_state` under key
+ *     `poweron_demo_${userId}` (user-specific, non-colliding)
+ *
+ * This function writes to Supabase — keep it async and fire-and-forget safe.
+ * Do NOT call this for the owner's own account.
+ *
+ * @param userId - Supabase auth user ID of the demo user
+ */
+export async function populateDemoData(userId: string): Promise<void> {
+  const { supabase } = await import('@/lib/supabase')
+
+  console.log(`[DemoData] Seeding demo account for user ${userId}`)
+
+  const errors: string[] = []
+  const now = new Date().toISOString()
+
+  // ── Helper: date N days ago as YYYY-MM-DD ────────────────────────────────
+  const daysAgo = (n: number): string => {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    return d.toISOString().slice(0, 10)
+  }
+
+  // ── 1. Specific demo projects for invited users (B7 spec) ────────────────
+
+  type DemoProjectRow = {
+    id: string
+    name: string
+    phase: string | null
+    budget: number
+    health: number
+    complete: number
+    laborTasks: object[]
+    mtoItems: object[]
+    openRFIs: object[]
+    note?: string
+  }
+
+  const inviteDemoProjects: Array<{
+    supabase: object
+    local: DemoProjectRow
+  }> = [
+    {
+      supabase: {
+        org_id:          userId,
+        name:            'Retail Store TI — Commercial',
+        type:            'commercial_ti',
+        status:          'in_progress',
+        phase:           'Rough-In',
+        priority:        'high',
+        estimated_value: 28000,
+        contract_value:  28000,
+        actual_cost:     12600,
+        description:     'Tenant improvement electrical for retail space. 45% complete.',
+        nec_version:     '2023',
+        metadata:        { demo: true, completionPercent: 45, healthScore: 72, inviteSeeded: true },
+        created_by:      userId,
+      },
+      local: {
+        id: `demo-p1-${userId.slice(0, 6)}`,
+        name: 'Retail Store TI — Commercial',
+        phase: 'Rough-In',
+        budget: 28000,
+        health: 72,
+        complete: 45,
+        laborTasks: [
+          { phase: 'Demo',     name: 'Remove old panels',           complete: true,  hrs: 4  },
+          { phase: 'Demo',     name: 'Strip conduit in ceiling',     complete: true,  hrs: 6  },
+          { phase: 'Rough-In', name: 'Run EMT to panel locations',   complete: true,  hrs: 16 },
+          { phase: 'Rough-In', name: 'Install subpanels (2)',        complete: true,  hrs: 8  },
+          { phase: 'Rough-In', name: 'Home-run circuits — lighting', complete: false, hrs: 12 },
+          { phase: 'Rough-In', name: 'Home-run circuits — power',    complete: false, hrs: 10 },
+          { phase: 'Trim',     name: 'Install devices + covers',     complete: false, hrs: 14 },
+          { phase: 'Trim',     name: 'Panel trim out',               complete: false, hrs: 8  },
+        ],
+        mtoItems: [
+          { description: '3/4" EMT conduit',     qty: 300, unit: 'ft',    tagged: true  },
+          { description: '1" EMT conduit',        qty: 120, unit: 'ft',    tagged: true  },
+          { description: '100A subpanel',         qty: 2,   unit: 'ea',    tagged: true  },
+          { description: '20A duplex receptacle', qty: 24,  unit: 'ea',    tagged: true  },
+          { description: 'Single-gang box',       qty: 30,  unit: 'ea',    tagged: false },
+          { description: '4" square box',         qty: 18,  unit: 'ea',    tagged: true  },
+          { description: '#12 THHN wire (spool)', qty: 3,   unit: 'spool', tagged: true  },
+          { description: '#10 THHN wire (spool)', qty: 2,   unit: 'spool', tagged: false },
+          { description: 'Wire nuts assorted',    qty: 2,   unit: 'bag',   tagged: false },
+          { description: '20A circuit breaker',   qty: 12,  unit: 'ea',    tagged: true  },
+          { description: 'Reducer fittings',      qty: 20,  unit: 'ea',    tagged: false },
+          { description: 'EMT couplings',         qty: 40,  unit: 'ea',    tagged: true  },
+        ],
+        openRFIs: [
+          { id: 'rfi-001', subject: 'Panel clearance NEC 110.26 compliance at back wall',       status: 'open' },
+          { id: 'rfi-002', subject: 'Dedicated circuit count in cafe area — confirm with GC',   status: 'open' },
+        ],
+      },
+    },
+    {
+      supabase: {
+        org_id:          userId,
+        name:            'Residential Panel Upgrade',
+        type:            'panel_upgrade',
+        status:          'completed',
+        phase:           'Complete',
+        priority:        'normal',
+        estimated_value: 4200,
+        contract_value:  4200,
+        actual_cost:     3100,
+        description:     '200A panel upgrade. All work complete, inspected and approved.',
+        nec_version:     '2023',
+        metadata:        { demo: true, completionPercent: 100, healthScore: 100, inviteSeeded: true },
+        created_by:      userId,
+      },
+      local: {
+        id: `demo-p2-${userId.slice(0, 6)}`,
+        name: 'Residential Panel Upgrade',
+        phase: 'Complete',
+        budget: 4200,
+        health: 100,
+        complete: 100,
+        laborTasks: [
+          { phase: 'Install',  name: 'Pull permit',                complete: true, hrs: 0.5 },
+          { phase: 'Install',  name: 'Remove old 100A panel',       complete: true, hrs: 2   },
+          { phase: 'Install',  name: 'Install 200A main + meter',   complete: true, hrs: 6   },
+          { phase: 'Closeout', name: 'Final inspection + signoff',  complete: true, hrs: 1   },
+        ],
+        mtoItems: [
+          { description: '200A main panel (Square D)', qty: 1, unit: 'ea', tagged: true },
+          { description: '200A meter socket',          qty: 1, unit: 'ea', tagged: true },
+          { description: '2/0 AL service entrance',    qty: 8, unit: 'ft', tagged: true },
+          { description: 'Ground rod + clamps',        qty: 2, unit: 'ea', tagged: true },
+          { description: 'Meter can',                  qty: 1, unit: 'ea', tagged: true },
+          { description: 'Permit fee',                 qty: 1, unit: 'ea', tagged: true },
+        ],
+        openRFIs: [],
+      },
+    },
+    {
+      supabase: {
+        org_id:          userId,
+        name:            'Office Building — Service Call',
+        type:            'commercial_service',
+        status:          'estimate',
+        phase:           'Estimating',
+        priority:        'normal',
+        estimated_value: null,
+        contract_value:  null,
+        actual_cost:     null,
+        description:     'New lead — pending site walk.',
+        nec_version:     '2023',
+        metadata:        { demo: true, completionPercent: 0, healthScore: 0, inviteSeeded: true, note: 'New lead — pending site walk' },
+        created_by:      userId,
+      },
+      local: {
+        id: `demo-p3-${userId.slice(0, 6)}`,
+        name: 'Office Building — Service Call',
+        phase: 'Estimating',
+        budget: 0,
+        health: 0,
+        complete: 0,
+        laborTasks: [],
+        mtoItems: [],
+        openRFIs: [],
+        note: 'New lead — pending site walk',
+      },
+    },
+  ]
+
+  // Insert demo projects into Supabase
+  const insertedProjectIds: Record<string, string> = {}
+
+  for (const proj of inviteDemoProjects) {
+    const id = crypto.randomUUID()
+    const { error } = await supabase
+      .from('projects')
+      .insert({ id, ...(proj.supabase as object) })
+
+    if (error) {
+      console.error(`[DemoData] Project insert failed (${(proj.supabase as any).name}):`, error.message)
+      errors.push(`project:${error.message}`)
+    } else {
+      insertedProjectIds[(proj.supabase as any).name] = id
+      proj.local.id = id
+      console.log(`[DemoData] ✓ Project "${(proj.supabase as any).name}"`)
+    }
+  }
+
+  // ── 2. Service call definitions (B7 spec) ────────────────────────────────
+
+  const inviteServiceCalls = [
+    { description: 'Tripped breaker residential',       hrs: 1.5, amount: 185, daysAgo: 3  },
+    { description: 'GFCI replacement kitchen',          hrs: 0.5, amount: 95,  daysAgo: 7  },
+    { description: 'Outdoor outlet not working',        hrs: 1,   amount: 145, daysAgo: 12 },
+    { description: 'Panel inspection pre-sale',         hrs: 2,   amount: 240, daysAgo: 19 },
+    { description: 'Emergency lighting test commercial',hrs: 1,   amount: 165, daysAgo: 26 },
+  ]
+
+  const serviceLogs = inviteServiceCalls.map((sc, i) => ({
+    id:          `demo-sc-${userId.slice(0, 8)}-${i}`,
+    date:        daysAgo(sc.daysAgo),
+    description: sc.description,
+    hrs:         sc.hrs,
+    quoted:      sc.amount,
+    collected:   sc.amount,
+    payStatus:   'Paid',
+    balanceDue:  0,
+    demo:        true,
+    jtype:       'Service Call',
+  }))
+
+  // ── 3. Write combined demo state to app_state ────────────────────────────
+  //    Key: poweron_demo_${userId} — user-specific, won't collide with owner state
+
+  const demoStateKey = `poweron_demo_${userId}`
+
+  const demoState = {
+    _schemaVersion: 27,
+    _lastSavedAt:   now,
+    _demo:          true,
+    _demoUserId:    userId,
+    _demoSeededAt:  now,
+    projects:       inviteDemoProjects.map(p => p.local),
+    serviceLogs,
+  }
+
+  const { error: stateError } = await supabase
+    .from('app_state')
+    .upsert(
+      { state_key: demoStateKey, data: demoState, updated_at: now },
+      { onConflict: 'state_key' }
+    )
+
+  if (stateError) {
+    console.error('[DemoData] app_state write failed:', stateError.message)
+    errors.push(`app_state:${stateError.message}`)
+  } else {
+    console.log(`[DemoData] ✓ Demo state saved to key: ${demoStateKey}`)
+  }
+
+  // ── 4. Summary ────────────────────────────────────────────────────────────
+  if (errors.length === 0) {
+    console.log('[DemoData] ✓ Complete — 3 projects + 5 service calls created.')
+  } else {
+    console.warn(`[DemoData] Completed with ${errors.length} error(s):`, errors)
+  }
+}
+
+/** Returns the app_state key used for a given demo user's seeded state. */
+export function getDemoStateKey(userId: string): string {
+  return `poweron_demo_${userId}`
+}

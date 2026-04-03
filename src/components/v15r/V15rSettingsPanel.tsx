@@ -16,7 +16,8 @@
  */
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut } from 'lucide-react'
+import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus } from 'lucide-react'
+import DemoInvite from '@/components/admin/DemoInvite'
 import { getLocalSkillMap, getLocalSkillSignals, getLocalDevelopmentLog, calculateDevelopmentRate, IDEAL_PROFILE, SKILL_DOMAINS } from '@/services/skillSignalExtractor'
 import type { SkillDomain, StoredSkillSignal } from '@/services/skillSignalExtractor'
 import { supabase } from '@/lib/supabase'
@@ -59,6 +60,12 @@ export default function V15rSettingsPanel() {
 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+
+  // Auth (for owner role check)
+  const { isOwner, user } = useAuth()
+
+  // Beta Access invite modal
+  const [showBetaInviteModal, setShowBetaInviteModal] = useState(false)
 
   // Demo Mode store
   const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
@@ -1265,6 +1272,35 @@ export default function V15rSettingsPanel() {
 
           {/* SECURITY — CHANGE PASSCODE */}
           <SecurityCard />
+
+          {/* BETA ACCESS — owner only */}
+          {isOwner && (
+            <SettingCard title="Beta Access">
+              <div className="space-y-3">
+                <p className="text-sm text-gray-400">
+                  Invite beta demo users directly from your phone. They receive a magic link,
+                  get assigned a demo tier, and have their account auto-populated with sample
+                  projects and service calls so they can experience the app immediately.
+                </p>
+                <button
+                  onClick={() => setShowBetaInviteModal(true)}
+                  className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-semibold transition w-full justify-center"
+                  style={{ minHeight: '44px' }}
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Invite Beta User
+                </button>
+              </div>
+            </SettingCard>
+          )}
+
+          {/* BETA INVITE MODAL */}
+          {showBetaInviteModal && isOwner && user?.id && (
+            <DemoInvite
+              onClose={() => setShowBetaInviteModal(false)}
+              inviterUserId={user.id}
+            />
+          )}
 
           {/* DEMO MODE */}
           <SettingCard title="Demo Mode">
