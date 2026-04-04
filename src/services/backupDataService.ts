@@ -658,7 +658,14 @@ export function getAgendaProjectName(d: BackupData, projectId: string): string {
   return p ? p.name : 'General'
 }
 
-/** Build cumulative log rollup for a project */
+/** Build cumulative log rollup for a project.
+ *  Sorted oldest-to-newest so cumulative fields accumulate correctly.
+ *  Spec:
+ *    Labor cost = hours × billing rate (settings.billRate, default $95/hr)
+ *    Material cost = mat as entered
+ *    Mileage cost = miles × mileRate (settings.mileRate, default $0.67/mi)
+ *    Running balance = contract − cumulative collected − cumulative total cost
+ */
 export function buildProjectLogRollup(d: BackupData, projId: string): {
   quote: number; logs: BackupLog[]; byId: Record<string, any>
 } {
@@ -669,17 +676,49 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
     if (da !== db) return da.localeCompare(db)
     return String(a.id || '').localeCompare(String(b.id || ''))
   })
-  const opRate = num((d.settings && d.settings.opCost) || 42.45)
-  const mileRate = num((d.settings && d.settings.mileRate) || 0.66)
-  let cumHours = 0, cumMiles = 0, actualCostToDate = 0, remaining = quote
+  // Spec: billing rate for labor (not opCost/overhead rate)
+  const billRate = num((d.settings && d.settings.billRate) || 95)
+  const mileRate = num((d.settings && d.settings.mileRate) || 0.67)
+  let cumHours = 0, cumMiles = 0
+  let cumLaborCost = 0, cumMaterialCost = 0, cumMileageCost = 0, cumCollected = 0
   const byId: Record<string, any> = {}
   logs.forEach(l => {
     cumHours += num(l.hrs)
     cumMiles += num(l.miles)
-    const dayCost = num(l.hrs) * opRate + num(l.mat) + cumMiles * mileRate
-    actualCostToDate += dayCost
-    remaining = quote - actualCostToDate
-    byId[l.id] = { cumHours, cumMiles, dayCost, actualCostToDate, remainingAfter: remaining }
+    cumCollected += num(l.collected)
+
+    // Per-entry cost (spec: Labor=hrs×billRate, Material=mat, Mileage=milesRT×mileRate)
+    const entryLaborCost = num(l.hrs) * billRate
+    const entryMaterialCost = num(l.mat)
+    const entryMileageCost = num(l.miles) * mileRate
+    const entryTotalCost = entryLaborCost + entryMaterialCost + entryMileageCost
+
+    // Cumulative totals across all entries up to and including this one
+    cumLaborCost += entryLaborCost
+    cumMaterialCost += entryMaterialCost
+    cumMileageCost += entryMileageCost
+    const cumTotalCost = cumLaborCost + cumMaterialCost + cumMileageCost
+
+    // Spec: Running balance = Contract Amount − Collected (cumulative) − Cumulative Total Cost
+    const remainingAfter = quote - cumCollected - cumTotalCost
+
+    byId[l.id] = {
+      cumHours,
+      cumMiles,
+      cumCollected,
+      cumLaborCost,
+      cumMaterialCost,
+      cumMileageCost,
+      cumTotalCost,
+      entryLaborCost,
+      entryMaterialCost,
+      entryMileageCost,
+      entryTotalCost,
+      // Legacy field names preserved for any other consumers
+      dayCost: entryTotalCost,
+      actualCostToDate: cumTotalCost,
+      remainingAfter,
+    }
   })
   return { quote, logs, byId }
 }

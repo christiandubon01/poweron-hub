@@ -388,6 +388,12 @@ export function buildDeepProjectContext(): string {
     sections.push(svcLine)
   }
 
+  // ── CALENDAR ANALYSIS ──────────────────────────────────────────────────────
+  const calSection = buildCalendarContext(data)
+  if (calSection) {
+    sections.push(calSection)
+  }
+
   sections.push(
     '\nUse this data to produce specific, named, data-driven responses. ' +
     'Reference actual project names, actual dollar amounts, actual task names, ' +
@@ -395,4 +401,194 @@ export function buildDeepProjectContext(): string {
   )
 
   return sections.join('\n')
+}
+
+// ── Calendar Analysis ─────────────────────────────────────────────────────────
+
+const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/**
+ * Format a duration in milliseconds to a readable string like "5h", "2.5h", "45m".
+ */
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return ''
+  const hrs = ms / 3600000
+  if (hrs >= 1) return `${Math.round(hrs * 10) / 10}h`
+  return `${Math.round(ms / 60000)}m`
+}
+
+/**
+ * Parse a dateTime or date string from a Google Calendar event start/end field.
+ */
+function parseEventDate(ev: any, field: 'start' | 'end'): Date | null {
+  const f = ev[field]
+  if (!f) return null
+  const str = f.dateTime || f.date
+  if (!str) return null
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * Analyze calendar data from gcalCache and agendaSections.
+ *
+ * Data sources (from getBackupData()):
+ *   gcalCache    — array of GoogleCalendarEvent objects cached from the GCal API.
+ *                  Each event: { id, summary, description?, location?,
+ *                    start: { dateTime, timeZone? }, end: { dateTime, timeZone? },
+ *                    status? }
+ *                  Typically [] until CHRONO Google Calendar sync is established.
+ *   agendaSections — home agenda sections with tasks; used as fallback when
+ *                    gcalCache is empty.
+ *   projects     — active project array for capacity comparison.
+ *   serviceLogs  — used to detect service-heavy days in recent history.
+ *
+ * Returns a formatted prose block for NEXUS context injection.
+ * Returns empty string if no calendar data is available.
+ */
+function buildCalendarContext(data: any): string {
+  const gcalCache: any[]    = Array.isArray(data.gcalCache) ? data.gcalCache : []
+  const agendaSections: any[] = Array.isArray(data.agendaSections) ? data.agendaSections : []
+  const activeProjects      = (data.projects || []).filter((p: any) => p.status === 'active')
+  const activeCount         = activeProjects.length
+  const lines: string[]     = []
+
+  // ── Path A: gcalCache has events (Google Calendar synced) ─────────────────
+  if (gcalCache.length > 0) {
+    // Determine current week bounds (Sun → Sat)
+    const weekStart = new Date()
+    weekStart.setHours(0, 0, 0, 0)
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay())
+    const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
+
+    const thisWeekEvents = gcalCache.filter((ev: any) => {
+      if (ev.status === 'cancelled') return false
+      const startD = parseEventDate(ev, 'start')
+      if (!startD) return false
+      return startD.getTime() >= weekStart.getTime() && startD.getTime() < weekEnd.getTime()
+    })
+
+    lines.push(`\n### Calendar — Current Week`)
+
+    if (thisWeekEvents.length === 0) {
+      lines.push('No events this week in calendar cache.')
+    } else {
+      // Sort by start time
+      const sorted = [...thisWeekEvents].sort((a, b) => {
+        const aD = parseEventDate(a, 'start')
+        const bD = parseEventDate(b, 'start')
+        return (aD?.getTime() || 0) - (bD?.getTime() || 0)
+      })
+
+      // ── Event list ─────────────────────────────────────────────────────────
+      const eventLines: string[] = []
+      const summaryCount = new Map<string, number>()
+      let totalScheduledMs = 0
+      let projectBlockMs   = 0
+      let serviceBlockMs   = 0
+      const coveredWorkDays = new Set<number>()
+
+      for (const ev of sorted) {
+        const startD = parseEventDate(ev, 'start')
+        const endD   = parseEventDate(ev, 'end')
+        if (!startD) continue
+
+        const summary  = ev.summary || 'Unnamed event'
+        const day      = WEEK_DAYS[startD.getDay()]
+        const startFmt = startD.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+        const endFmt   = endD ? endD.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : ''
+        const durMs    = endD ? endD.getTime() - startD.getTime() : 0
+        const durStr   = fmtDuration(durMs)
+
+        const timeRange = endFmt ? `${startFmt}–${endFmt}` : startFmt
+        eventLines.push(`${day} ${timeRange} — ${summary}${durStr ? ` (${durStr})` : ''}`)
+
+        // Aggregate for analysis
+        totalScheduledMs += durMs
+        if (startD.getDay() >= 1 && startD.getDay() <= 5) coveredWorkDays.add(startD.getDay())
+
+        const sumLow = summary.toLowerCase()
+        if (sumLow.includes('project') || sumLow.includes('construction') || sumLow.includes('install') || sumLow.includes('rough') || sumLow.includes('trim') || sumLow.includes('finish')) {
+          projectBlockMs += durMs
+        }
+        if (sumLow.includes('service') || sumLow.includes('call') || sumLow.includes('repair') || sumLow.includes('troubleshoot')) {
+          serviceBlockMs += durMs
+        }
+
+        // Recurring detection
+        const key = sumLow.trim()
+        summaryCount.set(key, (summaryCount.get(key) || 0) + 1)
+      }
+
+      lines.push(eventLines.join('\n'))
+
+      // ── Recurring blocks ────────────────────────────────────────────────────
+      const recurring = [...summaryCount.entries()].filter(([, c]) => c >= 2)
+      if (recurring.length > 0) {
+        const labels = recurring.map(([name, c]) => `"${name}" (${c}x)`)
+        lines.push(`Recurring time blocks: ${labels.join(', ')}.`)
+      }
+
+      // ── Scheduled hours summary ─────────────────────────────────────────────
+      const totalHrs   = Math.round(totalScheduledMs / 360000) / 10
+      const projectHrs = Math.round(projectBlockMs / 360000) / 10
+      const serviceHrs = Math.round(serviceBlockMs / 360000) / 10
+      let summaryLine = `Total scheduled this week: ${totalHrs}h`
+      if (projectHrs > 0) summaryLine += ` | project blocks: ${projectHrs}h`
+      if (serviceHrs > 0) summaryLine += ` | service blocks: ${serviceHrs}h`
+      lines.push(summaryLine + '.')
+
+      // ── Capacity vs active project demand ───────────────────────────────────
+      // Rule: each active project needs at minimum ~2h/day of dedicated time
+      // across the work week to maintain momentum.
+      if (activeCount > 0) {
+        const recommendedProjectHrs = activeCount * 2 * 5 // 2h/day × 5 days
+        if (projectHrs > 0 && projectHrs < recommendedProjectHrs) {
+          lines.push(
+            `⚠ Capacity gap: ${projectHrs}h project time scheduled for ${activeCount} active project${activeCount !== 1 ? 's' : ''}. ` +
+            `At current pipeline size, aim for at least ${recommendedProjectHrs}h/week of project time to maintain delivery velocity.`
+          )
+        } else if (projectHrs === 0 && activeCount > 0) {
+          lines.push(
+            `⚠ No project time blocks found this week despite ${activeCount} active project${activeCount !== 1 ? 's' : ''} in pipeline.`
+          )
+        }
+      }
+
+      // ── Schedule gaps (Mon–Fri workdays with no events) ─────────────────────
+      const gapDays = [1, 2, 3, 4, 5].filter(d => !coveredWorkDays.has(d)).map(d => WEEK_DAYS[d])
+      if (gapDays.length > 0) {
+        lines.push(`Open days (no scheduled events): ${gapDays.join(', ')}.`)
+      }
+    }
+
+  // ── Path B: gcalCache empty — fall back to agenda + project count ─────────
+  } else {
+    const allTasks     = agendaSections.flatMap((s: any) => Array.isArray(s.tasks) ? s.tasks : [])
+    const pendingTasks = allTasks.filter((t: any) => !t.done && t.text)
+    const timeHintTasks = pendingTasks.filter((t: any) =>
+      /\d+(:\d+)?\s*(am|pm)/i.test(t.text || '') ||
+      /block|schedule|appointment/i.test(t.text || '')
+    )
+
+    if (timeHintTasks.length > 0 || activeCount > 0) {
+      lines.push('\n### Calendar — Schedule Context')
+
+      if (timeHintTasks.length > 0) {
+        const hints = timeHintTasks.slice(0, 5).map((t: any) => t.text).join('; ')
+        lines.push(`Agenda time-related tasks: ${hints}.`)
+      }
+
+      if (activeCount > 0) {
+        lines.push(
+          `${activeCount} active project${activeCount !== 1 ? 's' : ''} in pipeline. ` +
+          `Google Calendar not yet synced — connect in CHRONO panel to enable full schedule vs capacity analysis.`
+        )
+      }
+    }
+    // Return empty if nothing useful to report
+    if (lines.length === 0) return ''
+  }
+
+  return lines.join('\n')
 }
