@@ -280,3 +280,25 @@ Each entry follows this structure:
 - Scope Verified: Yes — vite.config.ts flag from prior commit, not this session
 - Accepted: Yes
 - Notes: Four intent types: command, action, insight, ambiguous. Ambiguous triggers one-time clarification question. Commands confirmed with storage acknowledgment.
+
+### Entry 021
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: V5 — NEXUS context depth
+- Commit Hash: 269dffe
+- Files Changed: src/agents/nexus/index.ts, src/agents/nexus/nexusContextBuilder.ts
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Deep context builder replaces shallow Supabase queries. Now pulls labor hours, MTO gaps, RFI age, days since last movement. Prose format replaces bullet list.
+
+### Entry 022
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: V6 — Voice session flow polish
+- Commit Hash: 015cc9a
+- Files Changed: src/services/voice.ts, src/components/nexus/NexusDrawerPanel.tsx, src/components/voice/VoiceActivationButton.tsx
+- Scope Verified: Yes — vite.config.ts flag from prior commit
+- Accepted: Yes
+- Notes: Critical gap fixed — voice was passing empty conversation history. Now shares history with text pipeline. Session continuity added — last 3 messages shown faded on new session open.
