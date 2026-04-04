@@ -247,3 +247,36 @@ Each entry follows this structure:
 - Scope Verified: Yes — one file only
 - Accepted: Yes
 - Notes: Search button appears inline when item not in price book. Opens Google search in new tab. Disappears on price book match. No new dependencies.
+
+### Entry 018
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: V1+V2 — NEXUS routing fix + agent response quality
+- Commit Hash: fcc4516
+- Files Changed: classifier.ts, router.ts, index.ts, nexus/systemPrompt.ts, ledger/systemPrompt.ts, scout/systemPrompt.ts
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: NEXUS now responds first. Specialist agents suppressed when redundant. Narrative format replacing bullet dumps. SCOUT silenced in conversation thread.
+
+### Entry 019
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: V3 — SCOUT background mode
+- Commit Hash: f2c4bb3
+- Files Changed: scoutQueue.ts, NexusChatPanel.tsx, ProposalFeed.tsx
+- Scope Verified: Yes
+- Accepted: Yes
+- Notes: Silent queue wired in code. SCOUT responses filtered from chat thread. Flagged Improvements tab added to Scout panel.
+
+### Entry 020
+- Date: 2026-04-03
+- Developer: Cowork AI Builder
+- Agreement: Internal — no NDA required
+- Session: V4 — Command vs insight detection
+- Commit Hash: 1898a77
+- Files Changed: classifier.ts, index.ts
+- Scope Verified: Yes — vite.config.ts flag from prior commit, not this session
+- Accepted: Yes
+- Notes: Four intent types: command, action, insight, ambiguous. Ambiguous triggers one-time clarification question. Commands confirmed with storage acknowledgment.
