@@ -39,6 +39,7 @@ import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
+import VoiceMaterialCapture from './VoiceMaterialCapture'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -837,10 +838,15 @@ export default function V15rFieldLogPanel() {
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Miles RT</label>
                 <input type="number" value={flMiles} onChange={e => setFlMiles(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Materials $</label>
-                <input type="number" step="0.01" value={flMat} onChange={e => setFlMat(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
+              <VoiceMaterialCapture
+                value={flMat}
+                onChange={setFlMat}
+                priceBook={backup.priceBook || []}
+                onConfirm={(total, note) => {
+                  setFlMat(total > 0 ? total.toFixed(2) : flMat)
+                  setFlNotes(prev => prev ? `${prev}\n${note}` : note)
+                }}
+              />
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Collected $</label>
                 <input type="number" step="0.01" value={flCollected} onChange={e => setFlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
@@ -1849,10 +1855,15 @@ export default function V15rFieldLogPanel() {
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Quoted $</label>
                 <input type="number" step="0.01" value={slQuoted} onChange={e => setSlQuoted(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Materials $</label>
-                <input type="number" step="0.01" value={slMat} onChange={e => setSlMat(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
+              <VoiceMaterialCapture
+                value={slMat}
+                onChange={setSlMat}
+                priceBook={backup.priceBook || []}
+                onConfirm={(total, note) => {
+                  setSlMat(total > 0 ? total.toFixed(2) : slMat)
+                  setSlNotes(prev => prev ? `${prev}\n${note}` : note)
+                }}
+              />
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Collected $</label>
                 <input type="number" step="0.01" value={slCollected} onChange={e => setSlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
