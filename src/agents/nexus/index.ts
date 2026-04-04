@@ -32,6 +32,8 @@ import { getRelatedMemories } from '@/services/vectorMemory'
 import { setVoiceContext, getVoiceContext, type VoiceContext } from '@/services/voice'
 // ── Session 10: Skill Intelligence ──────────────────────────────────────────
 import { processSkillSignals, isDevelopmentQuery, buildSkillMapContext } from '@/services/skillSignalExtractor'
+// ── V5 Session: Deep context builder (local-first, rich prose context) ───────
+import { buildDeepProjectContext } from './nexusContextBuilder'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,19 +84,40 @@ export function getLastContextSyncTime(): number {
 }
 
 /**
- * Build a structured operational data block from live Supabase data.
- * Queries active projects, service logs (30d), field logs (30d),
- * open RFIs, AR items, and pending agenda alerts.
+ * Build a structured operational data block for NEXUS context injection.
+ *
+ * V5 UPGRADE — Local-first deep context:
+ * 1. Tries getBackupData() (localStorage) first — this is the authoritative
+ *    source for all rich project data: phases, tasks, laborRows, mtoRows,
+ *    rfis with age, finance overrides, and field log recency.
+ * 2. Falls back to shallow Supabase queries only when no local data exists
+ *    (e.g. first load before any backup is imported, or clean slate).
+ *
+ * The output is readable prose, not a JSON dump — so Claude can produce
+ * responses like "Your rough-in is stalled — no movement in 8 days and the
+ * RTU RFI has been blocking for a month" rather than generic KPI summaries.
  */
 async function buildOperationalContext(orgId: string): Promise<string> {
+  // ── Step 1: Try local-first deep context (primary path) ──────────────────
+  try {
+    const localContext = buildDeepProjectContext()
+    if (localContext) {
+      console.log('[NEXUS] Deep local context built —', localContext.length, 'chars')
+      return localContext
+    }
+  } catch (localErr) {
+    console.warn('[NEXUS] Deep local context failed, falling back to Supabase:', localErr)
+  }
+
+  // ── Step 2: Supabase fallback (shallow — used when no local state exists) ─
   const timestamp = new Date().toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
   })
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
-  const lines: string[] = [`## Live Operational Data (as of ${timestamp})`]
+  const lines: string[] = [`## Live Operational Data — Supabase Fallback (as of ${timestamp})`]
 
   try {
-    // 1. Active projects
+    // Active projects (shallow schema — no phase/task/labor detail)
     const { data: projects } = await supabase
       .from('projects')
       .select('id, name, contract_value, actual_cost, status, phase, updated_at')
@@ -110,7 +133,6 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       .eq('org_id', orgId)
       .limit(100)
 
-    // Aggregate paid and billed amounts per project
     const paidByProject   = new Map()
     const billedByProject = new Map()
     for (const inv of (invoices || [])) {
@@ -121,7 +143,6 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       billedByProject.set(pid, (billedByProject.get(pid) || 0) + (Number(inv.total) || 0))
     }
 
-    // Name lookup for later joins
     const projectNameById = new Map()
     for (const p of (projects || [])) projectNameById.set(p.id, p.name)
 
@@ -138,7 +159,7 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 2. Service logs last 30 days
+    // Service logs last 30 days
     const { data: serviceLogs } = await supabase
       .from('service_logs')
       .select('log_date, customer_name, collected, job_type, field_log_id')
@@ -147,7 +168,6 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       .order('log_date', { ascending: false })
       .limit(50)
 
-    // Quoted amounts from linked field_logs
     const quotedByFieldLog = new Map()
     const slFieldLogIds = (serviceLogs || []).filter(sl => sl.field_log_id).map(sl => sl.field_log_id)
     if (slFieldLogIds.length > 0) {
@@ -168,7 +188,7 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 3. Field logs last 30 days
+    // Field logs last 30 days
     const { data: fieldLogs } = await supabase
       .from('field_logs')
       .select('log_date, project_id, phase, hours, collected, material_cost')
@@ -187,13 +207,13 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 4. Open RFIs
+    // Open RFIs (subject + description only — no age/directed-to in Supabase fallback)
     const { data: rfis } = await supabase
       .from('rfis')
-      .select('subject, description, status, project_id')
+      .select('subject, description, status, project_id, created_at')
       .eq('org_id', orgId)
       .in('status', ['open', 'pending', 'draft'])
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: true })
       .limit(20)
 
     if (rfis?.length) {
@@ -202,12 +222,16 @@ async function buildOperationalContext(orgId: string): Promise<string> {
         const projName = rfi.project_id
           ? (projectNameById.get(rfi.project_id) || rfi.project_id.slice(0, 8))
           : 'Unknown Project'
+        const daysOpen = rfi.created_at
+          ? Math.floor((Date.now() - new Date(rfi.created_at).getTime()) / 86400000)
+          : null
+        const ageStr = daysOpen !== null ? ` (${daysOpen} days open)` : ''
         const desc = rfi.description ? rfi.description.slice(0, 120) : 'No description'
-        lines.push(`- [${projName}] ${rfi.subject}: ${desc}`)
+        lines.push(`- [${projName}]${ageStr} ${rfi.subject}: ${desc}`)
       }
     }
 
-    // 5. AR items (contract - paid)
+    // AR items
     if (projects?.length) {
       const arItems = (projects || [])
         .map(p => ({
@@ -227,7 +251,7 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 6. Pending agenda alerts
+    // Pending agenda alerts
     const { data: agendaTasks } = await supabase
       .from('agenda_tasks')
       .select('text, due_date, status, metadata')
@@ -247,11 +271,11 @@ async function buildOperationalContext(orgId: string): Promise<string> {
     }
 
   } catch (err) {
-    console.warn('[NEXUS] buildOperationalContext error — continuing with memory only:', err)
-    lines.push('\n(Live data unavailable — using conversation memory and local backup)')
+    console.warn('[NEXUS] Supabase fallback context error — continuing with memory only:', err)
+    lines.push('\n(Live data unavailable — using conversation memory only)')
   }
 
-  lines.push('\nUse this data to answer operational questions accurately. Do not ask the user to create memory buckets for information that already exists here.')
+  lines.push('\nNote: This context is from Supabase (shallow schema). For richer project insight including phase detail, RFI ages, labor breakdown, and MTO gaps, import your latest backup into the app.')
   return lines.join('\n')
 }
 
