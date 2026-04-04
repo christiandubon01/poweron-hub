@@ -77,7 +77,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     pushState()
     const rfi = (freshProject.rfis || []).find(r => r.id === rfiId)
     if (rfi) {
-      rfi.status = rfi.status === 'critical' ? 'open' : rfi.status === 'open' ? 'answered' : 'open'
+      const nextStatus = rfi.status === 'critical' ? 'open' : rfi.status === 'open' ? 'answered' : 'open'
+      rfi.status = nextStatus
+      if (nextStatus === 'answered' || nextStatus === 'resolved') {
+        if (!rfi.resolved_at) rfi.resolved_at = new Date().toISOString().split('T')[0]
+      } else {
+        rfi.resolved_at = ''
+      }
     }
     saveBackupData(freshBackup)
     forceUpdate()
@@ -170,6 +176,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {rfis.map(r => {
               const colors = statusBadgeColor(r.status)
+              const isResolved = r.status === 'answered' || r.status === 'resolved'
+              const createdDate = r.submitted ? new Date(r.submitted) : null
+              const endDate = isResolved && r.resolved_at ? new Date(r.resolved_at) : new Date()
+              const daysOpen = createdDate
+                ? Math.max(0, Math.floor((endDate.getTime() - createdDate.getTime()) / 86400000))
+                : null
+              const daysColor = daysOpen === null ? 'var(--t3)' : daysOpen > 30 ? '#ef4444' : daysOpen > 14 ? '#f59e0b' : 'var(--t3)'
               return (
                 <div
                   key={r.id}
@@ -198,9 +211,19 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                         {r.status.toUpperCase()}
                       </span>
                     </div>
-                    <span style={{ fontSize: '11px', color: 'var(--t3)' }}>
-                      {r.submitted} · {r.directedTo || '—'}
-                    </span>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
+                        Created: {r.submitted || '—'} · {r.directedTo || '—'}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '2px' }}>
+                        Resolved: {isResolved && r.resolved_at ? r.resolved_at : '—'}
+                        {daysOpen !== null && (
+                          <span style={{ marginLeft: '8px', color: daysColor, fontWeight: daysOpen > 14 ? '600' : '400' }}>
+                            Open {daysOpen} {daysOpen === 1 ? 'day' : 'days'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Stage Recorded / Stage Applies dropdowns */}
