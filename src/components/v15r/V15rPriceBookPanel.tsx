@@ -18,7 +18,7 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download } from 'lucide-react'
-import { getBackupData, saveBackupData, syncToSupabase, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, markChanged, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 
@@ -242,7 +242,7 @@ function ImportPreviewModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-[#1a1d27] border border-gray-700 rounded-xl max-w-3xl w-full max-h-[80vh] flex flex-col shadow-2xl">
+      <div className="bg-[var(--bg-secondary)] border border-gray-700 rounded-xl max-w-3xl w-full max-h-[80vh] flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div>
@@ -257,7 +257,7 @@ function ImportPreviewModal({
         {/* Table */}
         <div className="flex-1 overflow-y-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-[#232738]">
+            <thead className="sticky top-0 bg-[var(--bg-card)]">
               <tr className="text-xs text-gray-400 uppercase">
                 <th className="px-4 py-2 text-left w-10">
                   <input
@@ -348,7 +348,7 @@ function ColumnMappingModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-[#1a1d27] border border-gray-700 rounded-xl max-w-lg w-full shadow-2xl">
+      <div className="bg-[var(--bg-secondary)] border border-gray-700 rounded-xl max-w-lg w-full shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div>
             <h3 className="text-lg font-bold text-gray-100">Map Columns</h3>
@@ -368,7 +368,7 @@ function ColumnMappingModal({
               <select
                 value={mapping[f.key] ?? ''}
                 onChange={(e) => onChangeMapping(f.key, e.target.value === '' ? null : Number(e.target.value))}
-                className="flex-1 px-3 py-2 bg-[#232738] border border-gray-600 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-emerald-500"
+                className="flex-1 px-3 py-2 bg-[var(--bg-input)] border border-gray-600 rounded-lg text-sm text-[var(--text-primary)] focus:outline-none focus:border-emerald-500"
               >
                 <option value="">— Skip —</option>
                 {headers.map((h, i) => (
@@ -624,13 +624,13 @@ export default function V15rPriceBookPanel() {
 
     // Save to poweron_v2 + poweron_backup_data
     persistPriceBook()
-    // Trigger Supabase sync
-    syncToSupabase().catch(err => console.warn('[PriceBook] Sync failed:', err))
+    // Mark changed — 30s periodic sync (startPeriodicSync) will handle Supabase write
+    markChanged('priceBook')
 
     setImportItems(null)
     refreshBackup()
 
-    setImportToast(`${newItems.length} items added to Price Book — synced`)
+    setImportToast(`${newItems.length} items added to Price Book — saved`)
     setTimeout(() => setImportToast(null), 5000)
   }
 

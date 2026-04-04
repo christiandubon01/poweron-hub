@@ -2,6 +2,7 @@
 import React, { useState, useCallback } from 'react'
 import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights, resolveProjectBucket, getProjectFinancials } from '@/services/backupDataService'
+import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -246,7 +247,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     } else {
       backup.serviceEstimates.push(estObj)
     }
-    saveBackupDataAndSync(backup, 'serviceEstimates')
+    nonCriticalWrite(backup, 'serviceEstimates')
     resetEstForm()
     setShowEstForm(false)
     forceUpdate()
@@ -265,7 +266,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (!confirm('Delete this estimate?')) return
     pushState(backup)
     backup.serviceEstimates = (backup.serviceEstimates || []).filter(e => e.id !== id)
-    saveBackupDataAndSync(backup, 'serviceEstimates')
+    nonCriticalWrite(backup, 'serviceEstimates')
     forceUpdate()
   }
 
@@ -296,7 +297,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       movedAt: new Date().toISOString(),
     })
     backup.serviceEstimates = ests.filter(e => e.id !== id)
-    saveBackupDataAndSync(backup, 'activeServiceCalls')
+    nonCriticalWrite(backup, 'activeServiceCalls')
     forceUpdate()
   }
 
@@ -333,7 +334,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (!confirm('Delete this active service call?')) return
     pushState(backup)
     backup.activeServiceCalls = (backup.activeServiceCalls || []).filter(c => c.id !== id)
-    saveBackupDataAndSync(backup, 'activeServiceCalls')
+    nonCriticalWrite(backup, 'activeServiceCalls')
     forceUpdate()
   }
 

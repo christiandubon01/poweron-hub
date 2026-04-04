@@ -24,6 +24,7 @@ import {
   daysSince,
   type BackupGCContact,
 } from '@/services/backupDataService'
+import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -83,7 +84,7 @@ export default function V15rLeadsPanel() {
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) {
     return (
-      <div className="flex items-center justify-center w-full h-64 bg-[#1a1d27]">
+      <div className="flex items-center justify-center w-full h-64 bg-[var(--bg-secondary)]">
         <div className="text-gray-500 text-sm">No backup data. Import to view leads.</div>
       </div>
     )
@@ -503,24 +504,24 @@ export default function V15rLeadsPanel() {
       <div>
         {/* ── Pipeline Summary Card ── */}
         <div className="grid grid-cols-4 gap-3 mb-4">
-          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+          <div className="bg-[var(--bg-card)] rounded-lg p-2.5 border border-gray-800">
             <div className="text-[8px] uppercase text-gray-500 font-bold">Total Leads</div>
             <div className="text-sm font-bold font-mono mt-1 text-gray-200">{totalLeads}</div>
           </div>
-          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+          <div className="bg-[var(--bg-card)] rounded-lg p-2.5 border border-gray-800">
             <div className="text-[8px] uppercase text-gray-500 font-bold">Hot Leads (80+)</div>
             <div className="text-sm font-bold font-mono mt-1 text-emerald-400">{hotLeads.length}</div>
             {hotLeads.length > 0 && (
               <div className="text-[9px] text-gray-500 mt-0.5">Avg {fmtK(hotAvgJob)}</div>
             )}
           </div>
-          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+          <div className="bg-[var(--bg-card)] rounded-lg p-2.5 border border-gray-800">
             <div className="text-[8px] uppercase text-gray-500 font-bold">Overdue Follow-ups</div>
             <div className={`text-sm font-bold font-mono mt-1 ${overdueFollowups.length > 0 ? 'text-red-400' : 'text-gray-400'}`}>
               {overdueFollowups.length}
             </div>
           </div>
-          <div className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+          <div className="bg-[var(--bg-card)] rounded-lg p-2.5 border border-gray-800">
             <div className="text-[8px] uppercase text-gray-500 font-bold">Est. Pipeline Value</div>
             <div className="text-sm font-bold font-mono mt-1 text-blue-400">{fmtK(pipelineValue)}</div>
           </div>
@@ -726,7 +727,7 @@ export default function V15rLeadsPanel() {
 
                               {/* Quick Log Contact Form */}
                               {openLogFormId === c.id ? (
-                                <div className="bg-[#1a1d27] rounded p-3 border border-gray-700 space-y-2">
+                                <div className="bg-[var(--bg-secondary)] rounded p-3 border border-gray-700 space-y-2">
                                   <div className="text-xs font-bold text-gray-400">Quick Log Contact</div>
                                   <select
                                     value={logFormData.method}
@@ -755,7 +756,7 @@ export default function V15rLeadsPanel() {
                               )}
 
                               {/* Linked Jobs Section */}
-                              <div className="bg-[#1a1d27] rounded p-3 border border-gray-700 space-y-3">
+                              <div className="bg-[var(--bg-secondary)] rounded p-3 border border-gray-700 space-y-3">
                                 <div className="text-xs font-bold text-gray-400">Linked Jobs</div>
 
                                 {/* Linked Service Leads */}
@@ -766,7 +767,7 @@ export default function V15rLeadsPanel() {
                                       {agg.linkedLeads.map((lead: any) => {
                                         const statusClr = SVC_STATUS_COLORS[lead.status] || '#6b7280'
                                         return (
-                                          <div key={lead.id} className="bg-[#232738] rounded p-2 border border-gray-800 text-[9px] space-y-1">
+                                          <div key={lead.id} className="bg-[var(--bg-card)] rounded p-2 border border-gray-800 text-[9px] space-y-1">
                                             <div className="flex justify-between">
                                               <span className="text-gray-400">{lead.date}</span>
                                               <span className="text-gray-500">{lead.customer}</span>
@@ -791,7 +792,7 @@ export default function V15rLeadsPanel() {
                                     <div className="text-[9px] font-semibold text-gray-500 mb-2">Service Logs ({agg.linkedLogs.length})</div>
                                     <div className="space-y-1.5">
                                       {agg.linkedLogs.map((log: any) => (
-                                        <div key={log.id} className="bg-[#232738] rounded p-2 border border-gray-800 text-[9px] space-y-1">
+                                        <div key={log.id} className="bg-[var(--bg-card)] rounded p-2 border border-gray-800 text-[9px] space-y-1">
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">{log.date}</span>
                                             <span className="text-gray-500">{log.customer}</span>
@@ -983,7 +984,7 @@ export default function V15rLeadsPanel() {
             { lbl: 'Conversion Rate', val: convRate + '%', clr: Number(convRate) >= 30 ? '#10b981' : '#f59e0b' },
             { lbl: 'Total Reviews', val: String(weeklyReviews.length) },
           ].map((k, i) => (
-            <div key={i} className="bg-[#232738] rounded-lg p-2.5 border border-gray-800">
+            <div key={i} className="bg-[var(--bg-card)] rounded-lg p-2.5 border border-gray-800">
               <div className="text-[8px] uppercase text-gray-500 font-bold">{k.lbl}</div>
               <div className="text-sm font-bold font-mono mt-1" style={{ color: k.clr || '#e5e7eb' }}>{k.val}</div>
             </div>
@@ -1098,7 +1099,7 @@ export default function V15rLeadsPanel() {
   // ── Main return ────────────────────────────────────────────────────────
 
   return (
-    <div ref={panelRef} className="min-h-screen bg-[#1a1d27] p-6">
+    <div ref={panelRef} className="min-h-screen bg-[var(--bg-secondary)] p-6">
       {/* Tab switcher */}
       <div className="flex gap-2 mb-6 items-center">
         {[
