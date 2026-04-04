@@ -79,6 +79,21 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const lastTranscriptRef           = useRef('')
   const lastCleanedTranscriptRef    = useRef('')
 
+  // FIX 4 — Session continuity: key for sessionStorage persistence
+  const DRAWER_SESSION_KEY = 'nexus_drawer_messages_v1'
+
+  // FIX 4 — Load last 3 messages from previous session as faded context
+  const [contextMessages, setContextMessages] = useState<DrawerMessage[]>(() => {
+    try {
+      const stored = sessionStorage.getItem('nexus_drawer_messages_v1')
+      if (stored) {
+        const msgs: DrawerMessage[] = JSON.parse(stored)
+        return msgs.slice(-3)
+      }
+    } catch {}
+    return []
+  })
+
   // Silence detection refs
   const silenceTimerRef    = useRef(null)
   const silenceStartRef    = useRef(0)
@@ -218,6 +233,14 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
     return () => unsub()
   }, [user?.id, profile?.org_id])
 
+  // FIX 4 — Persist messages to sessionStorage whenever they change
+  useEffect(() => {
+    if (messages.length === 0) return
+    try {
+      sessionStorage.setItem(DRAWER_SESSION_KEY, JSON.stringify(messages))
+    } catch {}
+  }, [messages, DRAWER_SESSION_KEY])
+
   // Silence detection
   const stopSilenceDetection = useCallback(() => {
     if (silenceRafRef.current)      { cancelAnimationFrame(silenceRafRef.current); silenceRafRef.current = null }
@@ -296,6 +319,9 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       case 'listening':
         if (!drawerOpen)            { setDrawerOpen(true); setDrawerExpanded(true) }
         else if (!drawerExpanded)   { setDrawerExpanded(true) }
+        // FIX 1 — sync accumulated conversation history to voice subsystem
+        // so voice queries share multi-turn context with text conversation
+        voice.setConversationHistory(conversationHistoryRef.current)
         await voice.startRecording('normal')
         break
       case 'recording':
@@ -379,12 +405,13 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
           if (!drawerOpen) { setDrawerOpen(true); setDrawerExpanded(true) }
           else             { toggleDrawer() }
         }}
-        orbState    = {orbState}
-        voiceStatus = {status}
-        onMicPress  = {handleMicPress}
-        messages    = {messages}
-        onSendText  = {handleSendText}
-        isSending   = {isSending}
+        orbState        = {orbState}
+        voiceStatus     = {status}
+        onMicPress      = {handleMicPress}
+        messages        = {messages}
+        onSendText      = {handleSendText}
+        isSending       = {isSending}
+        contextMessages = {contextMessages}
       />
 
       {/* Silence progress bar */}
