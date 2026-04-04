@@ -47,6 +47,7 @@ import {
   resolveProjectBucket,
   num,
   getProjectFinancials,
+  buildProjectLogRollup,
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
@@ -89,6 +90,18 @@ function agendaStatusChip(status: string) {
 
 // Status cycle order
 const STATUS_CYCLE = ['pending', 'active', 'done', 'postponed', 'declined']
+
+// ── Balance color helper (same thresholds as Field Log) ─────────────────────
+// green > 20% remaining | yellow 10–20% | orange < 10% | red if negative
+
+function getBalanceColor(balance: number, contract: number): string {
+  if (balance < 0) return '#ef4444'       // red: negative balance
+  if (contract <= 0) return '#10b981'     // green fallback when no contract set
+  const pctLeft = balance / contract
+  if (pctLeft > 0.20) return '#10b981'   // green: > 20% remaining
+  if (pctLeft > 0.10) return '#f59e0b'   // yellow: 10–20% remaining
+  return '#f97316'                        // orange: < 10% remaining
+}
 
 // ── Service money math helper ────────────────────────────────────────────────
 
@@ -1062,57 +1075,69 @@ export default function V15rHome() {
       </div>
 
       {/* ── RECENT LOGS ──────────────────────────────────────────────────────── */}
+      {/* Mirrors Field Log tab: uses buildProjectLogRollup for cumulative math per entry */}
       <div>
         <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Recent Logs</h2>
         {recentLogs.length > 0 ? (
           <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
             {(() => {
-              const grouped = groupLogsByDate(recentLogs)
-              const sortedDates = Array.from(grouped.keys()).sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
+              // Build rollup cache per project — same pattern as Field Log tab
+              const rollCache: Record<string, any> = {}
+              const getRoll = (projId: string) => {
+                if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
+                return rollCache[projId]
+              }
 
-              return sortedDates.map((date, dateIdx) => {
-                const logsForDate = grouped.get(date) || []
-                const mileRate = backup.settings?.mileRate || 0.66
-
-                // Calculate daily totals
-                // Use labor value (hrs × billRate) per entry — not cumulative project contract values
-                const billRate = num(backup.settings?.billRate || 95)
-                let dailyRevenue = 0
-                let dailyExpenses = 0
-                logsForDate.forEach((l: any) => {
-                  dailyRevenue += num(l.hrs) * billRate
-                  const mat = num(l.mat || 0)
-                  const miles = num(l.miles || 0)
-                  dailyExpenses += mat + (miles * mileRate)
-                })
-                const dailyNet = dailyRevenue - dailyExpenses
+              return recentLogs.map((l: any, i: number) => {
+                const projId = l.projId || l.projectId || ''
+                const projRoll = getRoll(projId)
+                // Fall back gracefully if log id not found in rollup (e.g. missing projId)
+                const rr = projRoll.byId[l.id] || {
+                  entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
+                  entryMaterialCost: num(l.mat),
+                  entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
+                  entryTotalCost: 0,
+                  remainingAfter: projRoll.quote,
+                }
+                const entryRevenue = rr.entryLaborCost
+                const entryExpenses = rr.entryMaterialCost + rr.entryMileageCost
+                const runningBalance = num(rr.remainingAfter)
+                const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
 
                 return (
-                  <div key={date}>
-                    {logsForDate.map((l, i) => (
-                      <div key={l.id || date + '-' + i} className={`px-4 py-3 flex items-start justify-between ${i < logsForDate.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
-                            <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
-                            <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
-                          </div>
-                          <div className="text-[10px] text-blue-300">{l.phase}</div>
-                          {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
-                        </div>
-                        <div className="text-right flex-shrink-0 ml-3">
-                          <div className="text-xs font-mono text-gray-200">{l.hrs}h</div>
-                          {l.mat > 0 && <div className="text-[10px] font-mono text-yellow-400">{fmt(l.mat)}</div>}
-                        </div>
+                  <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
+                        <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
+                        <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
                       </div>
-                    ))}
-
-                    {/* Daily summary strip */}
-                    <div className="px-4 py-1.5 bg-gray-800/50 border border-gray-700/30 rounded mx-2 my-2 text-[10px] font-mono">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span style={{color: '#10b981'}}>Revenue: {fmt(dailyRevenue)}</span>
-                        <span style={{color: '#ef4444'}}>Expenses: {fmt(dailyExpenses)}</span>
-                        <span style={{color: dailyNet >= 0 ? '#10b981' : '#ef4444'}}>Net: {fmt(dailyNet)}</span>
+                      <div className="text-[10px] text-blue-300">{l.phase}</div>
+                      {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
+                      {/* Expenses row: per-entry Revenue | Expenses | Net (running project balance) */}
+                      <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
+                        <span>
+                          <span className="text-gray-500">Revenue: </span>
+                          <span style={{ color: '#10b981' }}>{fmt(entryRevenue)}</span>
+                        </span>
+                        <span>
+                          <span className="text-gray-500">Expenses: </span>
+                          <span style={{ color: '#ef4444' }}>{fmt(entryExpenses)}</span>
+                        </span>
+                        <span>
+                          <span className="text-gray-500">Net: </span>
+                          <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span>
+                        </span>
+                      </div>
+                    </div>
+                    {/* Right side: hours | mat cost | running balance */}
+                    <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
+                      <div className="text-xs font-mono text-gray-200">{num(l.hrs).toFixed(1)}h</div>
+                      {num(l.mat) > 0 && (
+                        <div className="text-[10px] font-mono text-yellow-400">{fmt(num(l.mat))}</div>
+                      )}
+                      <div className="text-[11px] font-mono font-bold" style={{ color: balanceColor }}>
+                        Net: {fmt(runningBalance)}
                       </div>
                     </div>
                   </div>
