@@ -399,7 +399,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
               >
                 <div style={{ width: '3px', height: '16px', borderRadius: '2px', backgroundColor: clr, flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ color: 'var(--t1)', fontWeight: '600', marginBottom: '2px' }}>
+                  <div style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '14px', marginBottom: '2px' }}>
                     {ph}
                     {isCustom && (
                       <span style={{
@@ -471,13 +471,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                         onDrop={e => onDrop(ph, t.id, e)}
                         onDragEnd={onDragEnd}
                         style={{
-                          padding: '8px 10px',
+                          padding: '10px 10px 10px 0',
                           backgroundColor: dragActive === t.id ? '#2a2d40' : '#1e2130',
                           borderRadius: '6px',
                           display: 'flex',
                           flexDirection: 'row',
-                          alignItems: 'stretch',
-                          gap: '8px',
+                          alignItems: 'center',
+                          minHeight: '56px',
+                          gap: '0',
                           cursor: 'grab',
                           opacity: dragActive === t.id ? 0.55 : 1,
                           border: dragActive === t.id
@@ -487,23 +488,33 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           userSelect: 'none',
                         }}
                       >
-                        {/* Drag handle */}
-                        <span
+                        {/* Drag handle — 20px wide, left edge */}
+                        <div
                           style={{
-                            color: 'var(--t3)',
-                            fontSize: '14px',
-                            cursor: 'grab',
+                            width: '20px',
                             flexShrink: 0,
-                            opacity: 0.5,
-                            alignSelf: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            alignSelf: 'stretch',
+                            cursor: 'grab',
                           }}
                           title="Drag to reorder"
                         >
-                          ⠿
-                        </span>
+                          <span
+                            style={{
+                              color: 'var(--t3)',
+                              fontSize: '14px',
+                              opacity: 0.6,
+                              lineHeight: '1',
+                            }}
+                          >
+                            ⠿
+                          </span>
+                        </div>
 
-                        {/* Left column — 70%: description + slider */}
-                        <div style={{ flex: 7, display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
+                        {/* Left column — 65%: description + slider */}
+                        <div style={{ flex: '0 0 65%', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, paddingRight: '12px' }}>
                           <input
                             type="text"
                             value={t.desc || ''}
@@ -513,7 +524,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                               background: 'transparent',
                               border: 'none',
                               color: 'var(--t1)',
-                              fontSize: '12px',
+                              fontSize: '13px',
                               fontFamily: 'inherit',
                               outline: 'none',
                               width: '100%',
@@ -530,14 +541,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           />
                         </div>
 
-                        {/* Right column — 30%: hrs input + pct display, vertically centered */}
+                        {/* Right column — 35%: hours on top, percentage below */}
                         <div style={{
-                          flex: 3,
+                          flex: '0 0 calc(35% - 20px)',
                           display: 'flex',
                           flexDirection: 'column',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: '5px',
+                          gap: '6px',
                           minWidth: 0,
                         }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -548,21 +559,21 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                               step="0.5"
                               min="0"
                               style={{
-                                width: '50px',
-                                padding: '3px 4px',
+                                width: '54px',
+                                padding: '4px 6px',
                                 backgroundColor: '#0f1117',
                                 border: '1px solid var(--bdr2)',
                                 color: 'var(--t1)',
                                 fontFamily: 'monospace',
                                 borderRadius: '4px',
-                                fontSize: '11px',
+                                fontSize: '12px',
                                 textAlign: 'center',
                               }}
                             />
-                            <span style={{ fontSize: '10px', color: 'var(--t3)', flexShrink: 0 }}>hrs</span>
+                            <span style={{ fontSize: '11px', color: 'var(--t3)', flexShrink: 0 }}>hrs</span>
                           </div>
                           <span style={{
-                            fontSize: '13px',
+                            fontSize: '14px',
                             fontFamily: 'monospace',
                             fontWeight: '700',
                             color: clr,
@@ -582,7 +593,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             color: '#ef4444',
                             cursor: 'pointer',
                             fontSize: '16px',
-                            padding: '0 2px',
+                            padding: '0 4px',
                             lineHeight: 1,
                           }}
                         >

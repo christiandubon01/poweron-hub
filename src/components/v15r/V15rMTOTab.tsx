@@ -35,6 +35,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
 
+  // ── Inline edit state for chip-to-input transform ─────────────────
+  const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+
   // Global mouseup ends drag-select
   const handleMouseUp = useCallback(() => setIsSelecting(false), [])
   useEffect(() => {
@@ -211,13 +215,11 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     // Show when item name has text AND no price book item name matches it.
     const nameHasText = !!(r.name && r.name.trim())
     const showSearchBtn = nameHasText && !hasPBNameMatch(r.name)
-    // Show inputs if there is any committed OR locally-typed placement, or a note, or the row is focused
+    // Chip-based placement/note UX
     const hasPlacementVal = !!(localVal.trim())
     const hasNoteVal = !!(r.note && r.note.trim())
-    const hasAnySecondaryValue = hasPlacementVal || hasNoteVal
-    const showSecondaryInputs = hasAnySecondaryValue || isRowFocused
-    // Show the "+Add" hint only when hovered but secondary is hidden
-    const showAddHint = !showSecondaryInputs && isRowHovered
+    const isEditingPlacement = editingPlacementId === r.id
+    const isEditingNote = editingNoteId === r.id
 
     return (
       <tr
@@ -284,80 +286,188 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
             )}
           </div>
 
-          {/* Bug 4: Hover hint — only shown when row is hovered, has no values, and is not focused */}
-          {showAddHint && (
-            <div
-              onClick={() => setFocusedRowId(r.id)}
-              onMouseDown={e => e.stopPropagation()}
-              style={{
-                marginTop: '3px',
-                fontSize: '10px',
-                color: 'rgba(255,255,255,0.25)',
-                cursor: 'pointer',
-                padding: '2px 0',
-              }}
-            >
-              + Add placement / note
-            </div>
-          )}
-
-          {/* Bug 4: Secondary inputs — hidden when both empty and not focused */}
-          {showSecondaryInputs && (
-            <div
-              style={{ display: 'flex', gap: '4px', marginTop: '3px' }}
-              onFocus={() => setFocusedRowId(r.id)}
-              onBlur={e => {
-                // Only clear focus if focus moved entirely outside this wrapper
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                  setFocusedRowId(null)
-                }
-              }}
-            >
-              {/* Bug 1+2+3: placement uses local state; commits on blur/Enter */}
+          {/* Placement chip / input */}
+          <div style={{ display: 'flex', gap: '4px', marginTop: '3px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* -- Placement -- */}
+            {hasPlacementVal && !isEditingPlacement ? (
+              <span
+                onClick={() => setEditingPlacementId(r.id)}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '2px 8px',
+                  borderRadius: '9999px',
+                  backgroundColor: 'rgba(16,185,129,0.12)',
+                  color: '#86efac',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  lineHeight: '1.5',
+                }}
+              >
+                {localVal}
+                <span
+                  onClick={e => {
+                    e.stopPropagation()
+                    editMTORow(r.id, 'placement', '')
+                    setLocalPlacements(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                    setEditingPlacementId(null)
+                  }}
+                  onMouseDown={e => e.stopPropagation()}
+                  style={{
+                    cursor: 'pointer',
+                    color: 'rgba(134,239,172,0.5)',
+                    fontSize: '12px',
+                    lineHeight: '1',
+                    marginLeft: '2px',
+                  }}
+                  title="Clear placement"
+                >
+                  x
+                </span>
+              </span>
+            ) : isEditingPlacement ? (
               <input
+                autoFocus
                 type="text"
                 value={localVal}
                 onChange={e => setLocalPlacements(prev => ({ ...prev, [r.id]: e.target.value }))}
-                onBlur={e => commitPlacement(e.target.value)}
+                onBlur={e => {
+                  commitPlacement(e.target.value)
+                  setEditingPlacementId(null)
+                }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    commitPlacement((e.target as HTMLInputElement).value);
-                    (e.target as HTMLInputElement).blur()
+                    commitPlacement((e.target as HTMLInputElement).value)
+                    setEditingPlacementId(null)
+                  }
+                  if (e.key === 'Escape') {
+                    setLocalPlacements(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                    setEditingPlacementId(null)
                   }
                 }}
                 onMouseDown={e => e.stopPropagation()}
                 placeholder="Zone/Placement"
-                title="Optional zone or location tag"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '3px',
-                  color: localVal.trim() ? '#86efac' : 'var(--t3)',
-                  width: '50%',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(16,185,129,0.35)',
+                  borderRadius: '9999px',
+                  color: '#86efac',
                   fontSize: '10px',
-                  padding: '2px 5px',
+                  padding: '2px 8px',
+                  width: '120px',
+                  outline: 'none',
                 }}
               />
+            ) : isRowHovered ? (
+              <span
+                onClick={() => setEditingPlacementId(r.id)}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  display: 'inline-block',
+                  padding: '2px 8px',
+                  borderRadius: '9999px',
+                  backgroundColor: 'transparent',
+                  border: '1px dashed rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.18)',
+                  fontSize: '10px',
+                  cursor: 'pointer',
+                  lineHeight: '1.5',
+                }}
+              >
+                + placement
+              </span>
+            ) : null}
+
+            {/* -- Note -- */}
+            {hasNoteVal && !isEditingNote ? (
+              <span
+                onClick={() => setEditingNoteId(r.id)}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '2px 8px',
+                  borderRadius: '9999px',
+                  backgroundColor: 'rgba(148,163,184,0.1)',
+                  color: 'var(--t3)',
+                  fontSize: '10px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  lineHeight: '1.5',
+                }}
+              >
+                {r.note}
+                <span
+                  onClick={e => {
+                    e.stopPropagation()
+                    editMTORow(r.id, 'note', '')
+                    setEditingNoteId(null)
+                  }}
+                  onMouseDown={e => e.stopPropagation()}
+                  style={{
+                    cursor: 'pointer',
+                    color: 'rgba(148,163,184,0.4)',
+                    fontSize: '12px',
+                    lineHeight: '1',
+                    marginLeft: '2px',
+                  }}
+                  title="Clear note"
+                >
+                  x
+                </span>
+              </span>
+            ) : isEditingNote ? (
               <input
+                autoFocus
                 type="text"
                 value={r.note || ''}
                 onChange={e => editMTORow(r.id, 'note', e.target.value)}
+                onBlur={() => setEditingNoteId(null)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    setEditingNoteId(null)
+                  }
+                  if (e.key === 'Escape') setEditingNoteId(null)
+                }}
                 onMouseDown={e => e.stopPropagation()}
                 placeholder="Field note"
-                title="Optional field note"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '3px',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(148,163,184,0.25)',
+                  borderRadius: '9999px',
                   color: 'var(--t3)',
-                  width: '50%',
                   fontSize: '10px',
-                  padding: '2px 5px',
+                  padding: '2px 8px',
+                  width: '120px',
+                  outline: 'none',
                 }}
               />
-            </div>
-          )}
+            ) : isRowHovered ? (
+              <span
+                onClick={() => setEditingNoteId(r.id)}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  display: 'inline-block',
+                  padding: '2px 8px',
+                  borderRadius: '9999px',
+                  backgroundColor: 'transparent',
+                  border: '1px dashed rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.18)',
+                  fontSize: '10px',
+                  cursor: 'pointer',
+                  lineHeight: '1.5',
+                }}
+              >
+                + note
+              </span>
+            ) : null}
+          </div>
         </td>
 
         <td style={{ padding: '8px', fontSize: '11px', color: 'var(--t3)' }}>
