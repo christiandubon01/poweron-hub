@@ -29,6 +29,7 @@ import {
   Send,
   Mic,
   MicOff,
+  RefreshCw,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -125,6 +126,9 @@ export default function V15rHome() {
   const [editingAIAlertId, setEditingAIAlertId] = useState<string | null>(null)
   const [editAIAlertText, setEditAIAlertText] = useState('')
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+
+  // ── Quote refresh offset ──
+  const [quoteOffset, setQuoteOffset] = useState(0)
 
   // ── AI Daily Assistant state ──
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
@@ -464,7 +468,7 @@ export default function V15rHome() {
   const _motivNow = new Date()
   const _motivStart = new Date(_motivNow.getFullYear(), 0, 0)
   const _motivDayOfYear = Math.floor((_motivNow.getTime() - _motivStart.getTime()) / (1000 * 60 * 60 * 24))
-  const _motivPhrase = MOTIVATION_PHRASES[_motivDayOfYear % MOTIVATION_PHRASES.length]
+  const _motivPhrase = MOTIVATION_PHRASES[(_motivDayOfYear + quoteOffset) % MOTIVATION_PHRASES.length]
   const _motivHr = _motivNow.getHours()
   const _motivPeriod = _motivHr >= 5 && _motivHr < 12 ? 'morning'
     : _motivHr >= 12 && _motivHr < 17 ? 'afternoon'
@@ -1071,10 +1075,12 @@ export default function V15rHome() {
                 const mileRate = backup.settings?.mileRate || 0.66
 
                 // Calculate daily totals
+                // Use labor value (hrs × billRate) per entry — not cumulative project contract values
+                const billRate = num(backup.settings?.billRate || 95)
                 let dailyRevenue = 0
                 let dailyExpenses = 0
                 logsForDate.forEach((l: any) => {
-                  dailyRevenue += num(l.collected || l.quoted || 0)
+                  dailyRevenue += num(l.hrs) * billRate
                   const mat = num(l.mat || 0)
                   const miles = num(l.miles || 0)
                   dailyExpenses += mat + (miles * mileRate)
@@ -1128,14 +1134,35 @@ export default function V15rHome() {
           <div style={{ fontSize: 16, color: '#f9fafb', fontStyle: 'italic', fontWeight: 400, marginBottom: 6 }}>{_motivPhrase.quote}</div>
           <div style={{ fontSize: 12, color: '#1D9E75', marginBottom: 10 }}>{_motivPhrase.attr}</div>
           <div style={{ fontSize: 13, color: '#EF9F27', fontWeight: 500 }}>{_motivFireLine}</div>
-          <div
-            style={{ fontSize: 11, color: '#6b7280', marginTop: 10, cursor: 'pointer' }}
-            onClick={() => {
-              setAiInput(`Who said this? ${_motivFullQuote}`)
-              setAiPanelOpen(true)
-            }}
-          >
-            Ask NEXUS who said this →
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+            <div
+              style={{ fontSize: 11, color: '#6b7280', cursor: 'pointer' }}
+              onClick={() => {
+                setAiInput(`Who said this? ${_motivFullQuote}`)
+                setAiPanelOpen(true)
+              }}
+            >
+              Ask NEXUS who said this →
+            </div>
+            <button
+              onClick={() => setQuoteOffset(o => (o + 1) % MOTIVATION_PHRASES.length)}
+              title="Next quote"
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#4b5563',
+                opacity: 0.6,
+                padding: '2px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0.6' }}
+            >
+              <RefreshCw size={13} />
+            </button>
           </div>
         </div>
       )}

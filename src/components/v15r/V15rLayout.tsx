@@ -28,6 +28,7 @@ import {
   Volume2,
   Layers,
   LogOut,
+  Plus,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -42,6 +43,23 @@ import { initSparkBusListeners } from '@/agents/spark'
 import { getVoiceSubsystem, unlockAudioContext } from '@/services/voice'
 import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
 import { callClaude, extractText as claudeExtractText } from '@/services/claudeProxy'
+
+/** Header metric formatter — precise rounding for all KPI pills.
+ *  <$1k → exact ($471) | $1k–$9.9k → one decimal ($1.4k) | $10k–$99k → one decimal ($14.7k) | $100k+ → whole ($105k)
+ */
+function fmtHeader(v: number): string {
+  const n = Number(v || 0)
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 100000) {
+    return sign + '$' + Math.round(abs / 1000) + 'k'
+  }
+  if (abs >= 1000) {
+    // floor to one decimal place (avoid rounding $1,471 up to $1.5k when user expects $1.4k)
+    return sign + '$' + (Math.floor(abs / 100) / 10).toFixed(1) + 'k'
+  }
+  return sign + '$' + Math.round(abs)
+}
 
 interface V15rLayoutProps {
   activeView: string
@@ -962,12 +980,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* PIPELINE */}
                 <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Pipeline' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">${(safeKpis.pipeline / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-green-400">{fmtHeader(safeKpis.pipeline)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Pipeline</span>
                       <span className="text-base font-bold text-green-400">
-                        ${(safeKpis.pipeline / 1000).toFixed(0)}k
+                        {fmtHeader(safeKpis.pipeline)}
                       </span>
                     </>
                   )}
@@ -976,12 +994,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* PAID */}
                 <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">${(safeKpis.paid / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-green-400">{fmtHeader(safeKpis.paid)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
                       <span className="text-base font-bold text-green-400">
-                        ${(safeKpis.paid / 1000).toFixed(0)}k
+                        {fmtHeader(safeKpis.paid)}
                       </span>
                     </>
                   )}
@@ -996,12 +1014,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* EXPOSURE */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Exposure' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-red-400">${(safeKpis.exposure / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-red-400">{fmtHeader(safeKpis.exposure)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Exposure</span>
                       <span className="text-base font-bold text-red-400">
-                        ${(safeKpis.exposure / 1000).toFixed(0)}k
+                        {fmtHeader(safeKpis.exposure)}
                       </span>
                     </>
                   )}
@@ -1010,12 +1028,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* SVC UNBILLED */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Svc Unbilled' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-yellow-400">${Math.round(safeKpis.svcUnbilled / 1000)}k</span>
+                    <span className="text-sm font-bold text-yellow-400">{fmtHeader(safeKpis.svcUnbilled)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
                       <span className="text-base font-bold text-yellow-400">
-                        ${Math.round(safeKpis.svcUnbilled / 1000)}k
+                        {fmtHeader(safeKpis.svcUnbilled)}
                       </span>
                     </>
                   )}
@@ -1061,12 +1079,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* SERVICE NET */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Service Net' : undefined}>
                   {isCompact ? (
-                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${(serviceNet / 1000).toFixed(0)}k</span>
+                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtHeader(serviceNet)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Service Net</span>
                       <span className={`text-base font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        ${(serviceNet / 1000).toFixed(0)}k
+                        {fmtHeader(serviceNet)}
                       </span>
                     </>
                   )}
@@ -1655,9 +1673,9 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-6 left-6 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg z-50 flex items-center justify-center transition-colors"
-        title="Quick Capture"
+        title="Quick log"
       >
-        <Zap size={24} />
+        <Plus size={24} />
       </button>
 
       {/* Bottom sheet */}

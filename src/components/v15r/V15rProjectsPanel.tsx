@@ -221,6 +221,20 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.paid = num(fin.contract)
     p.lastCollectedAt = new Date().toISOString()
     p.lastCollectedAmount = num(fin.contract)
+
+    // Sync to any service log entries linked to this project via project_id field.
+    // BackupServiceLog has no project_id by default — this handles future-linked entries.
+    // No direct link exists in current schema; project_id must be set when creating service logs.
+    const svcLogs = backup.serviceLogs || []
+    svcLogs.forEach((sl: any) => {
+      if (sl.project_id === p.id) {
+        sl.collected = num(fin.contract)
+        sl.payStatus = 'Y'
+        sl.balanceDue = 0
+        if (!sl.project_name) sl.project_name = p.name
+      }
+    })
+
     saveBackupData(backup)
     setCollectProject(null)
     forceUpdate()
@@ -233,6 +247,20 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.paid = num(p.paid || 0) + amount
     p.lastCollectedAt = new Date().toISOString()
     p.lastCollectedAmount = amount
+
+    // Sync partial payment to linked service log entries (linked via project_id field).
+    const svcLogs = backup.serviceLogs || []
+    svcLogs.forEach((sl: any) => {
+      if (sl.project_id === p.id) {
+        const prevCollected = num(sl.collected || 0)
+        const newCollected = prevCollected + amount
+        sl.collected = newCollected
+        sl.balanceDue = Math.max(0, num(sl.quoted || 0) - newCollected)
+        sl.payStatus = sl.balanceDue <= 0 ? 'Y' : (newCollected > 0 ? 'P' : 'N')
+        if (!sl.project_name) sl.project_name = p.name
+      }
+    })
+
     saveBackupData(backup)
     setCollectPartialInput('')
     setCollectLoggingPartial(false)
