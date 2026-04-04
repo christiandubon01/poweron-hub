@@ -542,6 +542,7 @@ async function tier3ClaudeFallback(
     return {
       category: 'general',
       targetAgent: 'nexus',
+      intentType: 'insight',
       confidence: 0.3,
       entities: [],
       requiresConfirmation: false,
@@ -681,12 +682,12 @@ export async function classifyIntent(
     return {
       category: 'general',
       targetAgent: 'nexus',
+      intentType: 'insight',
       confidence: 0.4,
       entities: [],
       requiresConfirmation: false,
       impactLevel: 'LOW',
       reasoning: `Routed to NEXUS general handler (${wordCount}-word input, no strong keyword match)`,
-      intentType,
     }
   }
 
@@ -700,12 +701,12 @@ export async function classifyIntent(
     return {
       category: 'general',
       targetAgent: 'nexus',
+      intentType: 'insight',
       confidence: 0.3,
       entities: [],
       requiresConfirmation: false,
       impactLevel: 'LOW',
       reasoning: 'Routed to NEXUS for general assistance.',
-      intentType,
     }
   }
 }
