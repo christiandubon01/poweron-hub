@@ -71,14 +71,16 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         const waste = num(pbItem?.waste || 0)
         const lineRaw = num(r.qty || 0) * costUnit * (1 + waste)
         const lineTax = lineRaw * taxRate
+        const hasCost = costUnit > 0
         const existing = acc.find(x => x.phase === r.phase)
         if (existing) {
           existing.raw += lineRaw
           existing.tax += lineTax
           existing.total = existing.raw + existing.tax
           existing.count += 1
+          if (hasCost) existing.hasCostData = true
         } else {
-          acc.push({ phase: r.phase, raw: lineRaw, tax: lineTax, total: lineRaw + lineTax, count: 1 })
+          acc.push({ phase: r.phase, raw: lineRaw, tax: lineTax, total: lineRaw + lineTax, count: 1, hasCostData: hasCost })
         }
         return acc
       }, [])
@@ -1401,22 +1403,35 @@ Return ONLY valid JSON, no other text.`
             {t.matBreakdown.length > 0 ? (
               <>
                 {/* Phase header row */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 90px 70px 90px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', fontWeight: '600', fontSize: '11px', color: 'var(--t3)' }}>
+                <div style={{ overflowX: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', fontWeight: '600', fontSize: '11px', color: 'var(--t3)', minWidth: '720px' }}>
                   <div>Phase</div>
                   <div style={{ textAlign: 'right' }}>Items</div>
                   <div style={{ textAlign: 'right' }}>Raw Cost</div>
                   <div style={{ textAlign: 'right' }}>Tax</div>
                   <div style={{ textAlign: 'right' }}>Phase Total</div>
+                  <div style={{ textAlign: 'right' }}>Supplier Cost</div>
+                  <div style={{ textAlign: 'right' }}>Selling Price</div>
+                  <div style={{ textAlign: 'right' }}>Margin %</div>
                 </div>
-                {t.matBreakdown.map((r, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 90px 70px 90px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)' }}>
+                {t.matBreakdown.map((r, i) => {
+                  const markupRate = num(backup.settings?.markup || 50) / 100
+                  const sellingPrice = r.hasCostData ? r.raw * (1 + markupRate) : 0
+                  const marginPct = sellingPrice > 0 ? ((sellingPrice - r.raw) / sellingPrice * 100) : 0
+                  return (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', minWidth: '720px' }}>
                     <div>{r.phase}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>{r.count}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>{fmt(r.raw)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#ef4444' }}>{fmt(r.tax)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: '600', color: '#10b981' }}>{fmt(r.total)}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: 'var(--t2)' }}>{r.hasCostData ? fmt(r.raw) : '—'}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#60a5fa' }}>{r.hasCostData ? fmt(sellingPrice) : '—'}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: marginPct > 0 ? '#10b981' : 'var(--t3)' }}>{r.hasCostData ? marginPct.toFixed(1) + '%' : '—'}</div>
                   </div>
-                ))}
+                  )
+                })}
+                </div>
                 <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '8px' }}>
                   Read-only summary from Material Takeoff tab. Edit items in MTO.
                 </div>
@@ -1727,21 +1742,24 @@ Return ONLY valid JSON, no other text.`
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Subtotal</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.subtotal)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 Tax (
                 <input
                   type="number"
                   value={num(backup.settings?.tax || 0)}
                   onChange={e => editTax(e.target.value)}
                   style={{
-                    width: '40px',
-                    padding: '2px 4px',
-                    backgroundColor: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    width: '52px',
+                    minHeight: '44px',
+                    padding: '10px 8px',
+                    backgroundColor: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
                     color: 'var(--t1)',
                     fontFamily: 'monospace',
-                    fontSize: '12px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
                   }}
                 />
                 %)
