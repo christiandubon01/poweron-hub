@@ -1,603 +1,818 @@
 // @ts-nocheck
-/**
- * src/views/GuardianView.tsx — GUARDIAN Rules Engine View
- *
- * E5 | GUARDIAN Rules Engine
- *
- * Layout:
- *   Panel 1 — Active Rules (header contains "Run Audit" button)
- *   Panel 2 — Violations (appends on each audit run)
- *   Panel 3 — Audit Trail (timestamps + violation counts)
- *
- * Approval gate:
- *   HIGH violations → confirmation modal before results are displayed.
- *   LOW / MEDIUM violations → display immediately with no gate.
- */
-
-import React, { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react';
 import {
-  ShieldAlert,
-  ShieldCheck,
-  Play,
+  Shield,
   AlertTriangle,
   CheckCircle,
   Clock,
-  FileText,
-  RefreshCw,
+  ToggleLeft,
+  ToggleRight,
+  ChevronDown,
+  Plus,
+  Download,
   X,
-  ChevronRight,
-} from 'lucide-react'
+  Brain,
+  Filter,
+  FileText,
+} from 'lucide-react';
+import type { GuardianRule, GuardianViolation, GuardianAuditEntry } from '../types';
+import type { SignedAgreementRecord } from '../services/ndaService';
+import { getUserSignedNDAs } from '../services/ndaService';
 import {
-  evaluateRules,
-  generateAuditEntry,
-  DEFAULT_RULES,
-  type GuardianRule,
-  type GuardianViolation,
-  type GuardianAuditEntry,
-  type GuardianData,
-} from '@/agents/guardian'
+  mockGuardianRules,
+  mockViolations,
+  mockAuditLog,
+} from '../mock';
+import type { AIDecisionLog, DecisionLogFilters } from '../services/auditTrailService';
+import { getDecisionLog, exportToCSV } from '../services/auditTrailService';
 
-// ── Mock Business Data ─────────────────────────────────────────────────────────
-// Representative fixtures that exercise all 5 rule types.
-// Relative dates keep violations fresh on any run date.
+// ─── Severity Badge ───────────────────────────────────────────────────────────
 
-const _now = Date.now()
-const _day = 86400000
-
-function isoDate(offsetDays: number): string {
-  return new Date(_now + offsetDays * _day).toISOString().slice(0, 10)
-}
-
-const MOCK_DATA: GuardianData = {
-  invoices: [
-    {
-      id: 'inv_1',
-      client: 'Alpha Electric Supply',
-      amount: 14500,
-      dueDate: isoDate(-45),   // 45 days overdue → HIGH
-      status: 'overdue',
-    },
-    {
-      id: 'inv_2',
-      client: 'Westside GC',
-      amount: 8200,
-      dueDate: isoDate(-35),   // 35 days overdue → HIGH
-      status: 'pending',
-    },
-    {
-      id: 'inv_3',
-      client: 'Harbor View Dev',
-      amount: 6750,
-      dueDate: isoDate(-10),   // 10 days overdue — under threshold, no flag
-      status: 'pending',
-    },
-    {
-      id: 'inv_4',
-      client: 'Ridgeline Construction',
-      amount: 11000,
-      dueDate: isoDate(14),    // not yet due
-      status: 'pending',
-    },
-  ],
-  leads: [
-    {
-      id: 'lead_1',
-      company: 'Pacific Builders Group',
-      lastFollowUpDate: isoDate(-14),  // 14 days ago → MEDIUM
-    },
-    {
-      id: 'lead_2',
-      company: 'Summit Properties',
-      lastFollowUpDate: isoDate(-3),   // 3 days ago — under threshold
-    },
-    {
-      id: 'lead_3',
-      company: 'Northgate Commercial',
-      lastFollowUpDate: null,          // never followed up → MEDIUM
-    },
-    {
-      id: 'lead_4',
-      company: 'Bayside Renovations',
-      lastFollowUpDate: isoDate(-9),   // 9 days ago → MEDIUM
-    },
-  ],
-  fieldLogs: [
-    {
-      id: 'fl_1',
-      projectId: 'proj_1',
-      projectName: 'Downtown Office Reno',
-      lastLogDate: isoDate(-6),        // 6 days ago, active → MEDIUM
-      projectStatus: 'active',
-    },
-    {
-      id: 'fl_2',
-      projectId: 'proj_2',
-      projectName: 'Warehouse Phase 2',
-      lastLogDate: isoDate(-1),        // yesterday — under threshold
-      projectStatus: 'active',
-    },
-    {
-      id: 'fl_3',
-      projectId: 'proj_3',
-      projectName: 'Completed Fit-Out',
-      lastLogDate: isoDate(-8),        // completed — excluded by rule
-      projectStatus: 'completed',
-    },
-  ],
-  crewMembers: [
-    {
-      id: 'crew_1',
-      name: 'Mike Torres',
-      hoursThisWeek: 0,   // no hours → LOW
-    },
-    {
-      id: 'crew_2',
-      name: 'Jamie Walsh',
-      hoursThisWeek: 32,
-    },
-    {
-      id: 'crew_3',
-      name: 'Sam Rivera',
-      hoursThisWeek: 0,   // no hours → LOW
-    },
-    {
-      id: 'crew_4',
-      name: 'Casey Novak',
-      hoursThisWeek: 24,
-    },
-  ],
-  projects: [
-    {
-      id: 'proj_wh2',
-      name: 'Warehouse Phase 2',
-      health: 28,          // below 40% → HIGH
-      status: 'active',
-    },
-    {
-      id: 'proj_offr',
-      name: 'Downtown Office Reno',
-      health: 72,
-      status: 'active',
-    },
-    {
-      id: 'proj_res',
-      name: 'Residential Remodel A',
-      health: 55,
-      status: 'active',
-    },
-  ],
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function severityColors(severity: string): { bg: string; border: string; text: string; dot: string } {
-  switch (severity) {
-    case 'HIGH':
-      return {
-        bg: 'bg-red-900/15',
-        border: 'border-red-700/40',
-        text: 'text-red-400',
-        dot: 'bg-red-500',
-      }
-    case 'MEDIUM':
-      return {
-        bg: 'bg-amber-900/15',
-        border: 'border-amber-700/40',
-        text: 'text-amber-400',
-        dot: 'bg-amber-500',
-      }
-    default:
-      return {
-        bg: 'bg-yellow-900/10',
-        border: 'border-yellow-700/30',
-        text: 'text-yellow-400',
-        dot: 'bg-yellow-500',
-      }
-  }
-}
-
-function formatTimestamp(iso: string): string {
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
-}
-
-function triggerLabel(type: string): string {
-  switch (type) {
-    case 'INVOICE_OVERDUE':    return 'Invoice Overdue'
-    case 'LEAD_NO_FOLLOWUP':   return 'Lead No Follow-Up'
-    case 'FIELD_LOG_MISSING':  return 'Field Log Missing'
-    case 'CREW_NO_HOURS':      return 'Crew No Hours'
-    case 'PROJECT_HEALTH_LOW': return 'Project Health Low'
-    default: return type
-  }
-}
-
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-function SeverityBadge({ severity }: { severity: string }) {
-  const c = severityColors(severity)
+function SeverityBadge({ severity }: { severity: 'low' | 'medium' | 'high' }) {
+  const styles: Record<'low' | 'medium' | 'high', string> = {
+    high: 'bg-red-900/40 text-red-400 border border-red-800/60',
+    medium: 'bg-yellow-900/40 text-yellow-400 border border-yellow-800/60',
+    low: 'bg-blue-900/40 text-blue-400 border border-blue-800/60',
+  };
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${c.bg} ${c.border} ${c.text}`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide ${styles[severity]}`}>
       {severity}
     </span>
-  )
+  );
 }
 
-function ViolationCard({ violation }: { violation: GuardianViolation }) {
-  const c = severityColors(violation.severity)
-  return (
-    <div className={`rounded-xl border p-3 space-y-1.5 ${c.bg} ${c.border}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <SeverityBadge severity={violation.severity} />
-          <span className="text-[10px] text-gray-500 bg-gray-800/60 border border-gray-700/30 rounded-full px-2 py-0.5">
-            {triggerLabel(violation.triggerType)}
-          </span>
-        </div>
-        <span className="text-[10px] text-gray-600 whitespace-nowrap flex-shrink-0">
-          {formatTimestamp(violation.detectedAt)}
-        </span>
-      </div>
-      <p className="text-white text-xs font-medium">{violation.subject}</p>
-      <p className="text-gray-400 text-xs leading-relaxed">{violation.detail}</p>
-    </div>
-  )
-}
+// ─── Panel Wrapper ────────────────────────────────────────────────────────────
 
-function RuleRow({ rule }: { rule: GuardianRule }) {
-  const c = severityColors(rule.severity)
-  return (
-    <div className="flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-800/60 bg-gray-800/20">
-      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
-      <div className="flex-1 min-w-0">
-        <p className="text-gray-200 text-xs font-medium truncate">{rule.name}</p>
-        <p className="text-gray-600 text-[10px] leading-tight mt-0.5 truncate">{rule.description}</p>
-      </div>
-      <SeverityBadge severity={rule.severity} />
-    </div>
-  )
-}
-
-function AuditRow({ entry }: { entry: GuardianAuditEntry }) {
-  const hasViolations = entry.violationCount > 0
-  return (
-    <div className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border ${hasViolations ? 'border-amber-800/30 bg-amber-900/8' : 'border-emerald-800/30 bg-emerald-900/8'}`}>
-      <div className={`mt-0.5 flex-shrink-0 ${hasViolations ? 'text-amber-500' : 'text-emerald-500'}`}>
-        {hasViolations ? <AlertTriangle size={13} /> : <CheckCircle size={13} />}
-      </div>
-      <div className="flex-1 min-w-0 space-y-0.5">
-        <p className="text-gray-300 text-xs">{entry.result}</p>
-        <p className="text-gray-600 text-[10px]">{entry.action} · {formatTimestamp(entry.timestamp)}</p>
-      </div>
-      {hasViolations && (
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {entry.highCount > 0   && <span className="text-[10px] text-red-400 bg-red-900/20 border border-red-700/30 px-1.5 py-0.5 rounded">{entry.highCount}H</span>}
-          {entry.mediumCount > 0 && <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 px-1.5 py-0.5 rounded">{entry.mediumCount}M</span>}
-          {entry.lowCount > 0    && <span className="text-[10px] text-yellow-400 bg-yellow-900/20 border border-yellow-700/30 px-1.5 py-0.5 rounded">{entry.lowCount}L</span>}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Confirmation Modal ─────────────────────────────────────────────────────────
-
-interface HighViolationModalProps {
-  count: number
-  onReview: () => void
-  onCancel: () => void
-}
-
-function HighViolationModal({ count, onReview, onCancel }: HighViolationModalProps) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={onCancel}
-      />
-
-      {/* Modal card */}
-      <div className="relative z-10 w-full max-w-sm mx-4 rounded-2xl bg-gray-900 border border-red-700/50 shadow-2xl overflow-hidden">
-        {/* Top accent strip */}
-        <div className="h-1 w-full bg-gradient-to-r from-red-600 to-red-400" />
-
-        <div className="p-6 space-y-4">
-          {/* Icon + heading */}
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-700/40 flex items-center justify-center flex-shrink-0">
-              <ShieldAlert size={20} className="text-red-400" />
-            </div>
-            <div>
-              <h3 className="text-white font-bold text-base leading-tight">
-                Critical Violations Found
-              </h3>
-              <p className="text-gray-400 text-xs mt-0.5">Approval required before proceeding</p>
-            </div>
-          </div>
-
-          {/* Body */}
-          <p className="text-gray-300 text-sm leading-relaxed">
-            GUARDIAN found{' '}
-            <span className="text-red-400 font-semibold">{count} critical violation{count !== 1 ? 's' : ''}</span>.
-            Review before proceeding.
-          </p>
-
-          {/* Actions */}
-          <div className="flex gap-3 pt-1">
-            <button
-              onClick={onReview}
-              className="flex-1 flex items-center justify-center gap-2 text-sm font-semibold bg-red-700/30 hover:bg-red-700/50 text-red-300 border border-red-700/50 px-4 py-2.5 rounded-xl transition-colors"
-            >
-              <ChevronRight size={15} />
-              Review
-            </button>
-            <button
-              onClick={onCancel}
-              className="flex-1 flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-gray-200 border border-gray-700/40 px-4 py-2.5 rounded-xl transition-colors bg-gray-800/40 hover:bg-gray-800/80"
-            >
-              <X size={14} />
-              Cancel
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Panel header ───────────────────────────────────────────────────────────────
-
-function PanelHeader({
-  icon,
-  title,
-  subtitle,
-  action,
-}: {
-  icon: React.ReactNode
-  title: string
-  subtitle?: string
-  action?: React.ReactNode
+function Panel({ title, icon, children, headerRight }: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  headerRight?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-800">
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className="text-emerald-400 flex-shrink-0">{icon}</div>
-        <div className="min-w-0">
-          <h3 className="text-white text-sm font-semibold truncate">{title}</h3>
-          {subtitle && (
-            <p className="text-gray-600 text-[10px] truncate">{subtitle}</p>
-          )}
+    <div
+      className="flex flex-col rounded-xl border overflow-hidden"
+      style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+    >
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b"
+        style={{ borderColor: '#1e2128', backgroundColor: '#11121a' }}
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+          <span className="text-green-500">{icon}</span>
+          {title}
         </div>
+        {headerRight}
       </div>
-      {action && <div className="flex-shrink-0">{action}</div>}
+      <div className="flex-1 overflow-y-auto">{children}</div>
     </div>
-  )
+  );
 }
 
-// ── Main View ──────────────────────────────────────────────────────────────────
+// ─── Panel 1: Active Rules ────────────────────────────────────────────────────
 
-export function GuardianView() {
-  const [violations, setViolations]     = useState<GuardianViolation[]>([])
-  const [auditLog, setAuditLog]         = useState<GuardianAuditEntry[]>([])
-  const [running, setRunning]           = useState(false)
+function RulesPanel() {
+  // Replace with real Supabase query during integration
+  const [rules, setRules] = useState<GuardianRule[]>(mockGuardianRules);
+  const [showForm, setShowForm] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newSeverity, setNewSeverity] = useState<'low' | 'medium' | 'high'>('medium');
 
-  // Pending state: violations returned but awaiting modal confirmation (HIGH gate)
-  const [pendingViolations, setPendingViolations] = useState<GuardianViolation[] | null>(null)
-  const [pendingAuditEntry, setPendingAuditEntry] = useState<GuardianAuditEntry | null>(null)
+  function toggleRule(id: string) {
+    setRules((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, active: !r.active } : r))
+    );
+  }
 
-  const activeRules = DEFAULT_RULES.filter(r => r.active)
-  const highCount   = violations.filter(v => v.severity === 'HIGH').length
-  const medCount    = violations.filter(v => v.severity === 'MEDIUM').length
-  const lowCount    = violations.filter(v => v.severity === 'LOW').length
-
-  // ── Run Audit ────────────────────────────────────────────────────────────────
-
-  const handleRunAudit = useCallback(() => {
-    if (running) return
-    setRunning(true)
-
-    // Small async tick to allow spinner to render before CPU-bound work
-    setTimeout(() => {
-      const result    = evaluateRules(DEFAULT_RULES, MOCK_DATA)
-      const entry     = generateAuditEntry('Manual Run Audit', result)
-      const hasHigh   = result.some(v => v.severity === 'HIGH')
-
-      if (hasHigh) {
-        // Store pending and show approval modal
-        setPendingViolations(result)
-        setPendingAuditEntry(entry)
-      } else {
-        // LOW / MEDIUM — display immediately
-        setViolations(prev => [...result, ...prev])
-        setAuditLog(prev => [entry, ...prev])
-      }
-
-      setRunning(false)
-    }, 0)
-  }, [running])
-
-  // ── Modal: Review ─────────────────────────────────────────────────────────────
-
-  const handleModalReview = useCallback(() => {
-    if (!pendingViolations || !pendingAuditEntry) return
-    setViolations(prev => [...pendingViolations, ...prev])
-    setAuditLog(prev => [pendingAuditEntry, ...prev])
-    setPendingViolations(null)
-    setPendingAuditEntry(null)
-  }, [pendingViolations, pendingAuditEntry])
-
-  // ── Modal: Cancel ─────────────────────────────────────────────────────────────
-
-  const handleModalCancel = useCallback(() => {
-    // Log the cancelled run to audit trail but don't show violations
-    if (pendingAuditEntry) {
-      const cancelledEntry: GuardianAuditEntry = {
-        ...pendingAuditEntry,
-        action: 'Run Audit (cancelled by user)',
-        result: `Audit cancelled — ${pendingAuditEntry.highCount} HIGH violation${pendingAuditEntry.highCount !== 1 ? 's' : ''} not reviewed.`,
-      }
-      setAuditLog(prev => [cancelledEntry, ...prev])
-    }
-    setPendingViolations(null)
-    setPendingAuditEntry(null)
-  }, [pendingAuditEntry])
-
-  // ── Pending HIGH count for modal ──────────────────────────────────────────────
-
-  const pendingHighCount = pendingViolations
-    ? pendingViolations.filter(v => v.severity === 'HIGH').length
-    : 0
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  function handleAddRule() {
+    if (!newName.trim()) return;
+    const newRule: GuardianRule = {
+      id: `rule-${Date.now()}`,
+      name: newName.trim(),
+      description: newDescription.trim() || 'No description provided.',
+      severity: newSeverity,
+      active: true,
+    };
+    setRules((prev) => [...prev, newRule]);
+    setNewName('');
+    setNewDescription('');
+    setNewSeverity('medium');
+    setShowForm(false);
+  }
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 text-white overflow-hidden">
-
-      {/* ── Page header ── */}
-      <div className="px-5 pt-5 pb-4 border-b border-gray-800 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-700/30 flex items-center justify-center">
-            <ShieldAlert size={20} className="text-emerald-400" />
-          </div>
-          <div>
-            <h2 className="text-white font-bold text-lg leading-tight">GUARDIAN</h2>
-            <p className="text-gray-500 text-xs">Rules Engine · Business compliance · Violation tracking</p>
+    <Panel
+      title="Active Rules"
+      icon={<Shield size={14} />}
+      headerRight={
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+          style={{ backgroundColor: '#16a34a22', color: '#4ade80', border: '1px solid #16a34a44' }}
+        >
+          <Plus size={12} />
+          Add Rule
+        </button>
+      }
+    >
+      {/* Inline add-rule form */}
+      {showForm && (
+        <div
+          className="mx-3 mt-3 mb-1 p-3 rounded-lg border"
+          style={{ borderColor: '#2a3040', backgroundColor: '#0a0b14' }}
+        >
+          <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">New Rule</p>
+          <div className="flex flex-col gap-2">
+            <input
+              type="text"
+              placeholder="Rule name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg text-sm text-gray-200 placeholder-gray-600 outline-none"
+              style={{ backgroundColor: '#1a1d27', border: '1px solid #2a3040' }}
+            />
+            <input
+              type="text"
+              placeholder="Description (optional)"
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg text-sm text-gray-200 placeholder-gray-600 outline-none"
+              style={{ backgroundColor: '#1a1d27', border: '1px solid #2a3040' }}
+            />
+            <select
+              value={newSeverity}
+              onChange={(e) => setNewSeverity(e.target.value as 'low' | 'medium' | 'high')}
+              className="w-full px-3 py-2 rounded-lg text-sm text-gray-200 outline-none"
+              style={{ backgroundColor: '#1a1d27', border: '1px solid #2a3040' }}
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+            <div className="flex gap-2 mt-1">
+              <button
+                onClick={handleAddRule}
+                className="flex-1 py-2 rounded-lg text-xs font-semibold text-white transition-colors"
+                style={{ backgroundColor: '#16a34a' }}
+              >
+                Add Rule
+              </button>
+              <button
+                onClick={() => setShowForm(false)}
+                className="px-3 py-2 rounded-lg text-xs font-medium text-gray-400 transition-colors"
+                style={{ backgroundColor: '#1a1d27' }}
+              >
+                <X size={12} />
+              </button>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Summary badges */}
-        {violations.length > 0 && (
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <span className="text-[11px] text-gray-500">{violations.length} total violation{violations.length !== 1 ? 's' : ''}:</span>
-            {highCount > 0 && (
-              <span className="text-[10px] font-semibold text-red-400 bg-red-900/20 border border-red-700/30 px-2 py-0.5 rounded-full">
-                {highCount} HIGH
+      {/* Rule list */}
+      <ul className="p-3 flex flex-col gap-2">
+        {rules.map((rule) => (
+          <li
+            key={rule.id}
+            className="flex flex-col gap-1.5 p-3 rounded-lg border transition-opacity"
+            style={{
+              borderColor: '#1e2128',
+              backgroundColor: '#0f1018',
+              opacity: rule.active ? 1 : 0.5,
+            }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <SeverityBadge severity={rule.severity} />
+                <span className="text-sm font-medium text-gray-200 truncate">{rule.name}</span>
+              </div>
+              <button
+                onClick={() => toggleRule(rule.id)}
+                className="flex-shrink-0 text-gray-500 hover:text-gray-300 transition-colors"
+                title={rule.active ? 'Disable rule' : 'Enable rule'}
+              >
+                {rule.active ? (
+                  <ToggleRight size={20} className="text-green-500" />
+                ) : (
+                  <ToggleLeft size={20} />
+                )}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 leading-relaxed">{rule.description}</p>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+// ─── Panel 2: Active Violations ───────────────────────────────────────────────
+
+function ViolationsPanel() {
+  // Replace with real Supabase query during integration
+  const [violations, setViolations] = useState<GuardianViolation[]>(mockViolations);
+  const [resolvedExpanded, setResolvedExpanded] = useState(false);
+
+  function resolveViolation(id: string) {
+    setViolations((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, status: 'resolved' } : v))
+    );
+  }
+
+  const open = violations.filter((v) => v.status === 'open');
+  const resolved = violations.filter((v) => v.status === 'resolved');
+
+  function formatDate(iso: string) {
+    return new Date(iso).toLocaleString('en', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  return (
+    <Panel
+      title="Active Violations"
+      icon={<AlertTriangle size={14} />}
+      headerRight={
+        open.length > 0 ? (
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-900/50 text-red-400 border border-red-800/50">
+            {open.length} open
+          </span>
+        ) : (
+          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-800/40">
+            All clear
+          </span>
+        )
+      }
+    >
+      <ul className="p-3 flex flex-col gap-2">
+        {open.length === 0 && (
+          <li className="flex flex-col items-center justify-center py-8 text-gray-600 text-sm gap-2">
+            <CheckCircle size={22} className="text-green-700" />
+            No open violations
+          </li>
+        )}
+        {open.map((v) => (
+          <li
+            key={v.id}
+            className="flex flex-col gap-2 p-3 rounded-lg border"
+            style={{ borderColor: '#3a1e1e', backgroundColor: '#120a0a' }}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <SeverityBadge severity={
+                    mockGuardianRules.find((r) => r.id === v.ruleId)?.severity ?? 'low'
+                  } />
+                  <span className="text-xs text-gray-400 font-medium">{v.ruleName}</span>
+                </div>
+                <p className="text-xs text-gray-300 leading-relaxed mt-0.5">{v.description}</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-1">
+              <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                <Clock size={11} />
+                {formatDate(v.detectedAt)}
+              </div>
+              <button
+                onClick={() => resolveViolation(v.id)}
+                className="text-xs font-semibold px-3 py-1 rounded-lg transition-colors"
+                style={{ backgroundColor: '#16a34a22', color: '#4ade80', border: '1px solid #16a34a44' }}
+              >
+                Resolve
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {/* Resolved section (collapsible) */}
+      {resolved.length > 0 && (
+        <div className="px-3 pb-3">
+          <button
+            onClick={() => setResolvedExpanded((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            style={{ backgroundColor: '#0f1018', border: '1px solid #1e2128' }}
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle size={12} className="text-green-700" />
+              <span>Resolved</span>
+              <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-gray-800 text-gray-500">
+                {resolved.length}
               </span>
-            )}
-            {medCount > 0 && (
-              <span className="text-[10px] font-semibold text-amber-400 bg-amber-900/20 border border-amber-700/30 px-2 py-0.5 rounded-full">
-                {medCount} MEDIUM
-              </span>
-            )}
-            {lowCount > 0 && (
-              <span className="text-[10px] font-semibold text-yellow-400 bg-yellow-900/20 border border-yellow-700/30 px-2 py-0.5 rounded-full">
-                {lowCount} LOW
-              </span>
-            )}
+            </div>
+            <ChevronDown
+              size={12}
+              className={`transition-transform ${resolvedExpanded ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {resolvedExpanded && (
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {resolved.map((v) => (
+                <li
+                  key={v.id}
+                  className="flex flex-col gap-1 p-3 rounded-lg border opacity-50"
+                  style={{ borderColor: '#1e2128', backgroundColor: '#0f1018' }}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <SeverityBadge severity={
+                      mockGuardianRules.find((r) => r.id === v.ruleId)?.severity ?? 'low'
+                    } />
+                    <span className="text-xs text-gray-500 font-medium">{v.ruleName}</span>
+                    <span className="ml-auto text-xs text-green-700 font-medium flex items-center gap-1">
+                      <CheckCircle size={10} /> Resolved
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600 leading-relaxed">{v.description}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ─── Panel 3: Audit Trail ─────────────────────────────────────────────────────
+
+function AuditTrailPanel() {
+  // Replace with real Supabase query during integration
+  const entries: GuardianAuditEntry[] = mockAuditLog;
+
+  function formatTimestamp(iso: string) {
+    return new Date(iso).toLocaleString('en', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  function resultColor(result: string): string {
+    if (result.startsWith('VIOLATION')) return 'text-red-400';
+    if (result.startsWith('ALERT')) return 'text-yellow-400';
+    if (result.startsWith('PASS')) return 'text-green-400';
+    return 'text-gray-400';
+  }
+
+  return (
+    <Panel
+      title="Audit Trail"
+      icon={<Clock size={14} />}
+      headerRight={
+        <button
+          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors cursor-not-allowed opacity-60"
+          style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}
+          title="Export Log — not yet implemented"
+          disabled
+        >
+          <Download size={12} />
+          Export Log
+        </button>
+      }
+    >
+      <ul className="p-3 flex flex-col gap-0">
+        {entries.map((entry, idx) => (
+          <li
+            key={entry.id}
+            className="flex gap-3 py-2.5 border-b last:border-b-0"
+            style={{ borderColor: '#1a1c23' }}
+          >
+            {/* Timeline dot */}
+            <div className="flex flex-col items-center flex-shrink-0 mt-1" style={{ width: 14 }}>
+              <div
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{
+                  backgroundColor: entry.result.startsWith('VIOLATION')
+                    ? '#f87171'
+                    : entry.result.startsWith('ALERT')
+                    ? '#facc15'
+                    : '#4ade80',
+                }}
+              />
+              {idx < entries.length - 1 && (
+                <div className="w-px flex-1 mt-1" style={{ backgroundColor: '#1e2128', minHeight: 12 }} />
+              )}
+            </div>
+
+            {/* Content */}
+            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium text-gray-400">{entry.agentId}</span>
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded font-mono"
+                  style={{ backgroundColor: '#1a1d27', color: '#6b7280' }}
+                >
+                  {entry.action}
+                </span>
+              </div>
+              <p className={`text-xs leading-relaxed ${resultColor(entry.result)}`}>
+                {entry.result}
+              </p>
+              <span className="text-xs text-gray-700 mt-0.5">{formatTimestamp(entry.timestamp)}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+// ─── Signed NDAs Panel (V3-23) ────────────────────────────────────────────────
+
+const STUB_USER_ID = 'local-demo-user';
+
+function SignedNDAsPanel() {
+  const [records, setRecords] = useState<SignedAgreementRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getUserSignedNDAs(STUB_USER_ID)
+      .then((r) => setRecords(r))
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <Panel title="Signed NDAs" icon={<FileText size={14} />}>
+      {loading ? (
+        <div className="flex items-center justify-center py-8 text-xs text-gray-600">
+          Loading…
+        </div>
+      ) : records.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-8 text-center px-4">
+          <FileText size={20} className="text-gray-700" />
+          <p className="text-xs text-gray-600">No signed agreements on record.</p>
+          <p className="text-xs text-gray-700">
+            NDA records will appear here after users sign the beta agreement.
+          </p>
+        </div>
+      ) : (
+        <ul className="divide-y" style={{ borderColor: '#1a1c23' }}>
+          {records.map((record, i) => (
+            <li key={record.id ?? i} className="px-4 py-3 flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-gray-300 truncate">
+                  {record.typed_name}
+                </span>
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ml-2"
+                  style={{ backgroundColor: '#052e16', color: '#4ade80' }}
+                >
+                  signed
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-gray-600">
+                <span>{new Date(record.signed_at).toLocaleString()}</span>
+                {record.ip_address && <span>IP: {record.ip_address}</span>}
+              </div>
+              {record.pdf_url && !record.pdf_url.startsWith('stub-') && (
+                <a
+                  href={record.pdf_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-indigo-400 hover:text-indigo-300 mt-0.5 inline-flex items-center gap-1"
+                >
+                  <Download size={11} />
+                  View PDF
+                </a>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+// ─── Panel 5: AI Decisions (V3-24) ───────────────────────────────────────────
+
+const AI_AGENTS = ['VAULT', 'OHM', 'LEDGER', 'BLUEPRINT', 'CHRONO', 'SPARK', 'ATLAS', 'NEXUS', 'MULTI'];
+
+const CONFIDENCE_COLORS: Record<string, string> = {
+  high: '#4ade80',
+  medium: '#facc15',
+  low: '#f87171',
+};
+
+function confidenceLabel(score: number): 'high' | 'medium' | 'low' {
+  if (score >= 0.8) return 'high';
+  if (score >= 0.55) return 'medium';
+  return 'low';
+}
+
+// Owner flag — replace with real auth store check during V2 integration
+const STUB_IS_OWNER = true;
+
+function AIDecisionsPanel() {
+  const [entries, setEntries] = useState<AIDecisionLog[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+
+  const [filterAgent, setFilterAgent] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterMinConf, setFilterMinConf] = useState('');
+  const [filterAction, setFilterAction] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+
+  const PAGE_SIZE = 25;
+
+  const loadEntries = useCallback(async () => {
+    setLoading(true);
+    try {
+      const filters: DecisionLogFilters = {
+        page,
+        page_size: PAGE_SIZE,
+        ...(filterAgent ? { agent_name: filterAgent } : {}),
+        ...(filterDateFrom ? { date_from: new Date(filterDateFrom).toISOString() } : {}),
+        ...(filterDateTo ? { date_to: new Date(filterDateTo + 'T23:59:59').toISOString() } : {}),
+        ...(filterMinConf ? { min_confidence: parseFloat(filterMinConf) / 100 } : {}),
+        ...(filterAction ? { user_action: filterAction as DecisionLogFilters['user_action'] } : {}),
+      };
+      const result = await getDecisionLog(STUB_USER_ID, filters, STUB_IS_OWNER);
+      setEntries(result.entries);
+      setTotal(result.total);
+      setTotalPages(result.total_pages);
+    } catch (err) {
+      console.error('[GuardianView] AI Decisions load failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, filterAgent, filterDateFrom, filterDateTo, filterMinConf, filterAction]);
+
+  useEffect(() => {
+    void loadEntries();
+  }, [loadEntries]);
+
+  function handleExportCSV() {
+    const csv = exportToCSV(entries);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ai-decisions-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function resetFilters() {
+    setFilterAgent('');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setFilterMinConf('');
+    setFilterAction('');
+    setPage(1);
+  }
+
+  function fmtDate(iso: string) {
+    return new Date(iso).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  const inputCss: React.CSSProperties = {
+    backgroundColor: '#1a1d27', border: '1px solid #2a3040', color: '#e2e8f0',
+    borderRadius: 8, padding: '5px 10px', fontSize: 12, outline: 'none', width: '100%',
+  };
+
+  const activeFilters = [filterAgent, filterDateFrom, filterDateTo, filterMinConf, filterAction].filter(Boolean).length;
+
+  return (
+    <Panel
+      title="AI Decisions"
+      icon={<Brain size={14} />}
+      headerRight={
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowFilters((v) => !v)}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+            style={{ backgroundColor: showFilters ? '#0f1a0f' : '#11121a', color: showFilters ? '#4ade80' : '#9ca3af', border: `1px solid ${showFilters ? '#16a34a44' : '#2a3040'}` }}
+          >
+            <Filter size={11} />
+            Filter
+            {activeFilters > 0 && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/40 text-green-400">{activeFilters}</span>}
+          </button>
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+            style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}
+          >
+            <Download size={11} />
+            Export CSV
+          </button>
+        </div>
+      }
+    >
+      {/* Filters */}
+      {showFilters && (
+        <div className="mx-3 mt-3 mb-1 p-3 rounded-lg border grid grid-cols-2 gap-2" style={{ borderColor: '#2a3040', backgroundColor: '#0a0b14' }}>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">Agent</label>
+            <select value={filterAgent} onChange={(e) => { setFilterAgent(e.target.value); setPage(1); }} style={inputCss}>
+              <option value="">All</option>
+              {AI_AGENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">Action</label>
+            <select value={filterAction} onChange={(e) => { setFilterAction(e.target.value); setPage(1); }} style={inputCss}>
+              <option value="">Any</option>
+              <option value="none">No action</option>
+              <option value="accepted">Accepted</option>
+              <option value="dismissed">Dismissed</option>
+              <option value="followed_up">Followed up</option>
+              <option value="flagged">Flagged</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">From</label>
+            <input type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setPage(1); }} style={inputCss} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">To</label>
+            <input type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setPage(1); }} style={inputCss} />
+          </div>
+          <div className="flex flex-col gap-1 col-span-2">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">
+              Min Confidence: {filterMinConf ? `${filterMinConf}%` : 'any'}
+            </label>
+            <input type="range" min="0" max="100" step="5" value={filterMinConf || '0'}
+              onChange={(e) => { setFilterMinConf(e.target.value === '0' ? '' : e.target.value); setPage(1); }}
+              className="w-full accent-green-500" />
+          </div>
+          {activeFilters > 0 && (
+            <div className="col-span-2">
+              <button onClick={resetFilters} className="text-xs text-gray-500 hover:text-gray-300 transition-colors underline">Reset filters</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="flex items-center gap-4 px-4 py-2.5 border-b" style={{ borderColor: '#1a1c23' }}>
+        <span className="text-xs text-gray-600">{loading ? 'Loading…' : `${total} decision${total !== 1 ? 's' : ''}`}</span>
+        {STUB_IS_OWNER
+          ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-800/40">All team</span>
+          : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-900/30 text-blue-400 border border-blue-800/40">My decisions</span>
+        }
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto">
+        {entries.length === 0 && !loading ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-2 text-gray-600 text-sm">
+            <Brain size={24} className="opacity-40" />
+            <p>No AI decisions logged yet.</p>
+            <p className="text-xs text-gray-700">Decisions appear after NEXUS processes queries.</p>
+          </div>
+        ) : (
+          <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1e2128', backgroundColor: '#0f1018' }}>
+                {['Timestamp', 'Agent', 'Query', 'Recommendation', 'Confidence', 'Action'].map((col) => (
+                  <th key={col} className="text-left px-3 py-2.5 font-semibold uppercase tracking-wide text-gray-600" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => {
+                const clvl = confidenceLabel(entry.confidence_score);
+                const cc = CONFIDENCE_COLORS[clvl];
+                return (
+                  <tr key={entry.id} className="border-b hover:bg-white/[0.02] transition-colors" style={{ borderColor: '#1a1c23' }}>
+                    <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(entry.timestamp)}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}>
+                        {entry.agent_name}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-400 max-w-[180px] truncate" title={entry.query}>{entry.query}</td>
+                    <td className="px-3 py-2.5 text-gray-300 max-w-[220px] truncate" title={entry.recommendation}>{entry.recommendation}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: '#1e2128' }}>
+                          <div className="h-full rounded-full" style={{ width: `${Math.round(entry.confidence_score * 100)}%`, backgroundColor: cc }} />
+                        </div>
+                        <span style={{ color: cc }} className="font-mono">{Math.round(entry.confidence_score * 100)}%</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      {entry.user_action ? (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                          style={{
+                            backgroundColor: entry.user_action === 'accepted' ? '#14532d55' : entry.user_action === 'flagged' ? '#7f1d1d55' : '#1e2128',
+                            color: entry.user_action === 'accepted' ? '#4ade80' : entry.user_action === 'flagged' ? '#f87171' : entry.user_action === 'followed_up' ? '#60a5fa' : '#9ca3af',
+                            border: '1px solid currentColor',
+                          }}>
+                          {entry.user_action.replace('_', ' ')}
+                        </span>
+                      ) : <span className="text-gray-700">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
 
-      {/* ── Scrollable content ── */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-
-        {/* ── Panel 1: Active Rules ── */}
-        <div className="rounded-2xl border border-gray-800 bg-gray-800/20 overflow-hidden">
-          <PanelHeader
-            icon={<ShieldCheck size={16} />}
-            title="Active Rules"
-            subtitle={`${activeRules.length} rule${activeRules.length !== 1 ? 's' : ''} configured`}
-            action={
-              <button
-                onClick={handleRunAudit}
-                disabled={running}
-                className="flex items-center gap-2 text-xs font-semibold bg-emerald-700/25 hover:bg-emerald-700/45 text-emerald-400 border border-emerald-700/40 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {running ? (
-                  <><RefreshCw size={12} className="animate-spin" /> Running…</>
-                ) : (
-                  <><Play size={12} /> Run Audit</>
-                )}
-              </button>
-            }
-          />
-
-          <div className="p-3 space-y-1.5">
-            {DEFAULT_RULES.map(rule => (
-              <RuleRow key={rule.id} rule={rule} />
-            ))}
-          </div>
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-2.5 border-t" style={{ borderColor: '#1a1c23' }}>
+          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="text-xs px-3 py-1.5 rounded-lg disabled:opacity-40" style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}>← Prev</button>
+          <span className="text-xs text-gray-600">Page {page} of {totalPages}</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="text-xs px-3 py-1.5 rounded-lg disabled:opacity-40" style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}>Next →</button>
         </div>
-
-        {/* ── Panel 2: Violations ── */}
-        <div className="rounded-2xl border border-gray-800 bg-gray-800/20 overflow-hidden">
-          <PanelHeader
-            icon={<AlertTriangle size={16} />}
-            title="Violations"
-            subtitle={
-              violations.length === 0
-                ? 'No violations detected yet — run an audit'
-                : `${violations.length} violation${violations.length !== 1 ? 's' : ''} detected`
-            }
-          />
-
-          <div className="p-3">
-            {violations.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
-                <ShieldCheck size={32} className="text-emerald-600/40" />
-                <p className="text-gray-600 text-sm">No violations yet.</p>
-                <p className="text-gray-700 text-xs">Click "Run Audit" in the panel above to evaluate all rules.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {violations.map(v => (
-                  <ViolationCard key={v.id} violation={v} />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Panel 3: Audit Trail ── */}
-        <div className="rounded-2xl border border-gray-800 bg-gray-800/20 overflow-hidden">
-          <PanelHeader
-            icon={<FileText size={16} />}
-            title="Audit Trail"
-            subtitle={
-              auditLog.length === 0
-                ? 'No runs logged yet'
-                : `${auditLog.length} run${auditLog.length !== 1 ? 's' : ''} recorded`
-            }
-          />
-
-          <div className="p-3">
-            {auditLog.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
-                <Clock size={32} className="text-gray-700/60" />
-                <p className="text-gray-600 text-sm">No audit runs yet.</p>
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {auditLog.map(entry => (
-                  <AuditRow key={entry.id} entry={entry} />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-      </div>
-
-      {/* ── HIGH Violation Approval Modal ── */}
-      {pendingViolations !== null && (
-        <HighViolationModal
-          count={pendingHighCount}
-          onReview={handleModalReview}
-          onCancel={handleModalCancel}
-        />
       )}
-
-    </div>
-  )
+    </Panel>
+  );
 }
 
-export default GuardianView
+// ─── Guardian View Root ───────────────────────────────────────────────────────
+
+type GuardianTab = 'monitor' | 'ai-decisions';
+
+export default function GuardianView() {
+  const [activeTab, setActiveTab] = useState<GuardianTab>('monitor');
+
+  const tabs: { id: GuardianTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'monitor', label: 'Monitor', icon: <Shield size={12} /> },
+    { id: 'ai-decisions', label: 'AI Decisions', icon: <Brain size={12} /> },
+  ];
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: '#0a0b0f' }}>
+      {/* Page Header */}
+      <div
+        className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
+        style={{ borderColor: '#1a1c23' }}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ backgroundColor: '#16a34a22', border: '1px solid #16a34a44' }}
+          >
+            <Shield size={16} className="text-green-400" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-gray-100">GUARDIAN</h1>
+            <p className="text-xs text-gray-600">Proactive project health monitor · Rule engine shell</p>
+          </div>
+        </div>
+        <div
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full"
+          style={{ backgroundColor: '#0f1a0f', color: '#4ade80', border: '1px solid #16a34a33' }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+          Shell · E4
+        </div>
+      </div>
+
+      {/* Tab Bar */}
+      <div className="flex items-center gap-1 px-4 pt-3 pb-0 border-b flex-shrink-0" style={{ borderColor: '#1a1c23' }}>
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all"
+            style={{
+              backgroundColor: activeTab === tab.id ? '#0d0e14' : 'transparent',
+              color: activeTab === tab.id ? '#4ade80' : '#6b7280',
+              borderTop: activeTab === tab.id ? '1px solid #1e2128' : '1px solid transparent',
+              borderLeft: activeTab === tab.id ? '1px solid #1e2128' : '1px solid transparent',
+              borderRight: activeTab === tab.id ? '1px solid #1e2128' : '1px solid transparent',
+              borderBottom: activeTab === tab.id ? '1px solid #0d0e14' : 'none',
+              marginBottom: activeTab === tab.id ? -1 : 0,
+            }}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      <div className="flex-1 overflow-y-auto p-4">
+        {activeTab === 'monitor' && (
+          <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 h-full min-h-0">
+            <RulesPanel />
+            <ViolationsPanel />
+            <AuditTrailPanel />
+            <SignedNDAsPanel />
+          </div>
+        )}
+        {activeTab === 'ai-decisions' && (
+          <div className="h-full min-h-0">
+            <AIDecisionsPanel />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

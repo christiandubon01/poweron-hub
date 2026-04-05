@@ -95,3 +95,42 @@ export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
 export function extractText(response: ClaudeResponse): string {
   return response.content?.find(c => c.type === 'text')?.text || ''
 }
+
+// ── NEXUS Prompt Engine integration ──────────────────────────────────────────
+// V3 integration: callNexus() routes queries through the NEXUS Prompt Engine
+// (nexusPromptEngine.ts) which handles query classification, ECHO context
+// injection, and multi-agent routing before calling the Claude API.
+//
+// This wraps the existing callClaude() path — existing code using callClaude()
+// directly continues to work unchanged.
+
+import type { NexusRequest, NexusResponse } from '@/agents/nexusPromptEngine'
+
+/**
+ * Route a query through the NEXUS Prompt Engine.
+ * Uses runNexusEngine() for classification, context injection, and structured
+ * response parsing. Falls back to a plain callClaude() if NEXUS fails.
+ */
+export async function callNexus(request: NexusRequest): Promise<NexusResponse> {
+  try {
+    const { runNexusEngine } = await import('@/agents/nexusPromptEngine')
+    return await runNexusEngine(request)
+  } catch (err) {
+    console.error('[claudeProxy] callNexus error — falling back to plain Claude:', err)
+    // Fallback: wrap the query as a plain Claude call
+    const response = await callClaude({
+      messages: [{ role: 'user', content: request.query }],
+      system: request.systemPromptOverride,
+      max_tokens: 1024,
+    })
+    const text = extractText(response)
+    return {
+      query: request.query,
+      primaryTarget: 'NEXUS',
+      response: text,
+      confidence: 0,
+      agentsInvolved: ['NEXUS'],
+      timestamp: new Date().toISOString(),
+    } as NexusResponse
+  }
+}

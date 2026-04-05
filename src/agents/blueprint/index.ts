@@ -13,6 +13,46 @@
  */
 
 import { BLUEPRINT_SYSTEM_PROMPT } from './systemPrompt'
+export { BLUEPRINT_SYSTEM_PROMPT }
+
+// ── BlueprintAI view helper (sync) ──────────────────────────────────────────
+// processBlueprint() is called by views/BlueprintAI.tsx to extract structured
+// data from blueprint text. This is a synchronous V3-prototype extraction stub.
+// Replace with a real async Claude call during full integration.
+export interface BlueprintOutput {
+  materials: Array<{ item: string; quantity: string; notes: string }>
+  laborItems: Array<{ task: string; hours: number; crew: number }>
+  phases: Array<{ name: string; duration: string; sequence: number }>
+  flags: string[]
+  complianceNotes: string[]
+  estimatedDays: number
+}
+
+export function processBlueprint(text: string): BlueprintOutput {
+  // Stub implementation — parse plain text into structured output.
+  // Future: replace with runNexusEngine({ query: text, agentTarget: 'BLUEPRINT' })
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  return {
+    materials: lines
+      .filter(l => /material|wire|conduit|panel|breaker|receptacle/i.test(l))
+      .map(l => ({ item: l.slice(0, 80), quantity: 'TBD', notes: '' })),
+    laborItems: lines
+      .filter(l => /install|pull|mount|run|connect/i.test(l))
+      .map((l, i) => ({ task: l.slice(0, 80), hours: 4, crew: 1 })),
+    phases: [
+      { name: 'Underground / Rough-in', duration: 'Day 1–7', sequence: 1 },
+      { name: 'Inspection', duration: 'Day 8', sequence: 2 },
+      { name: 'Trim-out', duration: 'Day 9–11', sequence: 3 },
+    ],
+    flags: lines
+      .filter(l => /nec|code|required|permit|compliance|title 24/i.test(l))
+      .map(l => l.slice(0, 120)),
+    complianceNotes: lines
+      .filter(l => /nec|title 24|permit|occupancy/i.test(l))
+      .map(l => l.slice(0, 120)),
+    estimatedDays: 11,
+  }
+}
 import * as projectManager from './projectManager'
 import * as rfiManager from './rfiManager'
 import * as changeOrderManager from './changeOrderManager'

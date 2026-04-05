@@ -19,6 +19,7 @@ import {
   Undo2,
   Redo2,
   Mic,
+  Mic2,
   Menu,
   X,
   Activity,
@@ -29,6 +30,12 @@ import {
   Layers,
   LogOut,
   Plus,
+  Brain,
+  GitBranch,
+  Phone,
+  Scissors,
+  Lock,
+  Map,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -568,6 +575,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
     { label: 'Settings', icon: Settings, view: 'settings' },
     { label: 'Demo Mode', icon: Zap, view: 'demo-mode' },
+    // ── V3 Business ──────────────────────────────────────────────────────────
+    { label: 'Blueprint AI', icon: Map, view: 'blueprint-ai' },
+    { label: 'Debt Killer', icon: Scissors, view: 'debt-killer' },
+    { label: 'Voice Journaling V2', icon: Mic2, view: 'voice-journaling-v2' },
+    { label: 'Crew Portal', icon: Users, view: 'crew-portal-v3' },
+    { label: 'VAULT Estimate', icon: Lock, view: 'vault-estimate' },
+    { label: 'V3 Settings', icon: Settings, view: 'settings-v3' },
   ]
 
   // Team nav items (people + compliance)
@@ -582,6 +596,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Journal', icon: Mic, view: 'journal' },
     { label: 'Activity', icon: Activity, view: 'activity' },
     { label: 'Agent Mode Selector', icon: Layers, view: 'agent-mode-selector' },
+    // ── V3 Intelligence ──────────────────────────────────────────────────────
+    { label: 'Material Intelligence', icon: Brain, view: 'material-intelligence' },
+    { label: 'N8n Automation', icon: GitBranch, view: 'n8n-automation' },
+    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view' },
+    { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call' },
+    { label: 'Lead Rolling Trend', icon: TrendingUp, view: 'lead-rolling-trend' },
+    { label: 'Voice Capture Queue', icon: Mic2, view: 'voice-journaling-v2' },
   ]
 
   // Toggle and close helpers

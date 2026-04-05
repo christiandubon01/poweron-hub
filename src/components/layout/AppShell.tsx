@@ -4,6 +4,9 @@
  *
  * Uses V15rLayout for the top bar + sidebar, renders all v15r panels.
  * AI agent panels are lazy-loaded to prevent import-time crashes.
+ *
+ * V3 Integration: 14 new views, Watermark, ConclusionCards, SessionDebrief,
+ * NDA gate, and role-based sidebar filtering wired in.
  */
 
 import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react'
@@ -12,6 +15,10 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { getBackupData } from '@/services/backupDataService'
 import { useReadOnly } from '@/contexts/ReadOnlyContext'
 import { useDemoStore } from '@/store/demoStore'
+import Watermark from '@/components/Watermark'
+import ConclusionCards from '@/components/ConclusionCards'
+import SessionDebrief from '@/components/SessionDebrief'
+import { hasUserSignedNDA } from '@/services/ndaService'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
@@ -55,6 +62,20 @@ const AgentModeSelector = lazy(() => import('@/views/AgentModeSelector').then(m 
 // Demo Mode view (lazy-loaded) — E3 | Demo Mode
 const DemoModeView = lazy(() => import('@/views/DemoMode').then(m => ({ default: m.DemoMode })))
 
+// ── V3 Views — lazy-loaded ────────────────────────────────────────────────────
+const BlueprintAI       = lazy(() => import('@/views/BlueprintAI'))
+const DebtKiller        = lazy(() => import('@/views/DebtKiller'))
+const GuardianView      = lazy(() => import('@/views/GuardianView'))
+const LeadRollingTrend  = lazy(() => import('@/views/LeadRollingTrend'))
+const MaterialIntel     = lazy(() => import('@/views/MaterialIntelligence'))
+const N8nAutomation     = lazy(() => import('@/views/N8nAutomation'))
+const NDASigningFlow    = lazy(() => import('@/views/NDASigningFlow'))
+const SparkLiveCall     = lazy(() => import('@/views/SparkLiveCall'))
+const VaultEstimatePanel = lazy(() => import('@/views/VaultEstimatePanel'))
+const VoiceJournalingV2 = lazy(() => import('@/views/VoiceJournalingV2'))
+const CrewPortalV3      = lazy(() => import('@/views/CrewPortal'))
+const SettingsV3        = lazy(() => import('@/views/Settings'))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })))
 const OnboardingModal = lazy(() => import('@/components/onboarding/OnboardingModal'))
@@ -84,6 +105,14 @@ export function AppShell({ children }: AppShellProps) {
   const { isReadOnly } = useReadOnly()
   const { isDemoMode, enableDemoMode, disableDemoMode, setHasHydrated } = useDemoStore()
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
+
+  // NDA gate — check if current user has signed NDA; show flow if not
+  const [ndaSigned, setNdaSigned] = useState<boolean | null>(null)
+  const [showNdaGate, setShowNdaGate] = useState(false)
+
+  // Session Debrief overlay state
+  const [showSessionDebrief, setShowSessionDebrief] = useState(false)
+  const [debriefConclusions, setDebriefConclusions] = useState<any[]>([])
 
   let profile = null
   try {
@@ -160,6 +189,35 @@ export function AppShell({ children }: AppShellProps) {
     return () => window.removeEventListener('poweron:show-money', handleShowMoney)
   }, [])
 
+  // NDA gate — check on auth. Non-demo, non-read-only sessions only.
+  useEffect(() => {
+    if (isReadOnly || isDemoMode) return
+    if (!profile?.id) return
+    hasUserSignedNDA(profile.id)
+      .then((signed) => {
+        setNdaSigned(signed)
+        setShowNdaGate(!signed)
+      })
+      .catch(() => {
+        // On error, don't block the app
+        setNdaSigned(true)
+        setShowNdaGate(false)
+      })
+  }, [profile?.id, isReadOnly, isDemoMode])
+
+  // Session Debrief listener — NEXUS publishes debrief conclusions via custom event
+  useEffect(() => {
+    function handleSessionDebrief(e: Event) {
+      const detail = (e as CustomEvent).detail
+      if (Array.isArray(detail?.conclusions) && detail.conclusions.length > 0) {
+        setDebriefConclusions(detail.conclusions)
+        setShowSessionDebrief(true)
+      }
+    }
+    window.addEventListener('poweron:session-debrief', handleSessionDebrief)
+    return () => window.removeEventListener('poweron:session-debrief', handleSessionDebrief)
+  }, [])
+
   // Handle navigation
   function handleNav(view: string) {
     // Project tab views that should NOT clear activeProjectId
@@ -210,7 +268,13 @@ export function AppShell({ children }: AppShellProps) {
 
     switch (activeView) {
       // v15r Workspace
-      case 'home':            return <V15rHome />
+      case 'home':            return (
+        <>
+          {/* ConclusionCards — pinned session insights at the top of Home */}
+          <ConclusionCards userId={profile?.id ?? ''} />
+          <V15rHome />
+        </>
+      )
       case 'projects':        return <V15rProjectsPanel onSelectProject={handleSelectProject} />
       case 'leads':           return <V15rLeadsPanel />
       case 'templates':       return <V15rTemplatesPanel />
@@ -261,8 +325,83 @@ export function AppShell({ children }: AppShellProps) {
       // E3 | Demo Mode settings view
       case 'demo-mode':       return <Suspense fallback={<PanelLoading />}><DemoModeView /></Suspense>
 
+      // ── V3 Views ────────────────────────────────────────────────────────────
+      case 'blueprint-ai':
+        return <Suspense fallback={<PanelLoading />}><BlueprintAI /></Suspense>
+
+      case 'debt-killer':
+        return <Suspense fallback={<PanelLoading />}><DebtKiller /></Suspense>
+
+      case 'guardian-view':
+        return <Suspense fallback={<PanelLoading />}><GuardianView /></Suspense>
+
+      case 'lead-rolling-trend':
+        return <Suspense fallback={<PanelLoading />}><LeadRollingTrend /></Suspense>
+
+      case 'material-intelligence':
+        return <Suspense fallback={<PanelLoading />}><MaterialIntel /></Suspense>
+
+      case 'n8n-automation':
+        return <Suspense fallback={<PanelLoading />}><N8nAutomation /></Suspense>
+
+      case 'nda-signing':
+        return (
+          <Suspense fallback={<PanelLoading />}>
+            <NDASigningFlow
+              userId={profile?.id ?? 'anonymous'}
+              onSigned={() => {
+                setNdaSigned(true)
+                setShowNdaGate(false)
+                setActiveView('home')
+              }}
+            />
+          </Suspense>
+        )
+
+      case 'spark-live-call':
+        return <Suspense fallback={<PanelLoading />}><SparkLiveCall /></Suspense>
+
+      case 'vault-estimate':
+        return <Suspense fallback={<PanelLoading />}><VaultEstimatePanel /></Suspense>
+
+      case 'voice-journaling-v2':
+        return <Suspense fallback={<PanelLoading />}><VoiceJournalingV2 /></Suspense>
+
+      case 'crew-portal-v3':
+        return <Suspense fallback={<PanelLoading />}><CrewPortalV3 /></Suspense>
+
+      case 'settings-v3':
+        return (
+          <Suspense fallback={<PanelLoading />}>
+            <SettingsV3
+              userTier="solo"
+              watermarkSettings={{ showOnExports: true }}
+              onWatermarkSettingsChange={() => {}}
+            />
+          </Suspense>
+        )
+
       default:                return <V15rHome />
     }
+  }
+
+  // NDA gate: block access until NDA is signed (non-demo, non-read-only)
+  if (showNdaGate && !isReadOnly && !isDemoMode) {
+    return (
+      <Suspense fallback={
+        <div className="flex items-center justify-center min-h-screen bg-gray-950">
+          <div className="text-gray-500 text-sm">Loading…</div>
+        </div>
+      }>
+        <NDASigningFlow
+          userId={profile?.id ?? 'anonymous'}
+          onSigned={() => {
+            setNdaSigned(true)
+            setShowNdaGate(false)
+          }}
+        />
+      </Suspense>
+    )
   }
 
   return (
@@ -333,6 +472,23 @@ export function AppShell({ children }: AppShellProps) {
       <Suspense fallback={null}>
         <VoiceActivationButton />
       </Suspense>
+
+      {/* Watermark — fixed bottom-right, always visible */}
+      <Watermark isDemoMode={isDemoMode} theme="dark" />
+
+      {/* Session Debrief overlay — slide-up panel triggered by NEXUS */}
+      {showSessionDebrief && (
+        <SessionDebrief
+          isOpen={showSessionDebrief}
+          conclusions={debriefConclusions}
+          userId={profile?.id ?? 'anonymous'}
+          sessionId={`session-${Date.now()}`}
+          onClose={() => {
+            setShowSessionDebrief(false)
+            setDebriefConclusions([])
+          }}
+        />
+      )}
 
       {/* Onboarding modal — shown for new users */}
       {showOnboarding && (

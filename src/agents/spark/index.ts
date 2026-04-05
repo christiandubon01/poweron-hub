@@ -425,3 +425,113 @@ async function generateSparkSummary(topic: string, data: unknown): Promise<strin
     return 'Summary generation unavailable.'
   }
 }
+
+// ── Live Call Engine (SparkLiveCall view integration) ─────────────────────────
+// These functions are used by views/SparkLiveCall.tsx for guided call scripts.
+// Stubs — replace with real call engine logic during Phase E7 integration.
+
+export type CallType = 'vendor' | 'sub' | 'gc'
+
+export interface CallOption {
+  id: string
+  label: string
+  nextStageId?: string
+}
+
+export interface CallStage {
+  id: string
+  prompt: string
+  options: CallOption[]
+  isEscalationPoint?: boolean
+  isOutcome?: boolean
+}
+
+export interface CallSession {
+  id: string
+  callType: CallType
+  currentStageId: string
+  history: Array<{ stageId: string; optionId: string; timestamp: string }>
+  startedAt: string
+  endedAt?: string
+  outcome?: string
+}
+
+const DEFAULT_SCRIPTS: Record<CallType, CallStage[]> = {
+  vendor: [
+    { id: 'v1', prompt: 'Introduce yourself and confirm vendor contact.', options: [{ id: 'v1a', label: 'Contact confirmed', nextStageId: 'v2' }, { id: 'v1b', label: 'No answer — leave message', nextStageId: 'v_end' }] },
+    { id: 'v2', prompt: 'Check on open purchase order status.', options: [{ id: 'v2a', label: 'PO confirmed, ETA received', nextStageId: 'v_end' }, { id: 'v2b', label: 'Delay — escalate', nextStageId: 'v_esc', isEscalationPoint: true }] },
+    { id: 'v_esc', prompt: 'Escalation: document delay and notify project manager.', options: [{ id: 'v_esc_ok', label: 'Documented and notified', nextStageId: 'v_end' }], isEscalationPoint: true },
+    { id: 'v_end', prompt: 'Call complete. Log outcome.', options: [], isOutcome: true },
+  ],
+  sub: [
+    { id: 's1', prompt: 'Confirm sub is on schedule for their scope.', options: [{ id: 's1a', label: 'On schedule', nextStageId: 's_end' }, { id: 's1b', label: 'Behind — escalate', nextStageId: 's_esc', isEscalationPoint: true }] },
+    { id: 's_esc', prompt: 'Escalation: document delay.', options: [{ id: 's_esc_ok', label: 'Documented', nextStageId: 's_end' }], isEscalationPoint: true },
+    { id: 's_end', prompt: 'Call complete. Log outcome.', options: [], isOutcome: true },
+  ],
+  gc: [
+    { id: 'g1', prompt: 'Check in on project status and upcoming scope windows.', options: [{ id: 'g1a', label: 'Status confirmed — next window set', nextStageId: 'g_end' }, { id: 'g1b', label: 'Issue flagged — escalate', nextStageId: 'g_esc', isEscalationPoint: true }] },
+    { id: 'g_esc', prompt: 'Escalation: document GC issue.', options: [{ id: 'g_esc_ok', label: 'Documented', nextStageId: 'g_end' }], isEscalationPoint: true },
+    { id: 'g_end', prompt: 'Call complete. Log outcome.', options: [], isOutcome: true },
+  ],
+}
+
+/** Load the call script for the given call type. */
+export function loadScript(callType: CallType): CallStage[] {
+  return DEFAULT_SCRIPTS[callType] ?? DEFAULT_SCRIPTS.vendor
+}
+
+/** Advance the session to the next stage based on the chosen option. */
+export function advance(session: CallSession, optionId: string): { nextStage: CallStage | null; updatedSession: CallSession } {
+  const script = loadScript(session.callType)
+  const currentStage = script.find(s => s.id === session.currentStageId)
+  const option = currentStage?.options.find(o => o.id === optionId)
+
+  const updatedHistory = [
+    ...session.history,
+    { stageId: session.currentStageId, optionId, timestamp: new Date().toISOString() },
+  ]
+
+  if (!option?.nextStageId) {
+    return {
+      nextStage: null,
+      updatedSession: { ...session, history: updatedHistory, endedAt: new Date().toISOString() },
+    }
+  }
+
+  const nextStage = script.find(s => s.id === option.nextStageId) ?? null
+  return {
+    nextStage,
+    updatedSession: {
+      ...session,
+      currentStageId: option.nextStageId,
+      history: updatedHistory,
+    },
+  }
+}
+
+/** Detect if the current session has hit an escalation point. */
+export function detectEscalation(session: CallSession): boolean {
+  const script = loadScript(session.callType)
+  const currentStage = script.find(s => s.id === session.currentStageId)
+  if (currentStage?.isEscalationPoint) return true
+  return session.history.some(h => {
+    const stage = script.find(s => s.id === h.stageId)
+    return stage?.isEscalationPoint === true
+  })
+}
+
+/** Generate a short text summary of the completed call session. */
+export function getOutcomeSummary(session: CallSession): string {
+  if (!session) return 'No session data.'
+  const steps = session.history.length
+  const escalated = detectEscalation(session)
+  const duration = session.endedAt
+    ? Math.round((new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()) / 1000)
+    : null
+  return [
+    `Call type: ${session.callType?.toUpperCase() ?? 'Unknown'}`,
+    `Steps completed: ${steps}`,
+    escalated ? '⚠ Escalation flagged during call' : '✓ No escalation',
+    duration != null ? `Duration: ${Math.floor(duration / 60)}m ${duration % 60}s` : '',
+  ].filter(Boolean).join('\n')
+}
