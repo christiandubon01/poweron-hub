@@ -292,6 +292,19 @@ self.addEventListener('fetch', (event) => {
   if (!url.startsWith('http')) return
   if (url.includes('chrome-extension')) return
 
+  // ── Auth callback bypass — never intercept auth-related URLs ─────────────
+  // Magic links open in Safari on iOS even when Chrome is set as the default
+  // browser. Safari completes the token exchange and these URLs must reach
+  // Supabase directly — never be cached or served from the service worker.
+  // Without this bypass the auth loop never resolves on Chrome iOS.
+  if (url.includes('/auth/callback') ||
+      url.includes('access_token') ||
+      url.includes('refresh_token') ||
+      url.includes('type=magiclink') ||
+      url.includes('type=recovery')) {
+    return
+  }
+
   // ── POST to dedicated field-log endpoints — intercept when offline ────────
   // NOTE: Supabase REST API calls (supabase.co/rest/v1/) are intentionally
   // excluded here. The app-state upsert from syncToSupabase() must NOT be

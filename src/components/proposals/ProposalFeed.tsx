@@ -7,13 +7,23 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, RefreshCw, Loader2, Inbox } from 'lucide-react'
+import { Activity, RefreshCw, Loader2, Inbox, Flag, Clipboard, X, CheckCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { supabase } from '@/lib/supabase'
 import { logAudit } from '@/lib/memory/audit'
 import { useAuth } from '@/hooks/useAuth'
 import { runScoutAnalysis, type ScoutRunResult } from '@/agents/scout'
 import { ProposalCard, type Proposal } from './ProposalCard'
+import {
+  getScoutQueue,
+  updateQueueEntryStatus,
+  removeFromScoutQueue,
+  formatAsCoworkPrompt,
+  type ScoutQueueEntry,
+} from '@/services/scoutQueue'
+
+// ── Tab type ─────────────────────────────────────────────────────────────────
+type FeedTab = 'proposals' | 'queue'
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -25,8 +35,22 @@ export function ProposalFeed() {
   const [lastRun, setLastRun]             = useState<ScoutRunResult | null>(null)
   const [selectedId, setSelectedId]       = useState<string | null>(null)
   const [error, setError]                 = useState<string | null>(null)
+  // FIX 3 — Queue viewer state
+  const [activeTab, setActiveTab]         = useState<FeedTab>('proposals')
+  const [queueItems, setQueueItems]       = useState<ScoutQueueEntry[]>([])
+  const [copiedId, setCopiedId]           = useState<string | null>(null)
 
   const orgId = profile?.org_id
+
+  // ── Load queue from localStorage ───────────────────────────────────────
+  const refreshQueue = useCallback(() => {
+    setQueueItems(getScoutQueue())
+  }, [])
+
+  useEffect(() => {
+    refreshQueue()
+    // Refresh whenever the tab becomes active
+  }, [activeTab, refreshQueue])
 
   // ── Fetch proposals ───────────────────────────────────────────────────
   const fetchProposals = useCallback(async () => {
@@ -126,6 +150,35 @@ export function ProposalFeed() {
     setSelectedId(selectedId === proposalId ? null : proposalId)
   }
 
+  // ── Queue actions (FIX 3) ─────────────────────────────────────────────
+
+  /** Dismiss a queue entry (mark as dismissed + remove after a brief delay). */
+  const handleDismiss = (id: string) => {
+    updateQueueEntryStatus(id, 'dismissed')
+    // Remove from view immediately
+    setTimeout(() => {
+      removeFromScoutQueue(id)
+      refreshQueue()
+    }, 300)
+    setQueueItems(prev => prev.filter(e => e.id !== id))
+  }
+
+  /** Mark reviewed + copy the Cowork prompt to clipboard. */
+  const handleConvertToSession = async (entry: ScoutQueueEntry) => {
+    const prompt = formatAsCoworkPrompt(entry)
+    try {
+      await navigator.clipboard.writeText(prompt)
+      updateQueueEntryStatus(entry.id, 'reviewed')
+      setQueueItems(prev => prev.map(e => e.id === entry.id ? { ...e, status: 'reviewed' } : e))
+      setCopiedId(entry.id)
+      setTimeout(() => setCopiedId(null), 2000)
+    } catch {
+      // Clipboard may fail in some environments — still mark reviewed
+      updateQueueEntryStatus(entry.id, 'reviewed')
+      setQueueItems(prev => prev.map(e => e.id === entry.id ? { ...e, status: 'reviewed' } : e))
+    }
+  }
+
   // ── Selected proposal detail panel ────────────────────────────────────
   const selectedProposal = proposals.find(p => p.id === selectedId)
 
@@ -163,6 +216,44 @@ export function ProposalFeed() {
         </button>
       </div>
 
+      {/* FIX 3 — Tab switcher: Proposals vs Flagged Improvements */}
+      <div className="flex items-center gap-1 px-5 py-2 border-b border-bg-4 bg-bg-1/60">
+        <button
+          onClick={() => setActiveTab('proposals')}
+          className={clsx(
+            'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all',
+            activeTab === 'proposals'
+              ? 'bg-scout/10 border border-[rgba(255,80,96,0.25)] text-scout'
+              : 'text-text-3 hover:text-text-1'
+          )}
+        >
+          <Activity size={11} />
+          Proposals
+          {proposals.length > 0 && (
+            <span className="ml-1 px-1 py-0.5 rounded bg-scout/20 text-scout text-[9px] font-mono">
+              {proposals.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => { setActiveTab('queue'); refreshQueue() }}
+          className={clsx(
+            'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all',
+            activeTab === 'queue'
+              ? 'bg-scout/10 border border-[rgba(255,80,96,0.25)] text-scout'
+              : 'text-text-3 hover:text-text-1'
+          )}
+        >
+          <Flag size={11} />
+          Flagged Improvements
+          {queueItems.filter(e => e.status === 'pending').length > 0 && (
+            <span className="ml-1 px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[9px] font-mono">
+              {queueItems.filter(e => e.status === 'pending').length}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Last run summary */}
       {lastRun && (
         <div className="mx-5 mt-3 px-4 py-2.5 rounded-lg bg-bg-2 border border-bg-4 animate-fade-in">
@@ -194,6 +285,105 @@ export function ProposalFeed() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
+
+        {/* ── FIX 3: Flagged Improvements Queue tab ──────────────────────── */}
+        {activeTab === 'queue' && (
+          <div className="px-5 py-4 space-y-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-bold text-text-1 uppercase tracking-wider">
+                Flagged Improvements
+              </div>
+              <button
+                onClick={refreshQueue}
+                className="text-[10px] text-text-4 hover:text-text-2 flex items-center gap-1"
+              >
+                <RefreshCw size={10} /> Refresh
+              </button>
+            </div>
+
+            {queueItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-12 h-12 rounded-xl bg-bg-2 border border-bg-4 flex items-center justify-center mb-3">
+                  <Flag className="w-6 h-6 text-text-4" />
+                </div>
+                <p className="text-xs text-text-3 max-w-xs">
+                  No flagged improvements yet. When SCOUT detects improvement ideas during your conversations,
+                  they'll appear here silently for your review.
+                </p>
+              </div>
+            ) : (
+              queueItems.map(entry => (
+                <div
+                  key={entry.id}
+                  className={clsx(
+                    'rounded-xl border p-4 transition-all',
+                    entry.status === 'pending'
+                      ? 'bg-bg-2 border-bg-4'
+                      : entry.status === 'reviewed'
+                        ? 'bg-bg-1 border-bg-3 opacity-60'
+                        : 'bg-bg-1 border-bg-3 opacity-40'
+                  )}
+                >
+                  {/* Timestamp + status badge */}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-mono text-text-4">
+                      {new Date(entry.timestamp).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </span>
+                    <span
+                      className={clsx(
+                        'px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider',
+                        entry.status === 'pending'
+                          ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                          : entry.status === 'reviewed'
+                            ? 'bg-green-subtle text-green border border-green-border'
+                            : 'bg-bg-3 text-text-4 border border-bg-4'
+                      )}
+                    >
+                      {entry.status}
+                    </span>
+                  </div>
+
+                  {/* Suggestion text */}
+                  <p className="text-xs text-text-1 leading-relaxed mb-2">
+                    {entry.suggestion}
+                  </p>
+
+                  {/* Original context */}
+                  <p className="text-[10px] text-text-4 font-mono mb-3 truncate">
+                    Context: "{entry.context.slice(0, 80)}{entry.context.length > 80 ? '…' : ''}"
+                  </p>
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleConvertToSession(entry)}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-bg-3 border border-bg-5 text-text-2 text-[10px] font-bold hover:bg-bg-4 transition-colors min-h-[36px]"
+                      title="Copy as Cowork prompt"
+                    >
+                      {copiedId === entry.id
+                        ? <><CheckCircle size={11} className="text-green" /> Copied!</>
+                        : <><Clipboard size={11} /> Convert to Session</>
+                      }
+                    </button>
+                    <button
+                      onClick={() => handleDismiss(entry.id)}
+                      className="flex items-center gap-1 px-3 py-1 rounded-lg text-text-4 text-[10px] hover:text-text-2 hover:bg-bg-3 transition-colors min-h-[36px]"
+                      title="Dismiss"
+                    >
+                      <X size={11} /> Dismiss
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* ── Proposals tab (existing) ─────────────────────────────────── */}
+        {activeTab === 'proposals' && (
         <div className="flex gap-4 h-full">
           {/* Proposal list */}
           <div className={clsx('flex-1 px-5 py-4 space-y-3 overflow-y-auto', selectedId && 'max-w-[60%]')}>
@@ -293,6 +483,8 @@ export function ProposalFeed() {
             </div>
           )}
         </div>
+        )} {/* end activeTab === 'proposals' */}
+
       </div>
     </div>
   )

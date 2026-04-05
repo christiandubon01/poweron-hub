@@ -34,6 +34,7 @@ interface BlueprintFile {
   extractedText?: string
   electricalFlags?: string[]
   analyzed: boolean
+  fileSize?: number
 }
 
 interface OHMFinding {
@@ -198,6 +199,12 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
         continue
       }
 
+      const MAX_FILE_SIZE = 512 * 1024 * 1024 // 512 MB in bytes
+      if (file.size > MAX_FILE_SIZE) {
+        setUploadError('File too large. Maximum size is 512 MB. Please compress the PDF and try again.')
+        continue
+      }
+
       const bpId = `bp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
       const orgId = backup?.settings?.orgId || 'local'
       const storagePath = `${orgId}/${projectId}/blueprints/${bpId}_${file.name}`
@@ -254,6 +261,7 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
         extractedText,
         electricalFlags,
         analyzed: false,
+        fileSize: file.size,
       }
       newBlueprints.push(bp)
     }
@@ -811,7 +819,7 @@ C-10 License #1151468`
 
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: C.t1, fontSize: '13px', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {bp.filename}
+                      {bp.filename}{bp.fileSize != null ? ` (${(bp.fileSize / (1024 * 1024)).toFixed(1)} MB)` : ''}
                     </div>
                     <div style={{ display: 'flex', gap: '8px', marginTop: '3px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '11px', padding: '1px 7px', backgroundColor: lc.bg, color: lc.color, borderRadius: '10px', fontWeight: '600' }}>

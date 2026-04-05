@@ -24,7 +24,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2 } from 'lucide-react'
+import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2, VolumeX } from 'lucide-react'
 import { clsx } from 'clsx'
 import { NexusThreeOrb } from './NexusThreeOrb'
 import type { OrbState } from './NexusPresenceOrb'
@@ -43,15 +43,17 @@ export interface DrawerMessage {
 }
 
 export interface NexusDrawerPanelProps {
-  isOpen:          boolean
-  drawerExpanded:  boolean
-  onToggleDrawer:  () => void
-  orbState:        OrbState
-  voiceStatus:     VoiceSessionStatus
-  onMicPress:      () => void
-  messages:        DrawerMessage[]
-  onSendText:      (text: string) => Promise<void>
-  isSending:       boolean
+  isOpen:           boolean
+  drawerExpanded:   boolean
+  onToggleDrawer:   () => void
+  orbState:         OrbState
+  voiceStatus:      VoiceSessionStatus
+  onMicPress:       () => void
+  messages:         DrawerMessage[]
+  onSendText:       (text: string) => Promise<void>
+  isSending:        boolean
+  /** Last 3 messages from the previous session — shown faded at top for continuity */
+  contextMessages?: DrawerMessage[]
 }
 
 // ── Agent color map ────────────────────────────────────────────────────────────
@@ -87,7 +89,7 @@ function orbStateLabel(status: VoiceSessionStatus): string {
 
 // ── Message bubble ─────────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: DrawerMessage }) {
+function MessageBubble({ msg, faded }: { msg: DrawerMessage; faded?: boolean }) {
   const isUser = msg.role === 'user'
   const agentColor = msg.agentId ? AGENT_COLORS[msg.agentId] ?? '#8b5cf6' : '#8b5cf6'
 
@@ -95,10 +97,11 @@ function MessageBubble({ msg }: { msg: DrawerMessage }) {
     <div
       className={clsx(
         'flex gap-2 animate-fade-in',
-        isUser ? 'flex-row-reverse' : 'flex-row'
+        isUser ? 'flex-row-reverse' : 'flex-row',
+        faded && 'opacity-40'
       )}
     >
-      {/* Avatar */}
+      {/* Avatar — nexus side only */}
       {!isUser && (
         <div
           className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[9px] font-mono font-bold mt-1"
@@ -138,10 +141,11 @@ function MessageBubble({ msg }: { msg: DrawerMessage }) {
           {msg.content}
         </p>
 
-        {/* Original voice transcript (gray, smaller) */}
-        {msg.isVoice && msg.originalContent && msg.originalContent !== msg.content && (
-          <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed whitespace-pre-wrap break-words m-0 border-t border-white/10 pt-1.5">
-            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-semibold">original: </span>
+        {/* Voice transcript — show original Whisper text so user can verify what was heard */}
+        {isUser && msg.isVoice && msg.originalContent && msg.originalContent !== msg.content && (
+          <p className="text-[11px] text-emerald-200/60 mt-1.5 leading-relaxed whitespace-pre-wrap break-words m-0 border-t border-white/10 pt-1.5">
+            <Mic size={9} className="inline mr-1 opacity-70" />
+            <span className="text-[9px] uppercase tracking-wider text-emerald-200/50 font-semibold">heard: </span>
             {msg.originalContent}
           </p>
         )}
@@ -154,9 +158,15 @@ function MessageBubble({ msg }: { msg: DrawerMessage }) {
           )}
         >
           {formatTime(msg.timestamp)}
-          {msg.isVoice && ' 🎙'}
         </p>
       </div>
+
+      {/* FIX 2 — Mic icon badge beside user voice messages (appears left of bubble in flex-row-reverse) */}
+      {isUser && msg.isVoice && (
+        <div className="flex-shrink-0 flex flex-col items-center justify-end pb-5 gap-0.5">
+          <Mic size={11} className="text-emerald-400/60" />
+        </div>
+      )}
     </div>
   )
 }
@@ -213,11 +223,66 @@ export function NexusDrawerPanel({
   messages,
   onSendText,
   isSending,
+  contextMessages = [],
 }: NexusDrawerPanelProps) {
   const [textInput, setTextInput] = useState('')
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const textareaRef     = useRef<HTMLTextAreaElement>(null)
   const scrollContRef   = useRef<HTMLDivElement>(null)
+
+  // ── Mute state — synced via localStorage 'nexus_mute' ─────────────────────
+  const [muted, setMuted] = useState(() => {
+    try { return localStorage.getItem('nexus_mute') === 'true' } catch { return false }
+  })
+
+  // Sync mute state when QuickCapture toggles it (storage event)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'nexus_mute') {
+        setMuted(e.newValue === 'true')
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  const toggleMute = useCallback(() => {
+    setMuted(prev => {
+      const next = !prev
+      try { localStorage.setItem('nexus_mute', String(next)) } catch {}
+      return next
+    })
+  }, [])
+
+  // ── "Tap mic to continue..." prompt logic ─────────────────────────────────
+  const [showContinuePrompt, setShowContinuePrompt] = useState(false)
+  const prevVoiceStatusRef = useRef<VoiceSessionStatus>(voiceStatus)
+  const continuePromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const prev = prevVoiceStatusRef.current
+    prevVoiceStatusRef.current = voiceStatus
+
+    // Show prompt when NEXUS finishes speaking and mic is idle
+    if (
+      prev === 'responding' &&
+      (voiceStatus === 'inactive' || voiceStatus === 'complete' || voiceStatus === 'listening')
+    ) {
+      setShowContinuePrompt(true)
+      if (continuePromptTimerRef.current) clearTimeout(continuePromptTimerRef.current)
+      continuePromptTimerRef.current = setTimeout(() => setShowContinuePrompt(false), 3000)
+    }
+
+    // Hide immediately if user starts recording
+    if (voiceStatus === 'recording' || voiceStatus === 'transcribing' || voiceStatus === 'processing') {
+      setShowContinuePrompt(false)
+      if (continuePromptTimerRef.current) clearTimeout(continuePromptTimerRef.current)
+    }
+
+    return () => {
+      if (continuePromptTimerRef.current) clearTimeout(continuePromptTimerRef.current)
+    }
+  }, [voiceStatus])
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -340,6 +405,22 @@ export function NexusDrawerPanel({
                 {messages.length} message{messages.length !== 1 ? 's' : ''}
               </div>
             </div>
+
+            {/* Mute toggle — FIX 2 */}
+            <button
+              onClick={toggleMute}
+              className={clsx(
+                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                muted
+                  ? 'bg-amber-500/20 border border-amber-500/40 text-amber-400'
+                  : 'bg-white/5 border border-white/10 text-gray-400 hover:text-gray-200 hover:bg-white/10'
+              )}
+              aria-label={muted ? 'Unmute TTS' : 'Mute TTS'}
+              title={muted ? 'TTS muted — tap to unmute' : 'Mute TTS output'}
+            >
+              {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+              <span className="text-[10px]">{muted ? 'Muted' : 'Sound'}</span>
+            </button>
           </div>
 
           {/* Messages — full height, scrollable */}
@@ -348,7 +429,24 @@ export function NexusDrawerPanel({
             className="flex-1 overflow-y-auto px-3 py-4 space-y-4 min-h-0"
             style={{ overscrollBehavior: 'contain' }}
           >
-            {messages.length === 0 && (
+            {/* FIX 4 — Previous session context: faded, not interactive */}
+            {contextMessages.length > 0 && (
+              <div className="mb-3">
+                <div className="text-[9px] font-mono text-gray-600 uppercase tracking-wider text-center mb-2 select-none">
+                  — previous session —
+                </div>
+                <div className="pointer-events-none space-y-3">
+                  {contextMessages.map(msg => (
+                    <MessageBubble key={`ctx-${msg.id}`} msg={msg} faded />
+                  ))}
+                </div>
+                <div className="border-t border-white/5 mt-3 pt-2 text-[9px] font-mono text-gray-700 text-center select-none">
+                  new session
+                </div>
+              </div>
+            )}
+
+            {messages.length === 0 && contextMessages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-center px-4 py-12">
                 <div
                   className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
@@ -395,22 +493,92 @@ export function NexusDrawerPanel({
 
           {/* Input area */}
           <div
-            className="flex-shrink-0 px-3 pb-4 pt-2"
+            className="flex-shrink-0 px-3 pb-3 pt-2"
             style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
           >
-            {/* Speaking state — stop button */}
-            {isSpeaking && (
-              <div className="flex items-center justify-center mb-2">
-                <button
-                  onClick={onMicPress}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 text-xs font-semibold hover:bg-cyan-500/25 transition-colors"
-                >
-                  <Volume2 size={14} />
-                  Speaking… (tap to stop)
-                </button>
-              </div>
-            )}
+            {/* ── FIX 1 — Large persistent centered mic button ─────────────── */}
+            <div className="flex flex-col items-center mb-3 mt-1">
+              {/* Large mic button — always visible, never disappears */}
+              <button
+                onClick={onMicPress}
+                disabled={isProcessing}
+                className={clsx(
+                  'relative w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-lg',
+                  'focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900',
+                  isRecording  && 'focus:ring-red-400',
+                  isSpeaking   && 'focus:ring-cyan-400',
+                  isProcessing && 'focus:ring-gray-500',
+                  !isRecording && !isSpeaking && !isProcessing && 'focus:ring-emerald-400',
+                )}
+                style={{
+                  background: isRecording
+                    ? 'rgba(220,38,38,0.85)'
+                    : isSpeaking
+                      ? 'rgba(8,145,178,0.85)'
+                      : isProcessing
+                        ? 'rgba(55,65,81,0.85)'
+                        : 'rgba(16,185,129,0.85)',
+                  boxShadow: isRecording
+                    ? '0 0 0 0 rgba(220,38,38,0.4)'
+                    : isSpeaking
+                      ? '0 0 0 0 rgba(8,145,178,0.4)'
+                      : '0 4px 24px rgba(16,185,129,0.25)',
+                }}
+                aria-label={
+                  isRecording  ? 'Stop recording'
+                  : isSpeaking  ? 'Stop speaking (barge in)'
+                  : isProcessing ? 'Processing…'
+                  : 'Start recording'
+                }
+                title={
+                  isRecording  ? 'Tap to stop recording'
+                  : isSpeaking  ? 'Tap to interrupt NEXUS'
+                  : isProcessing ? 'Processing…'
+                  : 'Tap to speak'
+                }
+              >
+                {/* Pulse ring when recording */}
+                {isRecording && (
+                  <span className="absolute inset-0 rounded-full animate-ping bg-red-500/30 pointer-events-none" />
+                )}
+                {/* Speaking wave ring */}
+                {isSpeaking && (
+                  <span className="absolute inset-0 rounded-full animate-ping bg-cyan-500/25 pointer-events-none" />
+                )}
 
+                {isProcessing ? (
+                  <Loader2 size={24} className="text-white animate-spin" />
+                ) : isRecording ? (
+                  <MicOff size={24} className="text-white" />
+                ) : isSpeaking ? (
+                  <Volume2 size={24} className="text-white" />
+                ) : (
+                  <Mic size={24} className="text-white" />
+                )}
+              </button>
+
+              {/* State label below large mic */}
+              <span className="mt-1.5 text-[10px] font-mono text-gray-400">
+                {isRecording  ? 'Recording — tap to stop'
+                 : isSpeaking  ? 'Speaking — tap to interrupt'
+                 : isProcessing ? 'Processing…'
+                 : 'Tap to speak'}
+              </span>
+
+              {/* FIX 3 — "Tap mic to continue..." prompt after NEXUS responds */}
+              {showContinuePrompt && !isRecording && !isProcessing && !isSpeaking && (
+                <span
+                  className="mt-1 text-[11px] text-emerald-400/80 font-medium"
+                  style={{
+                    animation: 'fadeOut 3s ease-in-out forwards',
+                  }}
+                >
+                  Tap mic to continue…
+                </span>
+              )}
+            </div>
+
+            {/* Text input row */}
             <div
               className="flex items-end gap-2 rounded-xl px-3 py-2"
               style={{
@@ -418,39 +586,13 @@ export function NexusDrawerPanel({
                 border: '1px solid rgba(255,255,255,0.09)',
               }}
             >
-              {/* Mic button */}
-              <button
-                onClick={onMicPress}
-                disabled={isProcessing}
-                className={clsx(
-                  'flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-all',
-                  'focus:outline-none',
-                  isRecording && 'bg-red-600/80 text-white scale-105',
-                  isSpeaking  && 'bg-cyan-600/80 text-white',
-                  isProcessing && 'bg-gray-700 text-gray-500 cursor-wait',
-                  !isRecording && !isSpeaking && !isProcessing && 'bg-emerald-600/70 text-white hover:bg-emerald-600',
-                )}
-                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                title={isRecording ? 'Stop recording' : 'Press to speak'}
-              >
-                {isProcessing ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : isRecording ? (
-                  <MicOff size={16} />
-                ) : isSpeaking ? (
-                  <Volume2 size={16} />
-                ) : (
-                  <Mic size={16} />
-                )}
-              </button>
-
               {/* Text input */}
               <textarea
                 ref={textareaRef}
                 value={textInput}
                 onChange={e => setTextInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask NEXUS anything…"
+                placeholder="Or type a message…"
                 rows={1}
                 className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-500 outline-none resize-none min-h-[20px] max-h-28 leading-relaxed"
                 style={{ fontSize: '15px' }}  /* readable on iPad without zooming */
@@ -477,6 +619,15 @@ export function NexusDrawerPanel({
               NEXUS · VAULT · PULSE · LEDGER · SPARK · BLUEPRINT · OHM · CHRONO · SCOUT
             </p>
           </div>
+
+          {/* Fade-out keyframe for continue prompt */}
+          <style>{`
+            @keyframes fadeOut {
+              0%   { opacity: 1; }
+              60%  { opacity: 1; }
+              100% { opacity: 0; }
+            }
+          `}</style>
         </div>
       </div>
     </>

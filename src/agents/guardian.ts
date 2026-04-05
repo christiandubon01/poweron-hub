@@ -379,6 +379,25 @@ export function evaluateRules(
  * @param action - Human-readable label for what triggered this audit (e.g. "Manual Run Audit")
  * @param result - The violations array returned by evaluateRules()
  */
+// ── Crew Field Log (stub for MorningBriefingCard) ─────────────────────────────
+
+export interface CrewFieldLog {
+  id: string
+  crewMemberId: string
+  crewMemberName: string
+  projectId: string
+  date: string
+  hoursLogged: number
+  notes?: string
+  status: 'pending' | 'reviewed' | 'flagged'
+}
+
+export function reviewPendingLogs(logs: CrewFieldLog[]): CrewFieldLog[] {
+  return logs.filter(log => log.status === 'pending')
+}
+
+// ── generateAuditEntry ─────────────────────────────────────────────────────────
+
 export function generateAuditEntry(
   action: string,
   result: GuardianViolation[],
@@ -402,4 +421,57 @@ export function generateAuditEntry(
     lowCount,
     timestamp: new Date().toISOString(),
   }
+}
+
+// ── GuardianPanel stubs — full implementation during V3 GUARDIAN integration ──
+
+export type ActivityAnomalyType = 'unusual_hours' | 'location_mismatch' | 'rapid_entries' | 'duplicate_log'
+
+export interface Flag {
+  id: string
+  logId: string
+  type: ActivityAnomalyType
+  description: string
+  severity: 'low' | 'medium' | 'high'
+  createdAt: string
+}
+
+export interface ActivityEntry {
+  id: string
+  crewMemberId: string
+  crewMemberName: string
+  projectId: string
+  timestamp: string
+  action: string
+  hoursLogged?: number
+  anomalyType?: ActivityAnomalyType
+}
+
+export function markLogReviewed(log: CrewFieldLog): CrewFieldLog {
+  return { ...log, status: 'reviewed' }
+}
+
+export function markAllLogsReviewed(logs: CrewFieldLog[]): CrewFieldLog[] {
+  return logs.map(log => ({ ...log, status: 'reviewed' as const }))
+}
+
+export function getActivityFeed(logs: CrewFieldLog[]): ActivityEntry[] {
+  return logs.map(log => ({
+    id: log.id,
+    crewMemberId: log.crewMemberId,
+    crewMemberName: log.crewMemberName,
+    projectId: log.projectId,
+    timestamp: log.date,
+    action: 'Field log submitted',
+    hoursLogged: log.hoursLogged,
+  }))
+}
+
+export function runActivityAnalysis(entries: ActivityEntry[]): Flag[] {
+  // Replace with real anomaly detection during V3 GUARDIAN integration
+  return []
+}
+
+export function routeGuardianAlerts(flags: Flag[]): void {
+  // Replace with real alert routing during V3 GUARDIAN integration
 }

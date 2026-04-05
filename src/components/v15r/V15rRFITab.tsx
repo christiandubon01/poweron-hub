@@ -27,23 +27,33 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   const addRFI = () => {
     pushState()
     p.rfis = p.rfis || []
-    const num = 'RFI-' + String(p.rfis.length + 1).padStart(3, '0')
+    const rfiNum = 'RFI-' + String(p.rfis.length + 1).padStart(3, '0')
     p.rfis.push({
-      id: num,
+      id: rfiNum,
       status: 'open',
       question: '',
       directedTo: '',
       submitted: new Date().toISOString().split('T')[0],
       response: '',
       costImpact: '',
+      // Stage fields initialised so they always persist on first save
+      stageRecorded: '',
+      stageApplies: '',
     })
     saveBackupData(backup)
     forceUpdate()
+    if (onUpdate) onUpdate()
   }
 
   const editRFI = (rfiId, field, value) => {
+    // Always read fresh from localStorage so we never save a stale backup
+    // (guards against the parent re-rendering with a new reference before this fires)
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
+    if (!freshProject) return
     pushState()
-    const rfi = (p.rfis || []).find(r => r.id === rfiId)
+    const rfi = (freshProject.rfis || []).find(r => r.id === rfiId)
     if (rfi) {
       if (field === 'question') rfi.question = String(value)
       else if (field === 'directedTo') rfi.directedTo = String(value)
@@ -52,26 +62,45 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       else if (field === 'stageRecorded') rfi.stageRecorded = String(value)
       else if (field === 'stageApplies') rfi.stageApplies = String(value)
     }
-    saveBackupData(backup)
+    saveBackupData(freshBackup)
     forceUpdate()
+    // Notify the parent (V15rProjectInner) to re-read from localStorage so the
+    // updated stage values are reflected when the parent next renders.
+    if (onUpdate) onUpdate()
   }
 
   const toggleStatus = (rfiId) => {
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
+    if (!freshProject) return
     pushState()
-    const rfi = (p.rfis || []).find(r => r.id === rfiId)
+    const rfi = (freshProject.rfis || []).find(r => r.id === rfiId)
     if (rfi) {
-      rfi.status = rfi.status === 'critical' ? 'open' : rfi.status === 'open' ? 'answered' : 'open'
+      const nextStatus = rfi.status === 'critical' ? 'open' : rfi.status === 'open' ? 'answered' : 'open'
+      rfi.status = nextStatus
+      if (nextStatus === 'answered' || nextStatus === 'resolved') {
+        if (!rfi.resolved_at) rfi.resolved_at = new Date().toISOString().split('T')[0]
+      } else {
+        rfi.resolved_at = ''
+      }
     }
-    saveBackupData(backup)
+    saveBackupData(freshBackup)
     forceUpdate()
+    if (onUpdate) onUpdate()
   }
 
   const delRFI = (rfiId) => {
     if (!confirm('Delete RFI?')) return
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
+    if (!freshProject) return
     pushState()
-    p.rfis = (p.rfis || []).filter(r => r.id !== rfiId)
-    saveBackupData(backup)
+    freshProject.rfis = (freshProject.rfis || []).filter(r => r.id !== rfiId)
+    saveBackupData(freshBackup)
     forceUpdate()
+    if (onUpdate) onUpdate()
   }
 
   const statusBadgeColor = (status) => {
@@ -147,6 +176,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {rfis.map(r => {
               const colors = statusBadgeColor(r.status)
+              const isResolved = r.status === 'answered' || r.status === 'resolved'
+              const createdDate = r.submitted ? new Date(r.submitted) : null
+              const endDate = isResolved && r.resolved_at ? new Date(r.resolved_at) : new Date()
+              const daysOpen = createdDate
+                ? Math.max(0, Math.floor((endDate.getTime() - createdDate.getTime()) / 86400000))
+                : null
+              const daysColor = daysOpen === null ? 'var(--t3)' : daysOpen > 30 ? '#ef4444' : daysOpen > 14 ? '#f59e0b' : 'var(--t3)'
               return (
                 <div
                   key={r.id}
@@ -175,9 +211,19 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                         {r.status.toUpperCase()}
                       </span>
                     </div>
-                    <span style={{ fontSize: '11px', color: 'var(--t3)' }}>
-                      {r.submitted} · {r.directedTo || '—'}
-                    </span>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
+                        Created: {r.submitted || '—'} · {r.directedTo || '—'}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '2px' }}>
+                        Resolved: {isResolved && r.resolved_at ? r.resolved_at : '—'}
+                        {daysOpen !== null && (
+                          <span style={{ marginLeft: '8px', color: daysColor, fontWeight: daysOpen > 14 ? '600' : '400' }}>
+                            Open {daysOpen} {daysOpen === 1 ? 'day' : 'days'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Stage Recorded / Stage Applies dropdowns */}

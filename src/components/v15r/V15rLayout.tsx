@@ -27,7 +27,10 @@ import {
   VolumeX,
   Volume2,
   Layers,
+  LogOut,
+  Plus,
 } from 'lucide-react'
+import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { useDemoStore } from '@/store/demoStore'
 import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
@@ -40,6 +43,23 @@ import { initSparkBusListeners } from '@/agents/spark'
 import { getVoiceSubsystem, unlockAudioContext } from '@/services/voice'
 import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
 import { callClaude, extractText as claudeExtractText } from '@/services/claudeProxy'
+
+/** Header metric formatter — precise rounding for all KPI pills.
+ *  <$1k → exact ($471) | $1k–$9.9k → one decimal ($1.4k) | $10k–$99k → one decimal ($14.7k) | $100k+ → whole ($105k)
+ */
+function fmtHeader(v: number): string {
+  const n = Number(v || 0)
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 100000) {
+    return sign + '$' + Math.round(abs / 1000) + 'k'
+  }
+  if (abs >= 1000) {
+    // floor to one decimal place (avoid rounding $1,471 up to $1.5k when user expects $1.4k)
+    return sign + '$' + (Math.floor(abs / 100) / 10).toFixed(1) + 'k'
+  }
+  return sign + '$' + Math.round(abs)
+}
 
 interface V15rLayoutProps {
   activeView: string
@@ -87,6 +107,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const saved = localStorage.getItem('nav_section_intelligence')
     return saved !== null ? saved === 'true' : true
   })
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const signOut = useAuthStore(s => s.signOut)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
@@ -118,13 +140,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
     refresh()
 
-    // Listen for storage changes from other components (e.g., Field Log saves)
+    // Listen for storage changes from other tabs (cross-tab)
     const handleStorageChange = () => refresh()
     window.addEventListener('storage', handleStorageChange)
 
-    // Clean up listener on unmount
+    // Listen for same-tab saves dispatched by saveBackupData (e.g. status changes, deletions)
+    // so the pipeline KPI in the header updates in real time without a page reload.
+    const handleDataSaved = () => refresh()
+    window.addEventListener('poweron-data-saved', handleDataSaved)
+
+    // Clean up listeners on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      window.removeEventListener('poweron-data-saved', handleDataSaved)
     }
   }, [])
 
@@ -591,7 +619,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
       {/* LEFT SIDEBAR */}
       <aside
-        className={`fixed left-0 top-0 h-screen flex flex-col z-50 transition-all duration-300 ${
+        className={`fixed left-0 top-0 h-screen flex flex-col z-[60] transition-all duration-300 ${
           isMobile
             ? (sidebarOpen ? 'translate-x-0' : '-translate-x-full')
             : ''
@@ -876,12 +904,63 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           </div>
 
         </div>
+
+        {/* ── Logout Button — pinned to sidebar bottom ────────────────── */}
+        <div className="border-t border-gray-700 px-2 py-3 flex-shrink-0">
+          <button
+            onClick={() => setShowLogoutConfirm(true)}
+            title={!showLabels ? 'Sign Out' : undefined}
+            className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors rounded text-gray-400 hover:text-red-400 hover:bg-red-500/10 border-l-2 border-transparent hover:border-red-500`}
+          >
+            <LogOut size={18} />
+            {showLabels && <span>Sign Out</span>}
+          </button>
+        </div>
+
+        {/* ── Logout Confirm Dialog ───────────────────────────────────── */}
+        {showLogoutConfirm && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowLogoutConfirm(false) }}
+          >
+            <div
+              className="w-full max-w-xs mx-4 rounded-2xl p-6 space-y-5"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-secondary)' }}
+            >
+              <div className="flex items-center gap-3">
+                <LogOut size={20} className="text-red-400 flex-shrink-0" />
+                <h3 className="text-base font-bold text-gray-100">Sign out of PowerOn Hub?</h3>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-gray-400 hover:text-gray-200 transition-colors"
+                  style={{ backgroundColor: 'var(--bg-input)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowLogoutConfirm(false)
+                    localStorage.removeItem('poweron_pin_hash')
+                    await signOut()
+                  }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </aside>
 
       {/* MAIN LAYOUT */}
       <div className="flex flex-col flex-1 transition-all duration-300" style={{ marginLeft: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224) }}>
         {/* TOP BAR - TWO ROWS */}
-        <header className="fixed top-0 right-0 flex flex-col z-30 transition-all duration-300" style={{ left: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224), backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
+        <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224), backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
             {/* LEFT: Hamburger + KPI Pills */}
@@ -901,12 +980,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* PIPELINE */}
                 <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Pipeline' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">${(safeKpis.pipeline / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-green-400">{fmtHeader(safeKpis.pipeline)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Pipeline</span>
                       <span className="text-base font-bold text-green-400">
-                        ${(safeKpis.pipeline / 1000).toFixed(0)}k
+                        {fmtHeader(safeKpis.pipeline)}
                       </span>
                     </>
                   )}
@@ -915,12 +994,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* PAID */}
                 <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">${(safeKpis.paid / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-green-400">{fmtHeader(safeKpis.paid)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
                       <span className="text-base font-bold text-green-400">
-                        ${(safeKpis.paid / 1000).toFixed(0)}k
+                        {fmtHeader(safeKpis.paid)}
                       </span>
                     </>
                   )}
@@ -935,12 +1014,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* EXPOSURE */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Exposure' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-red-400">${(safeKpis.exposure / 1000).toFixed(0)}k</span>
+                    <span className="text-sm font-bold text-red-400">{fmtHeader(safeKpis.exposure)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Exposure</span>
                       <span className="text-base font-bold text-red-400">
-                        ${(safeKpis.exposure / 1000).toFixed(0)}k
+                        {fmtHeader(safeKpis.exposure)}
                       </span>
                     </>
                   )}
@@ -949,12 +1028,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* SVC UNBILLED */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Svc Unbilled' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-yellow-400">${Math.round(safeKpis.svcUnbilled / 1000)}k</span>
+                    <span className="text-sm font-bold text-yellow-400">{fmtHeader(safeKpis.svcUnbilled)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
                       <span className="text-base font-bold text-yellow-400">
-                        ${Math.round(safeKpis.svcUnbilled / 1000)}k
+                        {fmtHeader(safeKpis.svcUnbilled)}
                       </span>
                     </>
                   )}
@@ -1000,12 +1079,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* SERVICE NET */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Service Net' : undefined}>
                   {isCompact ? (
-                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${(serviceNet / 1000).toFixed(0)}k</span>
+                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtHeader(serviceNet)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Service Net</span>
                       <span className={`text-base font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        ${(serviceNet / 1000).toFixed(0)}k
+                        {fmtHeader(serviceNet)}
                       </span>
                     </>
                   )}
@@ -1594,9 +1673,9 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-6 left-6 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg z-50 flex items-center justify-center transition-colors"
-        title="Quick Capture"
+        title="Quick log"
       >
-        <Zap size={24} />
+        <Plus size={24} />
       </button>
 
       {/* Bottom sheet */}

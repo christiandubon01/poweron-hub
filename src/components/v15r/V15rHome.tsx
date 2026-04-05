@@ -29,7 +29,9 @@ import {
   Send,
   Mic,
   MicOff,
+  RefreshCw,
 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 import {
   getBackupData,
   saveBackupData,
@@ -45,6 +47,7 @@ import {
   resolveProjectBucket,
   num,
   getProjectFinancials,
+  buildProjectLogRollup,
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
@@ -57,7 +60,10 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 
 function getGreeting(): string {
   const hr = new Date().getHours()
-  return hr < 12 ? 'morning' : hr < 17 ? 'afternoon' : 'evening'
+  if (hr >= 5 && hr < 12) return 'morning'
+  if (hr >= 12 && hr < 17) return 'afternoon'
+  if (hr >= 17 && hr < 21) return 'evening'
+  return 'night'
 }
 
 function formatDate(): string {
@@ -84,6 +90,18 @@ function agendaStatusChip(status: string) {
 
 // Status cycle order
 const STATUS_CYCLE = ['pending', 'active', 'done', 'postponed', 'declined']
+
+// ── Balance color helper (same thresholds as Field Log) ─────────────────────
+// green > 20% remaining | yellow 10–20% | orange < 10% | red if negative
+
+function getBalanceColor(balance: number, contract: number): string {
+  if (balance < 0) return '#ef4444'       // red: negative balance
+  if (contract <= 0) return '#10b981'     // green fallback when no contract set
+  const pctLeft = balance / contract
+  if (pctLeft > 0.20) return '#10b981'   // green: > 20% remaining
+  if (pctLeft > 0.10) return '#f59e0b'   // yellow: 10–20% remaining
+  return '#f97316'                        // orange: < 10% remaining
+}
 
 // ── Service money math helper ────────────────────────────────────────────────
 
@@ -122,6 +140,9 @@ export default function V15rHome() {
   const [editAIAlertText, setEditAIAlertText] = useState('')
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
+  // ── Quote refresh offset ──
+  const [quoteOffset, setQuoteOffset] = useState(0)
+
   // ── AI Daily Assistant state ──
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [aiMessages, setAiMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([])
@@ -130,6 +151,30 @@ export default function V15rHome() {
   const [aiRecording, setAiRecording] = useState(false)
   const aiScrollRef = useRef<HTMLDivElement>(null)
   const aiInitRef = useRef(false)
+
+  // ── User first name from Supabase profile ──
+  const [firstName, setFirstName] = useState<string>('')
+
+  useEffect(() => {
+    async function fetchUserName() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single()
+        if (profile?.full_name) {
+          const first = profile.full_name.trim().split(/\s+/)[0]
+          if (first) setFirstName(first)
+        }
+      } catch {
+        // silently ignore — name is optional; fall back to no-name greeting
+      }
+    }
+    fetchUserName()
+  }, [])
 
   const _rawBackup = getBackupData()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : _rawBackup
@@ -436,13 +481,15 @@ export default function V15rHome() {
   const _motivNow = new Date()
   const _motivStart = new Date(_motivNow.getFullYear(), 0, 0)
   const _motivDayOfYear = Math.floor((_motivNow.getTime() - _motivStart.getTime()) / (1000 * 60 * 60 * 24))
-  const _motivPhrase = MOTIVATION_PHRASES[_motivDayOfYear % MOTIVATION_PHRASES.length]
+  const _motivPhrase = MOTIVATION_PHRASES[(_motivDayOfYear + quoteOffset) % MOTIVATION_PHRASES.length]
   const _motivHr = _motivNow.getHours()
-  const _motivGreeting = _motivHr >= 5 && _motivHr < 12
-    ? 'Good morning, Christian'
-    : _motivHr >= 12 && _motivHr < 18
-    ? 'Good afternoon, Christian'
-    : 'Good evening, Christian'
+  const _motivPeriod = _motivHr >= 5 && _motivHr < 12 ? 'morning'
+    : _motivHr >= 12 && _motivHr < 17 ? 'afternoon'
+    : _motivHr >= 17 && _motivHr < 21 ? 'evening'
+    : 'night'
+  const _motivGreeting = firstName
+    ? `Good ${_motivPeriod}, ${firstName}`
+    : `Good ${_motivPeriod}`
   const _motivFireLine = _motivHr >= 5 && _motivHr < 12
     ? "Let's go build something today."
     : _motivHr >= 12 && _motivHr < 18
@@ -459,7 +506,7 @@ export default function V15rHome() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-100">
-            Good {getGreeting()} ⚡
+            Good {getGreeting()}{firstName ? `, ${firstName}` : ''} ⚡
           </h1>
           <p className="text-xs text-gray-500 mt-1">{formatDate()}</p>
         </div>
@@ -1028,55 +1075,69 @@ export default function V15rHome() {
       </div>
 
       {/* ── RECENT LOGS ──────────────────────────────────────────────────────── */}
+      {/* Mirrors Field Log tab: uses buildProjectLogRollup for cumulative math per entry */}
       <div>
         <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Recent Logs</h2>
         {recentLogs.length > 0 ? (
           <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
             {(() => {
-              const grouped = groupLogsByDate(recentLogs)
-              const sortedDates = Array.from(grouped.keys()).sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
+              // Build rollup cache per project — same pattern as Field Log tab
+              const rollCache: Record<string, any> = {}
+              const getRoll = (projId: string) => {
+                if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
+                return rollCache[projId]
+              }
 
-              return sortedDates.map((date, dateIdx) => {
-                const logsForDate = grouped.get(date) || []
-                const mileRate = backup.settings?.mileRate || 0.66
-
-                // Calculate daily totals
-                let dailyRevenue = 0
-                let dailyExpenses = 0
-                logsForDate.forEach((l: any) => {
-                  dailyRevenue += num(l.collected || l.quoted || 0)
-                  const mat = num(l.mat || 0)
-                  const miles = num(l.miles || 0)
-                  dailyExpenses += mat + (miles * mileRate)
-                })
-                const dailyNet = dailyRevenue - dailyExpenses
+              return recentLogs.map((l: any, i: number) => {
+                const projId = l.projId || l.projectId || ''
+                const projRoll = getRoll(projId)
+                // Fall back gracefully if log id not found in rollup (e.g. missing projId)
+                const rr = projRoll.byId[l.id] || {
+                  entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
+                  entryMaterialCost: num(l.mat),
+                  entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
+                  entryTotalCost: 0,
+                  remainingAfter: projRoll.quote,
+                }
+                const entryRevenue = rr.entryLaborCost
+                const entryExpenses = rr.entryMaterialCost + rr.entryMileageCost
+                const runningBalance = num(rr.remainingAfter)
+                const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
 
                 return (
-                  <div key={date}>
-                    {logsForDate.map((l, i) => (
-                      <div key={l.id || date + '-' + i} className={`px-4 py-3 flex items-start justify-between ${i < logsForDate.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
-                            <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
-                            <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
-                          </div>
-                          <div className="text-[10px] text-blue-300">{l.phase}</div>
-                          {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
-                        </div>
-                        <div className="text-right flex-shrink-0 ml-3">
-                          <div className="text-xs font-mono text-gray-200">{l.hrs}h</div>
-                          {l.mat > 0 && <div className="text-[10px] font-mono text-yellow-400">{fmt(l.mat)}</div>}
-                        </div>
+                  <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
+                        <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
+                        <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
                       </div>
-                    ))}
-
-                    {/* Daily summary strip */}
-                    <div className="px-4 py-1.5 bg-gray-800/50 border border-gray-700/30 rounded mx-2 my-2 text-[10px] font-mono">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span style={{color: '#10b981'}}>Revenue: {fmt(dailyRevenue)}</span>
-                        <span style={{color: '#ef4444'}}>Expenses: {fmt(dailyExpenses)}</span>
-                        <span style={{color: dailyNet >= 0 ? '#10b981' : '#ef4444'}}>Net: {fmt(dailyNet)}</span>
+                      <div className="text-[10px] text-blue-300">{l.phase}</div>
+                      {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
+                      {/* Expenses row: per-entry Revenue | Expenses | Net (running project balance) */}
+                      <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
+                        <span>
+                          <span className="text-gray-500">Revenue: </span>
+                          <span style={{ color: '#10b981' }}>{fmt(entryRevenue)}</span>
+                        </span>
+                        <span>
+                          <span className="text-gray-500">Expenses: </span>
+                          <span style={{ color: '#ef4444' }}>{fmt(entryExpenses)}</span>
+                        </span>
+                        <span>
+                          <span className="text-gray-500">Net: </span>
+                          <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span>
+                        </span>
+                      </div>
+                    </div>
+                    {/* Right side: hours | mat cost | running balance */}
+                    <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
+                      <div className="text-xs font-mono text-gray-200">{num(l.hrs).toFixed(1)}h</div>
+                      {num(l.mat) > 0 && (
+                        <div className="text-[10px] font-mono text-yellow-400">{fmt(num(l.mat))}</div>
+                      )}
+                      <div className="text-[11px] font-mono font-bold" style={{ color: balanceColor }}>
+                        Net: {fmt(runningBalance)}
                       </div>
                     </div>
                   </div>
@@ -1098,14 +1159,35 @@ export default function V15rHome() {
           <div style={{ fontSize: 16, color: '#f9fafb', fontStyle: 'italic', fontWeight: 400, marginBottom: 6 }}>{_motivPhrase.quote}</div>
           <div style={{ fontSize: 12, color: '#1D9E75', marginBottom: 10 }}>{_motivPhrase.attr}</div>
           <div style={{ fontSize: 13, color: '#EF9F27', fontWeight: 500 }}>{_motivFireLine}</div>
-          <div
-            style={{ fontSize: 11, color: '#6b7280', marginTop: 10, cursor: 'pointer' }}
-            onClick={() => {
-              setAiInput(`Who said this? ${_motivFullQuote}`)
-              setAiPanelOpen(true)
-            }}
-          >
-            Ask NEXUS who said this →
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+            <div
+              style={{ fontSize: 11, color: '#6b7280', cursor: 'pointer' }}
+              onClick={() => {
+                setAiInput(`Who said this? ${_motivFullQuote}`)
+                setAiPanelOpen(true)
+              }}
+            >
+              Ask NEXUS who said this →
+            </div>
+            <button
+              onClick={() => setQuoteOffset(o => (o + 1) % MOTIVATION_PHRASES.length)}
+              title="Next quote"
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#4b5563',
+                opacity: 0.6,
+                padding: '2px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0.6' }}
+            >
+              <RefreshCw size={13} />
+            </button>
           </div>
         </div>
       )}
@@ -1139,7 +1221,7 @@ export default function V15rHome() {
               const text = extractText(res)
               setAiMessages([{ role: 'assistant', content: text }])
             }).catch(() => {
-              setAiMessages([{ role: 'assistant', content: `Good ${getGreeting()}, Christian. I couldn't reach the AI service right now. Your dashboard data is above — check the service jobs needing attention first.` }])
+              setAiMessages([{ role: 'assistant', content: `Good ${getGreeting()}${firstName ? `, ${firstName}` : ''}. I couldn't reach the AI service right now. Your dashboard data is above — check the service jobs needing attention first.` }])
             }).finally(() => setAiLoading(false))
           }
         }}
@@ -1151,11 +1233,11 @@ export default function V15rHome() {
 
       {/* ── AI Slide-in Panel ── */}
       {aiPanelOpen && (
-        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full bg-[#1a1d2e] border-l border-gray-700 shadow-2xl flex flex-col">
+        <div className="fixed inset-y-0 right-0 z-50 w-[400px] max-w-full border-l border-gray-700 shadow-2xl flex flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#151827]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700" style={{ backgroundColor: 'var(--bg-secondary)' }}>
             <div>
-              <h3 className="text-sm font-bold text-gray-100">Good {getGreeting()}, Christian</h3>
+              <h3 className="text-sm font-bold text-gray-100">Good {getGreeting()}{firstName ? `, ${firstName}` : ''}</h3>
               <p className="text-[10px] text-gray-500">{formatDate()}</p>
             </div>
             <button onClick={() => { setAiPanelOpen(false); aiInitRef.current = false; setAiMessages([]) }} className="text-gray-400 hover:text-white"><X size={18} /></button>
@@ -1168,7 +1250,7 @@ export default function V15rHome() {
               </div>
             )}
             {aiMessages.map((msg, i) => (
-              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[#232738] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
+              <div key={i} className={`text-xs leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-blue-200 ml-8' : 'bg-[var(--bg-card)] border border-gray-700 rounded-lg p-3 text-gray-300'}`}>
                 {msg.content}
               </div>
             ))}
@@ -1198,7 +1280,7 @@ export default function V15rHome() {
                 }
               }}
               placeholder="Ask about your day..."
-              className="flex-1 bg-[#232738] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
+              className="flex-1 bg-[var(--bg-card)] border border-gray-600 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 outline-none"
             />
             <button
               onClick={() => {

@@ -79,6 +79,21 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   const lastTranscriptRef           = useRef('')
   const lastCleanedTranscriptRef    = useRef('')
 
+  // FIX 4 — Session continuity: key for sessionStorage persistence
+  const DRAWER_SESSION_KEY = 'nexus_drawer_messages_v1'
+
+  // FIX 4 — Load last 3 messages from previous session as faded context
+  const [contextMessages, setContextMessages] = useState<DrawerMessage[]>(() => {
+    try {
+      const stored = sessionStorage.getItem('nexus_drawer_messages_v1')
+      if (stored) {
+        const msgs: DrawerMessage[] = JSON.parse(stored)
+        return msgs.slice(-3)
+      }
+    } catch {}
+    return []
+  })
+
   // Silence detection refs
   const silenceTimerRef    = useRef(null)
   const silenceStartRef    = useRef(0)
@@ -218,6 +233,14 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
     return () => unsub()
   }, [user?.id, profile?.org_id])
 
+  // FIX 4 — Persist messages to sessionStorage whenever they change
+  useEffect(() => {
+    if (messages.length === 0) return
+    try {
+      sessionStorage.setItem(DRAWER_SESSION_KEY, JSON.stringify(messages))
+    } catch {}
+  }, [messages, DRAWER_SESSION_KEY])
+
   // Silence detection
   const stopSilenceDetection = useCallback(() => {
     if (silenceRafRef.current)      { cancelAnimationFrame(silenceRafRef.current); silenceRafRef.current = null }
@@ -296,6 +319,9 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
       case 'listening':
         if (!drawerOpen)            { setDrawerOpen(true); setDrawerExpanded(true) }
         else if (!drawerExpanded)   { setDrawerExpanded(true) }
+        // FIX 1 — sync accumulated conversation history to voice subsystem
+        // so voice queries share multi-turn context with text conversation
+        voice.setConversationHistory(conversationHistoryRef.current)
         await voice.startRecording('normal')
         break
       case 'recording':
@@ -370,8 +396,76 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
 
   const isVisible = drawerOpen || status !== 'inactive'
 
+  // ── NEXUS permanent entry point button ────────────────────────────────────
+  // Always visible when the full NEXUS drawer is not already expanded.
+  // Clicking opens the NEXUS voice conversation directly — no bucket selection.
+  const handleOpenNexus = () => {
+    setDrawerOpen(true)
+    setDrawerExpanded(true)
+    try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {}
+  }
+
   return (
     <>
+      {/* ── Permanent NEXUS floating button (bottom-right, always visible) ── */}
+      {/* Hidden only when the full drawer is expanded — the panel itself is the CTA */}
+      {!(isVisible && drawerExpanded) && (
+        <button
+          onClick={handleOpenNexus}
+          title="Talk to NEXUS"
+          style={{
+            position: 'fixed',
+            bottom: '96px',
+            right: '24px',
+            zIndex: 59,
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+            border: '1.5px solid rgba(34,197,94,0.6)',
+            boxShadow: '0 4px 20px rgba(34,197,94,0.35)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '2px',
+            cursor: 'pointer',
+            transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.07)'; (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 6px 28px rgba(34,197,94,0.5)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 20px rgba(34,197,94,0.35)' }}
+          aria-label="Open NEXUS voice conversation"
+        >
+          {/* N icon in a circle */}
+          <span style={{
+            width: '24px',
+            height: '24px',
+            borderRadius: '50%',
+            background: 'rgba(255,255,255,0.15)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'monospace',
+            fontWeight: 800,
+            fontSize: '13px',
+            color: '#ffffff',
+            letterSpacing: '-0.5px',
+          }}>
+            N
+          </span>
+          <span style={{
+            fontSize: '8px',
+            fontWeight: 700,
+            color: 'rgba(255,255,255,0.9)',
+            letterSpacing: '0.05em',
+            lineHeight: 1,
+            fontFamily: 'monospace',
+          }}>
+            NEXUS
+          </span>
+        </button>
+      )}
+
       <NexusDrawerPanel
         isOpen         = {isVisible}
         drawerExpanded = {drawerExpanded}
@@ -379,12 +473,13 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
           if (!drawerOpen) { setDrawerOpen(true); setDrawerExpanded(true) }
           else             { toggleDrawer() }
         }}
-        orbState    = {orbState}
-        voiceStatus = {status}
-        onMicPress  = {handleMicPress}
-        messages    = {messages}
-        onSendText  = {handleSendText}
-        isSending   = {isSending}
+        orbState        = {orbState}
+        voiceStatus     = {status}
+        onMicPress      = {handleMicPress}
+        messages        = {messages}
+        onSendText      = {handleSendText}
+        isSending       = {isSending}
+        contextMessages = {contextMessages}
       />
 
       {/* Silence progress bar */}

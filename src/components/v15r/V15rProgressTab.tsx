@@ -399,7 +399,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
               >
                 <div style={{ width: '3px', height: '16px', borderRadius: '2px', backgroundColor: clr, flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ color: 'var(--t1)', fontWeight: '600', marginBottom: '2px' }}>
+                  <div style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '14px', marginBottom: '2px' }}>
                     {ph}
                     {isCustom && (
                       <span style={{
@@ -471,12 +471,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                         onDrop={e => onDrop(ph, t.id, e)}
                         onDragEnd={onDragEnd}
                         style={{
-                          padding: '8px',
+                          padding: '10px 10px 10px 0',
                           backgroundColor: dragActive === t.id ? '#2a2d40' : '#1e2130',
                           borderRadius: '6px',
                           display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          minHeight: '56px',
+                          gap: '0',
                           cursor: 'grab',
                           opacity: dragActive === t.id ? 0.55 : 1,
                           border: dragActive === t.id
@@ -486,85 +488,117 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           userSelect: 'none',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {/* Drag handle */}
+                        {/* Drag handle — 20px wide, left edge */}
+                        <div
+                          style={{
+                            width: '20px',
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            alignSelf: 'stretch',
+                            cursor: 'grab',
+                          }}
+                          title="Drag to reorder"
+                        >
                           <span
                             style={{
                               color: 'var(--t3)',
                               fontSize: '14px',
-                              cursor: 'grab',
-                              flexShrink: 0,
-                              opacity: 0.5,
+                              opacity: 0.6,
+                              lineHeight: '1',
                             }}
-                            title="Drag to reorder"
                           >
                             ⠿
                           </span>
+                        </div>
+
+                        {/* Left column — 65%: description + slider */}
+                        <div style={{ flex: '0 0 65%', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, paddingRight: '12px' }}>
                           <input
                             type="text"
                             value={t.desc || ''}
                             onChange={e => editTask(ph, t.id, 'desc', e.target.value)}
-                            // Stop drag from firing while typing
                             onMouseDown={e => e.stopPropagation()}
                             style={{
                               background: 'transparent',
                               border: 'none',
                               color: 'var(--t1)',
-                              fontSize: '12px',
+                              fontSize: '13px',
                               fontFamily: 'inherit',
                               outline: 'none',
-                              flex: 1,
+                              width: '100%',
                               cursor: 'text',
                             }}
                           />
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                           <input
                             type="range"
                             min="0"
                             max="100"
                             value={t.pct || 0}
                             onChange={e => editTask(ph, t.id, 'pct', e.target.value)}
-                            style={{ flex: 1, accentColor: clr }}
+                            style={{ width: '100%', accentColor: clr }}
                           />
-                          <span style={{ fontSize: '11px', fontFamily: 'monospace', minWidth: '32px', textAlign: 'right' }}>
+                        </div>
+
+                        {/* Right column — 35%: hours on top, percentage below */}
+                        <div style={{
+                          flex: '0 0 calc(35% - 20px)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          minWidth: 0,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <input
+                              type="number"
+                              value={t.hrs || 0}
+                              onChange={e => editTask(ph, t.id, 'hrs', e.target.value)}
+                              step="0.5"
+                              min="0"
+                              style={{
+                                width: '54px',
+                                padding: '4px 6px',
+                                backgroundColor: '#0f1117',
+                                border: '1px solid var(--bdr2)',
+                                color: 'var(--t1)',
+                                fontFamily: 'monospace',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                                textAlign: 'center',
+                              }}
+                            />
+                            <span style={{ fontSize: '11px', color: 'var(--t3)', flexShrink: 0 }}>hrs</span>
+                          </div>
+                          <span style={{
+                            fontSize: '14px',
+                            fontFamily: 'monospace',
+                            fontWeight: '700',
+                            color: clr,
+                          }}>
                             {t.pct || 0}%
                           </span>
                         </div>
-                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                          <input
-                            type="number"
-                            value={t.hrs || 0}
-                            onChange={e => editTask(ph, t.id, 'hrs', e.target.value)}
-                            step="0.5"
-                            min="0"
-                            style={{
-                              width: '60px',
-                              padding: '4px',
-                              backgroundColor: '#0f1117',
-                              border: '1px solid var(--bdr2)',
-                              color: 'var(--t1)',
-                              fontFamily: 'monospace',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                            }}
-                          />
-                          <span style={{ fontSize: '11px', color: 'var(--t3)' }}>hours</span>
-                          <button
-                            onClick={() => delTask(ph, t.id)}
-                            style={{
-                              marginLeft: 'auto',
-                              background: 'none',
-                              border: 'none',
-                              color: '#ef4444',
-                              cursor: 'pointer',
-                              fontSize: '14px',
-                              padding: '0',
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
+
+                        {/* Delete button */}
+                        <button
+                          onClick={() => delTask(ph, t.id)}
+                          style={{
+                            flexShrink: 0,
+                            alignSelf: 'center',
+                            background: 'none',
+                            border: 'none',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            padding: '0 4px',
+                            lineHeight: 1,
+                          }}
+                        >
+                          ×
+                        </button>
                       </div>
                     ))}
                   </div>

@@ -321,6 +321,7 @@ Be specific and concise. Use the actual content from the notes — don't general
 export function JournalPanel() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activeContext, setActiveContext] = useState<VoiceContext>('general')
   const [showSummaryModal, setShowSummaryModal] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
@@ -338,11 +339,13 @@ export function JournalPanel() {
 
   const load = useCallback(async (opts: JournalFilterOptions = {}) => {
     setLoading(true)
+    setError(null)
     try {
       const data = await getJournalWithFilters(opts, 100)
       setEntries(data)
-    } catch (err) {
+    } catch (err: any) {
       console.error('[JournalPanel] Failed to load entries:', err)
+      setError(err?.message || 'Failed to load journal entries. Please try again.')
     } finally {
       setLoading(false)
     }

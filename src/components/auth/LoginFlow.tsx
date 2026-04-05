@@ -18,6 +18,14 @@ import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import { PasscodeScreen } from '@/components/auth/PasscodeScreen'
 import { BiometricPrompt } from '@/components/auth/BiometricPrompt'
+import { PinAuth } from '@/components/auth/PinAuth'
+
+// Key used by PinAuth to store the hashed PIN in localStorage
+const PIN_STORAGE_KEY = 'poweron_pin_hash'
+
+function hasPinStored(): boolean {
+  try { return Boolean(localStorage.getItem(PIN_STORAGE_KEY)) } catch { return false }
+}
 
 // ── Email Sign-In ────────────────────────────────────────────────────────────
 function EmailSignIn() {
@@ -304,13 +312,26 @@ interface LoginFlowProps {
 
 export function LoginFlow({ children }: LoginFlowProps) {
   const { status, submitPasscode, signOut } = useAuth()
+  // Track whether the user has chosen to fall back to magic link for this session.
+  // We initialise it to false — PinAuth is shown first whenever a PIN is stored.
+  const [pinFallback, setPinFallback] = useState(false)
 
   switch (status) {
     case 'loading':
       return <AuthSpinner />
 
-    case 'unauthenticated':
+    case 'unauthenticated': {
+      // Show PIN pad as the primary auth method when the user has set one up.
+      // If no PIN is stored, or the user has explicitly chosen to use a link,
+      // fall through to the magic-link / email sign-in screen.
+      const showPin = hasPinStored() && !pinFallback
+      if (showPin) {
+        return (
+          <PinAuth onFallbackToMagicLink={() => setPinFallback(true)} />
+        )
+      }
       return <EmailSignIn />
+    }
 
     case 'needs_passcode_setup':
       return <PasscodeSetupFlow />

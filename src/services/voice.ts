@@ -231,6 +231,10 @@ export class VoiceSubsystem {
   private orgId: string = ''
   private userId: string = ''
 
+  // Multi-turn conversation history — set by VoiceActivationButton before each recording
+  // so voice queries share context with the text conversation thread.
+  private conversationHistory: any[] = []
+
   /**
    * Initialize the voice subsystem with user context and preferences.
    */
@@ -521,6 +525,15 @@ export class VoiceSubsystem {
   }
 
   /**
+   * Set conversation history for the next voice pipeline call.
+   * Called by VoiceActivationButton before startRecording() so the
+   * voice path shares the same multi-turn context as text input.
+   */
+  setConversationHistory(history: any[]): void {
+    this.conversationHistory = [...history]
+  }
+
+  /**
    * Update voice preferences.
    */
   async updatePreferences(updates: Partial<VoicePreferences>): Promise<void> {
@@ -650,7 +663,7 @@ export class VoiceSubsystem {
         message: transcript,
         orgId: this.orgId,
         userId: this.userId,
-        conversationHistory: [],
+        conversationHistory: this.conversationHistory,
         isVoiceCommand: true,
       })
 
@@ -667,13 +680,35 @@ export class VoiceSubsystem {
         this.currentSession.agentResponse = fullDisplayText
       }
 
+      // FIX 1 — update internal conversation history so next voice turn has context
+      this.conversationHistory = [
+        ...this.conversationHistory,
+        { role: 'user', content: transcript, timestamp: Date.now() },
+        { role: 'assistant', content: fullDisplayText || responseText, timestamp: Date.now() + 1 },
+      ].slice(-20)
+
       console.log('[Voice] NEXUS response received via', nexusResult?.intent?.targetAgent, '— voice:', responseText?.substring(0, 100))
     } catch (routeErr) {
       console.warn('[Voice] NEXUS processMessage failed, falling back to direct Claude:', routeErr)
 
       // Fallback: send transcript directly to Claude via proxy
       try {
-        const NEXUS_SYSTEM = 'You are NEXUS, a helpful AI assistant for Power On Solutions LLC, a C-10 electrical contractor in the Coachella Valley, CA. You respond to voice commands. Be concise and conversational — your response will be spoken aloud. Keep answers under 3 sentences when possible.'
+        const NEXUS_SYSTEM = `You are NEXUS, the AI chief-of-staff for Power On Solutions, an electrical contracting company run by Christian Dubon in the Coachella Valley. You have direct access to all business data: projects, invoices, field logs, leads, scheduling, and financials.
+
+COMMUNICATION RULES — follow these exactly:
+- Talk to Christian like a sharp, trusted advisor who knows his business cold
+- Lead with the answer, never with setup
+- Be direct and specific — use actual numbers, project names, and dates from the data
+- No filler phrases: never say 'Great question', 'Certainly', 'Absolutely', 'Of course'
+- No bullet point walls — weave information into natural sentences when speaking
+- After giving the core answer, offer one follow-up: 'Want me to dig into X?' or 'Should I route this to LEDGER?'
+- Match his energy — if he's brief, be brief. If he's asking for analysis, go deeper
+- When data is missing: say exactly what's missing and what would fix it — never hedge
+- Field Mode (default): max 2 sentences + one action offer
+- Review Mode: full analysis, connect the dots across agents, surface what he hasn't asked yet
+- Sound human — use contractions, vary sentence length, don't read like a report
+
+Your response will be spoken aloud via TTS — keep it conversational and under 3 sentences unless he asks for analysis.`
         const claudeResult = await callClaude({
           system: NEXUS_SYSTEM,
           messages: [{ role: 'user', content: transcript }],
@@ -721,59 +756,72 @@ export class VoiceSubsystem {
 
     console.log('[Voice] Entering SPEAKING state — mic disabled')
 
+    // FIX: read mute state fresh from localStorage at CALL TIME — not at component mount.
+    // Muted = zero audio plays, zero ElevenLabs API calls made.
+    // Text response still renders in transcript panel regardless of mute state.
+    const isMuted = typeof window !== 'undefined' && localStorage.getItem('nexus_mute') === 'true'
+
     let ttsPlayed = false
-    try {
-      // Hard safety guard — truncate TTS text to 300 characters max.
-      // 300 chars ≈ 20-25 seconds of audio, safe for iOS blob playback.
-      // 800 chars still produced 46s audio which choked Howler on mobile.
-      const ttsText = responseText.slice(0, 300)
-      debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
-      debugPush('ElevenLabs TTS — requesting synthesis...')
-      // Read voice ID fresh at CALL TIME — never cache it
-      const activeVoiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
-        || this.preferences.ttsVoiceId
-        || DEFAULT_VOICE_ID
-      // Read speech rate fresh at CALL TIME
-      const speechRate = typeof window !== 'undefined'
-        ? parseFloat(localStorage.getItem('nexus_speech_rate') || '1.0')
-        : 1.0
-      console.log('[ElevenLabs] Firing TTS call — voice_id:', activeVoiceId, ', rate:', speechRate)
-      debugPush(`TTS voice ID: ${activeVoiceId}, rate: ${speechRate}`)
+    if (isMuted) {
+      debugPush('TTS muted (nexus_mute=true) — skipping ElevenLabs call and WebSpeech fallback')
+      console.log('[Voice] TTS muted — skipping audio playback')
+      ttsPlayed = true // set true so WebSpeech fallback below is also skipped
+    } else {
+      try {
+        // Hard safety guard — truncate TTS text to 300 characters max.
+        // 300 chars ≈ 20-25 seconds of audio, safe for iOS blob playback.
+        // 800 chars still produced 46s audio which choked Howler on mobile.
+        const ttsText = responseText.slice(0, 300)
+        debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
+        debugPush('ElevenLabs TTS — requesting synthesis...')
+        // Read voice ID fresh at CALL TIME — never cache it
+        const activeVoiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
+          || this.preferences.ttsVoiceId
+          || DEFAULT_VOICE_ID
+        // Read speech rate fresh at CALL TIME
+        const speechRate = typeof window !== 'undefined'
+          ? parseFloat(localStorage.getItem('nexus_speech_rate') || '1.0')
+          : 1.0
+        console.log('[ElevenLabs] Firing TTS call — voice_id:', activeVoiceId, ', rate:', speechRate)
+        debugPush(`TTS voice ID: ${activeVoiceId}, rate: ${speechRate}`)
 
-      const ttsResult = await synthesizeWithElevenLabs({
-        text: ttsText,
-        voice_id: activeVoiceId,
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-        },
-        speed: speechRate,
-      })
+        const ttsResult = await synthesizeWithElevenLabs({
+          text: ttsText,
+          voice_id: activeVoiceId,
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+          speed: speechRate,
+        })
 
-      debugPush(`ElevenLabs TTS — received blob ${ttsResult.audioBlob.size} bytes, ~${ttsResult.durationSeconds}s`)
+        debugPush(`ElevenLabs TTS — received blob ${ttsResult.audioBlob.size} bytes, ~${ttsResult.durationSeconds}s`)
 
-      if (this.currentSession) {
-        this.currentSession.responseAudioUrl = ttsResult.audioUrl
-        this.currentSession.responseVoiceId = activeVoiceId
-        this.currentSession.responseDurationSeconds = ttsResult.durationSeconds
+        if (this.currentSession) {
+          this.currentSession.responseAudioUrl = ttsResult.audioUrl
+          this.currentSession.responseVoiceId = activeVoiceId
+          this.currentSession.responseDurationSeconds = ttsResult.durationSeconds
+        }
+
+        // Step 6: Play response (with interruptible audio reference)
+        this.lastTTSText = ttsText
+        debugPush(`TTS chars: ${ttsText.length}`)
+        debugPush('playAudioTracked() — starting playback...')
+        console.log('[Voice] Playing TTS audio')
+        await this.playAudioTracked(ttsResult.audioUrl)
+        debugPush('playAudioTracked() — playback completed')
+        revokeAudioUrl(ttsResult.audioUrl)
+        ttsPlayed = true
+      } catch (ttsErr) {
+        debugPush(`TTS ERROR: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
+        console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
       }
-
-      // Step 6: Play response (with interruptible audio reference)
-      this.lastTTSText = ttsText
-      debugPush(`TTS chars: ${ttsText.length}`)
-      debugPush('playAudioTracked() — starting playback...')
-      console.log('[Voice] Playing TTS audio')
-      await this.playAudioTracked(ttsResult.audioUrl)
-      debugPush('playAudioTracked() — playback completed')
-      revokeAudioUrl(ttsResult.audioUrl)
-      ttsPlayed = true
-    } catch (ttsErr) {
-      debugPush(`TTS ERROR: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
-      console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
     }
 
     // Fallback: browser Web Speech API (especially important for iOS)
-    if (!ttsPlayed && typeof window !== 'undefined' && window.speechSynthesis) {
+    // FIX: also gate WebSpeech fallback behind mute check — re-read fresh from localStorage
+    const isMutedForFallback = typeof window !== 'undefined' && localStorage.getItem('nexus_mute') === 'true'
+    if (!ttsPlayed && !isMutedForFallback && typeof window !== 'undefined' && window.speechSynthesis) {
       try {
         debugPush('ElevenLabs/Howler failed — falling back to WebSpeech')
         console.log(VoiceSubsystem.IS_IOS ? '[iOS Audio] Falling back to WebSpeech' : '[Voice] Using WebSpeech fallback')
@@ -868,7 +916,9 @@ export class VoiceSubsystem {
       // iOS requires: set src, call load(), append to DOM, then play
       const audio = new Audio()
       audio.src = audioUrl
-      audio.playbackRate = this.preferences.ttsSpeed
+      // playbackRate = 1.0 — ElevenLabs already generates audio at the correct speed
+      // via voice_settings.speed; applying playbackRate here would double the effect.
+      audio.playbackRate = 1.0
       audio.load() // critical for iOS — forces buffering before play
       document.body.appendChild(audio) // required for iOS WebView audio playback
       audio.onended = () => {

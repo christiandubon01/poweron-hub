@@ -151,6 +151,15 @@ export function AppShell({ children }: AppShellProps) {
     return () => window.removeEventListener('poweron:show-journal', handleShowJournal)
   }, [])
 
+  // Collection routing "need to follow up" → navigate to Money panel
+  useEffect(() => {
+    function handleShowMoney() {
+      setActiveView('money')
+    }
+    window.addEventListener('poweron:show-money', handleShowMoney)
+    return () => window.removeEventListener('poweron:show-money', handleShowMoney)
+  }, [])
+
   // Handle navigation
   function handleNav(view: string) {
     // Project tab views that should NOT clear activeProjectId

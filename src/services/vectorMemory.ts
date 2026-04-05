@@ -10,6 +10,27 @@ import { storeMemory, searchMemory, chunkText, type MemoryRecord, type EntityTyp
 // Extended entity types for Phase F
 export type ExtendedEntityType = BaseEntityType | 'service_call' | 'field_log' | 'code_question' | 'agent_proposal' | 'conversation' | 'pattern'
 
+// ── DB1 Vector Memory Query Cache (5-minute TTL) ──────────────────────────────
+// Prevents redundant pgvector semantic searches when the same query is issued
+// multiple times within a conversation session (e.g. NEXUS context enrichment
+// firing on every message with similar content).
+const _vectorQueryCache = new Map<string, { result: MemoryRecord[]; expiresAt: number }>()
+const VECTOR_CACHE_TTL_MS = 5 * 60 * 1000  // 5 minutes
+
+function buildCacheKey(
+  orgId: string,
+  query: string,
+  options?: { entityType?: string; agentId?: string; limit?: number; threshold?: number }
+): string {
+  return `${orgId}::${query.trim().toLowerCase()}::${options?.entityType ?? ''}::${options?.agentId ?? ''}::${options?.limit ?? 5}::${options?.threshold ?? 0.65}`
+}
+
+/** Clear all cached vector query results (call after storing new memories). */
+export function clearVectorQueryCache(): void {
+  _vectorQueryCache.clear()
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Generate embedding via Netlify proxy (routed through lib/memory/embeddings).
  */
@@ -29,6 +50,9 @@ export async function storeEntityMemory(params: {
   content: string
   metadata?: Record<string, unknown>
 }): Promise<string | null> {
+  // Invalidate query cache when new memory is stored so subsequent searches
+  // reflect the newly stored content.
+  clearVectorQueryCache()
   return storeMemory({
     orgId: params.orgId,
     entityType: params.entityType as BaseEntityType,
@@ -41,6 +65,10 @@ export async function storeEntityMemory(params: {
 
 /**
  * Search related memories with sensible defaults.
+ *
+ * DB1 optimization: results are cached in-memory for 5 minutes per unique
+ * (orgId, query, options) combination to avoid redundant pgvector queries
+ * when NEXUS enrichment fires on back-to-back messages with similar content.
  */
 export async function getRelatedMemories(
   orgId: string,
@@ -52,7 +80,13 @@ export async function getRelatedMemories(
     threshold?: number
   }
 ): Promise<MemoryRecord[]> {
-  return searchMemory({
+  const cacheKey = buildCacheKey(orgId, query, options)
+  const cached = _vectorQueryCache.get(cacheKey)
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.result
+  }
+
+  const result = await searchMemory({
     orgId,
     query,
     entityType: options?.entityType as BaseEntityType | undefined,
@@ -60,6 +94,9 @@ export async function getRelatedMemories(
     limit: options?.limit ?? 5,
     threshold: options?.threshold ?? 0.65,
   })
+
+  _vectorQueryCache.set(cacheKey, { result, expiresAt: Date.now() + VECTOR_CACHE_TTL_MS })
+  return result
 }
 
 /**

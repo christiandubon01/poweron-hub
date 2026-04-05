@@ -27,6 +27,14 @@ import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { getBackupData, num, fmt } from '@/services/backupDataService'
 import { AgentActivityPanel } from './AgentActivityPanel'
+import { addToScoutQueue } from '@/services/scoutQueue'
+
+// ── SCOUT suppression helper ─────────────────────────────────────────────────
+// Returns true when the user explicitly asked SCOUT for something.
+// If false and the response agent is 'scout', suppress from chat → silent queue.
+function isExplicitScoutRequest(msg: string): boolean {
+  return /\bscout\b|what\s+(?:have\s+)?you\s+flagged|show.*improvements?|improvements?\s+(?:queue|list|you\s+have)|flagged\s+improvements?/i.test(msg)
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -296,6 +304,16 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         }
         setMessages(prev => [...prev, previewMsg])
 
+      } else if (
+        // FIX 2 — SCOUT response suppression:
+        // If the responding agent is SCOUT and the user's message did NOT
+        // explicitly mention SCOUT or improvements, suppress from the chat
+        // thread and log to the silent queue instead.
+        response.agent.agentId === 'scout' && !isExplicitScoutRequest(trimmed)
+      ) {
+        addToScoutQueue(response.agent.content, trimmed)
+        console.log('[NexusChat] SCOUT response suppressed → silent queue')
+        // Do NOT add to the messages thread — no notification, no badge
       } else {
         // Direct response — add to thread
         const assistantMsg: ChatMessage = {

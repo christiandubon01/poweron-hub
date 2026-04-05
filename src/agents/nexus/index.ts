@@ -32,6 +32,8 @@ import { getRelatedMemories } from '@/services/vectorMemory'
 import { setVoiceContext, getVoiceContext, type VoiceContext } from '@/services/voice'
 // ── Session 10: Skill Intelligence ──────────────────────────────────────────
 import { processSkillSignals, isDevelopmentQuery, buildSkillMapContext } from '@/services/skillSignalExtractor'
+// ── V5 Session: Deep context builder (local-first, rich prose context) ───────
+import { buildDeepProjectContext } from './nexusContextBuilder'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,19 +84,40 @@ export function getLastContextSyncTime(): number {
 }
 
 /**
- * Build a structured operational data block from live Supabase data.
- * Queries active projects, service logs (30d), field logs (30d),
- * open RFIs, AR items, and pending agenda alerts.
+ * Build a structured operational data block for NEXUS context injection.
+ *
+ * V5 UPGRADE — Local-first deep context:
+ * 1. Tries getBackupData() (localStorage) first — this is the authoritative
+ *    source for all rich project data: phases, tasks, laborRows, mtoRows,
+ *    rfis with age, finance overrides, and field log recency.
+ * 2. Falls back to shallow Supabase queries only when no local data exists
+ *    (e.g. first load before any backup is imported, or clean slate).
+ *
+ * The output is readable prose, not a JSON dump — so Claude can produce
+ * responses like "Your rough-in is stalled — no movement in 8 days and the
+ * RTU RFI has been blocking for a month" rather than generic KPI summaries.
  */
 async function buildOperationalContext(orgId: string): Promise<string> {
+  // ── Step 1: Try local-first deep context (primary path) ──────────────────
+  try {
+    const localContext = buildDeepProjectContext()
+    if (localContext) {
+      console.log('[NEXUS] Deep local context built —', localContext.length, 'chars')
+      return localContext
+    }
+  } catch (localErr) {
+    console.warn('[NEXUS] Deep local context failed, falling back to Supabase:', localErr)
+  }
+
+  // ── Step 2: Supabase fallback (shallow — used when no local state exists) ─
   const timestamp = new Date().toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
   })
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
-  const lines: string[] = [`## Live Operational Data (as of ${timestamp})`]
+  const lines: string[] = [`## Live Operational Data — Supabase Fallback (as of ${timestamp})`]
 
   try {
-    // 1. Active projects
+    // Active projects (shallow schema — no phase/task/labor detail)
     const { data: projects } = await supabase
       .from('projects')
       .select('id, name, contract_value, actual_cost, status, phase, updated_at')
@@ -110,7 +133,6 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       .eq('org_id', orgId)
       .limit(100)
 
-    // Aggregate paid and billed amounts per project
     const paidByProject   = new Map()
     const billedByProject = new Map()
     for (const inv of (invoices || [])) {
@@ -121,7 +143,6 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       billedByProject.set(pid, (billedByProject.get(pid) || 0) + (Number(inv.total) || 0))
     }
 
-    // Name lookup for later joins
     const projectNameById = new Map()
     for (const p of (projects || [])) projectNameById.set(p.id, p.name)
 
@@ -138,7 +159,7 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 2. Service logs last 30 days
+    // Service logs last 30 days
     const { data: serviceLogs } = await supabase
       .from('service_logs')
       .select('log_date, customer_name, collected, job_type, field_log_id')
@@ -147,7 +168,6 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       .order('log_date', { ascending: false })
       .limit(50)
 
-    // Quoted amounts from linked field_logs
     const quotedByFieldLog = new Map()
     const slFieldLogIds = (serviceLogs || []).filter(sl => sl.field_log_id).map(sl => sl.field_log_id)
     if (slFieldLogIds.length > 0) {
@@ -168,7 +188,7 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 3. Field logs last 30 days
+    // Field logs last 30 days
     const { data: fieldLogs } = await supabase
       .from('field_logs')
       .select('log_date, project_id, phase, hours, collected, material_cost')
@@ -187,13 +207,13 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 4. Open RFIs
+    // Open RFIs (subject + description only — no age/directed-to in Supabase fallback)
     const { data: rfis } = await supabase
       .from('rfis')
-      .select('subject, description, status, project_id')
+      .select('subject, description, status, project_id, created_at')
       .eq('org_id', orgId)
       .in('status', ['open', 'pending', 'draft'])
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: true })
       .limit(20)
 
     if (rfis?.length) {
@@ -202,12 +222,16 @@ async function buildOperationalContext(orgId: string): Promise<string> {
         const projName = rfi.project_id
           ? (projectNameById.get(rfi.project_id) || rfi.project_id.slice(0, 8))
           : 'Unknown Project'
+        const daysOpen = rfi.created_at
+          ? Math.floor((Date.now() - new Date(rfi.created_at).getTime()) / 86400000)
+          : null
+        const ageStr = daysOpen !== null ? ` (${daysOpen} days open)` : ''
         const desc = rfi.description ? rfi.description.slice(0, 120) : 'No description'
-        lines.push(`- [${projName}] ${rfi.subject}: ${desc}`)
+        lines.push(`- [${projName}]${ageStr} ${rfi.subject}: ${desc}`)
       }
     }
 
-    // 5. AR items (contract - paid)
+    // AR items
     if (projects?.length) {
       const arItems = (projects || [])
         .map(p => ({
@@ -227,7 +251,7 @@ async function buildOperationalContext(orgId: string): Promise<string> {
       }
     }
 
-    // 6. Pending agenda alerts
+    // Pending agenda alerts
     const { data: agendaTasks } = await supabase
       .from('agenda_tasks')
       .select('text, due_date, status, metadata')
@@ -247,11 +271,11 @@ async function buildOperationalContext(orgId: string): Promise<string> {
     }
 
   } catch (err) {
-    console.warn('[NEXUS] buildOperationalContext error — continuing with memory only:', err)
-    lines.push('\n(Live data unavailable — using conversation memory and local backup)')
+    console.warn('[NEXUS] Supabase fallback context error — continuing with memory only:', err)
+    lines.push('\n(Live data unavailable — using conversation memory only)')
   }
 
-  lines.push('\nUse this data to answer operational questions accurately. Do not ask the user to create memory buckets for information that already exists here.')
+  lines.push('\nNote: This context is from Supabase (shallow schema). For richer project insight including phase detail, RFI ages, labor breakdown, and MTO gaps, import your latest backup into the app.')
   return lines.join('\n')
 }
 
@@ -467,21 +491,25 @@ export function detectMode(message: string, requestedMode?: NexusMode): NexusMod
 
 const BRIEFING_FORMAT_INSTRUCTION = `
 ## Response Format — BRIEFING MODE
-Format your response as a concise briefing:
-- Max 5 bullet points using 🔴 (critical/urgent), 🟡 (needs attention), 🟢 (on track)
-- Each bullet: [Emoji] [Agent domain] — [one line max]
-- Priority score: HIGH / MEDIUM / LOW
-- Top 3 action items numbered (1. 2. 3.)
-- Be direct, specific with dollar amounts and names.
+Respond in natural, flowing prose — not bullet lists. 3-5 sentences maximum.
+
+Your response must cover three things in order, woven into natural language:
+1. What is the current state — use real project names, actual dollar amounts, real task names, actual days since last movement. Never say "your project" when you know the project name. Never say "outstanding AR" when you know the client and the amount.
+2. Why it matters — what risk, delay, or opportunity does this create right now?
+3. What should happen next — a specific, actionable recommendation.
+
+Do NOT produce lists of numbers the user can already see on their dashboard. Explain what those numbers mean and what to do about them.
 `
 
 const DEEP_DIVE_FORMAT_INSTRUCTION = `
 ## Response Format — DEEP DIVE MODE
-Provide a full per-agent breakdown:
-- Organize by agent domain (LEDGER, PULSE, BLUEPRINT, etc.) with clear headers
-- Each section: status, key numbers, risks, and recommended actions
-- Use concrete data — dollar amounts, project names, percentages
-- End with a consolidated priority action list
+Respond in narrative prose, organized by theme (not by agent). Write in paragraphs, not bullet lists.
+
+Each paragraph should cover: the specific situation (named projects, named clients, real amounts), why it matters for the business, and the recommended action. Connect the dots across domains — if a cash flow gap is linked to a project phase stall, say that explicitly.
+
+End with a direct summary sentence: "The most urgent item is [specific thing] — here's why and what to do about it."
+
+Use real data throughout: actual project names, actual dollar amounts, actual days, actual customer names.
 `
 
 // ── List Query Detection ────────────────────────────────────────────────────
@@ -523,35 +551,22 @@ That's all 11. What would you like to know about any of them?"
 
 const OPERATIONAL_BRIEFING_FORMAT_INSTRUCTION = `
 ## Response Format — OPERATIONAL BRIEFING
-You are generating a full operational briefing. Pull data from ALL agent domains and respond in this EXACT structure:
+You are generating a full operational briefing. Write in natural, connected prose — not a structured bullet dump. The goal is to give Christian a crisp picture of the business that he can act on, not a list of numbers he already knows.
 
-OPENING (1 sentence):
-Start with: "I've pulled from [list agent names used] — here's your full operational picture across projects and service calls."
+Your response must flow like this:
 
-PROJECTS BUCKET:
-- Current phase status: [X projects active, Y stuck in estimating, Z completed]
-- Cash flow exposure: [top 2-3 projects by outstanding AR with dollar amounts]
-- Ghost time eaters: [coordination gaps, RFI items, phase mismatches — be specific]
-- Critical insight: [one specific pattern you detected in the data]
-- Action: [one specific thing to do this week]
+PARAGRAPH 1 — Projects: Describe the active project situation by naming the specific projects, their current phase, what's moving and what's stalled. If a project has been sitting in a phase without logged movement for more than a week, name it and say how many days it's been stuck. Connect phase stalls to cash flow risk — if a project is stalled at rough-in and there's $X in materials on that phase with little logged hours, say so.
 
-SERVICE CALLS BUCKET (default: last 30 days):
-- Collection rate: [X% collected, $Y outstanding]
-- Top overdue: [customer name, dollar amount, days overdue]
-- Overhead flag: [any pattern in gas/material/labor costs]
-- Action: [one specific follow-up]
+PARAGRAPH 2 — Collections/Service: Describe the open service call and AR situation. Name the specific customers with outstanding balances, the actual amounts, and how long they've been outstanding. If there's a pattern (e.g., three jobs from the same week all uncollected), call it out.
 
-MILESTONE:
-"At your current trajectory, closing [gap 1], [gap 2], and [gap 3] puts you at 30% operational improvement by approximately [calculated month based on data]. Keep close eye on: follow-up cadence, audit logging, entry consistency."
+PARAGRAPH 3 — What needs to happen: Give one or two specific actions for today. Not generic — name the project, the customer, or the task.
 
-HANDOFF:
-"Tell me what you want to dive deeper into — projects, collections, overhead breakdown, or milestone plan."
+CLOSING (1 sentence): Offer to go deeper into the area that has the most risk.
 
-CRITICAL RULES:
-- Use real project names, real customer names, real dollar amounts from the data provided.
-- Never use placeholder text — if data is missing, say "no data available for this section."
-- Keep each section tight — 2-4 lines max per section.
-- Format with clean section headers for chat display.
+RULES:
+- Use real project names, real customer names, real dollar amounts, real days from the data.
+- Never use placeholder text — if data is missing, say "I don't have [specific data] — want me to flag that gap?"
+- Never produce a bullet-list of numbers without explaining what each number means and what to do about it.
 `
 
 const BRANCH_FORMAT_INSTRUCTION = `
@@ -1570,7 +1585,38 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
 
   console.log(`[NEXUS] Classified → ${intent.targetAgent} (${intent.category}, ${intent.confidence.toFixed(2)})`)
 
-  // ── Step 3b: Check for interview triggers ─────────────────────────────
+  // ── Step 3b: NEXUS routing overrides — enforce correct agent boundaries ──
+  //
+  // RULE: Project status / overview questions always stay with NEXUS.
+  //       LEDGER handles ONLY explicit billing, invoice, AR, and collections queries.
+  //       If a question like "how is the job going?" slipped through to LEDGER
+  //       (e.g. via keyword collision on 'collect', 'cash', 'revenue'), redirect it.
+  //
+  // Explicit LEDGER keywords: invoice, overdue, balance due, who owes me, billing,
+  //   accounts receivable, ar aging, collections, unpaid invoice.
+  // General financial words that should NOT guarantee LEDGER routing:
+  //   money, cash, revenue, paid, pipeline — these are too broad.
+  //
+  // ROUTE MAP (per spec):
+  //   Project status/progress/health   → NEXUS responds directly
+  //   Money owed, invoices, collections → NEXUS responds, LEDGER supplements
+  //   Compliance, NEC, code            → NEXUS responds, OHM supplements
+  //   Scheduling, dates, crew          → NEXUS responds, CHRONO supplements
+  //   Estimate, pricing, materials     → NEXUS responds, VAULT supplements
+  //   Leads, pipeline, marketing       → NEXUS responds, SPARK supplements
+  //   Improvement suggestion detected  → NEXUS responds first, SCOUT logs silently
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const PROJECT_STATUS_PATTERNS = /\bhow\s+(?:is|are|'s)\s+(?:the|my|our)?\s*(?:job|jobs|project|projects|business|things|it\s+going)\b|\bhow\s+are\s+we\s+doing\b/i
+  const LEDGER_EXPLICIT_KEYWORDS = /\b(?:invoice|invoices|overdue|balance\s+due|who\s+owes|accounts\s+receivable|ar\s+aging|billing|collections|unpaid\s+invoice)\b/i
+
+  if (intent.targetAgent === 'ledger' && PROJECT_STATUS_PATTERNS.test(query) && !LEDGER_EXPLICIT_KEYWORDS.test(query)) {
+    console.log('[NEXUS] Routing override: project status question redirected from LEDGER → NEXUS')
+    intent.targetAgent = 'nexus'
+    intent.category = 'general'
+  }
+
+  // ── Step 3c: Check for interview triggers ─────────────────────────────
   const interviewDef = checkInterviewTrigger(request.message, intent.targetAgent)
   if (interviewDef && !request.isVoiceCommand) {
     console.log(`[NEXUS] Interview triggered for ${interviewDef.agentName}`)
@@ -1732,6 +1778,64 @@ Always combine external research WITH the user's actual operational data — nev
     request.conversationHistory,
     { isListQuery, isResearchQuery, operationalContext: resolvedContext }
   )
+
+  // ── Step 4b: SCOUT improvement detection — silent background logging ────
+  // Per NEXUS routing spec: when an improvement suggestion is detected,
+  // NEXUS has already responded to the question first (above).
+  // SCOUT now logs the improvement silently — no response interruption.
+  // This is fire-and-forget; any failure is non-critical.
+  const SCOUT_IMPROVEMENT_PATTERNS = /\b(?:improvement|improve|enhance|add\s+a\s+feature|suggest|i\s+want\s+to\s+add|could\s+you\s+add|wish\s+the\s+app|feature\s+request|would\s+be\s+nice|better\s+if|what\s+if\s+you)\b/i
+  if (SCOUT_IMPROVEMENT_PATTERNS.test(query) && intent.targetAgent !== 'scout') {
+    // Fire-and-forget — SCOUT logs the improvement idea without blocking the response
+    ;(async () => {
+      try {
+        const { routeToAgent: scoutRoute } = await import('./router')
+        const scoutIntent = { ...intent, targetAgent: 'scout' as const, category: 'analysis' as const }
+        const scoutResult = await scoutRoute(scoutIntent, `[SILENT IMPROVEMENT LOG] User message: ${query}`, request.orgId, [], {})
+        console.log('[NEXUS] SCOUT logged improvement silently:', scoutResult.content?.substring(0, 100))
+      } catch (scoutErr) {
+        console.warn('[NEXUS] SCOUT silent log failed (non-critical):', scoutErr)
+      }
+    })()
+  }
+
+  // ── Step 4e: Shape response based on intentType ──────────────────────────
+  // Adjusts NEXUS response content to match command vs insight vs action vs ambiguous intent.
+  //
+  // command:   Appends persistent-storage confirmation ("Got it — I'll always X going forward.")
+  //            These are messages with signals like "always", "from now on", "going forward".
+  // insight:   No modification — NEXUS answers the question directly, no storage prompt.
+  //            These are information queries ("how is the job going?", "what do you think?").
+  // action:    No modification — agent response already confirms the completed action.
+  //            These are imperative requests ("send", "create", "schedule", etc.).
+  // ambiguous: Appends one-line offer to persist as a persistent preference.
+  //            NEXUS answers first, then asks if this should be remembered going forward.
+  //
+  // NOTE: If user replies "yes" to an ambiguous prompt → UI should re-submit as a command.
+  //       If user replies "no" or ignores → the insight answer already stands.
+  {
+    const iType = intent.intentType
+    if (iType === 'command') {
+      // Derive a plain summary of what the user wants NEXUS to always do
+      const commandBody = request.message
+        .replace(/\b(always|from now on|remember that|make sure you|going forward|set it so that|every time|i want you to always|keep doing|permanently|by default)\b[,:\s]*/gi, '')
+        .trim()
+        .replace(/^[,\s]+/, '')
+        .toLowerCase()
+      const confirmLine = commandBody.length > 3
+        ? `\n\nGot it — I'll always ${commandBody} going forward.`
+        : `\n\nGot it — I'll keep that in mind going forward.`
+      agentResponse = { ...agentResponse, content: agentResponse.content + confirmLine }
+    } else if (iType === 'ambiguous') {
+      // Answer first (already done above), then offer to convert to a persistent preference
+      agentResponse = {
+        ...agentResponse,
+        content: agentResponse.content + '\n\nWas this a one-time question or should I remember this going forward?',
+      }
+    }
+    // 'insight': no suffix — NEXUS answers directly, no storage prompt
+    // 'action':  no suffix — agent already confirms what was done
+  }
 
   // ── Step 5: Determine if confirmation is needed ─────────────────────────
   const needsConfirmation =

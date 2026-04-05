@@ -1,7 +1,8 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react'
 import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
-import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights, resolveProjectBucket, getProjectFinancials } from '@/services/backupDataService'
+import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -71,14 +72,16 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         const waste = num(pbItem?.waste || 0)
         const lineRaw = num(r.qty || 0) * costUnit * (1 + waste)
         const lineTax = lineRaw * taxRate
+        const hasCost = costUnit > 0
         const existing = acc.find(x => x.phase === r.phase)
         if (existing) {
           existing.raw += lineRaw
           existing.tax += lineTax
           existing.total = existing.raw + existing.tax
           existing.count += 1
+          if (hasCost) existing.hasCostData = true
         } else {
-          acc.push({ phase: r.phase, raw: lineRaw, tax: lineTax, total: lineRaw + lineTax, count: 1 })
+          acc.push({ phase: r.phase, raw: lineRaw, tax: lineTax, total: lineRaw + lineTax, count: 1, hasCostData: hasCost })
         }
         return acc
       }, [])
@@ -244,7 +247,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     } else {
       backup.serviceEstimates.push(estObj)
     }
-    saveBackupDataAndSync(backup, 'serviceEstimates')
+    nonCriticalWrite(backup, 'serviceEstimates')
     resetEstForm()
     setShowEstForm(false)
     forceUpdate()
@@ -263,7 +266,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (!confirm('Delete this estimate?')) return
     pushState(backup)
     backup.serviceEstimates = (backup.serviceEstimates || []).filter(e => e.id !== id)
-    saveBackupDataAndSync(backup, 'serviceEstimates')
+    nonCriticalWrite(backup, 'serviceEstimates')
     forceUpdate()
   }
 
@@ -294,7 +297,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       movedAt: new Date().toISOString(),
     })
     backup.serviceEstimates = ests.filter(e => e.id !== id)
-    saveBackupDataAndSync(backup, 'activeServiceCalls')
+    nonCriticalWrite(backup, 'activeServiceCalls')
     forceUpdate()
   }
 
@@ -331,7 +334,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (!confirm('Delete this active service call?')) return
     pushState(backup)
     backup.activeServiceCalls = (backup.activeServiceCalls || []).filter(c => c.id !== id)
-    saveBackupDataAndSync(backup, 'activeServiceCalls')
+    nonCriticalWrite(backup, 'activeServiceCalls')
     forceUpdate()
   }
 
@@ -625,30 +628,103 @@ Return ONLY valid JSON, no other text.`
 
   const estimateVersions = ((backup.estimateVersions || {})[projectId] || [])
 
-  // G7: Estimate pipeline — compute Won / Pending / Lost from data
+  // G7: Estimate pipeline — compute Won / Pending / Lost from live data
+  // ── Helper: total billable for a service log using money math (never stale payStatus) ──
+  const svcTotalBillable = (l) => {
+    const adjs = Array.isArray(l.adjustments) ? l.adjustments : []
+    const addIncome = adjs.filter(a => a?.type === 'income').reduce((ac, a) => ac + num(a.amount), 0)
+    return num(l.quoted) + addIncome
+  }
+
+  // WON box: active/won projects (work awarded) + service logs fully paid (money math)
   const pipelineWon = (() => {
+    const allProjects = backup.projects || []
     const svcLogs = backup.serviceLogs || []
+    // Active projects = awarded work (status: active, in_progress, won)
+    const wonProjects = allProjects.filter(p => {
+      const s = (p.status || '').toLowerCase()
+      return resolveProjectBucket(p) === 'active' || s === 'won' || s === 'in_progress'
+    })
+    // Service logs fully collected: collected >= totalBillable (money math, never stale payStatus)
+    const paidSvc = svcLogs.filter(l => {
+      const tb = svcTotalBillable(l)
+      return tb > 0 && num(l.collected) >= tb
+    })
     return {
-      count: svcLogs.filter(l => l.payStatus === 'paid').length,
-      value: svcLogs.filter(l => l.payStatus === 'paid').reduce((s, l) => s + num(l.quoted || 0), 0)
+      count: wonProjects.length + paidSvc.length,
+      value: wonProjects.reduce((s, p) => s + num(p.contract), 0)
+             + paidSvc.reduce((s, l) => s + svcTotalBillable(l), 0)
     }
   })()
+
+  // PENDING box: coming/estimating projects + open service estimates + active calls + partial svc
   const pipelinePending = (() => {
+    const allProjects = backup.projects || []
     const estimates = backup.serviceEstimates || []
     const activeCalls = backup.activeServiceCalls || []
-    const partialSvc = (backup.serviceLogs || []).filter(l => l.payStatus === 'pending' || l.payStatus === 'partial')
-    const all = [...estimates, ...activeCalls, ...partialSvc]
+    const svcLogs = backup.serviceLogs || []
+    // Coming projects = estimates in progress / not yet awarded
+    const comingProjects = allProjects.filter(p => {
+      const s = (p.status || '').toLowerCase()
+      if (s === 'deleted' || s === 'lost' || s === 'rejected') return false
+      return resolveProjectBucket(p) === 'coming'
+    })
+    // Open (non-lost) service estimates
+    const openEstimates = estimates.filter(e => (e.estimateStatus || e.status || '') !== 'lost')
+    // Active service calls in progress
+    // Partial service payments (money math: some collected but not complete)
+    const partialSvc = svcLogs.filter(l => {
+      const tb = svcTotalBillable(l)
+      return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb
+    })
     return {
-      count: all.length,
-      value: all.reduce((s, l) => s + num(l.quoted || 0), 0)
+      count: comingProjects.length + openEstimates.length + activeCalls.length + partialSvc.length,
+      value: comingProjects.reduce((s, p) => s + num(p.contract), 0)
+             + openEstimates.reduce((s, e) => s + num(e.quoted || 0), 0)
+             + activeCalls.reduce((s, c) => s + num(c.quoted || 0), 0)
+             + partialSvc.reduce((s, l) => s + (svcTotalBillable(l) - num(l.collected)), 0)
     }
   })()
+
+  // LOST/UNPAID box — split into two states:
+  // LOST: estimates/projects explicitly marked lost/rejected
+  // UNPAID: completed projects with outstanding AR, unpaid service logs
   const pipelineLost = (() => {
-    // Unpaid service logs with quoted > 0 (no activity, assumed lost)
-    const svcLogs = (backup.serviceLogs || []).filter(l => l.payStatus === 'unpaid' && num(l.quoted) > 0)
+    const allProjects = backup.projects || []
+    const svcLogs = backup.serviceLogs || []
+    const estimates = backup.serviceEstimates || []
+
+    // LOST: estimates manually marked as lost
+    const lostEstimates = estimates.filter(e => (e.estimateStatus || e.status || '') === 'lost')
+    // LOST: projects explicitly set to lost/rejected status
+    const lostProjects = allProjects.filter(p => {
+      const s = (p.status || '').toLowerCase()
+      return s === 'lost' || s === 'rejected'
+    })
+    const lostValue = lostEstimates.reduce((s, e) => s + num(e.quoted || 0), 0)
+                    + lostProjects.reduce((s, p) => s + num(p.contract), 0)
+    const lostCount = lostEstimates.length + lostProjects.length
+
+    // UNPAID: completed projects with AR > 0 (money math)
+    const unpaidProjects = allProjects.filter(p => {
+      if (resolveProjectBucket(p) !== 'completed') return false
+      const fin = getProjectFinancials(p, backup)
+      return fin.AR > 0
+    })
+    // UNPAID: service logs with zero collection (money math, no stale payStatus)
+    const unpaidSvc = svcLogs.filter(l => {
+      const tb = svcTotalBillable(l)
+      return tb > 0 && num(l.collected) === 0
+    })
+    const unpaidValue = unpaidProjects.reduce((s, p) => s + getProjectFinancials(p, backup).AR, 0)
+                      + unpaidSvc.reduce((s, l) => s + svcTotalBillable(l), 0)
+    const unpaidCount = unpaidProjects.length + unpaidSvc.length
+
     return {
-      count: svcLogs.length,
-      value: svcLogs.reduce((s, l) => s + num(l.quoted || 0), 0)
+      count: lostCount + unpaidCount,
+      value: lostValue + unpaidValue,
+      lostCount, lostValue,
+      unpaidCount, unpaidValue
     }
   })()
   const pipelineTotal = pipelineWon.value + pipelinePending.value + pipelineLost.value
@@ -662,25 +738,75 @@ Return ONLY valid JSON, no other text.`
           📊 Estimate Pipeline Overview
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '12px' }}>
-          {/* Won */}
+          {/* Won — active projects (awarded work) + fully paid service calls */}
           <div style={{ backgroundColor: 'rgba(16,185,129,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #10b981' }}>
             <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>✅ Won</div>
             <div style={{ fontSize: '18px', fontWeight: '800', color: '#10b981', fontFamily: 'monospace' }}>{fmt(pipelineWon.value)}</div>
-            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} jobs</div>
+            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} active/awarded</div>
           </div>
-          {/* Pending */}
+          {/* Pending — coming projects + open service estimates + active calls */}
           <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
             <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>⏳ Pending</div>
             <div style={{ fontSize: '18px', fontWeight: '800', color: '#eab308', fontFamily: 'monospace' }}>{fmt(pipelinePending.value)}</div>
-            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelinePending.count} estimates</div>
+            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelinePending.count} open estimates</div>
           </div>
-          {/* Lost */}
+          {/* Lost / Unpaid — split into two states */}
           <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost/Unpaid</div>
+            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost / Unpaid</div>
             <div style={{ fontSize: '18px', fontWeight: '800', color: '#ef4444', fontFamily: 'monospace' }}>{fmt(pipelineLost.value)}</div>
-            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineLost.count} jobs</div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+              {pipelineLost.lostCount > 0 && (
+                <span style={{ fontSize: '10px', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                  Lost: {pipelineLost.lostCount} ({fmt(pipelineLost.lostValue)})
+                </span>
+              )}
+              {pipelineLost.unpaidCount > 0 && (
+                <span style={{ fontSize: '10px', color: '#fb923c', backgroundColor: 'rgba(251,146,60,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                  Unpaid: {pipelineLost.unpaidCount} ({fmt(pipelineLost.unpaidValue)})
+                </span>
+              )}
+              {pipelineLost.count === 0 && <span style={{ fontSize: '11px', color: '#6b7280' }}>0 items</span>}
+            </div>
           </div>
         </div>
+
+        {/* Pending estimate rows with Mark as Lost */}
+        {(backup.serviceEstimates || []).filter(e => (e.estimateStatus || e.status || '') !== 'lost').length > 0 && (
+          <div style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '10px' }}>
+            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '6px' }}>
+              Open Service Estimates
+            </div>
+            {(backup.serviceEstimates || [])
+              .filter(e => (e.estimateStatus || e.status || '') !== 'lost')
+              .map(est => (
+                <div key={est.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px', marginBottom: '4px' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: '12px', color: '#d1d5db', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+                      {est.customer || est.name || 'Unnamed'} — {est.address || ''}
+                    </span>
+                    <span style={{ fontSize: '10px', color: '#6b7280' }}>{fmt(num(est.quoted))} · {est.date || ''}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!confirm('Mark this estimate as Lost?')) return
+                      const b = getBackupData()
+                      if (!b) return
+                      const idx = (b.serviceEstimates || []).findIndex(e => e.id === est.id)
+                      if (idx >= 0) {
+                        b.serviceEstimates[idx].estimateStatus = 'lost'
+                        saveBackupData(b)
+                        forceUpdate()
+                      }
+                    }}
+                    style={{ padding: '3px 8px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: '8px' }}
+                  >
+                    Mark Lost
+                  </button>
+                </div>
+              ))
+            }
+          </div>
+        )}
         {/* Pipeline bar visualization */}
         {pipelineTotal > 0 && (
           <div>
@@ -1278,22 +1404,35 @@ Return ONLY valid JSON, no other text.`
             {t.matBreakdown.length > 0 ? (
               <>
                 {/* Phase header row */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 90px 70px 90px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', fontWeight: '600', fontSize: '11px', color: 'var(--t3)' }}>
+                <div style={{ overflowX: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', fontWeight: '600', fontSize: '11px', color: 'var(--t3)', minWidth: '720px' }}>
                   <div>Phase</div>
                   <div style={{ textAlign: 'right' }}>Items</div>
                   <div style={{ textAlign: 'right' }}>Raw Cost</div>
                   <div style={{ textAlign: 'right' }}>Tax</div>
                   <div style={{ textAlign: 'right' }}>Phase Total</div>
+                  <div style={{ textAlign: 'right' }}>Supplier Cost</div>
+                  <div style={{ textAlign: 'right' }}>Selling Price</div>
+                  <div style={{ textAlign: 'right' }}>Margin %</div>
                 </div>
-                {t.matBreakdown.map((r, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 90px 70px 90px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)' }}>
+                {t.matBreakdown.map((r, i) => {
+                  const markupRate = num(backup.settings?.markup || 50) / 100
+                  const sellingPrice = r.hasCostData ? r.raw * (1 + markupRate) : 0
+                  const marginPct = sellingPrice > 0 ? ((sellingPrice - r.raw) / sellingPrice * 100) : 0
+                  return (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', minWidth: '720px' }}>
                     <div>{r.phase}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>{r.count}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>{fmt(r.raw)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#ef4444' }}>{fmt(r.tax)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: '600', color: '#10b981' }}>{fmt(r.total)}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: 'var(--t2)' }}>{r.hasCostData ? fmt(r.raw) : '—'}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#60a5fa' }}>{r.hasCostData ? fmt(sellingPrice) : '—'}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: marginPct > 0 ? '#10b981' : 'var(--t3)' }}>{r.hasCostData ? marginPct.toFixed(1) + '%' : '—'}</div>
                   </div>
-                ))}
+                  )
+                })}
+                </div>
                 <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '8px' }}>
                   Read-only summary from Material Takeoff tab. Edit items in MTO.
                 </div>
@@ -1604,21 +1743,24 @@ Return ONLY valid JSON, no other text.`
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Subtotal</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.subtotal)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 Tax (
                 <input
                   type="number"
                   value={num(backup.settings?.tax || 0)}
                   onChange={e => editTax(e.target.value)}
                   style={{
-                    width: '40px',
-                    padding: '2px 4px',
-                    backgroundColor: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    width: '52px',
+                    minHeight: '44px',
+                    padding: '10px 8px',
+                    backgroundColor: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
                     color: 'var(--t1)',
                     fontFamily: 'monospace',
-                    fontSize: '12px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
                   }}
                 />
                 %)

@@ -20,9 +20,12 @@ export const TARGET_AGENTS = [
 
 export const IMPACT_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const
 
+export const INTENT_TYPES = ['command', 'insight', 'action', 'ambiguous'] as const
+
 export type IntentCategory   = typeof INTENT_CATEGORIES[number]
 export type TargetAgent      = typeof TARGET_AGENTS[number]
 export type ImpactLevel      = typeof IMPACT_LEVELS[number]
+export type IntentType       = typeof INTENT_TYPES[number]
 
 export interface Entity {
   type:   string
@@ -38,6 +41,8 @@ export interface ClassifiedIntent {
   requiresConfirmation: boolean
   impactLevel:          ImpactLevel
   reasoning:            string
+  /** Whether the user issued a persistent command, a one-time insight query, an immediate action, or something ambiguous. */
+  intentType:           IntentType
 }
 
 // ── Conversation message type ───────────────────────────────────────────────
@@ -113,6 +118,7 @@ function validateIntent(raw: unknown): { data: ClassifiedIntent } | { error: str
       requiresConfirmation: obj.requiresConfirmation,
       impactLevel:          obj.impactLevel,
       reasoning:            obj.reasoning,
+      intentType:           'ambiguous' as IntentType, // Default — classifyIntent overrides with detectIntentType
     }
   }
 }
@@ -215,11 +221,52 @@ const AGENT_KEYWORDS: Record<TargetAgent, AgentKeywords> = {
       'morning briefing', 'daily summary', 'status update', 'how\'s business',
       'what\'s going on', 'moving forward', 'from now on', 'remember that',
       'i prefer', 'i want you to', 'going forward', 'keep in mind',
+      // Project status / "how is the job going" type questions — NEXUS owns these
+      'how is the job', 'how are the jobs', 'how are my jobs', 'how are we doing',
+      'how is business', 'how are things', 'project health', 'job health',
+      'how is the project', 'how are the projects', 'project overview',
+      'business overview', 'overall status', 'give me an overview',
     ],
     single: [
       'hi', 'hello', 'help', 'general', 'preference',
+      // Project status is NEXUS territory — broad overview words score here
+      'overview', 'summary', 'briefing', 'overall',
     ],
   },
+}
+
+// ── Intent type detection ────────────────────────────────────────────────────
+// Determines whether the user's message is a persistent command (should be
+// stored and always applied), a one-time insight query (answer only, no storage),
+// an immediate action request, or ambiguous (answer first, then offer to persist).
+
+const COMMAND_SIGNALS = /\b(always|from now on|remember that|make sure you|going forward|set it so that|every time|i want you to always|keep doing|permanently|by default)\b/i
+const INSIGHT_SIGNALS = /^(how is|how are|what is|what are|what was|what were|what's|tell me|analyze|give me|what do you think|can you check|show me|explain|summarize|who is|who are|when is|when are|where is|where are|how much|how many|why is|why are|do you know|is there|are there)/i
+const ACTION_SIGNALS  = /^(send|create|add|schedule|log|update|mark|delete|remove|set|book|assign|save|record|post|submit|complete|close|open|generate|make|run|start|stop|cancel|draft|invite|move|copy|archive|export|import|sync|approve|reject|apply|call|email|text|notify)\b/i
+
+/**
+ * Detect whether the user's message is a persistent command, a one-time
+ * insight request, an immediate action, or ambiguous.
+ *
+ * Priority: command > action > insight > ambiguous
+ * - command:   Contains persistent-instruction signals ("always", "from now on", etc.)
+ * - action:    Starts with an imperative action verb ("send", "create", "add", etc.)
+ * - insight:   Starts with a question phrase or ends with "?" ("how is", "what is", etc.)
+ * - ambiguous: Does not clearly match any of the above
+ */
+function detectIntentType(message: string): IntentType {
+  const trimmed = message.trim()
+
+  // Command signals take priority — these indicate a persistent instruction to store
+  if (COMMAND_SIGNALS.test(trimmed)) return 'command'
+
+  // Action signals — imperative verbs requesting an immediate one-off task
+  if (ACTION_SIGNALS.test(trimmed)) return 'action'
+
+  // Insight signals — questions or information requests (one-time, no storage)
+  if (INSIGHT_SIGNALS.test(trimmed) || trimmed.endsWith('?')) return 'insight'
+
+  return 'ambiguous'
 }
 
 // ── Classifier prompt for fallback ──────────────────────────────────────────
@@ -263,14 +310,39 @@ interface GuaranteedRoute {
   minScore: number
 }
 
+// ── NEXUS-FIRST ROUTING DESIGN ───────────────────────────────────────────────
+// Guaranteed routes cover SPECIALIST-ONLY terms — terms that unambiguously
+// require a specific domain agent's data.
+//
+// General terms ('project', 'job', 'status', 'how is', 'money', 'cash', 'revenue')
+// are intentionally excluded here. Those reach NEXUS directly and NEXUS synthesizes
+// a conversational response before any specialist detail is appended.
+//
+// LEDGER is only triggered by EXPLICIT billing/collection vocabulary:
+//   invoice, overdue, balance due, who owes, accounts receivable, billing, collections
+// NOT by: 'money', 'cash', 'revenue', 'paid', 'job going', 'project status'
+//
+// BLUEPRINT is only triggered by document/workflow-specific terms:
+//   rfi, punch list, change order, coordination item, submittal
+// NOT by: 'project', 'job', 'status', 'operations', 'phase', 'active jobs'
+// ─────────────────────────────────────────────────────────────────────────────
+
 const GUARANTEED_ROUTES: GuaranteedRoute[] = [
-  { keywords: ['project', 'job', 'status', 'operations', 'week', 'attention', 'active jobs', 'phase', 'permit', 'rfi', 'punch list'], agent: 'blueprint', minScore: 0.5 },
+  // Blueprint: only document/workflow-specific keywords — NOT general project status terms
+  { keywords: ['rfi', 'punch list', 'change order', 'coordination item', 'submittal'], agent: 'blueprint', minScore: 0.5 },
+  // OHM: electrical code — unchanged
   { keywords: ['nec', 'code requirement', 'title 24', 'cec', 'install', 'wire', 'breaker', 'panel', 'site', 'afci', 'gfci', 'conductor', 'ampacity'], agent: 'ohm', minScore: 0.5 },
-  { keywords: ['money', 'invoice', 'paid', 'collect', 'ar', 'cash', 'revenue', 'pipeline', 'overdue', 'receivable', 'balance due', 'who owes'], agent: 'ledger', minScore: 0.5 },
+  // LEDGER: ONLY explicit billing/collection terms — NOT general financial terms like money/cash/revenue/paid
+  { keywords: ['invoice', 'overdue', 'balance due', 'who owes', 'accounts receivable', 'billing', 'collections', 'ar aging'], agent: 'ledger', minScore: 0.5 },
+  // VAULT: estimating-specific terms — unchanged
   { keywords: ['estimate', 'quote', 'mto', 'material', 'takeoff', 'price', 'bid', 'pricing', 'cost', 'markup', 'price book'], agent: 'vault', minScore: 0.5 },
+  // CHRONO: scheduling-specific terms — unchanged
   { keywords: ['schedule', 'crew', 'calendar', 'book', 'dispatch', 'appointment', 'agenda', 'reminder', 'tomorrow', 'next week'], agent: 'chrono', minScore: 0.5 },
+  // SPARK: marketing/lead-specific terms — unchanged
   { keywords: ['lead', 'gc', 'contact', 'marketing', 'outreach', 'prospect', 'referral', 'campaign', 'review', 'yelp'], agent: 'spark', minScore: 0.5 },
-  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker', 'visual', 'visualization', 'chart', 'graph', 'numbers', 'analytics', 'data', 'metrics'], agent: 'pulse', minScore: 0.5 },
+  // PULSE: analytics/dashboard-specific terms — unchanged
+  { keywords: ['dashboard', 'kpi', 'metric', 'trend', 'margin', 'performance', 'weekly tracker', 'visual', 'visualization', 'chart', 'graph', 'analytics', 'metrics'], agent: 'pulse', minScore: 0.5 },
+  // SCOUT: research/analysis terms — unchanged
   { keywords: ['research', 'analyze', 'pattern', 'optimization', 'improvement', 'scout'], agent: 'scout', minScore: 0.5 },
 ]
 
@@ -470,6 +542,7 @@ async function tier3ClaudeFallback(
     return {
       category: 'general',
       targetAgent: 'nexus',
+      intentType: 'insight',
       confidence: 0.3,
       entities: [],
       requiresConfirmation: false,
@@ -497,6 +570,10 @@ export async function classifyIntent(
   conversationHistory: ConversationMessage[]
 ): Promise<ClassifiedIntent> {
   console.log('[Classifier] Running classification for:', message)
+
+  // Detect intent type once — applied to every classification path below
+  const intentType = detectIntentType(message)
+  console.log(`[Classifier] Intent type → ${intentType}`)
 
   const categoryMap: Record<TargetAgent, IntentCategory> = {
     vault: 'estimating',
@@ -534,6 +611,7 @@ export async function classifyIntent(
       requiresConfirmation: guaranteed.agent === 'ledger' || guaranteed.agent === 'vault',
       impactLevel: impactMap[guaranteed.agent],
       reasoning: guaranteed.reasoning,
+      intentType,
     }
   }
 
@@ -559,6 +637,7 @@ export async function classifyIntent(
       requiresConfirmation: finalAgent === 'ledger' || finalAgent === 'vault',
       impactLevel: impactMap[finalAgent],
       reasoning: tier1.reasoning,
+      intentType,
     }
   }
 
@@ -574,6 +653,7 @@ export async function classifyIntent(
       requiresConfirmation: false,
       impactLevel: 'LOW',
       reasoning: tier2.reasoning,
+      intentType,
     }
   }
 
@@ -588,7 +668,8 @@ export async function classifyIntent(
     // Some keyword signal exists — try Claude for nuanced classification
     try {
       console.log(`[Classifier] Tier 3 Claude fallback (maxScore: ${maxScore.toFixed(2)})`)
-      return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+      const tier3Result = await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+      return { ...tier3Result, intentType }
     } catch (error) {
       console.error('[Classifier] Claude fallback failed:', error)
     }
@@ -601,6 +682,7 @@ export async function classifyIntent(
     return {
       category: 'general',
       targetAgent: 'nexus',
+      intentType: 'insight',
       confidence: 0.4,
       entities: [],
       requiresConfirmation: false,
@@ -612,12 +694,14 @@ export async function classifyIntent(
   // Very short input with no matches — still try Claude
   try {
     console.log('[Classifier] Short input Claude fallback')
-    return await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+    const shortResult = await tier3ClaudeFallback(message, memoryContext, conversationHistory)
+    return { ...shortResult, intentType }
   } catch (error) {
     console.error('[Classifier] All classification failed:', error)
     return {
       category: 'general',
       targetAgent: 'nexus',
+      intentType: 'insight',
       confidence: 0.3,
       entities: [],
       requiresConfirmation: false,
