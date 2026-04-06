@@ -23,7 +23,218 @@ import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 
+// ── RMO Agreement Setup Gate ─────────────────────────────────────────────────
+
+function RMOSetupGate({ onActivate }: { onActivate: () => void }) {
+  const [toggled, setToggled] = useState(false)
+  const [agreementFile, setAgreementFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handleActivate() {
+    if (!toggled) return
+    // Persist rmo_active in localStorage
+    try { localStorage.setItem('rmo_active', 'true') } catch { /* ignore */ }
+    // Best-effort Supabase save
+    import('@/lib/supabase').then(({ supabase }) => {
+      supabase.from('user_preferences' as never).upsert({ key: 'rmo_active', value: 'true' }).catch(() => {/* ignore */})
+    }).catch(() => {/* ignore */})
+    onActivate()
+  }
+
+  return (
+    <div className="flex items-start justify-center min-h-[60vh] p-6">
+      <div className="w-full max-w-lg bg-[var(--bg-card,#1f2937)] border border-gray-700 rounded-2xl p-8 shadow-xl">
+        <div className="flex items-center gap-3 mb-2">
+          <span style={{ fontSize: '2rem' }}>☀️</span>
+          <h2 className="text-xl font-bold text-gray-100">RMO Agreement Setup</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-6 leading-relaxed">
+          This panel tracks your RMO (Residential Maintenance Operations) solar income pipeline — including installation revenue, RMO oversight fees, and projected monthly earnings. Activate to unlock the full Solar Income dashboard.
+        </p>
+
+        {/* Toggle */}
+        <div className="flex items-center justify-between bg-gray-800/60 rounded-xl px-4 py-3 mb-4 border border-gray-700">
+          <div>
+            <p className="text-sm font-semibold text-gray-200">Activate Solar Income Tracking</p>
+            <p className="text-xs text-gray-500 mt-0.5">Enables RMO pipeline projections and income analysis</p>
+          </div>
+          <button
+            onClick={() => setToggled(t => !t)}
+            className={`relative inline-flex w-11 h-6 rounded-full transition-colors focus:outline-none ${toggled ? 'bg-emerald-500' : 'bg-gray-600'}`}
+          >
+            <span className={`inline-block w-5 h-5 bg-white rounded-full shadow transition-transform mt-0.5 ${toggled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+
+        {/* File upload */}
+        <div className="mb-6">
+          <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">RMO Agreement PDF (optional)</p>
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-3 border border-dashed border-gray-600 hover:border-gray-400 rounded-xl px-4 py-3 cursor-pointer transition-colors"
+          >
+            <span className="text-gray-400 text-lg">📄</span>
+            <span className="text-sm text-gray-400">
+              {agreementFile ? agreementFile.name : 'Upload RMO Agreement PDF'}
+            </span>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            className="hidden"
+            onChange={e => setAgreementFile(e.target.files?.[0] || null)}
+          />
+        </div>
+
+        <button
+          onClick={handleActivate}
+          disabled={!toggled}
+          className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold text-sm transition-colors"
+        >
+          Activate RMO Solar Income
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── RMO Dashboard — extra fields + AI analysis (rendered when rmo_active) ───
+
+function RMODashboardExtras() {
+  const backup = getBackupData()
+  const calcRefs = backup?.calcRefs || {}
+  const [, forceUpdate] = useState({})
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiResult, setAiResult] = useState<string>('')
+
+  function updateRMOField(key: string, value: any) {
+    if (!backup) return
+    pushState()
+    backup.calcRefs[key] = value
+    saveBackupData(backup)
+    forceUpdate({})
+  }
+
+  const revenuePerInstall = num(calcRefs.rmoRevenuePerInstall) || 0
+  const transportCostPerJob = num(calcRefs.rmoTransportCostPerJob) || 0
+  const overheadAllocation = num(calcRefs.rmoOverheadAllocation) || 0
+  const idleTimeCostPerHr = num(calcRefs.rmoIdleTimeCostPerHr) || 0
+  const rmoCap = num(calcRefs.rmoCapMaxJobs) || 0
+
+  const marginPerJob = revenuePerInstall - transportCostPerJob - overheadAllocation
+  const monthlyRevenue = revenuePerInstall * rmoCap
+  const totalCostPerJob = transportCostPerJob + overheadAllocation
+  const breakEvenJobs = totalCostPerJob > 0 ? Math.ceil(overheadAllocation / Math.max(1, marginPerJob)) : 0
+
+  async function runAI() {
+    setAiLoading(true)
+    setAiResult('')
+    try {
+      const prompt = `You are a solar income analyst for an electrical contractor.
+Given: Revenue per install: $${revenuePerInstall}, Transport cost/job: $${transportCostPerJob}, Overhead allocation: $${overheadAllocation}, Idle time cost/hr: $${idleTimeCostPerHr}, RMO cap (max jobs/month): ${rmoCap}.
+Provide concise analysis covering:
+1. Margin per job: $${marginPerJob.toFixed(2)}
+2. Monthly revenue projection at full cap
+3. Break-even job count
+4. One actionable recommendation to improve margins.
+Keep it short and practical.`
+      const res = await callClaude([{ role: 'user', content: prompt }])
+      setAiResult(extractText(res))
+    } catch (e: any) {
+      setAiResult('AI analysis unavailable — check Claude API connection.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  return (
+    <div className="mt-6 space-y-4">
+      {/* RMO Editable Fields */}
+      <div className="bg-[var(--bg-card,#1f2937)] border border-amber-700/40 rounded-xl p-5">
+        <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider mb-4">RMO Income Parameters</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[
+            { label: 'Revenue per Installation ($)', key: 'rmoRevenuePerInstall', val: revenuePerInstall },
+            { label: 'Transportation Cost per Job ($)', key: 'rmoTransportCostPerJob', val: transportCostPerJob },
+            { label: 'Overhead Allocation ($)', key: 'rmoOverheadAllocation', val: overheadAllocation },
+            { label: 'Idle Time Cost per Hour ($)', key: 'rmoIdleTimeCostPerHr', val: idleTimeCostPerHr },
+            { label: 'RMO Cap: Max Jobs/Month', key: 'rmoCapMaxJobs', val: rmoCap },
+          ].map(({ label, key, val }) => (
+            <div key={key} className="flex flex-col gap-1">
+              <label className="text-xs text-gray-400">{label}</label>
+              <input
+                type="number"
+                value={val || ''}
+                onChange={e => updateRMOField(key, parseFloat(e.target.value) || 0)}
+                placeholder="0"
+                className="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:border-amber-500 outline-none"
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Live calculations */}
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {[
+            { label: 'Margin per Job', val: `$${marginPerJob.toFixed(2)}`, color: marginPerJob >= 0 ? 'text-emerald-400' : 'text-red-400' },
+            { label: 'Monthly Revenue (full cap)', val: `$${monthlyRevenue.toFixed(0)}`, color: 'text-blue-400' },
+            { label: 'Break-even Jobs', val: `${breakEvenJobs}`, color: 'text-amber-400' },
+          ].map(({ label, val, color }) => (
+            <div key={label} className="bg-gray-800/60 rounded-lg px-3 py-2.5 border border-gray-700">
+              <p className="text-xs text-gray-500 mb-1">{label}</p>
+              <p className={`text-base font-bold ${color}`}>{val}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* AI Analysis */}
+      <div className="bg-[var(--bg-card,#1f2937)] border border-gray-700 rounded-xl p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-gray-200 flex items-center gap-2">
+            <span>🤖</span> AI Analysis
+          </h3>
+          <button
+            onClick={runAI}
+            disabled={aiLoading}
+            className="px-3 py-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white rounded-lg transition-colors"
+          >
+            {aiLoading ? 'Analyzing…' : 'Run Analysis'}
+          </button>
+        </div>
+        {aiResult ? (
+          <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{aiResult}</p>
+        ) : (
+          <p className="text-xs text-gray-500 italic">Enter your RMO parameters above and click Run Analysis for margin, revenue projections, and break-even insights.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Main export with RMO gate ─────────────────────────────────────────────────
+
 export default function V15rIncomeCalc() {
+  const [rmoActive, setRmoActive] = useState<boolean>(() => {
+    try { return localStorage.getItem('rmo_active') === 'true' } catch { return false }
+  })
+
+  if (!rmoActive) {
+    return <RMOSetupGate onActivate={() => setRmoActive(true)} />
+  }
+
+  return (
+    <>
+      <V15rIncomeCalcInner />
+      <div className="px-4 pb-6">
+        <RMODashboardExtras />
+      </div>
+    </>
+  )
+}
+
+function V15rIncomeCalcInner() {
   const backup = getBackupData()
   if (!backup) return <NoData />
 

@@ -541,16 +541,12 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       )}
 
-      {/* Demo Mode banner — fixed below header, tapping opens exit confirmation */}
+      {/* Demo Mode banner — in normal document flow so it pushes content down */}
       {isDemoMode && (
         <div
           onClick={() => setShowExitDemoModal(true)}
           style={{
-            position: 'fixed',
-            top: '64px',   /* sits just below the 64px (h-16) header bar */
-            left: 0,
-            right: 0,
-            zIndex: 9990,  /* above content (z-30 header), below modals */
+            position: 'relative',
             backgroundColor: '#EF9F27',
             color: '#000',
             textAlign: 'center',
@@ -560,6 +556,7 @@ export function AppShell({ children }: AppShellProps) {
             letterSpacing: '0.04em',
             cursor: 'pointer',
             userSelect: 'none',
+            flexShrink: 0,
           }}
           title="Tap to exit Demo Mode"
         >
@@ -569,8 +566,7 @@ export function AppShell({ children }: AppShellProps) {
 
       <ErrorBoundary>
         <Suspense fallback={<PanelLoading />}>
-          {/* Add top padding when audit/demo banner is visible so content isn't hidden behind it */}
-          <div style={isReadOnly || isDemoMode ? { paddingTop: '30px' } : undefined}>
+          <div>
             {renderContent()}
           </div>
         </Suspense>

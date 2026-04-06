@@ -709,11 +709,6 @@ function V15rDashboardInner() {
 
   // ── Monthly Revenue offset state (for scrolling history) ──
   const [monthlyOffset, setMonthlyOffset] = useState<number>(0)
-  // ── Solar Income activation state ──
-  const [solarActivated, setSolarActivated] = useState<boolean>(false)
-  const [solarRmoRate, setSolarRmoRate] = useState<string>('')
-  const [solarInstallRate, setSolarInstallRate] = useState<string>('')
-
   // ── Revenue Timeline data (inlined from RevenuTimelineDashboard) ──
   const weekBuckets = useMemo(() => query8WeekCashFlow(), [backup])
   const monthBuckets = useMemo(() => queryMonthlyRevenue(6, monthlyOffset), [backup, monthlyOffset])
@@ -1178,71 +1173,6 @@ function V15rDashboardInner() {
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
                 No payments recorded this month yet
-              </div>
-            )}
-          </div>
-
-          {/* Solar Income Projections — activate prompt */}
-          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-gray-100">Solar Income Projections</h3>
-              <p className="text-xs text-gray-400 italic mt-0.5">RMO fee + install labor revenue projections from solar panel data</p>
-            </div>
-            {!solarActivated ? (
-              <div className="flex flex-col items-center justify-center gap-4 py-8">
-                <span style={{ fontSize: '2.5rem' }}>☀️</span>
-                <div className="text-center">
-                  <p className="text-gray-200 font-semibold text-base">Activate Solar Income Tracking?</p>
-                  <p className="text-gray-500 text-xs mt-1">Enter your rates below to generate projections from Solar Income panel data</p>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md mt-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400">RMO Fee Rate (%)</label>
-                    <input
-                      type="number"
-                      value={solarRmoRate}
-                      onChange={e => setSolarRmoRate(e.target.value)}
-                      placeholder="e.g. 15"
-                      className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-sm text-[var(--text-primary)] focus:border-amber-500 outline-none"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400">Install Labor Rate ($/watt)</label>
-                    <input
-                      type="number"
-                      value={solarInstallRate}
-                      onChange={e => setSolarInstallRate(e.target.value)}
-                      placeholder="e.g. 0.45"
-                      className="bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-sm text-[var(--text-primary)] focus:border-amber-500 outline-none"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    if (solarRmoRate && solarInstallRate) setSolarActivated(true)
-                  }}
-                  disabled={!solarRmoRate || !solarInstallRate}
-                  className="mt-2 px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Activate Solar Tracking
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-4 text-xs text-gray-400">
-                    <span className="bg-amber-900/40 border border-amber-700/60 rounded px-2 py-1 text-amber-300">RMO: {solarRmoRate}%</span>
-                    <span className="bg-amber-900/40 border border-amber-700/60 rounded px-2 py-1 text-amber-300">Install: ${solarInstallRate}/watt</span>
-                  </div>
-                  <button
-                    onClick={() => { setSolarActivated(false); setSolarRmoRate(''); setSolarInstallRate('') }}
-                    className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-                  >Reset rates</button>
-                </div>
-                <div className="flex items-center justify-center h-48 gap-3 flex-col">
-                  <span className="text-gray-400 text-sm text-center">Solar projections active — configure systems in the Solar Income tab to generate chart data.</span>
-                  <span className="text-gray-600 text-xs text-center">Rates: {solarRmoRate}% RMO · ${solarInstallRate}/watt install</span>
-                </div>
               </div>
             )}
           </div>
