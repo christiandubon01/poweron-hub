@@ -169,8 +169,8 @@ export default function ConclusionCards({
   const [clearing, setClearing] = useState(false);
   const autoCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Only show up to 5 conclusions
-  const visible = conclusions.slice(0, 5);
+  // Only show up to 5 conclusions — guard against undefined prop
+  const visible = (conclusions ?? []).slice(0, 5);
 
   // Don't render if no active conclusions
   if (!visible.length) return null;

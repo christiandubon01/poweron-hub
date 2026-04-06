@@ -43,15 +43,9 @@ function formatDate(date: Date): string {
   });
 }
 
-/** Best-effort IP address fetch (external prototype stub returns a placeholder) */
+/** IP capture disabled — api.ipify.org is blocked by CSP and will never resolve. */
 async function fetchClientIP(): Promise<string> {
-  try {
-    const res = await fetch('https://api.ipify.org?format=json');
-    const data = (await res.json()) as { ip: string };
-    return data.ip ?? '0.0.0.0';
-  } catch {
-    return '0.0.0.0';
-  }
+  return 'not_captured';
 }
 
 // ─── NDA Scroll Progress Bar ──────────────────────────────────────────────────
