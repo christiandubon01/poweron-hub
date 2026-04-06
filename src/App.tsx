@@ -22,7 +22,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useAuth } from '@/hooks/useAuth'
 import { ReadOnlyContext } from '@/contexts/ReadOnlyContext'
 import { supabase } from '@/lib/supabase'
-import { useDemoStore, DemoProvider } from '@/store/demoStore'
+import { useDemoStore, DemoProvider, INDUSTRY_LABELS } from '@/store/demoStore'
 import { ModeProvider } from '@/store/modeContext'
 import { useDemoLimits } from '@/hooks/useDemoLimits'
 
@@ -184,8 +184,10 @@ function DemoGate({ children }: { children: React.ReactNode }) {
 // Background: #ca8a04 (Tailwind yellow-700), white text, no close button.
 
 function DemoModeBanner() {
-  const { isDemoMode } = useDemoStore()
+  const { isDemoMode, currentIndustry, getDemoCompanyName } = useDemoStore()
   if (!isDemoMode) return null
+  const companyName = getDemoCompanyName()
+  const industryLabel = INDUSTRY_LABELS[currentIndustry] ?? currentIndustry ?? 'Electrical'
   return (
     <div
       style={{
@@ -204,7 +206,7 @@ function DemoModeBanner() {
         pointerEvents: 'none',
       }}
     >
-      ⚠ DEMO MODE ACTIVE — Data shown is not real
+      ⚠ DEMO MODE — {companyName} ({industryLabel})
     </div>
   )
 }

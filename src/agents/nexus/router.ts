@@ -13,6 +13,7 @@ import { getEventContext } from '@/services/agentEventBus'
 import { getLedgerContext } from '@/services/ledgerDataBridge'
 import { getBackupData, getProjectFinancials, num } from '@/services/backupDataService'
 import { buildOwnerProfileContext } from '@/services/ownerProfileService'
+import { useDemoStore } from '@/store/demoStore'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
 
 // ── Status Bucket Helpers ───────────────────────────────────────────────────
@@ -698,7 +699,20 @@ If the NEXUS synthesis already fully answered the question — stop there. Do NO
 "Based on your current projects, you have three active construction jobs and about $42,500 in outstanding receivables across them. Desert Solar has the largest open balance at $18,000. Your service call collections are running about 78% this month — better than last month but still below your 85% target. LEDGER sees one invoice that's 45 days past due on Desert Solar — worth a follow-up call this week."
 ` : ''
 
+  // ── Demo Mode: inject industry-specific NEXUS personality prefix ──────────
+  let demoPersonalityPrefix = ''
+  try {
+    const demoState = useDemoStore.getState()
+    if (demoState.isDemoMode) {
+      const personality = demoState.getDemoData('nexusPersonality')
+      if (personality && typeof personality === 'string') {
+        demoPersonalityPrefix = `## Demo Mode — NEXUS Personality\n${personality}\n`
+      }
+    }
+  } catch { /* ignore — never block a query */ }
+
   const systemPrompt = [
+    demoPersonalityPrefix ? `${demoPersonalityPrefix}\n---\n\n` : '',
     buildSystemPrompt(),
     `\n---\n\n${capabilitySummary}`,
     ownerProfileCtx ? `\n---\n\n${ownerProfileCtx}` : '',
