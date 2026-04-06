@@ -144,8 +144,7 @@ function NexusVoiceSelector() {
   // Sync to Supabase user_preferences when selection changes
   useEffect(() => {
     if (!user?.id) return
-    const { supabase: sb } = require('@/lib/supabase')
-    sb.from('user_preferences').upsert({ user_id: user.id, nexus_voice_id: selectedId, updated_at: new Date().toISOString() }).catch(() => { /* table may not exist */ })
+    supabase.from('user_preferences').upsert({ user_id: user.id, nexus_voice_id: selectedId, updated_at: new Date().toISOString() }).catch(() => { /* table may not exist */ })
   }, [selectedId, user?.id])
 
   return (
