@@ -21,6 +21,13 @@ const templates: Record<string, IndustryTemplate> = {
 };
 
 export function getTemplate(industry: string): IndustryTemplate | undefined {
+  // Admin template preview: if poweron_preview_industry is set in sessionStorage, use that template
+  try {
+    const previewIndustry = sessionStorage.getItem('poweron_preview_industry')
+    if (previewIndustry && templates[previewIndustry]) {
+      return templates[previewIndustry]
+    }
+  } catch { /* ignore — SSR or storage unavailable */ }
   return templates[industry];
 }
 

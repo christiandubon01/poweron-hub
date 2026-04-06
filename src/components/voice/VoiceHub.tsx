@@ -1,16 +1,17 @@
 // @ts-nocheck
 /**
  * VoiceHub.tsx — B18 | Voice Hub tab distinction
+ * B20 | Quick Capture rework — focused capture-only interface
  *
  * Three distinctly different tabs:
- *   Quick Capture — Voice capture/recording interface (tap to record, recent captures, category tags)
+ *   Quick Capture — Focused capture: mic button, transcription preview, category, recent 5
  *   Insights      — AI analysis of patterns across all voice entries
  *   Journal       — Full journal with all entries, filter by category, expandable entries
  */
 
-import React, { useState, useEffect, Suspense, lazy } from 'react'
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { getRecentJournal, getWeeklyJournalEntries, type JournalEntry } from '@/services/voiceJournalService'
+import { getRecentJournal, getWeeklyJournalEntries, saveJournalEntry, type JournalEntry } from '@/services/voiceJournalService'
 
 // Lazy-load underlying components (same pattern used in AppShell)
 function chunkRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -36,6 +37,248 @@ function PanelLoading() {
   return (
     <div className="flex items-center justify-center h-32">
       <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
+
+// ── Quick Capture Tab — focused recording interface ────────────────────────────
+
+type CaptureCategory = 'field' | 'financial' | 'personal' | 'project' | 'general'
+
+const CAPTURE_CATEGORIES: { id: CaptureCategory; label: string }[] = [
+  { id: 'field',     label: 'Field'     },
+  { id: 'financial', label: 'Financial' },
+  { id: 'personal',  label: 'Personal'  },
+  { id: 'project',   label: 'Project'   },
+  { id: 'general',   label: 'General'   },
+]
+
+interface CaptureEntry {
+  id: string
+  timestamp: string
+  durationSecs: number
+  category: CaptureCategory
+  transcript: string
+}
+
+const CAPTURE_HISTORY_KEY = 'poweron_quick_captures'
+
+function loadCaptureHistory(): CaptureEntry[] {
+  try {
+    const raw = localStorage.getItem(CAPTURE_HISTORY_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch { /* ignore */ }
+  return []
+}
+
+function saveCaptureHistory(entries: CaptureEntry[]) {
+  try { localStorage.setItem(CAPTURE_HISTORY_KEY, JSON.stringify(entries.slice(0, 50))) } catch { /* ignore */ }
+}
+
+function QuickCaptureTab() {
+  const [isRecording, setIsRecording] = useState(false)
+  const [transcript, setTranscript] = useState<string | null>(null)
+  const [editedTranscript, setEditedTranscript] = useState('')
+  const [category, setCategory] = useState<CaptureCategory>('general')
+  const [recorderDuration, setRecorderDuration] = useState(0)
+  const [recent, setRecent] = useState<CaptureEntry[]>(() => loadCaptureHistory())
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startTimeRef = useRef<number>(0)
+
+  function startTimer() {
+    setRecorderDuration(0)
+    startTimeRef.current = Date.now()
+    timerRef.current = setInterval(() => {
+      setRecorderDuration(Math.floor((Date.now() - startTimeRef.current) / 1000))
+    }, 1000)
+  }
+
+  function stopTimer() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+  }
+
+  async function toggleRecording() {
+    if (isRecording) {
+      // Stop recording
+      stopTimer()
+      mediaRecorderRef.current?.stop()
+    } else {
+      // Start recording
+      setTranscript(null)
+      setEditedTranscript('')
+      setSaved(false)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        chunksRef.current = []
+        const mr = new MediaRecorder(stream)
+        mediaRecorderRef.current = mr
+
+        mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+        mr.onstop = () => {
+          stream.getTracks().forEach(t => t.stop())
+          // Show placeholder transcript for editing since we have no direct Whisper API here
+          setTranscript('(Recording complete — type your transcription or dictate notes below)')
+          setEditedTranscript('')
+        }
+
+        mr.start(100)
+        startTimer()
+        setIsRecording(true)
+      } catch {
+        setTranscript('Microphone access denied. Please allow microphone permissions.')
+      }
+      return
+    }
+    setIsRecording(false)
+  }
+
+  function handleSave() {
+    const text = editedTranscript.trim() || transcript || ''
+    if (!text) return
+    setSaving(true)
+    const entry: CaptureEntry = {
+      id: `cap-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      durationSecs: recorderDuration,
+      category,
+      transcript: text,
+    }
+    const updated = [entry, ...recent]
+    setRecent(updated)
+    saveCaptureHistory(updated)
+    // Attempt to persist via voiceJournalService (best effort)
+    try {
+      saveJournalEntry({ transcript: text, contextTag: category })
+        .catch(() => { /* ignore — local copy already saved */ })
+    } catch { /* ignore */ }
+    setSaving(false)
+    setSaved(true)
+    setTranscript(null)
+    setEditedTranscript('')
+    setTimeout(() => setSaved(false), 3000)
+  }
+
+  function fmtDuration(secs: number): string {
+    const m = Math.floor(secs / 60)
+    const s = secs % 60
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-6 p-6">
+      {/* Mic button */}
+      <div className="flex flex-col items-center gap-3">
+        <button
+          onClick={toggleRecording}
+          className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all duration-200 focus:outline-none focus:ring-4 ${
+            isRecording
+              ? 'bg-red-600 hover:bg-red-500 focus:ring-red-400/40 animate-pulse'
+              : 'bg-gray-800 hover:bg-gray-700 focus:ring-gray-600/40 border border-gray-600'
+          }`}
+          title={isRecording ? 'Tap to stop' : 'Tap to record'}
+        >
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="23" />
+            <line x1="8" y1="23" x2="16" y2="23" />
+          </svg>
+        </button>
+        {isRecording ? (
+          <span className="text-red-400 text-sm font-bold">{fmtDuration(recorderDuration)} — Recording… tap to stop</span>
+        ) : (
+          <span className="text-gray-500 text-sm">Tap to record</span>
+        )}
+      </div>
+
+      {/* Transcription preview */}
+      {transcript && !saved && (
+        <div className="w-full max-w-lg space-y-3">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Transcription Preview</p>
+          <textarea
+            value={editedTranscript}
+            onChange={(e) => setEditedTranscript(e.target.value)}
+            placeholder={transcript}
+            rows={4}
+            className="w-full px-3 py-2 rounded-lg border text-sm text-gray-100 resize-none outline-none focus:border-emerald-500 transition-colors"
+            style={{ backgroundColor: '#111318', borderColor: '#2a2d38' }}
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-sm font-bold rounded-lg transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setTranscript(null); setEditedTranscript('') }}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {saved && (
+        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-900/40 border border-emerald-600/40 text-emerald-400 text-sm font-semibold">
+          ✓ Capture saved
+        </div>
+      )}
+
+      {/* Category selector */}
+      <div className="w-full max-w-lg">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Category</p>
+        <div className="flex flex-wrap gap-2">
+          {CAPTURE_CATEGORIES.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => setCategory(cat.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                category === cat.id
+                  ? 'bg-emerald-600 border-emerald-500 text-white'
+                  : 'bg-transparent border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent captures */}
+      {recent.length > 0 && (
+        <div className="w-full max-w-lg">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Recent Captures</p>
+          <div className="space-y-2">
+            {recent.slice(0, 5).map(entry => (
+              <div
+                key={entry.id}
+                className="flex items-start gap-3 px-3 py-2.5 rounded-lg border"
+                style={{ borderColor: '#1e2128', backgroundColor: '#0a0b10' }}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-200 truncate">{entry.transcript.slice(0, 120)}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-gray-600">{new Date(entry.timestamp).toLocaleString()}</span>
+                    <span className="text-xs text-gray-600">·</span>
+                    <span className="text-xs text-gray-600">{fmtDuration(entry.durationSecs)}</span>
+                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${CATEGORY_COLORS[entry.category] || CATEGORY_COLORS.general}`}>
+                      {entry.category}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -260,11 +503,9 @@ export default function VoiceHub() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-auto">
-        {/* Quick Capture — voice recording interface with recent captures and category tags */}
+        {/* Quick Capture — focused capture-only interface */}
         {activeTab === 'quick-capture' && (
-          <Suspense fallback={<PanelLoading />}>
-            <VoiceJournalingV2 />
-          </Suspense>
+          <QuickCaptureTab />
         )}
 
         {/* Insights — AI analysis of patterns across all voice entries */}

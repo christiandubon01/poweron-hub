@@ -89,8 +89,8 @@ export default function V15rTemplatesPanel() {
 
   const [showUseModal, setShowUseModal] = useState<string | null>(null)
   const [newProjectName, setNewProjectName] = useState('')
-  const [aiEstimate, setAiEstimate] = useState<string | null>(null)
-  const [aiEstimateLoading, setAiEstimateLoading] = useState(false)
+  const [aiEstimates, setAiEstimates] = useState<Record<string, string | null>>({})
+  const [aiEstimateLoading, setAiEstimateLoading] = useState<Record<string, boolean>>({})
 
   const stats = useMemo(() => {
     const templateCount = (templates || []).length
@@ -302,7 +302,7 @@ export default function V15rTemplatesPanel() {
                           ? (projects || []).find((p: BackupProject) => p.id === selectedProjectId)
                           : (projects || [])[0]
 
-                        setAiEstimateLoading(true)
+                        setAiEstimateLoading(prev => ({ ...prev, [template.id]: true }))
                         try {
                           const phasesActivated = template?.activatedPhases || Object.keys(template?.tasks || {})
                           const projectContext = activeProject
@@ -313,24 +313,24 @@ export default function V15rTemplatesPanel() {
                             messages: [{ role: 'user', content: `Based on this project template:\nName: ${template?.name || 'Unknown'}\nType: ${template?.type || 'General'}\nJob Type: ${template?.type || 'General'}\nPhases: ${phasesActivated.join(', ')}\nTasks: ${JSON.stringify(template?.tasks || {}, null, 2)}${projectContext}\n\nSuggest estimate line items, typical labor hours, material categories, and margin targets for this job type in the Coachella Valley electrical market. Keep under 250 words.` }],
                             max_tokens: 640,
                           })
-                          setAiEstimate(extractText(response))
-                        } catch { setAiEstimate('Analysis unavailable') }
-                        setAiEstimateLoading(false)
+                          setAiEstimates(prev => ({ ...prev, [template.id]: extractText(response) }))
+                        } catch { setAiEstimates(prev => ({ ...prev, [template.id]: 'Analysis unavailable' })) }
+                        setAiEstimateLoading(prev => ({ ...prev, [template.id]: false }))
                       }}
-                      disabled={aiEstimateLoading}
+                      disabled={!!aiEstimateLoading[template.id]}
                       className="w-full px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded-lg text-sm font-medium transition flex items-center justify-center gap-1 disabled:opacity-50"
                     >
-                      <Sparkles size={14} /> {aiEstimateLoading ? 'Analyzing...' : 'AI Estimate Helper'}
+                      <Sparkles size={14} /> {aiEstimateLoading[template.id] ? 'Analyzing...' : 'AI Estimate Helper'}
                     </button>
                   )}
 
-                  {aiEstimate && (
+                  {aiEstimates[template.id] && (
                     <div className="mt-3 p-4 bg-purple-900/20 border border-purple-500/20 rounded-lg">
                       <div className="flex justify-between items-start mb-2">
                         <span className="text-purple-400 text-xs font-medium">AI Estimate Suggestions</span>
-                        <button onClick={() => setAiEstimate(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+                        <button onClick={() => setAiEstimates(prev => ({ ...prev, [template.id]: null }))} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
                       </div>
-                      <p className="text-gray-300 text-sm whitespace-pre-wrap">{aiEstimate}</p>
+                      <p className="text-gray-300 text-sm whitespace-pre-wrap">{aiEstimates[template.id]}</p>
                     </div>
                   )}
                 </div>

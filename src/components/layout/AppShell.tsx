@@ -120,7 +120,7 @@ export function AppShell({ children }: AppShellProps) {
   const [showOnboarding, setShowOnboarding] = useState(false)
 
   const { isReadOnly } = useReadOnly()
-  const { isDemoMode, enableDemoMode, disableDemoMode, setHasHydrated } = useDemoStore()
+  const { isDemoMode, enableDemoMode, disableDemoMode, setHasHydrated, getDemoCompanyName } = useDemoStore()
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
   // NDA gate — check if current user has signed NDA; show flow if not
@@ -544,7 +544,6 @@ export function AppShell({ children }: AppShellProps) {
       {/* Demo Mode banner — in normal document flow so it pushes content down */}
       {isDemoMode && (
         <div
-          onClick={() => setShowExitDemoModal(true)}
           style={{
             position: 'relative',
             backgroundColor: '#EF9F27',
@@ -554,15 +553,48 @@ export function AppShell({ children }: AppShellProps) {
             fontWeight: 700,
             fontSize: '12px',
             letterSpacing: '0.04em',
-            cursor: 'pointer',
             userSelect: 'none',
             flexShrink: 0,
           }}
-          title="Tap to exit Demo Mode"
         >
-          ⚠ DEMO MODE — Sample data only. Tap to exit (sign in required).
+          ⚠ DEMO MODE ACTIVE — {getDemoCompanyName()} — Sample data only
         </div>
       )}
+
+      {/* Template Preview chip — shown when admin has loaded a preview industry */}
+      {(() => {
+        try {
+          const previewIndustry = sessionStorage.getItem('poweron_preview_industry')
+          if (!previewIndustry) return null
+          const INDUSTRY_LABELS: Record<string, string> = {
+            'electrical': 'Electrical',
+            'plumbing': 'Plumbing',
+            'gc': 'General Contractor',
+            'medical-billing': 'Medical Billing',
+            'mechanic': 'Mechanic',
+            'electrical-supplier': 'Electrical Supplier',
+          }
+          const label = INDUSTRY_LABELS[previewIndustry] || previewIndustry
+          return (
+            <div
+              style={{
+                position: 'relative',
+                backgroundColor: '#FACC15',
+                color: '#000',
+                textAlign: 'center',
+                padding: '4px 16px',
+                fontWeight: 700,
+                fontSize: '11px',
+                letterSpacing: '0.04em',
+                userSelect: 'none',
+                flexShrink: 0,
+              }}
+            >
+              🔍 TEMPLATE PREVIEW: {label.toUpperCase()} — Admin only. Real data unchanged.
+            </div>
+          )
+        } catch { return null }
+      })()}
 
       <ErrorBoundary>
         <Suspense fallback={<PanelLoading />}>

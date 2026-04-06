@@ -203,6 +203,84 @@ function NexusVoiceSelector() {
   )
 }
 
+// ── Admin Template Switcher ───────────────────────────────────────────────────
+
+const ADMIN_TEMPLATE_OPTIONS = [
+  { value: 'electrical',         label: 'Electrical (default)' },
+  { value: 'plumbing',           label: 'Plumbing'             },
+  { value: 'gc',                 label: 'General Contractor'   },
+  { value: 'medical-billing',    label: 'Medical Billing'      },
+  { value: 'mechanic',           label: 'Mechanic'             },
+  { value: 'electrical-supplier',label: 'Electrical Supplier'  },
+]
+
+const PREVIEW_KEY = 'poweron_preview_industry'
+
+function AdminTemplateSwitcherCard() {
+  const [selected, setSelected] = useState<string>(() => {
+    try { return sessionStorage.getItem(PREVIEW_KEY) || 'electrical' } catch { return 'electrical' }
+  })
+  const isPreviewActive = (() => {
+    try { return !!sessionStorage.getItem(PREVIEW_KEY) } catch { return false }
+  })()
+
+  function handlePreview() {
+    try {
+      sessionStorage.setItem(PREVIEW_KEY, selected)
+      window.location.reload()
+    } catch { /* ignore */ }
+  }
+
+  function handleReset() {
+    try {
+      sessionStorage.removeItem(PREVIEW_KEY)
+      window.location.reload()
+    } catch { /* ignore */ }
+  }
+
+  return (
+    <SettingCard title="Industry Template Preview">
+      <div className="space-y-4">
+        <p className="text-xs text-gray-400">
+          Load any industry template to audit demo data. Your real data is never modified. Resets on next login.
+        </p>
+        {isPreviewActive && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-400/10 border border-yellow-400/40 text-yellow-300 text-xs font-semibold">
+            🔍 Preview active: <span className="font-bold">{ADMIN_TEMPLATE_OPTIONS.find(o => o.value === ((() => { try { return sessionStorage.getItem(PREVIEW_KEY) } catch { return '' } })()))?.label || selected}</span>
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Template</label>
+          <select
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            className="w-full px-3 py-2 rounded border text-sm theme-input outline-none"
+            style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)', color: 'var(--text-primary)' }}
+          >
+            {ADMIN_TEMPLATE_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handlePreview}
+            className="flex-1 px-4 py-2 bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold rounded transition-colors"
+          >
+            Preview Template
+          </button>
+          <button
+            onClick={handleReset}
+            className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-bold rounded transition-colors"
+          >
+            Reset to My Data
+          </button>
+        </div>
+      </div>
+    </SettingCard>
+  )
+}
+
 export default function V15rSettingsPanel() {
   const backup = getBackupData()
   if (!backup) return <NoData />
@@ -1607,6 +1685,11 @@ export default function V15rSettingsPanel() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ADMIN TEMPLATE SWITCHER — only visible when logged-in user matches VITE_ADMIN_EMAIL */}
+          {user?.email && user.email === (import.meta.env.VITE_ADMIN_EMAIL as string) && (
+            <AdminTemplateSwitcherCard />
           )}
 
           {/* SYSTEM INFO */}

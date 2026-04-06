@@ -1,2 +1,0 @@
-import{F as s,G as o}from"./index-CtQ1n1r3.js";import"./react-vendor-Cq6wvmBX.js";import"./supabase-vendor-AnTI2EX_.js";import"./redis-vendor-C_wJB7Oe.js";async function l(e){const t=await s({messages:[{role:"user",content:e.prompt}],system:e.system,max_tokens:e.maxTokens??2048});return{text:o(t),model:t.model,usage:t.usage}}export{l as callClaude};
-//# sourceMappingURL=claudeService-DhBKVAzL.js.map

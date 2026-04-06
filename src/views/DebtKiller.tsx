@@ -524,6 +524,253 @@ function DebtPayoffSection({
   );
 }
 
+// ─── Expense Buckets ──────────────────────────────────────────────────────────
+
+const BUCKETS_KEY = 'poweron_debt_buckets'
+
+interface BucketItem {
+  id: string
+  name: string
+  monthly: number
+}
+
+interface Bucket {
+  id: string
+  label: string
+  accent: string
+  borderColor: string
+  items: BucketItem[]
+}
+
+const DEFAULT_BUCKETS: Bucket[] = [
+  {
+    id: 'overhead',
+    label: 'Business Overhead',
+    accent: 'text-green-400',
+    borderColor: '#166534',
+    items: [
+      'Business Insurance','QuickBooks','Franchise Tax','Registered Agent','Virtual Mail',
+      'Phone Bill','LLC Bond','Workers Comp','DHS License','Palm Desert License',
+    ].map((name, i) => ({ id: `oh-${i}`, name, monthly: 0 })),
+  },
+  {
+    id: 'personal',
+    label: 'Personal Essentials',
+    accent: 'text-blue-400',
+    borderColor: '#1e3a5f',
+    items: [
+      'Rent','Utilities','Food','Storage','Mom',
+    ].map((name, i) => ({ id: `pe-${i}`, name, monthly: 0 })),
+  },
+  {
+    id: 'subscriptions',
+    label: 'Subscriptions',
+    accent: 'text-purple-400',
+    borderColor: '#4c1d95',
+    items: [
+      'ChatGPT','Google Workspace','Bluehost','PDF Expert','One Drive',
+    ].map((name, i) => ({ id: `sub-${i}`, name, monthly: 0 })),
+  },
+  {
+    id: 'vehicle',
+    label: 'Vehicle',
+    accent: 'text-orange-400',
+    borderColor: '#7c2d12',
+    items: [
+      'Truck Insurance','Van Insurance','Truck Maintenance','Van Maintenance','Truck Registration',
+    ].map((name, i) => ({ id: `veh-${i}`, name, monthly: 0 })),
+  },
+  {
+    id: 'debt',
+    label: 'Debt Payments',
+    accent: 'text-red-400',
+    borderColor: '#7f1d1d',
+    items: [
+      'Truck Loan','Trade School Loan','PayPal Seller','PayPal Personal','Wells Fargo','Braces',
+    ].map((name, i) => ({ id: `debt-${i}`, name, monthly: 0 })),
+  },
+]
+
+function loadBuckets(): Bucket[] {
+  try {
+    const raw = localStorage.getItem(BUCKETS_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch { /* ignore */ }
+  return DEFAULT_BUCKETS
+}
+
+function saveBuckets(buckets: Bucket[]) {
+  try { localStorage.setItem(BUCKETS_KEY, JSON.stringify(buckets)) } catch { /* ignore */ }
+}
+
+function ExpenseBuckets() {
+  const [buckets, setBuckets] = useState<Bucket[]>(() => loadBuckets())
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [addName, setAddName] = useState<Record<string, string>>({})
+  const [addAmount, setAddAmount] = useState<Record<string, string>>({})
+  const [dragItem, setDragItem] = useState<{ itemId: string; fromBucketId: string } | null>(null)
+
+  function update(updated: Bucket[]) {
+    setBuckets(updated)
+    saveBuckets(updated)
+  }
+
+  function toggleExpand(id: string) {
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  function addItem(bucketId: string) {
+    const name = (addName[bucketId] || '').trim()
+    const monthly = parseFloat(addAmount[bucketId] || '0') || 0
+    if (!name) return
+    const newItem: BucketItem = { id: `item-${Date.now()}`, name, monthly }
+    update(buckets.map(b => b.id === bucketId ? { ...b, items: [...b.items, newItem] } : b))
+    setAddName(prev => ({ ...prev, [bucketId]: '' }))
+    setAddAmount(prev => ({ ...prev, [bucketId]: '' }))
+  }
+
+  function handleDragStart(itemId: string, fromBucketId: string) {
+    setDragItem({ itemId, fromBucketId })
+  }
+
+  function handleDrop(toBucketId: string) {
+    if (!dragItem || dragItem.fromBucketId === toBucketId) { setDragItem(null); return }
+    const fromBucket = buckets.find(b => b.id === dragItem.fromBucketId)
+    const item = fromBucket?.items.find(i => i.id === dragItem.itemId)
+    if (!item) { setDragItem(null); return }
+    update(buckets.map(b => {
+      if (b.id === dragItem.fromBucketId) return { ...b, items: b.items.filter(i => i.id !== dragItem.itemId) }
+      if (b.id === toBucketId) return { ...b, items: [...b.items, item] }
+      return b
+    }))
+    setDragItem(null)
+  }
+
+  const totalMonthly = buckets.reduce((sum, b) => sum + b.items.reduce((s, i) => s + i.monthly, 0), 0)
+  const totalYearly = totalMonthly * 12
+
+  return (
+    <Panel title="Expense Buckets" icon={<DollarSign size={16} />}>
+      <div className="space-y-3">
+        {buckets.map(bucket => {
+          const bucketMonthly = bucket.items.reduce((s, i) => s + i.monthly, 0)
+          const bucketYearly = bucketMonthly * 12
+          const isOpen = !!expanded[bucket.id]
+
+          return (
+            <div
+              key={bucket.id}
+              className="rounded-lg border overflow-hidden"
+              style={{ borderColor: bucket.borderColor, backgroundColor: '#0a0b10' }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => handleDrop(bucket.id)}
+            >
+              {/* Bucket header */}
+              <button
+                onClick={() => toggleExpand(bucket.id)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <span className={`text-sm font-bold ${bucket.accent}`}>{bucket.label}</span>
+                  <span className="text-xs text-gray-500">{bucket.items.length} items</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className={`text-sm font-bold ${bucket.accent}`}>{fmt(bucketMonthly)}/mo</p>
+                    <p className="text-xs text-gray-500">{fmt(bucketYearly)}/yr</p>
+                  </div>
+                  <span className="text-gray-500 text-xs">{isOpen ? '▲' : '▼'}</span>
+                </div>
+              </button>
+
+              {/* Expanded content */}
+              {isOpen && (
+                <div className="px-4 pb-3 space-y-1 border-t" style={{ borderColor: bucket.borderColor }}>
+                  {/* Items list */}
+                  <div className="space-y-1 mt-2">
+                    {bucket.items.map(item => (
+                      <div
+                        key={item.id}
+                        draggable
+                        onDragStart={() => handleDragStart(item.id, bucket.id)}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded border cursor-grab active:cursor-grabbing hover:border-gray-600 transition-colors"
+                        style={{ borderColor: '#1e2128', backgroundColor: '#111318' }}
+                      >
+                        <span className="text-gray-600 text-xs">⠿</span>
+                        <span className="flex-1 text-sm text-gray-200 truncate">{item.name}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-gray-500 text-xs">$</span>
+                          <input
+                            type="number"
+                            value={item.monthly}
+                            onChange={(e) => {
+                              update(buckets.map(b =>
+                                b.id === bucket.id
+                                  ? { ...b, items: b.items.map(i => i.id === item.id ? { ...i, monthly: parseFloat(e.target.value) || 0 } : i) }
+                                  : b
+                              ))
+                            }}
+                            className="bg-transparent text-sm font-semibold text-gray-100 w-16 text-right outline-none border-b border-transparent hover:border-gray-600 focus:border-orange-400 transition-colors"
+                            min={0}
+                          />
+                          <span className="text-gray-600 text-xs">/mo</span>
+                        </div>
+                        <button
+                          onClick={() => update(buckets.map(b => b.id === bucket.id ? { ...b, items: b.items.filter(i => i.id !== item.id) } : b))}
+                          className="text-gray-700 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Quick-add row */}
+                  <div className="flex items-center gap-2 mt-2 pt-2 border-t" style={{ borderColor: '#1e2128' }}>
+                    <input
+                      type="text"
+                      placeholder="Item name"
+                      value={addName[bucket.id] || ''}
+                      onChange={(e) => setAddName(prev => ({ ...prev, [bucket.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') addItem(bucket.id) }}
+                      className="flex-1 bg-transparent border-b border-gray-700 focus:border-orange-400 outline-none text-sm text-gray-100 px-1 py-0.5 transition-colors"
+                    />
+                    <input
+                      type="number"
+                      placeholder="$/mo"
+                      value={addAmount[bucket.id] || ''}
+                      onChange={(e) => setAddAmount(prev => ({ ...prev, [bucket.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') addItem(bucket.id) }}
+                      className="w-20 bg-transparent border-b border-gray-700 focus:border-orange-400 outline-none text-sm text-gray-100 px-1 py-0.5 text-right transition-colors"
+                      min={0}
+                    />
+                    <button
+                      onClick={() => addItem(bucket.id)}
+                      className="px-3 py-1 bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold rounded transition-colors"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Summary row */}
+      <div
+        className="flex items-center justify-between mt-4 px-4 py-3 rounded-lg border"
+        style={{ borderColor: '#2a2d38', backgroundColor: '#111318' }}
+      >
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Monthly Expenses</span>
+        <span className="text-lg font-bold text-gray-100">{fmt(totalMonthly)}</span>
+        <span className="text-xs text-gray-500">Yearly: <span className="text-gray-300 font-semibold">{fmt(totalYearly)}</span></span>
+      </div>
+    </Panel>
+  )
+}
+
 // ─── Main DebtKiller View ─────────────────────────────────────────────────────
 
 export default function DebtKiller() {
@@ -560,9 +807,10 @@ export default function DebtKiller() {
         </div>
       </div>
 
-      {/* 3 Sections */}
+      {/* Sections */}
       <div className="flex flex-col gap-6 max-w-3xl mx-auto">
         <BurnRateSection expenses={expenses} />
+        <ExpenseBuckets />
         <ExpenseTracker expenses={expenses} onExpensesChange={setExpenses} />
         <DebtPayoffSection debts={debts} netCashflow={netCashflow} />
       </div>
