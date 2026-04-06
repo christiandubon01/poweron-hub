@@ -581,7 +581,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Blueprint AI', icon: Map, view: 'blueprint-ai' },
     { label: 'Debt Killer', icon: Scissors, view: 'debt-killer' },
     { label: 'Voice Journaling V2', icon: Mic2, view: 'voice-journaling-v2' },
-    { label: 'Crew Portal', icon: Users, view: 'crew-portal-v3' },
+    { label: 'Crew Portal', icon: Users, view: 'crew-portal' },
     { label: 'VAULT Estimate', icon: Lock, view: 'vault-estimate' },
     { label: 'V3 Settings', icon: Settings, view: 'settings-v3' },
   ]

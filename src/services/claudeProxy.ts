@@ -65,7 +65,12 @@ export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
   // Fallback: direct API call with VITE_ key (local dev only — DEV guard prevents inlining in prod)
   const apiKey = import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : undefined
   if (!apiKey) {
-    throw new Error('No API key available — configure ANTHROPIC_API_KEY on Netlify or VITE_ANTHROPIC_API_KEY locally')
+    // In DEV: show actionable config message. In production the key is server-side only —
+    // show a clean error instead (never expose key config instructions to end users).
+    if (import.meta.env.DEV) {
+      throw new Error('No API key available — configure ANTHROPIC_API_KEY on Netlify or VITE_ANTHROPIC_API_KEY locally')
+    }
+    throw new Error('AI service temporarily unavailable. Please try again.')
   }
 
   const response = await fetch(DIRECT_URL, {

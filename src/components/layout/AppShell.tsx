@@ -25,65 +25,75 @@ import { validateInviteToken, markInviteAccepted } from '@/services/inviteServic
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
 
+// ── Chunk-retry helper — reloads page on stale chunk fetch after deployment ───
+// If a lazy import fails (e.g. old chunk hash after a redeploy), reload once
+// so the browser fetches the latest bundle instead of crashing the whole app.
+function chunkRetry(importFn: () => Promise<any>) {
+  return importFn().catch(() => {
+    window.location.reload()
+    return { default: () => null }
+  })
+}
+
 // v15r panels — all lazy-loaded to keep recharts and heavy deps out of main bundle
-const V15rHome = lazy(() => import('@/components/v15r/V15rHome'))
-const V15rProjectsPanel = lazy(() => import('@/components/v15r/V15rProjectsPanel'))
-const V15rProjectInner = lazy(() => import('@/components/v15r/V15rProjectInner'))
-const V15rFieldLogPanel = lazy(() => import('@/components/v15r/V15rFieldLogPanel'))
-const V15rMoneyPanel = lazy(() => import('@/components/v15r/V15rMoneyPanel'))
-const V15rIncomeCalc = lazy(() => import('@/components/v15r/V15rIncomeCalc'))
-const V15rPriceBookPanel = lazy(() => import('@/components/v15r/V15rPriceBookPanel'))
-const V15rLeadsPanel = lazy(() => import('@/components/v15r/V15rLeadsPanel'))
-const V15rTemplatesPanel = lazy(() => import('@/components/v15r/V15rTemplatesPanel'))
-const V15rSettingsPanel = lazy(() => import('@/components/v15r/V15rSettingsPanel'))
-const V15rTeamPanel = lazy(() => import('@/components/v15r/V15rTeamPanel'))
-const V15rDashboard = lazy(() => import('@/components/v15r/V15rDashboard'))
-const V15rPricingIntelligencePanel = lazy(() => import('@/components/v15r/V15rPricingIntelligencePanel'))
+const V15rHome = lazy(() => chunkRetry(() => import('@/components/v15r/V15rHome')))
+const V15rProjectsPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rProjectsPanel')))
+const V15rProjectInner = lazy(() => chunkRetry(() => import('@/components/v15r/V15rProjectInner')))
+const V15rFieldLogPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rFieldLogPanel')))
+const V15rMoneyPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rMoneyPanel')))
+const V15rIncomeCalc = lazy(() => chunkRetry(() => import('@/components/v15r/V15rIncomeCalc')))
+const V15rPriceBookPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rPriceBookPanel')))
+const V15rLeadsPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rLeadsPanel')))
+const V15rTemplatesPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rTemplatesPanel')))
+const V15rSettingsPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rSettingsPanel')))
+const V15rTeamPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rTeamPanel')))
+const V15rDashboard = lazy(() => chunkRetry(() => import('@/components/v15r/V15rDashboard')))
+const V15rPricingIntelligencePanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rPricingIntelligencePanel')))
 
 // AI agent panels — lazy-loaded so import errors don't crash the main shell
-const NexusChatPanel = lazy(() => import('@/components/nexus/NexusChatPanel').then(m => ({ default: m.NexusChatPanel })))
-const MarketingPanel = lazy(() => import('@/components/spark/MarketingPanel').then(m => ({ default: m.MarketingPanel })))
-const SchedulePanel  = lazy(() => import('@/components/chrono/SchedulePanel').then(m => ({ default: m.SchedulePanel })))
-const CodePanel      = lazy(() => import('@/components/ohm/CodePanel').then(m => ({ default: m.CodePanel })))
-const OhmCalculator  = lazy(() => import('@/components/ohm/Calculator').then(m => ({ default: m.Calculator })))
-const ProposalFeed   = lazy(() => import('@/components/proposals/ProposalFeed').then(m => ({ default: m.ProposalFeed })))
-const VoiceSettings  = lazy(() => import('@/components/voice/VoiceSettings').then(m => ({ default: m.VoiceSettings })))
+const NexusChatPanel = lazy(() => import('@/components/nexus/NexusChatPanel').then(m => ({ default: m.NexusChatPanel })).catch(() => { window.location.reload(); return { default: () => null } }))
+const MarketingPanel = lazy(() => import('@/components/spark/MarketingPanel').then(m => ({ default: m.MarketingPanel })).catch(() => { window.location.reload(); return { default: () => null } }))
+const SchedulePanel  = lazy(() => import('@/components/chrono/SchedulePanel').then(m => ({ default: m.SchedulePanel })).catch(() => { window.location.reload(); return { default: () => null } }))
+const CodePanel      = lazy(() => import('@/components/ohm/CodePanel').then(m => ({ default: m.CodePanel })).catch(() => { window.location.reload(); return { default: () => null } }))
+const OhmCalculator  = lazy(() => import('@/components/ohm/Calculator').then(m => ({ default: m.Calculator })).catch(() => { window.location.reload(); return { default: () => null } }))
+const ProposalFeed   = lazy(() => import('@/components/proposals/ProposalFeed').then(m => ({ default: m.ProposalFeed })).catch(() => { window.location.reload(); return { default: () => null } }))
+const VoiceSettings  = lazy(() => import('@/components/voice/VoiceSettings').then(m => ({ default: m.VoiceSettings })).catch(() => { window.location.reload(); return { default: () => null } }))
 
 // Activity log panel (lazy-loaded)
-const ActivityPanel = lazy(() => import('@/components/ActivityPanel').then(m => ({ default: m.ActivityPanel })))
+const ActivityPanel = lazy(() => import('@/components/ActivityPanel').then(m => ({ default: m.ActivityPanel })).catch(() => { window.location.reload(); return { default: () => null } }))
 
 // GUARDIAN panel (lazy-loaded)
-const GuardianPanel = lazy(() => import('@/components/guardian/GuardianPanel').then(m => ({ default: m.GuardianPanel })))
+const GuardianPanel = lazy(() => import('@/components/guardian/GuardianPanel').then(m => ({ default: m.GuardianPanel })).catch(() => { window.location.reload(); return { default: () => null } }))
 
 // Voice journal panel (lazy-loaded)
-const JournalPanel = lazy(() => import('@/components/JournalPanel').then(m => ({ default: m.JournalPanel })))
+const JournalPanel = lazy(() => import('@/components/JournalPanel').then(m => ({ default: m.JournalPanel })).catch(() => { window.location.reload(); return { default: () => null } }))
 
-// Agent Mode Selector view (lazy-loaded)
-const AgentModeSelector = lazy(() => import('@/views/AgentModeSelector').then(m => ({ default: m.AgentModeSelector })))
+// Agent Mode Selector view (lazy-loaded) — uses default export (not named)
+const AgentModeSelector = lazy(() => chunkRetry(() => import('@/views/AgentModeSelector')))
 
 // Demo Mode view (lazy-loaded) — E3 | Demo Mode
-const DemoModeView = lazy(() => import('@/views/DemoMode').then(m => ({ default: m.DemoMode })))
+const DemoModeView = lazy(() => import('@/views/DemoMode').then(m => ({ default: m.DemoMode })).catch(() => { window.location.reload(); return { default: () => null } }))
 
 // ── V3 Views — lazy-loaded ────────────────────────────────────────────────────
-const BlueprintAI       = lazy(() => import('@/views/BlueprintAI'))
-const DebtKiller        = lazy(() => import('@/views/DebtKiller'))
-const GuardianView      = lazy(() => import('@/views/GuardianView'))
-const LeadRollingTrend  = lazy(() => import('@/views/LeadRollingTrend'))
-const MaterialIntel     = lazy(() => import('@/views/MaterialIntelligence'))
-const N8nAutomation     = lazy(() => import('@/views/N8nAutomation'))
-const NDASigningFlow    = lazy(() => import('@/views/NDASigningFlow'))
-const SparkLiveCall     = lazy(() => import('@/views/SparkLiveCall'))
-const VaultEstimatePanel = lazy(() => import('@/views/VaultEstimatePanel'))
-const VoiceJournalingV2 = lazy(() => import('@/views/VoiceJournalingV2'))
-const CrewPortalV3      = lazy(() => import('@/views/CrewPortal'))
-const SettingsV3        = lazy(() => import('@/views/Settings'))
+const BlueprintAI       = lazy(() => chunkRetry(() => import('@/views/BlueprintAI')))
+const DebtKiller        = lazy(() => chunkRetry(() => import('@/views/DebtKiller')))
+const GuardianView      = lazy(() => chunkRetry(() => import('@/views/GuardianView')))
+const LeadRollingTrend  = lazy(() => chunkRetry(() => import('@/views/LeadRollingTrend')))
+const MaterialIntel     = lazy(() => chunkRetry(() => import('@/views/MaterialIntelligence')))
+const N8nAutomation     = lazy(() => chunkRetry(() => import('@/views/N8nAutomation')))
+const NDASigningFlow    = lazy(() => chunkRetry(() => import('@/views/NDASigningFlow')))
+const SparkLiveCall     = lazy(() => chunkRetry(() => import('@/views/SparkLiveCall')))
+const VaultEstimatePanel = lazy(() => chunkRetry(() => import('@/views/VaultEstimatePanel')))
+const VoiceJournalingV2 = lazy(() => chunkRetry(() => import('@/views/VoiceJournalingV2')))
+const CrewPortalV3      = lazy(() => chunkRetry(() => import('@/views/CrewPortal')))
+const SettingsV3        = lazy(() => chunkRetry(() => import('@/views/Settings')))
 
 // Lazy-load non-critical overlays
-const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })))
-const OnboardingModal = lazy(() => import('@/components/onboarding/OnboardingModal'))
+const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
+const OnboardingModal = lazy(() => chunkRetry(() => import('@/components/onboarding/OnboardingModal')))
 
 // Beta onboarding flow — fires once after NDA, checks orgs.onboarding_complete
-const BetaOnboarding = lazy(() => import('@/components/onboarding/BetaOnboarding'))
+const BetaOnboarding = lazy(() => chunkRetry(() => import('@/components/onboarding/BetaOnboarding')))
 
 // Loading fallback for lazy-loaded panels
 function PanelLoading() {
@@ -437,6 +447,7 @@ export function AppShell({ children }: AppShellProps) {
       case 'voice-journaling-v2':
         return <Suspense fallback={<PanelLoading />}><VoiceJournalingV2 /></Suspense>
 
+      case 'crew-portal':
       case 'crew-portal-v3':
         return <Suspense fallback={<PanelLoading />}><CrewPortalV3 /></Suspense>
 

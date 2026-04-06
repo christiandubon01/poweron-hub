@@ -27,11 +27,18 @@ import { ModeProvider } from '@/store/modeContext'
 import { useDemoLimits } from '@/hooks/useDemoLimits'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
+// Chunk-retry: reloads page if a stale chunk hash causes an import failure after deployment
 const CrewPortal = lazy(() =>
-  import('@/components/crew/CrewPortal').then(m => ({ default: m.CrewPortal }))
+  import('@/components/crew/CrewPortal')
+    .then(m => ({ default: m.CrewPortal }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .catch((): any => { window.location.reload(); return { default: () => null } })
 )
 const InviteAccept = lazy(() =>
-  import('@/components/crew/InviteAccept').then(m => ({ default: m.InviteAccept }))
+  import('@/components/crew/InviteAccept')
+    .then(m => ({ default: m.InviteAccept }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .catch((): any => { window.location.reload(); return { default: () => null } })
 )
 
 // ── Spinner (shared loading state) ────────────────────────────────────────────
