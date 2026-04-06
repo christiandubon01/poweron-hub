@@ -115,8 +115,21 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const saved = localStorage.getItem('nav_section_intelligence')
     return saved !== null ? saved === 'true' : true
   })
+  const [sectionOperations, setSectionOperations] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_operations')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [sectionAdmin, setSectionAdmin] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_admin')
+    return saved !== null ? saved === 'true' : true
+  })
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const signOut = useAuthStore(s => s.signOut)
+  const authUser = useAuthStore(s => s.user)
+  const adminEmail = import.meta.env.VITE_ADMIN_EMAIL as string | undefined
+  const isAdmin = !!(authUser?.email && adminEmail && authUser.email === adminEmail)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
@@ -568,22 +581,20 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Coordination', view: 'coordination' },
   ]
 
-  // Business nav items (operational panels)
+  // Business nav items — B14 restructure
   const businessItems = [
     { label: 'Graph Dashboard', icon: BarChart3, view: 'graph-dashboard' },
     { label: 'Field Log', icon: ClipboardList, view: 'field-log' },
     { label: 'Money', icon: DollarSign, view: 'money' },
-    { label: 'Solar Income', icon: Calculator, view: 'income-calc' },
     { label: 'Price Book', icon: BookOpen, view: 'price-book' },
     { label: 'Settings', icon: Settings, view: 'settings' },
-    { label: 'Demo Mode', icon: Zap, view: 'demo-mode' },
-    // ── V3 Business ──────────────────────────────────────────────────────────
+  ]
+
+  // Operations nav items — B14 new section
+  const operationsItems = [
     { label: 'Blueprint AI', icon: Map, view: 'blueprint-ai' },
-    { label: 'Debt Killer', icon: Scissors, view: 'debt-killer' },
-    { label: 'Voice Journaling V2', icon: Mic2, view: 'voice-journaling-v2' },
-    { label: 'Crew Portal', icon: Users, view: 'crew-portal' },
     { label: 'VAULT Estimate', icon: Lock, view: 'vault-estimate' },
-    { label: 'V3 Settings', icon: Settings, view: 'settings-v3' },
+    { label: 'Demo Mode', icon: Zap, view: 'demo-mode' },
   ]
 
   // Team nav items (people + compliance)
@@ -592,19 +603,22 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
   ]
 
-  // Intelligence nav items (AI-powered panels)
+  // Intelligence nav items — B14 restructure (Voice Hub replaces 3 items)
   const intelligenceItems = [
     { label: 'OHM', icon: Zap, view: 'compliance' },
-    { label: 'Journal', icon: Mic, view: 'journal' },
+    { label: 'Voice Hub', icon: Mic2, view: 'voice-hub' },
     { label: 'Activity', icon: Activity, view: 'activity' },
     { label: 'Agent Mode Selector', icon: Layers, view: 'agent-mode-selector' },
-    // ── V3 Intelligence ──────────────────────────────────────────────────────
     { label: 'Material Intelligence', icon: Brain, view: 'material-intelligence' },
-    { label: 'N8n Automation', icon: GitBranch, view: 'n8n-automation' },
-    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view' },
-    { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call' },
-    { label: 'Lead Rolling Trend', icon: TrendingUp, view: 'lead-rolling-trend' },
-    { label: 'Voice Capture Queue', icon: Mic2, view: 'voice-journaling-v2' },
+  ]
+
+  // Admin nav items — B14 owner-only gate
+  const adminItems = [
+    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null },
+    { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null },
+    { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview' },
+    { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null },
+    { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null },
   ]
 
   // Toggle and close helpers
@@ -828,6 +842,55 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             )}
           </div>
 
+          {/* OPERATIONS Section — B14 */}
+          <div className="pt-6 border-t border-gray-700">
+            {showLabels ? (
+              <button
+                onClick={() => {
+                  const next = !sectionOperations
+                  setSectionOperations(next)
+                  localStorage.setItem('nav_section_operations', String(next))
+                }}
+                className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #6b7280)' }}>Operations</span>
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted, #6b7280)',
+                    transition: 'transform 0.2s',
+                    transform: sectionOperations ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            ) : null}
+            {sectionOperations && (
+              <nav className="space-y-1">
+                {operationsItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeView === item.view
+                  return (
+                    <button
+                      key={item.view}
+                      onClick={() => handleNavClick(item.view)}
+                      title={!showLabels ? item.label : undefined}
+                      className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
+                        isActive
+                          ? 'bg-emerald-500/15 dark:bg-gray-800 border-l-2 border-[#10b981] text-emerald-800 dark:text-white'
+                          : 'text-gray-400 hover:text-gray-300 border-l-2 border-transparent hover:border-gray-600'
+                      }`}
+                    >
+                      <Icon size={18} />
+                      {showLabels && <span>{item.label}</span>}
+                    </button>
+                  )
+                })}
+              </nav>
+            )}
+          </div>
+
           {/* TEAM Section */}
           <div className="pt-6 border-t border-gray-700">
             {showLabels ? (
@@ -925,6 +988,77 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
               </nav>
             )}
           </div>
+
+          {/* ADMIN Section — B14 | visible only to owner email match */}
+          {isAdmin && (
+            <div className="pt-6 border-t border-yellow-800/40">
+              {showLabels ? (
+                <button
+                  onClick={() => {
+                    const next = !sectionAdmin
+                    setSectionAdmin(next)
+                    localStorage.setItem('nav_section_admin', String(next))
+                  }}
+                  className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
+                  style={{ touchAction: 'manipulation' }}
+                >
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#ca8a04' }}>Admin</span>
+                  <ChevronDown
+                    size={14}
+                    style={{
+                      color: '#ca8a04',
+                      transition: 'transform 0.2s',
+                      transform: sectionAdmin ? 'rotate(0deg)' : 'rotate(-90deg)',
+                      flexShrink: 0,
+                    }}
+                  />
+                </button>
+              ) : null}
+              {sectionAdmin && (
+                <nav className="space-y-1">
+                  {adminItems.map((item) => {
+                    const Icon = item.icon
+                    const isActive = activeView === item.view
+                    return (
+                      <button
+                        key={item.view}
+                        onClick={() => handleNavClick(item.view)}
+                        title={!showLabels ? item.label : undefined}
+                        className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
+                          isActive
+                            ? 'bg-yellow-500/15 border-l-2 border-yellow-500 text-yellow-300'
+                            : 'text-yellow-600 hover:text-yellow-400 border-l-2 border-transparent hover:border-yellow-700'
+                        }`}
+                      >
+                        <Icon size={18} />
+                        {showLabels && (
+                          <span className="flex items-center gap-2 flex-1">
+                            {item.label}
+                            {item.badge && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  letterSpacing: '0.05em',
+                                  padding: '1px 5px',
+                                  borderRadius: 4,
+                                  backgroundColor: '#ca8a04',
+                                  color: '#fff',
+                                  textTransform: 'uppercase',
+                                }}
+                              >
+                                {item.badge}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </nav>
+              )}
+            </div>
+          )}
 
         </div>
 

@@ -85,6 +85,7 @@ const NDASigningFlow    = lazy(() => chunkRetry(() => import('@/views/NDASigning
 const SparkLiveCall     = lazy(() => chunkRetry(() => import('@/views/SparkLiveCall')))
 const VaultEstimatePanel = lazy(() => chunkRetry(() => import('@/views/VaultEstimatePanel')))
 const VoiceJournalingV2 = lazy(() => chunkRetry(() => import('@/views/VoiceJournalingV2')))
+const VoiceHub          = lazy(() => chunkRetry(() => import('@/components/voice/VoiceHub')))
 const CrewPortalV3      = lazy(() => chunkRetry(() => import('@/views/CrewPortal')))
 const SettingsV3        = lazy(() => chunkRetry(() => import('@/views/Settings')))
 
@@ -444,6 +445,8 @@ export function AppShell({ children }: AppShellProps) {
       case 'vault-estimate':
         return <Suspense fallback={<PanelLoading />}><VaultEstimatePanel /></Suspense>
 
+      case 'voice-hub':
+        return <Suspense fallback={<PanelLoading />}><VoiceHub /></Suspense>
       case 'voice-journaling-v2':
         return <Suspense fallback={<PanelLoading />}><VoiceJournalingV2 /></Suspense>
 
