@@ -36,6 +36,7 @@ import {
   Scissors,
   Lock,
   Map,
+  HardHat,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -600,6 +601,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Team nav items (people + compliance)
   const teamItems = [
     { label: 'Team', icon: Users, view: 'team' },
+    { label: 'Crew Portal', icon: HardHat, view: 'crew-portal' },
     { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
   ]
 
