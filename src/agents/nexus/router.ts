@@ -8,6 +8,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { buildSystemPrompt, detectAndApplyStrategicMode } from './systemPrompt'
+import { buildLiveBusinessContext } from './nexusContextBuilder'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getEventContext } from '@/services/agentEventBus'
 import { getLedgerContext } from '@/services/ledgerDataBridge'
@@ -711,9 +712,14 @@ If the NEXUS synthesis already fully answered the question — stop there. Do NO
     }
   } catch { /* ignore — never block a query */ }
 
+  // B10 — Live business context: compact structured block injected before every response.
+  // Synchronous read from already-loaded backupDataService state — no Supabase calls.
+  const liveBusinessCtx = buildLiveBusinessContext()
+
   const systemPrompt = [
     demoPersonalityPrefix ? `${demoPersonalityPrefix}\n---\n\n` : '',
     buildSystemPrompt(),
+    liveBusinessCtx ? `\n---\n\n${liveBusinessCtx}` : '',
     `\n---\n\n${capabilitySummary}`,
     ownerProfileCtx ? `\n---\n\n${ownerProfileCtx}` : '',
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',

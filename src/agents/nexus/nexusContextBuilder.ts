@@ -18,7 +18,8 @@
  * classifier, or any file on the out-of-scope list.
  */
 
-import { getBackupData } from '@/services/backupDataService'
+import { getBackupData, getKPIs } from '@/services/backupDataService'
+import { getActiveMode } from '@/services/nexusMode'
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -141,6 +142,124 @@ function getFinancials(p: any): {
   const paid        = num(p.paid) + num(p.finance?.manualPaidAdjustment)
   const outstanding = contract - paid
   return { contract, billed, paid, outstanding }
+}
+
+// ── Compact Live Business Context Block ───────────────────────────────────────
+
+/**
+ * Build a compact structured Live Business Context block for NEXUS.
+ *
+ * Injected into the NEXUS system prompt BEFORE every response so Claude always
+ * has the current snapshot of the business without re-running queries.
+ *
+ * Max ~300 tokens. Fully synchronous — reads from already-loaded
+ * backupDataService state only. No new Supabase calls. If state is not loaded,
+ * returns a minimal placeholder with just the date.
+ *
+ * FORMAT:
+ *   ## Live Business Context — [date]
+ *   Active Projects: [name (health%, phase, Xd stale, X RFIs); ...]
+ *   Financial: Pipeline $X | Paid $X | Exposure $X | Unbilled $X
+ *   AR Alert: [30+ day items or 'none']
+ *   Recent Field Activity: [last 3 log summaries]
+ *   Lead Pipeline: Hot X | Warm X | Cold X | Top: A, B, C
+ *   Current Mode: [mode]
+ */
+export function buildLiveBusinessContext(): string {
+  const today = new Date().toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+
+  const data = getBackupData()
+  if (!data) {
+    return `## Live Business Context — ${today}\n[Data not loaded — awaiting local state]`
+  }
+
+  const phaseWeights = data.settings?.phaseWeights || {}
+  const lines: string[] = [`## Live Business Context — ${today}`]
+
+  // ── 1. Active Projects: name, health score, phase, days stale, open RFIs ────
+  const activeProjects = (data.projects || []).filter((p: any) => p.status === 'active')
+  if (activeProjects.length === 0) {
+    lines.push('Active Projects: none')
+  } else {
+    const projStrs = activeProjects.slice(0, 5).map((p: any) => {
+      const completion  = overallCompletion(p.phases, phaseWeights)
+      const activePhase = resolveActivePhase(p.phases)
+      const daysStale   = daysSince(p.lastMove)
+      const healthScore = computeHealthScore(p, completion, daysStale)
+      const openRFIs    = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
+      const staleStr    = daysStale < 999 ? ` ${daysStale}d stale` : ''
+      const rfiStr      = openRFIs > 0 ? ` ${openRFIs} RFI${openRFIs > 1 ? 's' : ''}` : ''
+      return `${p.name} (${healthScore}% health, ${activePhase.name}${staleStr}${rfiStr})`
+    })
+    lines.push(`Active Projects: ${projStrs.join('; ')}`)
+  }
+
+  // ── 2. Financial Snapshot ───────────────────────────────────────────────────
+  try {
+    const kpis = getKPIs(data)
+    lines.push(
+      `Financial: Pipeline ${fmt(kpis.pipeline)} | Paid ${fmt(kpis.paid)} | ` +
+      `Exposure ${fmt(kpis.exposure)} | Unbilled SVC ${fmt(kpis.svcUnbilled)}`
+    )
+  } catch {
+    lines.push('Financial: [unavailable]')
+  }
+
+  // ── 3. AR Alert: service logs 30+ days with outstanding balance ─────────────
+  const arItems: string[] = (data.serviceLogs || [])
+    .filter((s: any) => {
+      const balance = num(s.quoted) - num(s.collected)
+      return balance > 1 && daysSince(s.date) >= 30
+    })
+    .slice(0, 3)
+    .map((s: any) => {
+      const balance = num(s.quoted) - num(s.collected)
+      return `${s.customer || 'Unknown'} ${fmt(balance)}`
+    })
+  lines.push(`AR Alert: ${arItems.length > 0 ? arItems.join(', ') : 'none'}`)
+
+  // ── 4. Recent Field Activity: last 3 log entries (date + project + hours) ───
+  const sortedLogs = [...(data.logs || [])]
+    .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')))
+    .slice(0, 3)
+  if (sortedLogs.length > 0) {
+    const logStrs = sortedLogs.map((l: any) => {
+      const projName = (data.projects || []).find((p: any) => p.id === l.projId)?.name || 'Project'
+      const hrs  = l.hrs ? ` ${num(l.hrs)}h` : ''
+      const note = l.notes ? ` — ${String(l.notes).slice(0, 35)}` : ''
+      return `${l.date}${hrs}: ${projName}${note}`
+    })
+    lines.push(`Recent Field Activity: ${logStrs.join(' | ')}`)
+  } else {
+    lines.push('Recent Field Activity: no entries')
+  }
+
+  // ── 5. Lead Pipeline: gcContacts by fit score (hot ≥4, warm 2-3, cold <2) ──
+  const gcContacts   = data.gcContacts || []
+  const hot          = gcContacts.filter((c: any) => num(c.fit) >= 4).length
+  const warm         = gcContacts.filter((c: any) => num(c.fit) >= 2 && num(c.fit) < 4).length
+  const cold         = gcContacts.filter((c: any) => num(c.fit) < 2).length
+  const svcLeadCount = (data.serviceLeads || []).length
+  const top3         = [...gcContacts]
+    .sort((a: any, b: any) => num(b.fit) - num(a.fit))
+    .slice(0, 3)
+    .map((c: any) => (c.company || c.contact || '').trim())
+    .filter(Boolean)
+  let leadLine = `Lead Pipeline: Hot ${hot} | Warm ${warm} | Cold ${cold}`
+  if (svcLeadCount > 0) leadLine += ` | SVC ${svcLeadCount}`
+  if (top3.length > 0) leadLine += ` | Top: ${top3.join(', ')}`
+  lines.push(leadLine)
+
+  // ── 6. Current Agent Mode ───────────────────────────────────────────────────
+  let currentMode = 'standard'
+  try {
+    currentMode = getActiveMode()
+  } catch { /* nexusMode unavailable — default to standard */ }
+  lines.push(`Current Mode: ${currentMode}`)
+
+  return lines.join('\n')
 }
 
 // ── Main exported builder ─────────────────────────────────────────────────────
