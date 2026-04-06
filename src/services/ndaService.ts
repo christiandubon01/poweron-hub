@@ -21,6 +21,7 @@
  */
 
 import { syncToSupabase, fetchFromSupabase } from './supabaseService';
+import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,20 +179,20 @@ export async function saveSignedNDA(
 
 /**
  * Returns true if the user has a signed NDA on record.
+ *
+ * IMPORTANT: uses the Supabase auth.uid() directly — NOT the caller-supplied
+ * userId — so the SELECT always queries with the same identifier that the
+ * RLS-enforced INSERT stores in user_id.  Passing orgId (or any other app-level
+ * identifier) would never match the row that saveSignedNDA() created.
  */
-export async function hasUserSignedNDA(userId: string): Promise<boolean> {
-  // STUB — replace with real Supabase query:
-  // const records = await supabase
-  //   .from('signed_agreements')
-  //   .select('id')
-  //   .eq('user_id', userId)
-  //   .eq('agreement_type', NDA_AGREEMENT_VERSION)
-  //   .limit(1);
-  // return (records.data?.length ?? 0) > 0;
+export async function hasUserSignedNDA(_userId: string): Promise<boolean> {
+  // Resolve the Supabase auth UID — this is what saveSignedNDA() stores in user_id.
+  const { data: { user } } = await (supabase as any).auth.getUser();
+  const authUid = user?.id ?? _userId; // fall back to caller value if no active session
 
   const records = await fetchFromSupabase<SignedAgreementRecord>(
     'signed_agreements',
-    { user_id: userId, agreement_type: NDA_AGREEMENT_VERSION }
+    { user_id: authUid, agreement_type: NDA_AGREEMENT_VERSION }
   );
   return records.length > 0;
 }
