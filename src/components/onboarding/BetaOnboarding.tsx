@@ -232,6 +232,20 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
         }
       }
 
+      // B8 — Notification 1: New beta user active
+      // Fire-and-forget — does not block onboarding completion
+      fetch('/.netlify/functions/notifyNewBetaUser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId:           orgId,
+          businessName:    businessName.trim() || '',
+          industry:        industry?.key ?? '',
+          ownerName:       ownerName.trim() || profile?.full_name || '',
+          signupTimestamp: profile?.created_at ?? new Date().toISOString(),
+        }),
+      }).catch((err) => console.warn('[BetaOnboarding] notifyNewBetaUser failed:', err))
+
       onComplete()
     } catch (err) {
       console.error('[BetaOnboarding] Complete failed:', err)

@@ -280,7 +280,7 @@ async function sendNDAConfirmationEmails(params: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       to: 'app@poweronsolutionsllc.com',
-      subject: `New Beta NDA Signed — ${typedName}`,
+      subject: `NDA Signed \u2014 ${typedName}`,
       body: adminBody,
     }),
   }).catch((err) => console.warn('[ndaService] Admin email send failed:', err));
