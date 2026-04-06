@@ -156,7 +156,7 @@ exports.handler = async (event: any, _context: any) => {
     }
   }
 
-  const { to, subject, body: emailBody, from, type } = body as any
+  const { to, subject, body: emailBody, from, type, attachment } = body as any
 
   // ── NDA PIN request — branch before standard validation ───────────────────
   if (type === 'nda_pin') {
@@ -176,12 +176,23 @@ exports.handler = async (event: any, _context: any) => {
   const recipients: string[] = Array.isArray(to) ? to : [to]
 
   try {
-    const resendPayload = {
+    const resendPayload: Record<string, unknown> = {
       from:    from || DEFAULT_FROM,
       to:      recipients,
       subject: subject,
       html:    convertToHtml(emailBody as string),
       text:    emailBody as string,
+    }
+
+    // ── Attachment support (B3 — NDA PDF) ─────────────────────────────────
+    // attachment: { filename: string, content: string (base64) }
+    if (attachment && attachment.filename && attachment.content) {
+      resendPayload.attachments = [
+        {
+          filename: attachment.filename,
+          content: attachment.content,
+        },
+      ]
     }
 
     const res = await fetch(RESEND_API_URL, {

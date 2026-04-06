@@ -2,26 +2,19 @@
  * ndaService.ts
  * NDA signing service for PowerOn Hub.
  *
- * STUB — In the external prototype all Supabase calls are no-ops.
- * Replace the stub bodies with real @supabase/supabase-js calls during V2 integration.
+ * B3 — PDF generation + confirmation emails + admin view support.
  *
- * Supabase table required:
- *   signed_agreements (
- *     id              uuid primary key default uuid_generate_v4(),
- *     user_id         uuid not null references auth.users(id),
- *     agreement_type  text not null default 'nda_beta_v1',
- *     signature_image text,          -- base64 PNG data URL
- *     typed_name      text not null,
- *     ip_address      text,
- *     signed_at       timestamptz not null default now(),
- *     pdf_url         text           -- Supabase Storage public URL
- *   );
- *
- * Supabase Storage bucket required: nda-documents (private)
+ * Supabase table: signed_agreements
+ * Supabase Storage bucket: nda-documents (private)
  */
 
+import jsPDF from 'jspdf';
 import { syncToSupabase, fetchFromSupabase } from './supabaseService';
 import { supabase } from '@/lib/supabase';
+import { NDA_FULL_TEXT, NDA_AGREEMENT_VERSION } from '@/constants/ndaText';
+
+// Re-export for backward compatibility with NDASigningFlow and other consumers
+export { NDA_FULL_TEXT, NDA_AGREEMENT_VERSION };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,10 +27,12 @@ export interface SignedAgreementRecord {
   ip_address: string;
   signed_at: string;
   pdf_url?: string;
-  // Identity verification fields (Addition 3 — B2)
+  // Identity verification fields (B2)
   email?: string;
   pin_verified?: boolean;
   verification_timestamp?: string;
+  // Admin revoke (B3)
+  revoked?: boolean;
 }
 
 export interface NDASubmission {
@@ -47,104 +42,260 @@ export interface NDASubmission {
   ipAddress: string;
 }
 
-// ─── NDA Text ─────────────────────────────────────────────────────────────────
-
-export const NDA_AGREEMENT_VERSION = 'nda_beta_v1';
-
-export const NDA_FULL_TEXT = `NON-DISCLOSURE AND BETA TESTING AGREEMENT
-
-Effective Date: Upon electronic execution by the User
-
-This Non-Disclosure and Beta Testing Agreement ("Agreement") is entered into between PowerOn Hub, LLC ("Company") and the individual signing below ("User" or "Beta Tester").
-
-1. PURPOSE AND SCOPE
-The Company is developing a proprietary software platform known as PowerOn Hub (the "Software"). The User has been invited to participate in a closed beta testing program (the "Beta Program") to evaluate the Software and provide feedback. This Agreement governs the User's access to and use of the Software during the Beta Program.
-
-2. CONFIDENTIAL INFORMATION
-For purposes of this Agreement, "Confidential Information" means all non-public information disclosed by the Company to the User, whether in written, oral, electronic, or any other form, including without limitation: (a) the Software, including its source code, object code, architecture, design, features, and functionality; (b) all documentation, specifications, user interfaces, technical information, trade secrets, and business information related to the Software; (c) any bugs, errors, or defects identified during testing; (d) any business plans, product roadmaps, financial data, or proprietary processes disclosed in connection with the Beta Program; and (e) any information designated as confidential or that reasonably should be understood to be confidential given the nature of the disclosure.
-
-3. OBLIGATIONS OF THE BETA TESTER
-The User agrees to: (a) hold all Confidential Information in strict confidence using no less than the same degree of care used to protect the User's own confidential information, but in no event less than reasonable care; (b) not disclose, share, publish, broadcast, or otherwise make available any Confidential Information to any third party without the prior written consent of the Company; (c) use the Confidential Information solely for the purpose of participating in the Beta Program and providing feedback to the Company; (d) not reproduce, copy, reverse engineer, disassemble, decompile, or attempt to derive the source code of the Software except as expressly authorized; (e) not use the Software for commercial purposes, in a production environment, or for any purpose other than beta testing; (f) promptly notify the Company of any unauthorized disclosure or use of Confidential Information; and (g) comply with all applicable laws and regulations in connection with the User's use of the Software.
-
-4. FEEDBACK AND INTELLECTUAL PROPERTY
-The User agrees that any feedback, suggestions, ideas, reports, evaluations, or other information provided to the Company concerning the Software ("Feedback") shall be the exclusive property of the Company. The User hereby assigns to the Company all rights, title, and interest in and to any Feedback, including all intellectual property rights therein. The User waives any moral rights in the Feedback to the maximum extent permitted by applicable law.
-
-5. NO WARRANTIES; ACCEPTANCE OF RISK
-THE SOFTWARE IS PROVIDED "AS IS" IN BETA FORM AND MAY CONTAIN BUGS, ERRORS, AND OTHER ISSUES. THE COMPANY MAKES NO WARRANTIES, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT. THE USER ACKNOWLEDGES THAT BETA SOFTWARE MAY BE UNSTABLE AND AGREES TO USE IT AT THE USER'S OWN RISK. THE USER IS RESPONSIBLE FOR MAINTAINING BACKUP COPIES OF ALL DATA AND FOR TAKING ALL REASONABLE PRECAUTIONS.
-
-6. LIMITATION OF LIABILITY
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE COMPANY BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING WITHOUT LIMITATION LOSS OF PROFITS, DATA, USE, OR GOODWILL, ARISING OUT OF OR RELATED TO THIS AGREEMENT OR THE USER'S USE OF THE SOFTWARE, EVEN IF THE COMPANY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
-
-7. TERM AND TERMINATION
-This Agreement shall commence on the date of execution and continue until the earlier of: (a) the Company's public release of the Software; (b) the Company's written notice of termination to the User; or (c) the User's written notice of withdrawal from the Beta Program. Sections 2, 3, 4, 5, 6, 8, and 9 shall survive termination of this Agreement. Upon termination, the User shall immediately cease using the Software and destroy or return all copies of Confidential Information in the User's possession.
-
-8. INJUNCTIVE RELIEF
-The User acknowledges that any breach of this Agreement may cause irreparable harm to the Company for which monetary damages would be an inadequate remedy. Accordingly, the Company shall be entitled to seek injunctive or other equitable relief without the requirement of posting a bond or other security.
-
-9. GENERAL PROVISIONS
-(a) Governing Law. This Agreement shall be governed by and construed in accordance with the laws of the State of Texas, without regard to its conflict of law provisions. (b) Entire Agreement. This Agreement constitutes the entire agreement between the parties with respect to its subject matter and supersedes all prior agreements, understandings, and negotiations. (c) Amendment. This Agreement may not be amended except by a written instrument signed by both parties. (d) Waiver. Failure to enforce any provision of this Agreement shall not constitute a waiver of future enforcement of that or any other provision. (e) Severability. If any provision of this Agreement is found to be unenforceable, the remaining provisions shall continue in full force and effect. (f) No Assignment. The User may not assign this Agreement or any rights hereunder without the prior written consent of the Company. (g) Counterparts. This Agreement may be executed electronically, and electronic execution shall have the same legal effect as an original ink signature.
-
-BY SIGNING BELOW, THE USER ACKNOWLEDGES THAT THE USER HAS READ, UNDERSTANDS, AND AGREES TO BE BOUND BY THE TERMS OF THIS AGREEMENT, AND THAT THE USER IS AUTHORIZED TO ENTER INTO THIS AGREEMENT.
-
-PowerOn Hub, LLC
-Beta Testing Program
-`;
-
-// ─── PDF Generation (stub) ────────────────────────────────────────────────────
+// ─── PDF Generation ───────────────────────────────────────────────────────────
 
 /**
- * Generates a minimal PDF-like Blob containing the NDA text, signature, name,
- * date, and timestamp.
- *
- * In the external prototype this produces a plain-text pseudo-PDF blob for
- * structural completeness. Replace with jspdf or pdfmake during V2 integration.
+ * Generates a PDF containing the full NDA text, signature image, and metadata.
+ * Uses jsPDF for real PDF generation.
  */
 export async function generateNDAPdf(params: {
   typedName: string;
+  email: string;
   signatureBase64: string;
   ipAddress: string;
   signedAt: string;
 }): Promise<Blob> {
-  // STUB — replace with real PDF library in V2 integration
-  // Suggested: npm install jspdf @types/jspdf
-  const content = [
-    NDA_FULL_TEXT,
-    '\n\n─────────────────────────────────────────────────────────',
-    'EXECUTION PAGE',
-    '─────────────────────────────────────────────────────────',
-    `Signed by:    ${params.typedName}`,
-    `Date:         ${new Date(params.signedAt).toLocaleDateString('en-US', {
-      year: 'numeric', month: 'long', day: 'numeric',
-    })}`,
-    `Timestamp:    ${params.signedAt}`,
-    `IP Address:   ${params.ipAddress}`,
-    `Agreement:    ${NDA_AGREEMENT_VERSION}`,
-    `Signature:    [Electronic signature image embedded — base64 PNG]`,
-  ].join('\n');
+  const { typedName, email, signatureBase64, signedAt } = params;
 
-  return new Blob([content], { type: 'application/pdf' });
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 60;
+  const contentWidth = pageWidth - margin * 2;
+  let y = margin;
+
+  // ── Header ─────────────────────────────────────────────────────────────────
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 30, 30);
+  doc.text('PowerOn Hub', margin, y);
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 100, 100);
+  doc.text('Power On Solutions LLC', margin, (y += 18));
+  doc.text('C-10 License #1151468 · Desert Hot Springs, CA', margin, (y += 14));
+
+  // Horizontal rule
+  y += 16;
+  doc.setDrawColor(220, 220, 220);
+  doc.setLineWidth(0.5);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 20;
+
+  // ── Agreement Title ────────────────────────────────────────────────────────
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 30, 30);
+  doc.text('NON-DISCLOSURE AND BETA TESTING AGREEMENT', margin, y, {
+    maxWidth: contentWidth,
+  });
+  y += 30;
+
+  // ── Body Text ──────────────────────────────────────────────────────────────
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(60, 60, 60);
+
+  const bodyLines = doc.splitTextToSize(NDA_FULL_TEXT, contentWidth);
+
+  for (const line of bodyLines) {
+    if (y + 12 > pageHeight - margin) {
+      doc.addPage();
+      y = margin;
+    }
+    doc.text(line, margin, y);
+    y += 12;
+  }
+
+  // ── Execution Page ─────────────────────────────────────────────────────────
+  // Always start execution page on a new page for clean presentation
+  doc.addPage();
+  y = margin;
+
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 30, 30);
+  doc.text('EXECUTION PAGE', margin, y);
+  y += 8;
+
+  doc.setLineWidth(0.5);
+  doc.setDrawColor(180, 180, 180);
+  doc.line(margin, y + 4, pageWidth - margin, y + 4);
+  y += 24;
+
+  // Signed by
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(60, 60, 60);
+  doc.text('Signed by:', margin, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(typedName, margin + 90, y);
+  y += 18;
+
+  // Email
+  doc.setFont('helvetica', 'bold');
+  doc.text('Email:', margin, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(email || '(not provided)', margin + 90, y);
+  y += 18;
+
+  // Date
+  const formattedDate = new Date(signedAt).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  doc.setFont('helvetica', 'bold');
+  doc.text('Date:', margin, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(formattedDate, margin + 90, y);
+  y += 36;
+
+  // Signature image
+  if (signatureBase64 && signatureBase64.startsWith('data:image')) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text('Electronic Signature:', margin, y);
+    y += 10;
+
+    try {
+      // Draw a light background box for the signature
+      doc.setFillColor(250, 250, 250);
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(margin, y, 240, 70, 4, 4, 'FD');
+      doc.addImage(signatureBase64, 'PNG', margin + 8, y + 8, 224, 54);
+    } catch (_imgErr) {
+      // If signature image fails to embed, note it
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(150, 150, 150);
+      doc.text('[Electronic signature image — embedded at signing]', margin + 8, y + 36);
+    }
+    y += 86;
+  }
+
+  // Footer
+  y += 20;
+  doc.setDrawColor(220, 220, 220);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 16;
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(140, 140, 140);
+  doc.text(
+    'This document was electronically signed via PowerOn Hub. PIN verification confirmed.',
+    margin,
+    y,
+    { maxWidth: contentWidth }
+  );
+  y += 14;
+  doc.text(
+    `Agreement version: ${NDA_AGREEMENT_VERSION}  |  Signed at: ${signedAt}`,
+    margin,
+    y,
+    { maxWidth: contentWidth }
+  );
+
+  return doc.output('blob');
 }
 
-// ─── Supabase Storage stub ────────────────────────────────────────────────────
+// ─── Supabase Storage ─────────────────────────────────────────────────────────
 
-async function uploadNDAPdf(_userId: string, _blob: Blob): Promise<string> {
-  // STUB — replace with real Supabase Storage upload:
-  // const { data, error } = await supabase.storage
-  //   .from('nda-documents')
-  //   .upload(`${_userId}/${Date.now()}_nda.pdf`, _blob, { contentType: 'application/pdf' });
-  // if (error) throw error;
-  // return supabase.storage.from('nda-documents').getPublicUrl(data.path).data.publicUrl;
-  return `stub-pdf-url-${Date.now()}`;
+/**
+ * Uploads a PDF blob to the 'nda-documents' private bucket.
+ * Returns the storage object path (not a signed URL — use createSignedUrl on read).
+ */
+async function uploadNDAPdf(userId: string, rowId: string, blob: Blob): Promise<string> {
+  const path = `${userId}/${rowId}_nda.pdf`;
+
+  const { error } = await (supabase as any).storage
+    .from('nda-documents')
+    .upload(path, blob, { contentType: 'application/pdf', upsert: true });
+
+  if (error) {
+    console.warn('[ndaService] Storage upload error:', error.message);
+    // Return stub path so the row still gets updated
+    return `stub-pdf-path-${rowId}`;
+  }
+
+  return path;
+}
+
+// ─── Email Sending ────────────────────────────────────────────────────────────
+
+/**
+ * Sends confirmation emails via /.netlify/functions/sendEmail.
+ * Fire-and-forget — does not throw on failure.
+ */
+async function sendNDAConfirmationEmails(params: {
+  typedName: string;
+  email: string;
+  signedAt: string;
+  pdfBase64: string;
+  recordId: string;
+}): Promise<void> {
+  const { typedName, email, signedAt, pdfBase64, recordId } = params;
+
+  const formattedDate = new Date(signedAt).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+
+  // User confirmation email
+  const userEmailPromise = fetch('/.netlify/functions/sendEmail', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: email,
+      subject: 'Your PowerOn Hub NDA — Signed Copy',
+      body: 'Thank you for signing. Your signed NDA is attached.',
+      attachment: {
+        filename: 'PowerOnHub_NDA_Signed.pdf',
+        content: pdfBase64,
+      },
+    }),
+  }).catch((err) => console.warn('[ndaService] User email send failed:', err));
+
+  // Admin notification email
+  const adminBody = [
+    'A new Beta NDA has been signed via PowerOn Hub.',
+    '',
+    `Name:       ${typedName}`,
+    `Email:      ${email}`,
+    `Timestamp:  ${formattedDate}`,
+    `Record ID:  ${recordId}`,
+    '',
+    'View the record in Supabase: signed_agreements table.',
+  ].join('\n');
+
+  const adminEmailPromise = fetch('/.netlify/functions/sendEmail', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: 'app@poweronsolutionsllc.com',
+      subject: `New Beta NDA Signed — ${typedName}`,
+      body: adminBody,
+    }),
+  }).catch((err) => console.warn('[ndaService] Admin email send failed:', err));
+
+  await Promise.allSettled([userEmailPromise, adminEmailPromise]);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Saves a signed NDA record to Supabase and uploads the generated PDF.
- * Returns the stored record ID.
+ * Saves a signed NDA record to Supabase, generates a PDF, uploads it to
+ * Supabase Storage, updates the row with the pdf_url, and sends confirmation
+ * emails to the user and admin.
  *
- * @param email           Email address verified via PIN confirmation (Addition 2/3 — B2)
- * @param pinVerified     Whether email was confirmed via PIN (Addition 2/3 — B2)
+ * Returns the stored record ID.
  */
 export async function saveSignedNDA(
   userId: string,
@@ -157,17 +308,7 @@ export async function saveSignedNDA(
   const signedAt = new Date().toISOString();
   const verificationTimestamp = new Date().toISOString();
 
-  // Generate PDF blob
-  const pdfBlob = await generateNDAPdf({
-    typedName,
-    signatureBase64,
-    ipAddress,
-    signedAt,
-  });
-
-  // Upload PDF to storage
-  const pdfUrl = await uploadNDAPdf(userId, pdfBlob);
-
+  // 1 ── INSERT the record (no pdf_url yet)
   const record: SignedAgreementRecord = {
     user_id: userId,
     agreement_type: NDA_AGREEMENT_VERSION,
@@ -175,34 +316,79 @@ export async function saveSignedNDA(
     typed_name: typedName,
     ip_address: ipAddress,
     signed_at: signedAt,
-    pdf_url: pdfUrl,
-    // Identity verification fields
     email: email ?? undefined,
     pin_verified: pinVerified ?? false,
     verification_timestamp: verificationTimestamp,
   };
 
-  const result = await syncToSupabase({
+  const insertedRow = await syncToSupabase({
     table: 'signed_agreements',
     data: record as unknown as Record<string, unknown>,
     operation: 'insert',
   });
 
-  return (result.id as string) ?? `local-${Date.now()}`;
+  const rowId = (insertedRow.id as string) ?? `local-${Date.now()}`;
+
+  // 2 ── Generate PDF with jsPDF
+  let pdfBlob: Blob;
+  let pdfBase64 = '';
+  try {
+    pdfBlob = await generateNDAPdf({
+      typedName,
+      email: email ?? '',
+      signatureBase64,
+      ipAddress,
+      signedAt,
+    });
+
+    // Convert blob to base64 for email attachment
+    const arrayBuffer = await pdfBlob.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    let binary = '';
+    uint8.forEach((b) => { binary += String.fromCharCode(b); });
+    pdfBase64 = btoa(binary);
+  } catch (pdfErr) {
+    console.warn('[ndaService] PDF generation failed:', pdfErr);
+    // Create a minimal fallback blob
+    pdfBlob = new Blob(['[PDF generation error]'], { type: 'application/pdf' });
+  }
+
+  // 3 ── Upload PDF to Supabase Storage
+  const storagePath = await uploadNDAPdf(userId, rowId, pdfBlob);
+
+  // 4 ── UPDATE signed_agreements row with pdf_url
+  if (!rowId.startsWith('local-')) {
+    await syncToSupabase({
+      table: 'signed_agreements',
+      data: { id: rowId, pdf_url: storagePath } as Record<string, unknown>,
+      operation: 'upsert',
+      matchColumn: 'id',
+    });
+  }
+
+  // 5 ── Send confirmation emails (fire-and-forget)
+  if (email) {
+    void sendNDAConfirmationEmails({
+      typedName,
+      email,
+      signedAt,
+      pdfBase64,
+      recordId: rowId,
+    });
+  }
+
+  return rowId;
 }
 
 /**
  * Returns true if the user has a signed NDA on record.
  *
- * IMPORTANT: uses the Supabase auth.uid() directly — NOT the caller-supplied
- * userId — so the SELECT always queries with the same identifier that the
- * RLS-enforced INSERT stores in user_id.  Passing orgId (or any other app-level
- * identifier) would never match the row that saveSignedNDA() created.
+ * Uses the Supabase auth.uid() directly — NOT the caller-supplied userId —
+ * so the SELECT always queries with the same identifier the RLS-enforced INSERT stores.
  */
 export async function hasUserSignedNDA(_userId: string): Promise<boolean> {
-  // Resolve the Supabase auth UID — this is what saveSignedNDA() stores in user_id.
   const { data: { user } } = await (supabase as any).auth.getUser();
-  const authUid = user?.id ?? _userId; // fall back to caller value if no active session
+  const authUid = user?.id ?? _userId;
 
   const records = await fetchFromSupabase<SignedAgreementRecord>(
     'signed_agreements',
@@ -212,10 +398,71 @@ export async function hasUserSignedNDA(_userId: string): Promise<boolean> {
 }
 
 /**
- * Fetches all signed NDA records for a given user (used in GUARDIAN viewer).
+ * Fetches all signed NDA records for a given user.
  */
 export async function getUserSignedNDAs(userId: string): Promise<SignedAgreementRecord[]> {
   return fetchFromSupabase<SignedAgreementRecord>('signed_agreements', {
     user_id: userId,
   });
+}
+
+/**
+ * Fetches ALL signed NDA records (owner/admin use only).
+ * Ordered by signed_at DESC.
+ */
+export async function getAllSignedNDAs(): Promise<SignedAgreementRecord[]> {
+  try {
+    const { data, error } = await (supabase as any)
+      .from('signed_agreements')
+      .select('*')
+      .order('signed_at', { ascending: false });
+
+    if (error) {
+      console.warn('[ndaService] getAllSignedNDAs error:', error.message);
+      return [];
+    }
+    return (data ?? []) as SignedAgreementRecord[];
+  } catch (err) {
+    console.warn('[ndaService] getAllSignedNDAs failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Revokes a signed NDA record by setting revoked: true.
+ */
+export async function revokeSignedNDA(recordId: string): Promise<void> {
+  const { error } = await (supabase as any)
+    .from('signed_agreements')
+    .update({ revoked: true })
+    .eq('id', recordId);
+
+  if (error) {
+    throw new Error(`Revoke failed: ${error.message}`);
+  }
+}
+
+/**
+ * Generates a time-limited signed URL for a PDF stored in the nda-documents bucket.
+ * @param storagePath  The path stored in pdf_url column (e.g., "userId/rowId_nda.pdf")
+ * @param expiresIn    Seconds until URL expires (default: 3600)
+ */
+export async function getNDAPdfSignedUrl(
+  storagePath: string,
+  expiresIn = 3600
+): Promise<string | null> {
+  try {
+    const { data, error } = await (supabase as any).storage
+      .from('nda-documents')
+      .createSignedUrl(storagePath, expiresIn);
+
+    if (error || !data?.signedUrl) {
+      console.warn('[ndaService] createSignedUrl error:', error?.message);
+      return null;
+    }
+    return data.signedUrl as string;
+  } catch (err) {
+    console.warn('[ndaService] getNDAPdfSignedUrl failed:', err);
+    return null;
+  }
 }

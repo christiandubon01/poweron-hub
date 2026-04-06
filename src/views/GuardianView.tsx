@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import type { GuardianRule, GuardianViolation, GuardianAuditEntry } from '../types';
 import type { SignedAgreementRecord } from '../services/ndaService';
-import { getUserSignedNDAs } from '../services/ndaService';
+import { getUserSignedNDAs, getAllSignedNDAs, revokeSignedNDA, getNDAPdfSignedUrl } from '../services/ndaService';
 import {
   mockGuardianRules,
   mockViolations,
@@ -734,9 +734,267 @@ function AIDecisionsPanel() {
   );
 }
 
+// ─── Signed NDAs Admin Tab (B3) ───────────────────────────────────────────────
+
+function SignedNDAsAdminTab() {
+  const [records, setRecords] = useState<SignedAgreementRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revokeTarget, setRevokeTarget] = useState<SignedAgreementRecord | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function load() {
+    setLoading(true);
+    setError(null);
+    getAllSignedNDAs()
+      .then((r) => setRecords(r))
+      .catch(() => setError('Failed to load signed NDAs.'))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function handleDownloadPdf(record: SignedAgreementRecord) {
+    if (!record.pdf_url || record.pdf_url.startsWith('stub-')) {
+      alert('No PDF on record for this agreement.');
+      return;
+    }
+    setDownloadingId(record.id ?? null);
+    try {
+      const signedUrl = await getNDAPdfSignedUrl(record.pdf_url, 300);
+      if (!signedUrl) {
+        alert('Could not generate download link. Please try again.');
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = signedUrl;
+      a.download = `NDA_${record.typed_name?.replace(/\s+/g, '_') ?? 'signed'}.pdf`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      alert('Download failed. Please try again.');
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  async function confirmRevoke() {
+    if (!revokeTarget?.id) return;
+    setRevoking(true);
+    try {
+      await revokeSignedNDA(revokeTarget.id);
+      setRecords((prev) =>
+        prev.map((r) => (r.id === revokeTarget.id ? { ...r, revoked: true } : r))
+      );
+    } catch {
+      alert('Revoke failed. Please try again.');
+    } finally {
+      setRevoking(false);
+      setRevokeTarget(null);
+    }
+  }
+
+  function formatDate(iso: string) {
+    return new Date(iso).toLocaleString('en', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {/* Revoke Confirmation Dialog */}
+      {revokeTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+        >
+          <div
+            className="flex flex-col gap-4 p-6 rounded-xl border max-w-sm w-full mx-4"
+            style={{ backgroundColor: '#0d0e14', borderColor: '#2a3040' }}
+          >
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={20} className="text-yellow-400 flex-shrink-0" />
+              <h3 className="text-sm font-semibold text-gray-100">Revoke NDA Access</h3>
+            </div>
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Are you sure you want to revoke the signed NDA for{' '}
+              <span className="font-semibold text-gray-200">{revokeTarget.typed_name}</span>?
+              This will flag the record as revoked. This action cannot be undone.
+            </p>
+            <div className="flex gap-2 mt-1">
+              <button
+                onClick={confirmRevoke}
+                disabled={revoking}
+                className="flex-1 py-2 rounded-lg text-xs font-semibold text-white transition-colors disabled:opacity-50"
+                style={{ backgroundColor: '#7f1d1d' }}
+              >
+                {revoking ? 'Revoking…' : 'Revoke Access'}
+              </button>
+              <button
+                onClick={() => setRevokeTarget(null)}
+                disabled={revoking}
+                className="flex-1 py-2 rounded-lg text-xs font-semibold text-gray-300 transition-colors"
+                style={{ backgroundColor: '#1a1d27', border: '1px solid #2a3040' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Panel Header */}
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+        style={{ borderColor: '#1e2128', backgroundColor: '#11121a' }}
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+          <FileText size={14} className="text-green-500" />
+          Signed NDAs
+          {records.length > 0 && (
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-800/40 ml-1">
+              {records.length}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={load}
+          className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+          style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* Content */}
+      {loading ? (
+        <div className="flex items-center justify-center flex-1 text-xs text-gray-600 gap-2">
+          <div className="w-3 h-3 rounded-full border border-green-800 border-t-green-500 animate-spin" />
+          Loading…
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-center flex-1 text-xs text-red-400 gap-2">
+          <AlertTriangle size={14} />
+          {error}
+        </div>
+      ) : records.length === 0 ? (
+        <div className="flex flex-col items-center justify-center flex-1 gap-2 py-12 text-center px-4">
+          <FileText size={24} className="text-gray-700" />
+          <p className="text-sm text-gray-500">No signed NDA records.</p>
+          <p className="text-xs text-gray-700">Records appear here after users complete the beta NDA.</p>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-x-auto overflow-y-auto">
+          <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1e2128', backgroundColor: '#0f1018' }}>
+                {['Name', 'Email', 'Signed Date', 'Status', 'Actions'].map((col) => (
+                  <th
+                    key={col}
+                    className="text-left px-4 py-3 font-semibold uppercase tracking-wide text-gray-600"
+                    style={{ fontSize: 10, whiteSpace: 'nowrap' }}
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((record, i) => (
+                <tr
+                  key={record.id ?? i}
+                  className="border-b hover:bg-white/[0.02] transition-colors"
+                  style={{
+                    borderColor: '#1a1c23',
+                    opacity: record.revoked ? 0.5 : 1,
+                  }}
+                >
+                  {/* Name */}
+                  <td className="px-4 py-3 text-gray-200 font-medium whitespace-nowrap max-w-[180px] truncate">
+                    {record.typed_name || '—'}
+                  </td>
+
+                  {/* Email */}
+                  <td className="px-4 py-3 text-gray-400 whitespace-nowrap max-w-[200px] truncate">
+                    {record.email || '—'}
+                  </td>
+
+                  {/* Signed Date */}
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                    {record.signed_at ? formatDate(record.signed_at) : '—'}
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {record.revoked ? (
+                      <span
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+                        style={{ backgroundColor: '#3b0a0a', color: '#f87171', border: '1px solid #7f1d1d44' }}
+                      >
+                        Revoked
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+                        style={{ backgroundColor: '#052e16', color: '#4ade80', border: '1px solid #16a34a44' }}
+                      >
+                        Active
+                      </span>
+                    )}
+                  </td>
+
+                  {/* Actions */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      {/* Download PDF */}
+                      <button
+                        onClick={() => handleDownloadPdf(record)}
+                        disabled={downloadingId === record.id || !record.pdf_url || record.pdf_url.startsWith('stub-')}
+                        className="flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ backgroundColor: '#0f2a4a', color: '#60a5fa', border: '1px solid #1e3a5f' }}
+                        title={!record.pdf_url || record.pdf_url.startsWith('stub-') ? 'No PDF available' : 'Download PDF'}
+                      >
+                        <Download size={10} />
+                        {downloadingId === record.id ? 'Getting…' : 'Download PDF'}
+                      </button>
+
+                      {/* Revoke */}
+                      {!record.revoked && (
+                        <button
+                          onClick={() => setRevokeTarget(record)}
+                          className="flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors"
+                          style={{ backgroundColor: '#2a0a0a', color: '#f87171', border: '1px solid #7f1d1d44' }}
+                          title="Revoke NDA access"
+                        >
+                          <X size={10} />
+                          Revoke
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Guardian View Root ───────────────────────────────────────────────────────
 
-type GuardianTab = 'monitor' | 'ai-decisions';
+type GuardianTab = 'monitor' | 'ai-decisions' | 'signed-ndas';
 
 export default function GuardianView() {
   const [activeTab, setActiveTab] = useState<GuardianTab>('monitor');
@@ -744,6 +1002,7 @@ export default function GuardianView() {
   const tabs: { id: GuardianTab; label: string; icon: React.ReactNode }[] = [
     { id: 'monitor', label: 'Monitor', icon: <Shield size={12} /> },
     { id: 'ai-decisions', label: 'AI Decisions', icon: <Brain size={12} /> },
+    { id: 'signed-ndas', label: 'Signed NDAs', icon: <FileText size={12} /> },
   ];
 
   return (
@@ -810,6 +1069,14 @@ export default function GuardianView() {
         {activeTab === 'ai-decisions' && (
           <div className="h-full min-h-0">
             <AIDecisionsPanel />
+          </div>
+        )}
+        {activeTab === 'signed-ndas' && (
+          <div
+            className="flex flex-col rounded-xl border overflow-hidden"
+            style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14', height: '100%', minHeight: 0 }}
+          >
+            <SignedNDAsAdminTab />
           </div>
         )}
       </div>
