@@ -934,9 +934,9 @@ export default function V15rSettingsPanel() {
               <div className="p-3 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
                 <p className="text-sm text-gray-300 mb-2">Anthropic API Key</p>
                 <div className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${import.meta.env.VITE_ANTHROPIC_API_KEY ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <div className={`w-3 h-3 rounded-full ${(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'bg-green-500' : 'bg-red-500'}`}></div>
                   <span className="text-xs text-gray-400">
-                    {import.meta.env.VITE_ANTHROPIC_API_KEY ? 'Configured — QuickBooks PDF import enabled' : 'Not configured — set VITE_ANTHROPIC_API_KEY in .env'}
+                    {(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'Configured — QuickBooks PDF import enabled' : 'Not configured — set VITE_ANTHROPIC_API_KEY in .env'}
                   </span>
                 </div>
               </div>

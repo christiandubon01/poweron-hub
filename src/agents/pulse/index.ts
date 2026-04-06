@@ -169,7 +169,7 @@ export async function processPulseRequest(request: PulseRequest): Promise<PulseR
  */
 async function generateKPISummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     // Enrich with real local device data (source of truth)
     const localWeeklyCtx = getLocalWeeklyContext()
@@ -222,7 +222,7 @@ Be direct, data-driven, and actionable.`
  */
 async function generateARAugingSummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const userPrompt = `Here is the AR aging breakdown:
 
@@ -271,7 +271,7 @@ Be direct and actionable.`
  */
 async function generateCashFlowSummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const userPrompt = `Here is the 12-week cash flow forecast:
 
@@ -320,7 +320,7 @@ Be direct and specific about timing.`
  */
 async function generateTrendsSummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const userPrompt = `Here are the financial trends over the past 12 weeks:
 

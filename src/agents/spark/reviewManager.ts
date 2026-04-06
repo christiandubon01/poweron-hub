@@ -52,7 +52,7 @@ export async function draftReviewResponse(
   draftedBy?: string
 ): Promise<ReviewResponse> {
   // Generate draft via Claude
-  const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+  const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
   const response = await fetch('/api/anthropic/v1/messages', {
     method: 'POST',

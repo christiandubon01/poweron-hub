@@ -793,7 +793,7 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
 
   try {
     // Get Anthropic key from environment
-    const envKey = ((import.meta as any).env as Record<string, string>)?.VITE_ANTHROPIC_API_KEY
+    const envKey = import.meta.env.DEV ? ((import.meta as any).env as Record<string, string>)?.VITE_ANTHROPIC_API_KEY : ''
     if (!envKey) {
       throw new Error('VITE_ANTHROPIC_API_KEY not set')
     }

@@ -125,8 +125,8 @@ export async function transcribeWithWhisper(
     console.warn('[Whisper] Proxy unavailable, falling back to direct API...', proxyErr)
   }
 
-  // ── Try 2: Direct OpenAI call (needs VITE_OPENAI_API_KEY) ────────────────
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+  // ── Try 2: Direct OpenAI call (needs VITE_OPENAI_API_KEY, local dev only) ──
+  const apiKey = import.meta.env.DEV ? import.meta.env.VITE_OPENAI_API_KEY : undefined
   if (!apiKey) {
     throw new Error('Whisper proxy unavailable and no VITE_OPENAI_API_KEY configured.')
   }

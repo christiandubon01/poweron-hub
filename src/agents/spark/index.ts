@@ -395,7 +395,7 @@ export function initSparkBusListeners(): () => void {
 // Claude summary generator
 async function generateSparkSummary(topic: string, data: unknown): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const response = await fetch('/api/anthropic/v1/messages', {
       method: 'POST',

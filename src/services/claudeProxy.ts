@@ -62,8 +62,8 @@ export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
     console.warn('[Claude] Proxy unavailable, trying direct API:', err instanceof Error ? err.message : err)
   }
 
-  // Fallback: direct API call with VITE_ key
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
+  // Fallback: direct API call with VITE_ key (local dev only — DEV guard prevents inlining in prod)
+  const apiKey = import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : undefined
   if (!apiKey) {
     throw new Error('No API key available — configure ANTHROPIC_API_KEY on Netlify or VITE_ANTHROPIC_API_KEY locally')
   }

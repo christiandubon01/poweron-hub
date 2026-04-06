@@ -467,7 +467,7 @@ Be specific, professional, and actionable.`
     const response = await fetch('/api/anthropic/v1/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY as string,
+        'x-api-key': (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
         'anthropic-dangerous-direct-browser-access': 'true',

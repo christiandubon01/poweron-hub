@@ -234,7 +234,7 @@ export async function analyzeIdea(
   submittedBy: string,
   category: string
 ): Promise<IdeaAnalysis | null> {
-  const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+  const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
   if (!ANTHROPIC_API_KEY) {
     throw new Error('VITE_ANTHROPIC_API_KEY is not set. Add it to .env.local.')

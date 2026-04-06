@@ -261,11 +261,11 @@ export class VoiceSubsystem {
       detector.onWakeWord(() => this.onWakeWordDetected())
     }
 
-    // Startup checks — warn if API keys are missing
-    if (!import.meta.env.VITE_OPENAI_API_KEY) {
+    // Startup checks — warn if API keys are missing (local dev only)
+    if (import.meta.env.DEV && !import.meta.env.VITE_OPENAI_API_KEY) {
       console.warn('[Voice] VITE_OPENAI_API_KEY not set — Whisper will use Netlify proxy only. Direct fallback disabled.')
     }
-    if (!import.meta.env.VITE_ELEVENLABS_API_KEY) {
+    if (import.meta.env.DEV && !import.meta.env.VITE_ELEVENLABS_API_KEY) {
       console.warn('[Voice] VITE_ELEVENLABS_API_KEY not set — TTS will fall back to browser speechSynthesis.')
     }
 
