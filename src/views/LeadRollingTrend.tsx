@@ -11,7 +11,8 @@ function getAdvanceRate(snap: WeeklyLeadSnapshot): number {
 }
 
 function getAvgRPL(snapshots: WeeklyLeadSnapshot[]): number {
-  const total = snapshots.reduce((sum, s) => sum + s.revenuePerLead, 0);
+  if (!snapshots?.length) return 0;
+  const total = snapshots.reduce((sum, s) => sum + (s.revenuePerLead ?? 0), 0);
   return Math.round(total / snapshots.length);
 }
 
@@ -185,7 +186,7 @@ function RPLLineChart({ snapshots }: RPLLineChartProps) {
               fill="#15803d"
               fontWeight="600"
             >
-              ${snap.revenuePerLead.toLocaleString()}
+              ${(snap.revenuePerLead ?? 0).toLocaleString()}
             </text>
             <text
               x={cx}
@@ -248,7 +249,7 @@ export default function LeadRollingTrend() {
         />
         <SummaryCard
           label="4-Week Avg RPL"
-          value={`$${avgRPL.toLocaleString()}`}
+          value={`$${(avgRPL ?? 0).toLocaleString()}`}
         />
         <SummaryCard
           label="Best Performing Week"

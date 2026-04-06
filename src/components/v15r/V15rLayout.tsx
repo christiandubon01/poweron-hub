@@ -1394,7 +1394,11 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
           setRecording(false)
           setSilenceCountdown(null)
           setVoiceError(null)  // FIX: clear any prior error state on successful transcript
-          setOpen(true)   // ensure sheet is visible when transcript arrives
+          // FIX 7 — Only open capture panel when user says a capture keyword
+          const CAPTURE_TRIGGER = /\b(capture|save\s+that|remember|remind\s+me|note\s+that|memorize)\b/i
+          if (CAPTURE_TRIGGER.test(transcript)) {
+            setOpen(true)
+          }
         }
       }
 

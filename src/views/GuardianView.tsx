@@ -27,7 +27,7 @@ import {
 } from '../services/inviteService';
 import type { GuardianRule, GuardianViolation, GuardianAuditEntry } from '../types';
 import type { SignedAgreementRecord } from '../services/ndaService';
-import { getUserSignedNDAs, getAllSignedNDAs, revokeSignedNDA, getNDAPdfSignedUrl } from '../services/ndaService';
+import { getUserSignedNDAs, getAllSignedNDAs, getSignedNDAsPaginated, revokeSignedNDA, getNDAPdfSignedUrl } from '../services/ndaService';
 import {
   mockGuardianRules,
   mockViolations,
@@ -746,6 +746,8 @@ function AIDecisionsPanel() {
 
 // ─── Signed NDAs Admin Tab (B3) ───────────────────────────────────────────────
 
+const NDA_PAGE_SIZES = [10, 25, 50, 100] as const;
+
 function SignedNDAsAdminTab() {
   const [records, setRecords] = useState<SignedAgreementRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -753,19 +755,25 @@ function SignedNDAsAdminTab() {
   const [revoking, setRevoking] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<typeof NDA_PAGE_SIZES[number]>(10);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  function load() {
+  function load(p = page, ps = pageSize) {
     setLoading(true);
     setError(null);
-    getAllSignedNDAs()
-      .then((r) => setRecords(r))
+    getSignedNDAsPaginated(p, ps)
+      .then(({ records: r, total: t }) => { setRecords(r); setTotal(t); })
       .catch(() => setError('Failed to load signed NDAs.'))
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    load(page, pageSize);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize]);
 
   async function handleDownloadPdf(record: SignedAgreementRecord) {
     if (!record.pdf_url || record.pdf_url.startsWith('stub-')) {
@@ -871,9 +879,9 @@ function SignedNDAsAdminTab() {
         <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
           <FileText size={14} className="text-green-500" />
           Signed NDAs
-          {records.length > 0 && (
+          {total > 0 && (
             <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-800/40 ml-1">
-              {records.length}
+              {total}
             </span>
           )}
         </div>
@@ -904,6 +912,7 @@ function SignedNDAsAdminTab() {
           <p className="text-xs text-gray-700">Records appear here after users complete the beta NDA.</p>
         </div>
       ) : (
+        <>
         <div className="flex-1 overflow-x-auto overflow-y-auto">
           <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
             <thead>
@@ -997,6 +1006,58 @@ function SignedNDAsAdminTab() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        <div
+          className="flex items-center justify-between flex-shrink-0 px-4 py-2.5 border-t"
+          style={{ borderColor: '#1a1c23', backgroundColor: '#0d0e14' }}
+        >
+          {/* Page size selector */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-600 uppercase tracking-wide">Rows:</span>
+            {NDA_PAGE_SIZES.map((ps) => (
+              <button
+                key={ps}
+                onClick={() => { setPageSize(ps); setPage(1); }}
+                className="text-[10px] px-2 py-1 rounded transition-colors"
+                style={{
+                  backgroundColor: pageSize === ps ? '#16a34a22' : '#1a1d27',
+                  color: pageSize === ps ? '#4ade80' : '#6b7280',
+                  border: `1px solid ${pageSize === ps ? '#16a34a44' : '#2a3040'}`,
+                }}
+              >
+                {ps}
+              </button>
+            ))}
+          </div>
+
+          {/* Page nav */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-600">
+              {total > 0 ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}` : '0 records'}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="text-xs px-3 py-1.5 rounded-lg disabled:opacity-40"
+              style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}
+            >
+              ← Prev
+            </button>
+            <span className="text-[10px] text-gray-600">
+              {page}/{totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="text-xs px-3 py-1.5 rounded-lg disabled:opacity-40"
+              style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+        </>
       )}
     </div>
   );

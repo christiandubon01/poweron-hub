@@ -1,0 +1,103 @@
+From 0c9502d873955761d8a2639f872a3436d7603ff0 Mon Sep 17 00:00:00 2001
+From: Christian <swatish.3103@gmail.com>
+Date: Wed, 1 Apr 2026 22:41:09 -0700
+Subject: [PATCH] fix: demo mode ?demo=true URL bypasses pin gate correctly
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Added DemoGate component in App.tsx that checks ?demo=true before
+LoginFlow renders. When the URL param is present, enableDemoMode() is
+called synchronously (via useDemoStore.getState()), demo mode is active
+on first paint, and AppShell renders directly — skipping auth entirely.
+
+Mirrors the existing AuditGate pattern. Normal login is unaffected.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ src/App.tsx | 51 ++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 46 insertions(+), 5 deletions(-)
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 3bd078d3..91ee20d6 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -22,6 +22,7 @@ import { useAuthStore } from '@/store/authStore'
+ import { useAuth } from '@/hooks/useAuth'
+ import { ReadOnlyContext } from '@/contexts/ReadOnlyContext'
+ import { supabase } from '@/lib/supabase'
++import { useDemoStore } from '@/store/demoStore'
+ 
+ // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
+ const CrewPortal = lazy(() =>
+@@ -140,6 +141,42 @@ function AuditGate({ children }: { children: React.ReactNode }) {
+ }
+ 
+ 
++// ── DemoGate — checks for ?demo=true in URL ───────────────────────────────────
++// If ?demo=true is present, bypasses the normal auth/passcode flow entirely
++// and renders AppShell in demo mode with the amber banner.
++// Demo mode state is stored in localStorage via demoStore so it survives the
++// render, but the URL param is the trigger that activates it before any pin gate.
++
++function DemoGate({ children }: { children: React.ReactNode }) {
++  // Evaluate ?demo=true synchronously so it is stable on first render.
++  // We also call enableDemoMode() inside the lazy initializer so the
++  // demoStore flag is set before AppShell's first paint — no amber-banner flash.
++  const [isDemoUrl] = useState<boolean>(() => {
++    const params = new URLSearchParams(window.location.search)
++    const isDemoParam = params.get('demo') === 'true'
++    if (isDemoParam) {
++      // Synchronously enable demo mode so AppShell sees isDemoMode=true on
++      // its very first render (avoids a brief flash where the banner is missing).
++      useDemoStore.getState().enableDemoMode()
++    }
++    return isDemoParam
++  })
++
++  if (isDemoUrl) {
++    // Skip all auth — render AppShell directly. The amber demo banner is
++    // rendered inside AppShell when isDemoMode is true in demoStore.
++    return (
++      <ErrorBoundary>
++        <AppShell />
++      </ErrorBoundary>
++    )
++  }
++
++  // Not a demo URL — normal auth flow
++  return <>{children}</>
++}
++
++
+ // ── App (root) ────────────────────────────────────────────────────────────────
+ 
+ export default function App() {
+@@ -164,15 +201,19 @@ export default function App() {
+             }
+           />
+ 
+-          {/* All other routes — audit gate + auth-gated */}
++          {/* All other routes — audit gate + demo gate + auth-gated */}
+           <Route
+             path="/*"
+             element={
+               <AuditGate>
+-                <LoginFlow>
+-                  {/* LoginFlow renders children only when status === 'authenticated' */}
+-                  <AuthenticatedRoot />
+-                </LoginFlow>
++                {/* DemoGate: if ?demo=true, bypass LoginFlow and render AppShell
++                    directly in demo mode — no passcode required */}
++                <DemoGate>
++                  <LoginFlow>
++                    {/* LoginFlow renders children only when status === 'authenticated' */}
++                    <AuthenticatedRoot />
++                  </LoginFlow>
++                </DemoGate>
+               </AuditGate>
+             }
+           />
+-- 
+2.34.1
+

@@ -123,9 +123,10 @@ function OwnerPanel() {
   const [crew, setCrew] = useState<CrewMember[]>(mockCrewMembers);
 
   const crewOnly = crew.filter((m) => m.role === 'crew');
-  const totalHours = crew.reduce((sum, m) => sum + m.hoursThisWeek, 0);
-  const avgHours =
-    crewOnly.length > 0 ? (crewOnly.reduce((sum, m) => sum + m.hoursThisWeek, 0) / crewOnly.length).toFixed(1) : '0';
+  const totalHoursRaw = crew.reduce((sum, m) => sum + (m.hoursThisWeek ?? 0), 0);
+  const totalHours = isNaN(totalHoursRaw) ? 0 : totalHoursRaw;
+  const avgHoursRaw = crewOnly.length > 0 ? (crewOnly.reduce((sum, m) => sum + (m.hoursThisWeek ?? 0), 0) / crewOnly.length) : 0;
+  const avgHours = isNaN(avgHoursRaw) ? '0' : avgHoursRaw.toFixed(1);
 
   function handleAddProject(memberId: string, project: string) {
     const trimmed = project.trim();
@@ -261,11 +262,11 @@ function OwnerPanel() {
                 </td>
 
                 {/* Hours */}
-                <td className="px-4 py-3 text-gray-300 font-mono">{member.hoursThisWeek}h</td>
+                <td className="px-4 py-3 text-gray-300 font-mono">{isNaN(member.hoursThisWeek) ? 0 : (member.hoursThisWeek ?? 0)}h</td>
 
                 {/* Status */}
                 <td className="px-4 py-3">
-                  <StatusDot hours={member.hoursThisWeek} />
+                  <StatusDot hours={isNaN(member.hoursThisWeek) ? 0 : (member.hoursThisWeek ?? 0)} />
                 </td>
               </tr>
             ))}
@@ -280,7 +281,10 @@ function OwnerPanel() {
 
 function CrewPanel() {
   // Replace with real Supabase query during integration — fetch authenticated crew member
-  const marcus = mockCrewMembers.find((m) => m.name === 'Marcus R.')!;
+  const marcusRaw = mockCrewMembers.find((m) => m.name === 'Marcus R.');
+  // Fallback crew member if mock data doesn't contain 'Marcus R.'
+  const marcus = marcusRaw ?? (mockCrewMembers[0] ?? { name: 'Crew Member', role: 'crew', hoursThisWeek: 0, assignedProjects: [] });
+  const marcusHours = isNaN(marcus.hoursThisWeek) ? 0 : (marcus.hoursThisWeek ?? 0);
 
   return (
     <div className="space-y-5 max-w-xl">
@@ -293,7 +297,7 @@ function CrewPanel() {
           className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
           style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
         >
-          MR
+          {(marcus.name ?? 'C').charAt(0).toUpperCase()}{(marcus.name ?? '').split(' ')[1]?.charAt(0) ?? ''}
         </div>
         <div>
           <p className="font-semibold text-gray-100">{marcus.name}</p>
@@ -301,7 +305,7 @@ function CrewPanel() {
         </div>
         <div className="ml-auto text-right">
           <p className="text-xs text-gray-500">Hours This Week</p>
-          <p className="text-xl font-bold text-blue-400">{marcus.hoursThisWeek}h</p>
+          <p className="text-xl font-bold text-blue-400">{marcusHours}h</p>
         </div>
       </div>
 

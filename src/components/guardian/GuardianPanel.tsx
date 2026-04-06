@@ -352,9 +352,9 @@ function PendingReviewTab() {
     setLoading(true)
     try {
       const result = await reviewPendingLogs()
-      setFlaggedLogs(result.flagged)
-      setCleanLogs(result.clean)
-      setSummary(result.summary)
+      setFlaggedLogs(result?.flagged ?? [])
+      setCleanLogs(result?.clean ?? [])
+      setSummary(result?.summary ?? '')
     } catch (err) {
       console.error('[GuardianPanel] PendingReviewTab error:', err)
     } finally {
@@ -387,19 +387,19 @@ function PendingReviewTab() {
 
   return (
     <div className="space-y-4">
-      <div className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${flaggedLogs.length > 0 ? 'bg-amber-900/20 border border-amber-700/30' : 'bg-emerald-900/20 border border-emerald-700/30'}`}>
+      <div className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${(flaggedLogs ?? []).length > 0 ? 'bg-amber-900/20 border border-amber-700/30' : 'bg-emerald-900/20 border border-emerald-700/30'}`}>
         <div className="flex items-center gap-2">
-          {flaggedLogs.length > 0 ? (
+          {(flaggedLogs ?? []).length > 0 ? (
             <ShieldAlert size={16} className="text-amber-400 flex-shrink-0" />
           ) : (
             <ShieldCheck size={16} className="text-emerald-400 flex-shrink-0" />
           )}
-          <span className={`text-sm ${flaggedLogs.length > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
+          <span className={`text-sm ${(flaggedLogs ?? []).length > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
             {summary}
           </span>
         </div>
 
-        {flaggedLogs.length > 0 && (
+        {(flaggedLogs ?? []).length > 0 && (
           <button
             onClick={handleMarkAll}
             disabled={markingAll}
@@ -411,9 +411,9 @@ function PendingReviewTab() {
         )}
       </div>
 
-      {flaggedLogs.length > 0 ? (
+      {(flaggedLogs ?? []).length > 0 ? (
         <div className="space-y-3">
-          {flaggedLogs.map(log => (
+          {(flaggedLogs ?? []).map(log => (
             <LogCard
               key={log.id}
               log={log}

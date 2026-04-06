@@ -128,14 +128,9 @@ User request: "${req.userMessage}"
 Return ONLY valid JSON with these fields. If any required field is missing, include null.`
 
   try {
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,

@@ -793,10 +793,6 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
 
   try {
     // Get Anthropic key from environment
-    const envKey = import.meta.env.DEV ? ((import.meta as any).env as Record<string, string>)?.VITE_ANTHROPIC_API_KEY : ''
-    if (!envKey) {
-      throw new Error('VITE_ANTHROPIC_API_KEY not set')
-    }
 
     // Inject local project context (status buckets + financials from device state)
     const localProjectCtx = getLocalProjectContext()
@@ -804,14 +800,9 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
       ? `${BLUEPRINT_SYSTEM_PROMPT}\n\n---\n\n## Live Project Context (from device state)\n${localProjectCtx}`
       : BLUEPRINT_SYSTEM_PROMPT
 
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': envKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1500,

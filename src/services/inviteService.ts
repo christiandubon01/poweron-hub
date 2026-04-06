@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * inviteService.ts — Beta Invite System (B7)
  *

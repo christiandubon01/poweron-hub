@@ -395,16 +395,10 @@ export function initSparkBusListeners(): () => void {
 // Claude summary generator
 async function generateSparkSummary(topic: string, data: unknown): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 300,

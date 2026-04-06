@@ -78,10 +78,10 @@ function truncate(text: string, maxLen: number): string {
 // ─── Category Badge ───────────────────────────────────────────────────────────
 
 function CategoryBadge({ category }: { category: JournalCategory }) {
-  const colors = CATEGORY_COLORS[category];
+  const colors = CATEGORY_COLORS[category] ?? { bg: 'bg-gray-800', text: 'text-gray-400', border: 'border-gray-700' };
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${colors.bg} ${colors.text} ${colors.border}`}
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${colors?.bg ?? ''} ${colors?.text ?? ''} ${colors?.border ?? ''}`}
     >
       {CATEGORY_LABELS[category]}
     </span>
@@ -282,7 +282,7 @@ function RecordPanel({ onSave }: RecordPanelProps) {
       {/* Category selector */}
       <div className="flex flex-wrap justify-center gap-2">
         {ALL_CATEGORIES.map((cat) => {
-          const colors = CATEGORY_COLORS[cat];
+          const colors = CATEGORY_COLORS[cat] ?? { bg: 'bg-gray-800', text: 'text-gray-400', border: 'border-gray-700' };
           const active = selectedCategory === cat;
           return (
             <button
@@ -291,7 +291,7 @@ function RecordPanel({ onSave }: RecordPanelProps) {
               onClick={() => setSelectedCategory(cat)}
               className={`px-3 py-1 rounded-full text-sm font-medium border transition-all
                 ${active
-                  ? `${colors.bg} ${colors.text} ${colors.border} shadow-sm`
+                  ? `${colors?.bg ?? ''} ${colors?.text ?? ''} ${colors?.border ?? ''} shadow-sm`
                   : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
                 }
                 ${recordState !== 'idle' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}

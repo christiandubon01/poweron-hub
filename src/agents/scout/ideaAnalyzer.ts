@@ -234,24 +234,14 @@ export async function analyzeIdea(
   submittedBy: string,
   category: string
 ): Promise<IdeaAnalysis | null> {
-  const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
-
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error('VITE_ANTHROPIC_API_KEY is not set. Add it to .env.local.')
-  }
 
   if (!idea.trim() || !submittedBy.trim()) {
     throw new Error('Idea and submittedBy are required')
   }
 
-  const response = await fetch('/api/anthropic/v1/messages', {
+  const response = await fetch('/.netlify/functions/claude', {
     method: 'POST',
-    headers: {
-      'x-api-key':        ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'content-type':      'application/json',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 2048,

@@ -169,7 +169,6 @@ export async function processPulseRequest(request: PulseRequest): Promise<PulseR
  */
 async function generateKPISummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     // Enrich with real local device data (source of truth)
     const localWeeklyCtx = getLocalWeeklyContext()
@@ -188,14 +187,9 @@ Provide a concise 2-3 sentence executive summary highlighting:
 
 Be direct, data-driven, and actionable.`
 
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
@@ -222,7 +216,6 @@ Be direct, data-driven, and actionable.`
  */
 async function generateARAugingSummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const userPrompt = `Here is the AR aging breakdown:
 
@@ -237,14 +230,9 @@ Provide a concise 2-3 sentence summary of:
 
 Be direct and actionable.`
 
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
@@ -271,7 +259,6 @@ Be direct and actionable.`
  */
 async function generateCashFlowSummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const userPrompt = `Here is the 12-week cash flow forecast:
 
@@ -286,14 +273,9 @@ Provide a concise 2-3 sentence summary including:
 
 Be direct and specific about timing.`
 
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
@@ -320,7 +302,6 @@ Be direct and specific about timing.`
  */
 async function generateTrendsSummary(data: unknown, context?: string): Promise<string> {
   try {
-    const ANTHROPIC_API_KEY = (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string
 
     const userPrompt = `Here are the financial trends over the past 12 weeks:
 
@@ -335,14 +316,9 @@ Provide a concise 2-3 sentence summary of:
 
 Be insightful and forward-looking.`
 
-    const response = await fetch('/api/anthropic/v1/messages', {
+    const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,

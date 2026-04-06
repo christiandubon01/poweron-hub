@@ -429,6 +429,34 @@ export async function getAllSignedNDAs(): Promise<SignedAgreementRecord[]> {
 }
 
 /**
+ * Returns a page of signed NDAs with total count for pagination.
+ * Uses Supabase .range() — never loads the full table.
+ */
+export async function getSignedNDAsPaginated(
+  page: number,
+  pageSize: number,
+): Promise<{ records: SignedAgreementRecord[]; total: number }> {
+  try {
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize - 1;
+    const { data, error, count } = await (supabase as any)
+      .from('signed_agreements')
+      .select('*', { count: 'exact' })
+      .order('signed_at', { ascending: false })
+      .range(start, end);
+
+    if (error) {
+      console.warn('[ndaService] getSignedNDAsPaginated error:', error.message);
+      return { records: [], total: 0 };
+    }
+    return { records: (data ?? []) as SignedAgreementRecord[], total: count ?? 0 };
+  } catch (err) {
+    console.warn('[ndaService] getSignedNDAsPaginated failed:', err);
+    return { records: [], total: 0 };
+  }
+}
+
+/**
  * Revokes a signed NDA record by setting revoked: true.
  */
 export async function revokeSignedNDA(recordId: string): Promise<void> {

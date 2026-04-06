@@ -35,6 +35,3 @@
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
-
-[functions."weeklyDigest"]
-  schedule = "0 16 * * 1"

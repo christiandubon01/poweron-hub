@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#060608" />
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="description" content="PowerOn Hub — 11-Agent AI Platform for Power On Solutions" />
+
+    <!-- Brand fonts: Syne + IBM Plex Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>PowerOn Hub</title>
+    <script type="module" crossorigin src="/assets/index-CqLKBkvI.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-vendor-Cq6wvmBX.js">
+    <link rel="modulepreload" crossorigin href="/assets/supabase-vendor-AnTI2EX_.js">
+    <link rel="modulepreload" crossorigin href="/assets/redis-vendor-C_wJB7Oe.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-yit6a8k-.css">
+  </head>
+  <body>
+    <!-- Apply saved theme before first render to prevent flash -->
+    <script>
+      (function() {
+        try {
+          // Fast path: check dedicated theme key first (set by Settings toggle)
+          var theme = localStorage.getItem('poweron_theme');
+          // Fallback: parse from backup data if dedicated key not set
+          if (!theme) {
+            var raw = localStorage.getItem('poweron_backup_data');
+            if (raw) {
+              var data = JSON.parse(raw);
+              theme = data && data.settings && data.settings.theme;
+            }
+          }
+          if (theme === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+            document.documentElement.classList.add('light');
+            document.body && document.body.classList.add('lt');
+          } else {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            document.documentElement.classList.add('dark');
+          }
+        } catch(e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <div id="root"></div>
+    <!-- H2: Service worker registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(function(err) {
+          console.warn('[SW] Registration failed:', err)
+        })
+      }
+    </script>
+  </body>
+</html>

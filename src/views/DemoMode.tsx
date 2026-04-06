@@ -198,10 +198,10 @@ export default function DemoMode({ isActive, onToggle }: DemoModeProps) {
 
   const [companyName, setCompanyName] = useState(() => getDemoCompanyName());
 
-  // Initialize agent shell on mount (stub)
-  useState(() => {
+  // Initialize agent shell on mount (stub) — use useEffect, not useState
+  useEffect(() => {
     initDemoModeAgent();
-  });
+  }, []);
 
   // On mount: read industry from URL param first, then fall back to store
   useEffect(() => {
