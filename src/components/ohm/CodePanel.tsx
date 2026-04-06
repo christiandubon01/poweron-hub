@@ -209,21 +209,27 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
 4. Any jurisdiction-specific notes
 5. Field/practical notes where applicable`
 
+      // B15: log exact proxy request so format can be verified against claude.ts expectations
+      const proxyBody = {
+        messages: [{ role: 'user', content: userContent }],
+        system: systemPrompt,
+        max_tokens: 2000,
+      }
+      console.log('[OHM CodePanel] → POST /.netlify/functions/claude', JSON.stringify(proxyBody).slice(0, 300))
+
       const response = await fetch('/.netlify/functions/claude', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 2000,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userContent }],
-        }),
+        body: JSON.stringify(proxyBody),
       })
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`)
+        // B15: log full response body to diagnose AI service unavailable in prod
+        const errBody = await response.text().catch(() => '(unreadable)')
+        console.error('[OHM CodePanel] proxy non-200:', response.status, response.statusText, '— body:', errBody)
+        throw new Error(`OHM proxy error (${response.status}): ${errBody.slice(0, 200)}`)
       }
 
       const data = await response.json()

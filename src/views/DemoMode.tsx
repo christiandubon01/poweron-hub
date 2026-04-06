@@ -192,11 +192,18 @@ function ShareDemoButton({ industryKey }: { industryKey: IndustryKey }) {
 
 // ─── DemoMode View ────────────────────────────────────────────────────────────
 
-export default function DemoMode({ isActive, onToggle }: DemoModeProps) {
-  const { currentIndustry, setIndustry, getDemoCompanyName } = useDemoStore();
+export default function DemoMode({ isActive: isActiveProp, onToggle: onToggleProp }: DemoModeProps) {
+  // B15 fix: use store as source of truth when props are not provided
+  // (AppShell renders <DemoModeView /> without props; Zustand store is always available)
+  const { isDemoMode, toggleDemoMode, currentIndustry, setIndustry, getDemoCompanyName } = useDemoStore();
+  // Hooks must all be called unconditionally before any conditional logic
+  const isActive = isActiveProp ?? isDemoMode;
+  const onToggle = onToggleProp ?? toggleDemoMode;
   const industryKey = (currentIndustry as IndustryKey) || 'electrical';
 
-  const [companyName, setCompanyName] = useState(() => getDemoCompanyName());
+  const [companyName, setCompanyName] = useState(() => {
+    try { return getDemoCompanyName() } catch { return 'Demo Company LLC' }
+  });
 
   // Initialize agent shell on mount (stub) — use useEffect, not useState
   useEffect(() => {
@@ -215,7 +222,7 @@ export default function DemoMode({ isActive, onToggle }: DemoModeProps) {
 
   // When industry changes in store, update company name from template
   useEffect(() => {
-    setCompanyName(getDemoCompanyName());
+    try { setCompanyName(getDemoCompanyName()) } catch { /* ignore */ }
   }, [currentIndustry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const projects = DEMO_DATA[industryKey] ?? DEMO_DATA.electrical;

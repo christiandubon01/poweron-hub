@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus } from 'lucide-react'
+import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus, Play, Square, Volume2 } from 'lucide-react'
 import DemoInvite from '@/components/admin/DemoInvite'
 import { getLocalSkillMap, getLocalSkillSignals, getLocalDevelopmentLog, calculateDevelopmentRate, IDEAL_PROFILE, SKILL_DOMAINS } from '@/services/skillSignalExtractor'
 import type { SkillDomain, StoredSkillSignal } from '@/services/skillSignalExtractor'
@@ -50,6 +50,151 @@ function SettingCard({ title, children }: { title: string; children: React.React
     <div className="rounded-lg border p-6" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-secondary)' }}>
       <h2 className="text-lg font-bold mb-4" style={{ color: 'var(--text-primary)' }}>{title}</h2>
       {children}
+    </div>
+  )
+}
+
+// ── NEXUS Voice selector (3 curated voices) ───────────────────────────────────
+const NEXUS_VOICES = [
+  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',      descriptor: 'Calm focused professional' },
+  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Clear direct field-ready'    },
+  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',     descriptor: 'Confident authoritative sharp' },
+]
+const NEXUS_VOICE_KEY = 'poweron_nexus_voice'
+const NEXUS_VOICE_DEFAULT = 'gOkFV1JMCt0G0n9xmBwV' // Oxley
+
+function NexusVoiceSelector() {
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    try { return localStorage.getItem(NEXUS_VOICE_KEY) || NEXUS_VOICE_DEFAULT } catch { return NEXUS_VOICE_DEFAULT }
+  })
+  const [playingId, setPlayingId] = useState<string | null>(null)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const { user } = useAuth()
+
+  const stopAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel()
+    setPlayingId(null)
+    setLoadingId(null)
+  }, [])
+
+  const handleSelect = useCallback((voiceId: string) => {
+    setSelectedId(voiceId)
+    setSaved(false)
+    try {
+      // Write to both keys so voice.ts picks it up immediately
+      localStorage.setItem(NEXUS_VOICE_KEY, voiceId)
+      localStorage.setItem('nexus_voice_id', voiceId)
+    } catch { /* ignore */ }
+    const voice = NEXUS_VOICES.find(v => v.id === voiceId)
+    console.log('[NexusVoiceSelector] Voice selected:', voice?.name, voiceId)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }, [])
+
+  const handlePlaySample = useCallback(async (voice: typeof NEXUS_VOICES[0]) => {
+    if (playingId === voice.id) { stopAudio(); return }
+    stopAudio()
+    setLoadingId(voice.id)
+
+    const sampleText = `This is ${voice.name}. I'm your NEXUS voice assistant for Power On Solutions.`
+
+    // Try ElevenLabs TTS via VITE_ELEVENLABS_API_KEY (same path voice.ts uses)
+    try {
+      const apiKey = (import.meta as any).env?.VITE_ELEVENLABS_API_KEY || (import.meta as any).env?.VITE_ELEVEN_LABS_API_KEY
+      if (apiKey) {
+        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice.id}`, {
+          method: 'POST',
+          headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+          body: JSON.stringify({ text: sampleText, model_id: 'eleven_turbo_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: 1.0 } }),
+        })
+        if (res.ok) {
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          const audio = document.createElement('audio') as HTMLAudioElement
+          audio.playsInline = true
+          audio.src = url
+          audio.oncanplaythrough = () => { setLoadingId(null); setPlayingId(voice.id); audio.play().catch(() => { URL.revokeObjectURL(url); fallbackSpeak() }) }
+          audio.onended = () => { setPlayingId(null); URL.revokeObjectURL(url) }
+          audio.onerror  = () => { setLoadingId(null); URL.revokeObjectURL(url); fallbackSpeak() }
+          audio.load()
+          audioRef.current = audio
+          return
+        }
+      }
+    } catch { /* fall through */ }
+
+    fallbackSpeak()
+
+    function fallbackSpeak() {
+      if (!window.speechSynthesis) { setLoadingId(null); return }
+      const utt = new SpeechSynthesisUtterance(sampleText)
+      utt.onstart = () => { setLoadingId(null); setPlayingId(voice.id) }
+      utt.onend   = () => setPlayingId(null)
+      utt.onerror = () => { setPlayingId(null); setLoadingId(null) }
+      window.speechSynthesis.speak(utt)
+    }
+  }, [playingId, stopAudio])
+
+  // Sync to Supabase user_preferences when selection changes
+  useEffect(() => {
+    if (!user?.id) return
+    const { supabase: sb } = require('@/lib/supabase')
+    sb.from('user_preferences').upsert({ user_id: user.id, nexus_voice_id: selectedId, updated_at: new Date().toISOString() }).catch(() => { /* table may not exist */ })
+  }, [selectedId, user?.id])
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <Volume2 className="w-4 h-4 text-emerald-400" />
+        <p className="text-sm text-gray-400">Choose the voice NEXUS uses for all spoken responses</p>
+      </div>
+      <div className="grid grid-cols-1 gap-2">
+        {NEXUS_VOICES.map(voice => {
+          const isSelected = selectedId === voice.id
+          const isPlaying  = playingId  === voice.id
+          const isLoading  = loadingId  === voice.id
+          return (
+            <div
+              key={voice.id}
+              className={`flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer ${isSelected ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-gray-700/60 bg-gray-800/30 hover:border-gray-600'}`}
+              onClick={() => handleSelect(voice.id)}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isSelected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
+                  {voice.name[0]}
+                </div>
+                <div>
+                  <div className={`text-sm font-semibold ${isSelected ? 'text-emerald-300' : 'text-gray-200'}`}>{voice.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{voice.descriptor}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {isSelected && <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />}
+                <button
+                  onClick={e => { e.stopPropagation(); handlePlaySample(voice) }}
+                  disabled={isLoading}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${isLoading ? 'bg-gray-700 text-gray-500 cursor-wait' : isPlaying ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                  title={isPlaying ? 'Stop' : 'Play sample'}
+                >
+                  {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3 ml-0.5" />}
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {saved && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+          <Check className="w-3.5 h-3.5" /> Voice saved — NEXUS will use this voice for all responses
+        </div>
+      )}
+      <p className="text-xs text-gray-600 mt-1">Selection is saved immediately to localStorage and synced to your profile.</p>
     </div>
   )
 }
@@ -1264,7 +1409,7 @@ export default function V15rSettingsPanel() {
 
           {/* NEXUS VOICE */}
           <SettingCard title="NEXUS Voice">
-            <VoiceSettings />
+            <NexusVoiceSelector />
           </SettingCard>
 
           {/* AUDIT ACCESS */}

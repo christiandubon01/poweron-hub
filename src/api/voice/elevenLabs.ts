@@ -103,8 +103,9 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
     : request.text
 
   // FIX: read voice_id fresh from localStorage at CALL TIME — never captured at import/mount.
+  // B15: prefer poweron_nexus_voice (curated selector) then legacy nexus_voice_id.
   // Falls back to request.voice_id, then DEFAULT_VOICE_ID.
-  const voiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
+  const voiceId = (typeof window !== 'undefined' && (localStorage.getItem('poweron_nexus_voice') || localStorage.getItem('nexus_voice_id')))
     || request.voice_id
     || DEFAULT_VOICE_ID
 

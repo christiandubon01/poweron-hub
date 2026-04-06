@@ -72,7 +72,8 @@ const JournalPanel = lazy(() => import('@/components/JournalPanel').then(m => ({
 const AgentModeSelector = lazy(() => chunkRetry(() => import('@/views/AgentModeSelector')))
 
 // Demo Mode view (lazy-loaded) — E3 | Demo Mode
-const DemoModeView = lazy(() => import('@/views/DemoMode').then(m => ({ default: m.DemoMode })).catch(() => { window.location.reload(); return { default: () => null } }))
+// B15 fix: use chunkRetry + default export (m.DemoMode was undefined — only default export exists)
+const DemoModeView = lazy(() => chunkRetry(() => import('@/views/DemoMode')))
 
 // ── V3 Views — lazy-loaded ────────────────────────────────────────────────────
 const BlueprintAI       = lazy(() => chunkRetry(() => import('@/views/BlueprintAI')))

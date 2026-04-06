@@ -775,7 +775,8 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
         debugPush(`ElevenLabs TTS — sending ${ttsText.length} chars (original ${responseText.length} chars)`)
         debugPush('ElevenLabs TTS — requesting synthesis...')
         // Read voice ID fresh at CALL TIME — never cache it
-        const activeVoiceId = (typeof window !== 'undefined' && localStorage.getItem('nexus_voice_id'))
+        // B15: prefer poweron_nexus_voice (curated 3-voice selector) then legacy nexus_voice_id
+        const activeVoiceId = (typeof window !== 'undefined' && (localStorage.getItem('poweron_nexus_voice') || localStorage.getItem('nexus_voice_id')))
           || this.preferences.ttsVoiceId
           || DEFAULT_VOICE_ID
         // Read speech rate fresh at CALL TIME

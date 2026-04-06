@@ -279,28 +279,34 @@ export async function getRelatedArticles(articleNumber: string): Promise<NECArti
  */
 async function extractKeywordsFromQuery(query: string): Promise<string[]> {
   try {
+    // B15: log exact request body so we can verify proxy format
+    const requestBody = {
+      messages: [
+        {
+          role: 'user',
+          content: `Extract 3-5 electrical code keywords from this query for NEC article search:
+"${query}"
+
+Return ONLY a comma-separated list of keywords (no explanation). Examples: wire sizing, EV charging, solar, grounding, conduit fill`,
+        },
+      ],
+      max_tokens: 200,
+    }
+    console.log('[OHM] extractKeywordsFromQuery → POST /.netlify/functions/claude', JSON.stringify(requestBody))
+
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 200,
-        messages: [
-          {
-            role: 'user',
-            content: `Extract 3-5 electrical code keywords from this query for NEC article search:
-"${query}"
-
-Return ONLY a comma-separated list of keywords (no explanation). Examples: wire sizing, EV charging, solar, grounding, conduit fill`,
-          },
-        ],
-      }),
+      body: JSON.stringify(requestBody),
     })
 
     if (!response.ok) {
-      throw new Error(`Claude API error: ${response.statusText}`)
+      // B15: log full response body so we can diagnose proxy failures
+      const errBody = await response.text().catch(() => '(unreadable)')
+      console.error('[OHM] extractKeywordsFromQuery proxy non-200:', response.status, response.statusText, '— body:', errBody)
+      throw new Error(`Claude proxy error (${response.status}): ${errBody.slice(0, 200)}`)
     }
 
     const data = await response.json()
