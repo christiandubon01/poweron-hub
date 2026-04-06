@@ -1,0 +1,61 @@
+{
+  "industry": "electrical-supplier",
+  "displayName": "Electrical Supply",
+  "demoCompanyName": "Southwest Electrical Supply Co",
+  "demoOwnerName": "Tom Hargrove",
+  "priceBookItems": [
+    { "name": "12 AWG THHN Wire — Black (per ft)", "unit": "ft", "price": 0.38 },
+    { "name": "10 AWG THHN Wire — Black (per ft)", "unit": "ft", "price": 0.62 },
+    { "name": "8 AWG THHN Wire — Black (per ft)", "unit": "ft", "price": 1.10 },
+    { "name": "6 AWG THHN Wire — Black (per ft)", "unit": "ft", "price": 1.75 },
+    { "name": "4 AWG THHN Wire — Black (per ft)", "unit": "ft", "price": 2.85 },
+    { "name": "2/0 AWG XHHW Aluminum (per ft)", "unit": "ft", "price": 3.20 },
+    { "name": "20A Single Pole Breaker", "unit": "ea", "price": 12.50 },
+    { "name": "20A Double Pole Breaker", "unit": "ea", "price": 24.00 },
+    { "name": "30A Double Pole Breaker", "unit": "ea", "price": 28.50 },
+    { "name": "50A Double Pole Breaker", "unit": "ea", "price": 38.00 },
+    { "name": "100A Main Breaker", "unit": "ea", "price": 85.00 },
+    { "name": "200A 40-Space Main Panel", "unit": "ea", "price": 225.00 },
+    { "name": "100A 20-Space Sub Panel", "unit": "ea", "price": 145.00 },
+    { "name": "1/2\" EMT Conduit (per 10 ft stick)", "unit": "ea", "price": 8.75 },
+    { "name": "3/4\" EMT Conduit (per 10 ft stick)", "unit": "ea", "price": 12.50 },
+    { "name": "1\" EMT Conduit (per 10 ft stick)", "unit": "ea", "price": 18.00 },
+    { "name": "1/2\" EMT Coupling", "unit": "ea", "price": 0.85 },
+    { "name": "3/4\" EMT Connector — Compression", "unit": "ea", "price": 1.20 },
+    { "name": "PVC Conduit 1/2\" (per 10 ft stick)", "unit": "ea", "price": 5.50 },
+    { "name": "Wire Nuts — Orange Bag (50 pk)", "unit": "bag", "price": 8.50 },
+    { "name": "20A Duplex Receptacle — Spec Grade", "unit": "ea", "price": 5.25 },
+    { "name": "20A GFCI Receptacle — Spec Grade", "unit": "ea", "price": 18.50 },
+    { "name": "20A AFCI/GFCI Combo Outlet", "unit": "ea", "price": 42.00 },
+    { "name": "Single Gang Box — Old Work", "unit": "ea", "price": 2.75 },
+    { "name": "4\" Square Metal Box", "unit": "ea", "price": 4.50 },
+    { "name": "LED Shop Light 4ft 4000K (2-pack)", "unit": "pk", "price": 48.00 },
+    { "name": "Recessed Can Light 6\" LED Retrofit", "unit": "ea", "price": 28.00 },
+    { "name": "Electrical Tape — 3M Scotch 33+ (roll)", "unit": "ea", "price": 4.25 },
+    { "name": "Lineman Pliers — Klein 9\"", "unit": "ea", "price": 45.00 },
+    { "name": "Klein Tools Wire Stripper 10-18 AWG", "unit": "ea", "price": 32.00 }
+  ],
+  "projectPhases": [
+    { "id": "quote", "label": "Quote", "order": 1 },
+    { "id": "order", "label": "Order", "order": 2 },
+    { "id": "fulfillment", "label": "Fulfillment", "order": 3 },
+    { "id": "delivery", "label": "Delivery", "order": 4 },
+    { "id": "invoice", "label": "Invoice", "order": 5 }
+  ],
+  "labelOverrides": {
+    "invoice": "Invoice",
+    "estimate": "Quote",
+    "project": "Order",
+    "crew": "Sales Reps"
+  },
+  "visiblePanels": [
+    "home",
+    "projects",
+    "estimate",
+    "price-book",
+    "collections",
+    "nexus"
+  ],
+  "ohmReference": "NEC",
+  "nexusPersonality": "I'm NEXUS, your electrical supply intelligence system — I know NEC code requirements, track order fulfillment, and help your sales reps quote accurately and competitively. Ask me about product specs, NEC compliance, or any open order and I'll get you the answer fast."
+}

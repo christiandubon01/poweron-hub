@@ -1,0 +1,63 @@
+{
+  "industry": "plumbing",
+  "displayName": "Plumbing",
+  "demoCompanyName": "Pacific Coast Plumbing LLC",
+  "demoOwnerName": "Mike Torres",
+  "priceBookItems": [
+    { "name": "1/2\" Copper Pipe (per ft)", "unit": "ft", "price": 3.25 },
+    { "name": "3/4\" Copper Pipe (per ft)", "unit": "ft", "price": 4.75 },
+    { "name": "1\" Copper Pipe (per ft)", "unit": "ft", "price": 6.50 },
+    { "name": "1/2\" PVC Schedule 40 Pipe (per ft)", "unit": "ft", "price": 1.10 },
+    { "name": "3/4\" PVC Schedule 40 Pipe (per ft)", "unit": "ft", "price": 1.50 },
+    { "name": "1/2\" CPVC Fitting — 90 Elbow", "unit": "ea", "price": 1.85 },
+    { "name": "3/4\" CPVC Fitting — Tee", "unit": "ea", "price": 2.40 },
+    { "name": "1/2\" Copper Sweat Coupling", "unit": "ea", "price": 1.20 },
+    { "name": "3/4\" Ball Valve (full port)", "unit": "ea", "price": 14.50 },
+    { "name": "1\" Ball Valve (full port)", "unit": "ea", "price": 22.00 },
+    { "name": "50-Gallon Gas Water Heater", "unit": "ea", "price": 685.00 },
+    { "name": "40-Gallon Electric Water Heater", "unit": "ea", "price": 525.00 },
+    { "name": "Tankless Water Heater — Gas (whole home)", "unit": "ea", "price": 1150.00 },
+    { "name": "Kitchen Faucet — Standard", "unit": "ea", "price": 145.00 },
+    { "name": "Bathroom Faucet — Standard", "unit": "ea", "price": 95.00 },
+    { "name": "Toilet — Elongated Low-Flow", "unit": "ea", "price": 310.00 },
+    { "name": "Shower Valve — Pressure Balancing", "unit": "ea", "price": 185.00 },
+    { "name": "Tub Spout — Chrome", "unit": "ea", "price": 38.00 },
+    { "name": "P-Trap 1-1/2\" PVC", "unit": "ea", "price": 7.50 },
+    { "name": "4\" ABS Drain Pipe (per ft)", "unit": "ft", "price": 3.20 },
+    { "name": "Wax Ring & Closet Bolts Kit", "unit": "ea", "price": 12.00 },
+    { "name": "Supply Line — Braided Stainless 12\"", "unit": "ea", "price": 9.50 },
+    { "name": "Angle Stop Valve 1/2\"", "unit": "ea", "price": 11.00 },
+    { "name": "Pressure Regulator Valve", "unit": "ea", "price": 72.00 },
+    { "name": "Backflow Preventer 3/4\"", "unit": "ea", "price": 55.00 },
+    { "name": "Sump Pump — 1/2 HP Submersible", "unit": "ea", "price": 195.00 },
+    { "name": "Pipe Insulation Wrap (per ft)", "unit": "ft", "price": 0.85 },
+    { "name": "Thread Seal Tape (roll)", "unit": "ea", "price": 1.50 },
+    { "name": "Plumber Labor — Standard Rate", "unit": "hr", "price": 115.00 },
+    { "name": "Plumber Labor — Overtime Rate", "unit": "hr", "price": 172.50 }
+  ],
+  "projectPhases": [
+    { "id": "rough-in", "label": "Rough-In", "order": 1 },
+    { "id": "pressure-test", "label": "Pressure Test", "order": 2 },
+    { "id": "trim-out", "label": "Trim Out", "order": 3 },
+    { "id": "inspection", "label": "Inspection", "order": 4 },
+    { "id": "punch-list", "label": "Punch List", "order": 5 }
+  ],
+  "labelOverrides": {
+    "invoice": "Invoice",
+    "estimate": "Bid",
+    "project": "Job",
+    "crew": "Plumbers"
+  },
+  "visiblePanels": [
+    "home",
+    "projects",
+    "estimate",
+    "field-logs",
+    "price-book",
+    "collections",
+    "service-calls",
+    "nexus"
+  ],
+  "ohmReference": "UPC",
+  "nexusPersonality": "I'm NEXUS, your plumbing business intelligence system — I know the UPC inside and out and can help you build bids, track rough-in progress, and keep your jobs flowing on schedule. Ask me anything about your jobs, bids, or code questions."
+}

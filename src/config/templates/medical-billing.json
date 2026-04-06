@@ -1,0 +1,61 @@
+{
+  "industry": "medical-billing",
+  "displayName": "Medical Billing",
+  "demoCompanyName": "Clarity Medical Billing Services",
+  "demoOwnerName": "Sandra Reyes",
+  "priceBookItems": [
+    { "name": "99213 — Office Visit Level 3 (Est.)", "unit": "claim", "price": 145.00 },
+    { "name": "99214 — Office Visit Level 4 (Est.)", "unit": "claim", "price": 210.00 },
+    { "name": "99203 — Office Visit Level 3 (New)", "unit": "claim", "price": 185.00 },
+    { "name": "99204 — Office Visit Level 4 (New)", "unit": "claim", "price": 275.00 },
+    { "name": "99215 — Office Visit Level 5 (Est.)", "unit": "claim", "price": 310.00 },
+    { "name": "99283 — ED Visit Level 3", "unit": "claim", "price": 420.00 },
+    { "name": "99285 — ED Visit Level 5", "unit": "claim", "price": 895.00 },
+    { "name": "90837 — Psychotherapy 60 min", "unit": "claim", "price": 175.00 },
+    { "name": "93000 — EKG w/ Interpretation", "unit": "claim", "price": 95.00 },
+    { "name": "85025 — CBC with Differential", "unit": "claim", "price": 45.00 },
+    { "name": "80053 — Comprehensive Metabolic Panel", "unit": "claim", "price": 52.00 },
+    { "name": "71046 — Chest X-Ray 2 Views", "unit": "claim", "price": 185.00 },
+    { "name": "G0008 — Influenza Vaccine Admin", "unit": "claim", "price": 28.00 },
+    { "name": "G0439 — Annual Wellness Visit (Subsequent)", "unit": "claim", "price": 225.00 },
+    { "name": "96372 — Therapeutic Injection", "unit": "claim", "price": 55.00 },
+    { "name": "Facility Fee — Outpatient Surgery", "unit": "claim", "price": 2500.00 },
+    { "name": "Facility Fee — Observation", "unit": "claim", "price": 1200.00 },
+    { "name": "Copay Collection — Primary Care", "unit": "ea", "price": 30.00 },
+    { "name": "Copay Collection — Specialist", "unit": "ea", "price": 55.00 },
+    { "name": "Copay Collection — Urgent Care", "unit": "ea", "price": 75.00 },
+    { "name": "Prior Authorization — Radiology", "unit": "ea", "price": 45.00 },
+    { "name": "Prior Authorization — Surgery", "unit": "ea", "price": 85.00 },
+    { "name": "Denial Appeal — Level 1", "unit": "ea", "price": 95.00 },
+    { "name": "Denial Appeal — Level 2 (Peer Review)", "unit": "ea", "price": 185.00 },
+    { "name": "Claim Resubmission Fee", "unit": "ea", "price": 35.00 },
+    { "name": "Patient Statement Processing (per stmt)", "unit": "ea", "price": 4.50 },
+    { "name": "EOB Posting — Complex Claim", "unit": "ea", "price": 12.00 },
+    { "name": "Eligibility Verification (per patient)", "unit": "ea", "price": 8.00 },
+    { "name": "Medical Billing — Standard Rate (per hr)", "unit": "hr", "price": 65.00 },
+    { "name": "Credentialing Services (per provider)", "unit": "ea", "price": 350.00 }
+  ],
+  "projectPhases": [
+    { "id": "claim-submission", "label": "Claim Submission", "order": 1 },
+    { "id": "insurance-review", "label": "Insurance Review", "order": 2 },
+    { "id": "denial-management", "label": "Denial Management", "order": 3 },
+    { "id": "payment-posting", "label": "Payment Posting", "order": 4 },
+    { "id": "patient-billing", "label": "Patient Billing", "order": 5 }
+  ],
+  "labelOverrides": {
+    "invoice": "Claim",
+    "estimate": "Pre-Auth",
+    "project": "Account",
+    "crew": "Billers"
+  },
+  "visiblePanels": [
+    "home",
+    "projects",
+    "estimate",
+    "collections",
+    "service-calls",
+    "nexus"
+  ],
+  "ohmReference": "none",
+  "nexusPersonality": "I'm NEXUS, your medical billing intelligence assistant — I help you track claim statuses, manage denial workflows, and maximize reimbursement across all payer contracts. Ask me about any account, claim, or payer and I'll give you a clear picture of where things stand."
+}
