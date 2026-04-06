@@ -144,7 +144,12 @@ function NexusVoiceSelector() {
   // Sync to Supabase user_preferences when selection changes
   useEffect(() => {
     if (!user?.id) return
-    supabase.from('user_preferences').upsert({ user_id: user.id, nexus_voice_id: selectedId, updated_at: new Date().toISOString() }).catch(() => { /* table may not exist */ })
+    ;(async () => {
+      try {
+        const { error } = await supabase.from('user_preferences').upsert({ user_id: user.id, nexus_voice_id: selectedId, updated_at: new Date().toISOString() })
+        if (error) console.error(error)
+      } catch(err) { console.error(err) }
+    })()
   }, [selectedId, user?.id])
 
   return (
@@ -1646,12 +1651,14 @@ function AuditAccessCard() {
   useEffect(() => {
     if (!user?.id) return
     setLoading(true)
-    supabase
-      .from('profiles')
-      .select('audit_token, audit_access_enabled')
-      .eq('id', user.id)
-      .single()
-      .then(({ data }) => {
+    ;(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('audit_token, audit_access_enabled')
+          .eq('id', user.id)
+          .single()
+        if (error) console.error(error)
         if (data) {
           setAuditToken(data.audit_token || null)
           setAuditEnabled(data.audit_access_enabled || false)
@@ -1660,9 +1667,9 @@ function AuditAccessCard() {
             generateAndSaveToken(false)
           }
         }
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+      } catch(err) { console.error(err) }
+      setLoading(false)
+    })()
   }, [user?.id])
 
   function newUUID(): string {

@@ -23,77 +23,119 @@ import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 
-// ── RMO Agreement Setup Gate ─────────────────────────────────────────────────
+// ── RMO Status Card — collapsible after first setup ──────────────────────────
 
-function RMOSetupGate({ onActivate }: { onActivate: () => void }) {
-  const [toggled, setToggled] = useState(false)
+function RMOStatusCard({
+  rmoActive,
+  collapsed,
+  onToggleCollapse,
+  onActivate,
+  onDeactivate,
+}: {
+  rmoActive: boolean
+  collapsed: boolean
+  onToggleCollapse: () => void
+  onActivate: () => void
+  onDeactivate: () => void
+}) {
   const [agreementFile, setAgreementFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  function handleActivate() {
-    if (!toggled) return
-    // Persist rmo_active in localStorage
-    try { localStorage.setItem('rmo_active', 'true') } catch { /* ignore */ }
-    // Best-effort Supabase save
-    import('@/lib/supabase').then(({ supabase }) => {
-      supabase.from('user_preferences' as never).upsert({ key: 'rmo_active', value: 'true' }).catch(() => {/* ignore */})
-    }).catch(() => {/* ignore */})
-    onActivate()
+  function handleToggleActive() {
+    if (rmoActive) {
+      try { localStorage.setItem('rmo_active', 'false') } catch { /* ignore */ }
+      onDeactivate()
+    } else {
+      try { localStorage.setItem('rmo_active', 'true') } catch { /* ignore */ }
+      import('@/lib/supabase').then(({ supabase }) => {
+        ;(async () => {
+          try {
+            const { error } = await supabase.from('user_preferences' as never).upsert({ key: 'rmo_active', value: 'true' })
+            if (error) console.error(error)
+          } catch(err) { console.error(err) }
+        })()
+      }).catch(() => {/* ignore */})
+      onActivate()
+    }
+  }
+
+  if (collapsed) {
+    return (
+      <div className="flex items-center justify-between bg-[var(--bg-card,#1f2937)] border border-gray-700 rounded-xl px-4 py-3 mb-4">
+        <div className="flex items-center gap-2">
+          <span>☀️</span>
+          <span className="text-sm font-semibold text-gray-200">RMO Solar Income</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${rmoActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
+            {rmoActive ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+        <button
+          onClick={onToggleCollapse}
+          className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+        >
+          Configure ▾
+        </button>
+      </div>
+    )
   }
 
   return (
-    <div className="flex items-start justify-center min-h-[60vh] p-6">
-      <div className="w-full max-w-lg bg-[var(--bg-card,#1f2937)] border border-gray-700 rounded-2xl p-8 shadow-xl">
-        <div className="flex items-center gap-3 mb-2">
-          <span style={{ fontSize: '2rem' }}>☀️</span>
-          <h2 className="text-xl font-bold text-gray-100">RMO Agreement Setup</h2>
+    <div className="bg-[var(--bg-card,#1f2937)] border border-gray-700 rounded-2xl p-5 mb-4 shadow-lg">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: '1.4rem' }}>☀️</span>
+          <h2 className="text-base font-bold text-gray-100">RMO Setup</h2>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${rmoActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
+            {rmoActive ? 'Active' : 'Inactive'}
+          </span>
         </div>
-        <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-          This panel tracks your RMO (Residential Maintenance Operations) solar income pipeline — including installation revenue, RMO oversight fees, and projected monthly earnings. Activate to unlock the full Solar Income dashboard.
-        </p>
-
-        {/* Toggle */}
-        <div className="flex items-center justify-between bg-gray-800/60 rounded-xl px-4 py-3 mb-4 border border-gray-700">
-          <div>
-            <p className="text-sm font-semibold text-gray-200">Activate Solar Income Tracking</p>
-            <p className="text-xs text-gray-500 mt-0.5">Enables RMO pipeline projections and income analysis</p>
-          </div>
+        {rmoActive && (
           <button
-            onClick={() => setToggled(t => !t)}
-            className={`relative inline-flex w-11 h-6 rounded-full transition-colors focus:outline-none ${toggled ? 'bg-emerald-500' : 'bg-gray-600'}`}
+            onClick={onToggleCollapse}
+            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
           >
-            <span className={`inline-block w-5 h-5 bg-white rounded-full shadow transition-transform mt-0.5 ${toggled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            Collapse ▴
           </button>
-        </div>
+        )}
+      </div>
 
-        {/* File upload */}
-        <div className="mb-6">
-          <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">RMO Agreement PDF (optional)</p>
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-3 border border-dashed border-gray-600 hover:border-gray-400 rounded-xl px-4 py-3 cursor-pointer transition-colors"
-          >
-            <span className="text-gray-400 text-lg">📄</span>
-            <span className="text-sm text-gray-400">
-              {agreementFile ? agreementFile.name : 'Upload RMO Agreement PDF'}
-            </span>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf"
-            className="hidden"
-            onChange={e => setAgreementFile(e.target.files?.[0] || null)}
-          />
-        </div>
+      <p className="text-xs text-gray-400 mb-4 leading-relaxed">
+        RMO (Residential Maintenance Operations) tracks your solar income pipeline — installation revenue, RMO oversight fees, and monthly projections.
+      </p>
 
+      {/* Active/inactive toggle */}
+      <div className="flex items-center justify-between bg-gray-800/60 rounded-xl px-4 py-3 mb-4 border border-gray-700">
+        <div>
+          <p className="text-sm font-semibold text-gray-200">Solar Income Tracking</p>
+          <p className="text-xs text-gray-500 mt-0.5">Enables RMO pipeline metrics below the calculator</p>
+        </div>
         <button
-          onClick={handleActivate}
-          disabled={!toggled}
-          className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold text-sm transition-colors"
+          onClick={handleToggleActive}
+          className={`relative inline-flex w-11 h-6 rounded-full transition-colors focus:outline-none ${rmoActive ? 'bg-emerald-500' : 'bg-gray-600'}`}
         >
-          Activate RMO Solar Income
+          <span className={`inline-block w-5 h-5 bg-white rounded-full shadow transition-transform mt-0.5 ${rmoActive ? 'translate-x-5' : 'translate-x-0.5'}`} />
         </button>
+      </div>
+
+      {/* Agreement upload */}
+      <div>
+        <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">RMO Agreement PDF (optional)</p>
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-3 border border-dashed border-gray-600 hover:border-gray-400 rounded-xl px-4 py-3 cursor-pointer transition-colors"
+        >
+          <span className="text-gray-400 text-lg">📄</span>
+          <span className="text-sm text-gray-400">
+            {agreementFile ? agreementFile.name : 'Upload RMO Agreement PDF'}
+          </span>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf"
+          className="hidden"
+          onChange={e => setAgreementFile(e.target.files?.[0] || null)}
+        />
       </div>
     </div>
   )
@@ -213,23 +255,49 @@ Keep it short and practical.`
   )
 }
 
-// ── Main export with RMO gate ─────────────────────────────────────────────────
+// ── Main export — Solar Income always visible; RMO is an add-on ──────────────
 
 export default function V15rIncomeCalc() {
   const [rmoActive, setRmoActive] = useState<boolean>(() => {
     try { return localStorage.getItem('rmo_active') === 'true' } catch { return false }
   })
+  // Collapse the RMO card by default once it has been set up
+  const [rmoCardCollapsed, setRmoCardCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('rmo_active') === 'true' } catch { return false }
+  })
 
-  if (!rmoActive) {
-    return <RMOSetupGate onActivate={() => setRmoActive(true)} />
+  function handleActivate() {
+    setRmoActive(true)
+    setRmoCardCollapsed(true)
+  }
+
+  function handleDeactivate() {
+    setRmoActive(false)
+    setRmoCardCollapsed(false)
   }
 
   return (
     <>
-      <V15rIncomeCalcInner />
-      <div className="px-4 pb-6">
-        <RMODashboardExtras />
+      {/* RMO status card — sits above the calculator, collapsible after first setup */}
+      <div className="px-4 pt-4">
+        <RMOStatusCard
+          rmoActive={rmoActive}
+          collapsed={rmoCardCollapsed}
+          onToggleCollapse={() => setRmoCardCollapsed(c => !c)}
+          onActivate={handleActivate}
+          onDeactivate={handleDeactivate}
+        />
       </div>
+
+      {/* Full Solar Income calculator — always visible regardless of RMO status */}
+      <V15rIncomeCalcInner />
+
+      {/* RMO-specific metrics — additional section, only visible when rmo_active */}
+      {rmoActive && (
+        <div className="px-4 pb-6">
+          <RMODashboardExtras />
+        </div>
+      )}
     </>
   )
 }
