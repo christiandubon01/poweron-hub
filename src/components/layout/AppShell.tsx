@@ -80,6 +80,9 @@ const SettingsV3        = lazy(() => import('@/views/Settings'))
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })))
 const OnboardingModal = lazy(() => import('@/components/onboarding/OnboardingModal'))
 
+// Beta onboarding flow — fires once after NDA, checks orgs.onboarding_complete
+const BetaOnboarding = lazy(() => import('@/components/onboarding/BetaOnboarding'))
+
 // Loading fallback for lazy-loaded panels
 function PanelLoading() {
   return (
@@ -110,6 +113,10 @@ export function AppShell({ children }: AppShellProps) {
   const [ndaSigned, setNdaSigned] = useState<boolean | null>(null)
   const [showNdaGate, setShowNdaGate] = useState(false)
 
+  // Beta onboarding gate — fires once after NDA, before main app loads
+  const [showBetaOnboarding, setShowBetaOnboarding] = useState(false)
+  const [betaOnboardingChecked, setBetaOnboardingChecked] = useState(false)
+
   // Session Debrief overlay state
   const [showSessionDebrief, setShowSessionDebrief] = useState(false)
   const [debriefConclusions, setDebriefConclusions] = useState<any[]>([])
@@ -137,12 +144,41 @@ export function AppShell({ children }: AppShellProps) {
     }
   }, [])
 
-  // Show onboarding modal for new users
+  // Show onboarding modal for new users (legacy profile-level check)
   useEffect(() => {
     if (profile && profile.onboarding_completed === false) {
       setShowOnboarding(true)
     }
   }, [profile])
+
+  // Beta onboarding gate — check orgs.onboarding_complete after NDA is signed.
+  // Only runs once per session, only for non-demo, non-read-only users.
+  useEffect(() => {
+    if (isReadOnly || isDemoMode) return
+    if (betaOnboardingChecked) return
+    // Wait until NDA has been confirmed signed before checking onboarding
+    if (ndaSigned !== true) return
+    if (!profile?.org_id) return
+
+    setBetaOnboardingChecked(true)
+
+    import('@/lib/supabase').then(({ supabase }) => {
+      supabase
+        .from('orgs' as never)
+        .select('onboarding_complete')
+        .eq('id', profile.org_id)
+        .single()
+        .then(({ data, error }: { data: any; error: any }) => {
+          if (error) {
+            console.warn('[AppShell] onboarding_complete check failed:', error)
+            return
+          }
+          if (data && data.onboarding_complete === false) {
+            setShowBetaOnboarding(true)
+          }
+        })
+    })
+  }, [ndaSigned, profile?.org_id, isReadOnly, isDemoMode, betaOnboardingChecked])
 
   // NEXUS command "show snapshots" → navigate to settings panel
   useEffect(() => {
@@ -399,6 +435,22 @@ export function AppShell({ children }: AppShellProps) {
             setNdaSigned(true)
             setShowNdaGate(false)
           }}
+        />
+      </Suspense>
+    )
+  }
+
+  // Beta onboarding gate: fires once after NDA, before main app loads.
+  // Checks orgs.onboarding_complete — if false, show BetaOnboarding full-screen.
+  if (showBetaOnboarding && !isReadOnly && !isDemoMode) {
+    return (
+      <Suspense fallback={
+        <div className="flex items-center justify-center min-h-screen bg-gray-950">
+          <div className="text-gray-500 text-sm">Setting up your workspace…</div>
+        </div>
+      }>
+        <BetaOnboarding
+          onComplete={() => setShowBetaOnboarding(false)}
         />
       </Suspense>
     )
