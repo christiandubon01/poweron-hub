@@ -8,9 +8,10 @@
  */
 
 import { useEffect, useState } from 'react'
-import { Sun, TrendingUp, Calendar, AlertTriangle, Clock, ShieldAlert, ShieldCheck, BookOpen } from 'lucide-react'
+import { Sun, TrendingUp, Calendar, AlertTriangle, Clock, ShieldAlert, ShieldCheck, BookOpen, Zap, AlertCircle, Info, X } from 'lucide-react'
 import { reviewPendingLogs, type CrewFieldLog } from '@/agents/guardian'
 import { getJournalSummary } from '@/services/voiceJournalService'
+import { getActiveAlerts, dismissAlert, type ProactiveAlert, type AlertSeverity } from '@/services/proactiveAlertService'
 
 interface BriefingStats {
   field_logs: number
@@ -26,6 +27,77 @@ interface MorningBriefingCardProps {
     date: string
     stats: BriefingStats
   }
+}
+
+// ── Proactive Alerts Section (B12) ───────────────────────────────────────────
+
+const ALERT_SEVERITY_STYLES: Record<AlertSeverity, { border: string; bg: string; badge: string; badgeBg: string; icon: string }> = {
+  critical: { border: '#7f1d1d55', bg: '#12080988', badge: '#f87171', badgeBg: '#7f1d1d22', icon: '#f87171' },
+  warning:  { border: '#78350f55', bg: '#120f0688', badge: '#fbbf24', badgeBg: '#78350f22', icon: '#fbbf24' },
+  info:     { border: '#1e3a5f55', bg: '#060d1488', badge: '#60a5fa', badgeBg: '#1e3a5f22', icon: '#60a5fa' },
+}
+
+function AlertsBriefingSection() {
+  const [alerts, setAlerts] = useState<ProactiveAlert[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    try {
+      const active = getActiveAlerts()
+      setAlerts(active)
+    } catch (err) {
+      console.warn('[MorningBriefingCard] Alerts section failed:', err)
+    }
+    setLoaded(true)
+  }, [])
+
+  if (!loaded || alerts.length === 0) return null
+
+  function handleDismiss(e: React.MouseEvent, id: string) {
+    e.stopPropagation()
+    dismissAlert(id)
+    setAlerts(prev => prev.filter(a => a.id !== id))
+  }
+
+  return (
+    <div className="rounded-lg border border-red-900/30 bg-red-950/10 p-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-red-400 text-xs font-semibold">
+        <Zap size={13} />
+        Active Alerts ({alerts.length})
+      </div>
+      {alerts.slice(0, 5).map(alert => {
+        const s = ALERT_SEVERITY_STYLES[alert.severity]
+        return (
+          <div
+            key={alert.id}
+            className="flex items-start gap-2 pl-2 border-l"
+            style={{ borderLeftColor: s.border }}
+          >
+            <div className="flex-1 text-gray-400 text-xs leading-relaxed">
+              <span className="font-semibold mr-1" style={{ color: s.badge }}>
+                [{alert.severity.toUpperCase()}]
+              </span>
+              {alert.message}
+            </div>
+            <button
+              className="flex-shrink-0 opacity-40 hover:opacity-100 transition-opacity mt-0.5"
+              style={{ color: s.badge }}
+              onClick={e => handleDismiss(e, alert.id)}
+              title="Dismiss"
+              aria-label="Dismiss alert"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        )
+      })}
+      {alerts.length > 5 && (
+        <div className="text-gray-500 text-xs pl-2">
+          +{alerts.length - 5} more — check Alerts row on dashboard
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── GUARDIAN Section ──────────────────────────────────────────────────────────
@@ -220,6 +292,9 @@ export function MorningBriefingCard({ content, metadata }: MorningBriefingCardPr
           />
         )}
       </div>
+
+      {/* B12 — Proactive Alerts Section */}
+      <AlertsBriefingSection />
 
       {/* GUARDIAN Crew Section */}
       <GuardianBriefingSection />

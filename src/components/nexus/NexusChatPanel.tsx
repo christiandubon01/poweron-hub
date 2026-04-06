@@ -28,6 +28,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { getBackupData, num, fmt } from '@/services/backupDataService'
+import { getAlertSummaryForBriefing, isFirstNexusOpenToday } from '@/services/proactiveAlertService'
 import { AgentActivityPanel } from './AgentActivityPanel'
 import { addToScoutQueue } from '@/services/scoutQueue'
 
@@ -198,7 +199,10 @@ export function NexusChatPanel() {
   const stagnantProjects = (backup?.projects || []).filter(p => p.status !== 'completed' && p.lastMove && new Date(p.lastMove) < new Date(Date.now() - 14 * 86400000))
   const uncollectedAR = (backup?.serviceLogs || []).reduce((sum, s) => sum + Math.max(0, num(s.quoted) - num(s.collected)), 0)
 
-  const briefingContext = `Good ${greeting}, Christian. Give a brief morning briefing based on:
+  // B12 — Prepend active alerts to briefing context on first NEXUS open of the day
+  const _alertPrefix = isFirstNexusOpenToday() ? getAlertSummaryForBriefing() : ''
+
+  const briefingContext = `${_alertPrefix}Good ${greeting}, Christian. Give a brief morning briefing based on:
 - ${overdueServiceCalls.length} overdue service calls (uncollected 7+ days)
 - ${stagnantProjects.length} stagnant projects (no activity 14+ days)
 - $${uncollectedAR.toFixed(0)} uncollected AR total

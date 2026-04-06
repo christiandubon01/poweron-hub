@@ -17,6 +17,7 @@ import { useReadOnly } from '@/contexts/ReadOnlyContext'
 import { useDemoStore } from '@/store/demoStore'
 import Watermark from '@/components/Watermark'
 import ConclusionCards from '@/components/ConclusionCards'
+import ProactiveAlertCards from '@/components/ProactiveAlertCards'
 import SessionDebrief from '@/components/SessionDebrief'
 import { hasUserSignedNDA } from '@/services/ndaService'
 import { validateInviteToken, markInviteAccepted } from '@/services/inviteService'
@@ -330,6 +331,8 @@ export function AppShell({ children }: AppShellProps) {
       // v15r Workspace
       case 'home':            return (
         <>
+          {/* B12 — Proactive NEXUS alerts at the top of Home */}
+          <ProactiveAlertCards />
           {/* ConclusionCards — pinned session insights at the top of Home */}
           <ConclusionCards userId={profile?.id ?? ''} />
           <V15rHome />

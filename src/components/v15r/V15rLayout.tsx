@@ -46,6 +46,7 @@ import { initEventBus } from '@/services/agentEventBus'
 import { subscribeNexusToEvents } from '@/agents/nexus'
 import { subscribeLedgerToEvents } from '@/agents/ledger'
 import { initPulseBusSubscriptions } from '@/agents/pulse'
+import { initAlertEngine } from '@/services/proactiveAlertService'
 import { initSparkBusListeners } from '@/agents/spark'
 import { getVoiceSubsystem, unlockAudioContext } from '@/services/voice'
 import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
@@ -228,8 +229,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const unsubLedger = subscribeLedgerToEvents()
     const unsubPulse  = initPulseBusSubscriptions()
     const unsubSpark  = initSparkBusListeners()
-    console.log('[Layout] Event bus initialized, NEXUS + LEDGER + PULSE + SPARK subscribed')
-    return () => { unsubNexus(); unsubLedger(); unsubPulse(); unsubSpark() }
+    const unsubAlerts = initAlertEngine()
+    console.log('[Layout] Event bus initialized, NEXUS + LEDGER + PULSE + SPARK + ALERTS subscribed')
+    return () => { unsubNexus(); unsubLedger(); unsubPulse(); unsubSpark(); unsubAlerts() }
   }, [])
 
   // Track window width for responsive breakpoints
