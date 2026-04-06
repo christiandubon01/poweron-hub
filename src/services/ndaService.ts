@@ -34,6 +34,10 @@ export interface SignedAgreementRecord {
   ip_address: string;
   signed_at: string;
   pdf_url?: string;
+  // Identity verification fields (Addition 3 — B2)
+  email?: string;
+  pin_verified?: boolean;
+  verification_timestamp?: string;
 }
 
 export interface NDASubmission {
@@ -138,14 +142,20 @@ async function uploadNDAPdf(_userId: string, _blob: Blob): Promise<string> {
 /**
  * Saves a signed NDA record to Supabase and uploads the generated PDF.
  * Returns the stored record ID.
+ *
+ * @param email           Email address verified via PIN confirmation (Addition 2/3 — B2)
+ * @param pinVerified     Whether email was confirmed via PIN (Addition 2/3 — B2)
  */
 export async function saveSignedNDA(
   userId: string,
   signatureBase64: string,
   typedName: string,
-  ipAddress: string
+  ipAddress: string,
+  email?: string,
+  pinVerified?: boolean
 ): Promise<string> {
   const signedAt = new Date().toISOString();
+  const verificationTimestamp = new Date().toISOString();
 
   // Generate PDF blob
   const pdfBlob = await generateNDAPdf({
@@ -166,6 +176,10 @@ export async function saveSignedNDA(
     ip_address: ipAddress,
     signed_at: signedAt,
     pdf_url: pdfUrl,
+    // Identity verification fields
+    email: email ?? undefined,
+    pin_verified: pinVerified ?? false,
+    verification_timestamp: verificationTimestamp,
   };
 
   const result = await syncToSupabase({

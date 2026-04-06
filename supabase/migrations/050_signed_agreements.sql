@@ -26,3 +26,10 @@ CREATE POLICY "Users can view own agreements"
 CREATE POLICY "Users can insert own agreements"
   ON public.signed_agreements FOR INSERT
   WITH CHECK (auth.uid() = user_id);
+
+-- B2: Identity verification columns (email PIN confirmation)
+-- Added by migration 050 amendment — safe to run on existing table.
+ALTER TABLE public.signed_agreements
+  ADD COLUMN IF NOT EXISTS email                  TEXT,
+  ADD COLUMN IF NOT EXISTS pin_verified           BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS verification_timestamp TIMESTAMPTZ;
