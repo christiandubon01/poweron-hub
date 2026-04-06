@@ -59,7 +59,7 @@ function uid() {
 
 /** Build Claude prompt for material extraction */
 function buildMaterialExtractionPrompt(transcript: string, priceBook: PriceBookEntry[]): string {
-  const pbSample = priceBook
+  const pbSample = (priceBook ?? [])
     .slice(0, 80)
     .map(p => `${p.id}: ${p.name || p.description || ''} (${p.unit || 'ea'}, $${p.unitCost ?? p.cost ?? 0})`)
     .join('\n')
@@ -330,7 +330,7 @@ export default function VoiceMaterialCapture({
   const totalCost = items.reduce((sum, it) => sum + (it.quantity * it.unitCost), 0)
 
   const handleConfirm = () => {
-    const note = '=== Voice Materials ===\n' + items.map(it => {
+    const note = '=== Voice Materials ===\n' + (items ?? []).map(it => {
       const cost = it.quantity * it.unitCost
       const matchStr = it.priceBookMatch ? ` → ${it.priceBookMatch}` : ''
       return `${it.quantity} ${it.unit} ${it.name}${matchStr} @ $${it.unitCost.toFixed(2)}/ea = $${cost.toFixed(2)}`
@@ -478,7 +478,7 @@ export default function VoiceMaterialCapture({
 
           {/* Item list */}
           <div className="divide-y divide-gray-800">
-            {items.map(item => (
+            {(items ?? []).map(item => (
               <div key={item.id} className="px-3 py-2">
                 {item.editing ? (
                   /* Edit mode row */

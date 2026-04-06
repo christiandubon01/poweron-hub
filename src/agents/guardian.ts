@@ -393,6 +393,7 @@ export interface CrewFieldLog {
 }
 
 export function reviewPendingLogs(logs: CrewFieldLog[]): CrewFieldLog[] {
+  if (!Array.isArray(logs)) return []
   return logs.filter(log => log.status === 'pending')
 }
 
@@ -452,10 +453,12 @@ export function markLogReviewed(log: CrewFieldLog): CrewFieldLog {
 }
 
 export function markAllLogsReviewed(logs: CrewFieldLog[]): CrewFieldLog[] {
+  if (!Array.isArray(logs)) return []
   return logs.map(log => ({ ...log, status: 'reviewed' as const }))
 }
 
 export function getActivityFeed(logs: CrewFieldLog[]): ActivityEntry[] {
+  if (!Array.isArray(logs)) return []
   return logs.map(log => ({
     id: log.id,
     crewMemberId: log.crewMemberId,
@@ -468,6 +471,7 @@ export function getActivityFeed(logs: CrewFieldLog[]): ActivityEntry[] {
 }
 
 export function runActivityAnalysis(entries: ActivityEntry[]): Flag[] {
+  if (!Array.isArray(entries)) return []
   // Replace with real anomaly detection during V3 GUARDIAN integration
   return []
 }

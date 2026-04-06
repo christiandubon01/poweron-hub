@@ -182,9 +182,9 @@ function EntryCard({ entry }: { entry: JournalEntry }) {
         <div className="px-4 pb-4">
           {/* Full transcript (already shown above when expanded, but add playback) */}
           <PlaybackStub duration={entry.duration} />
-          {entry.tags.length > 0 && (
+          {(entry.tags ?? []).length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {entry.tags.map((tag) => (
+              {(entry.tags ?? []).map((tag) => (
                 <span
                   key={tag}
                   className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-xs border border-slate-200"

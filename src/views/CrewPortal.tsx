@@ -218,7 +218,7 @@ function OwnerPanel() {
                 {/* Projects — inline edit */}
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1 mb-1">
-                    {member.assignedProjects.map((proj) => (
+                    {(member.assignedProjects ?? []).map((proj) => (
                       <span
                         key={proj}
                         className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border"
@@ -315,7 +315,7 @@ function CrewPanel() {
           <p className="text-sm font-semibold text-gray-300">Assigned Projects</p>
         </div>
         <div className="space-y-2">
-          {marcus.assignedProjects.map((proj) => (
+          {(marcus.assignedProjects ?? []).map((proj) => (
             <div
               key={proj}
               className="flex items-center gap-3 px-3 py-2 rounded border"
@@ -778,7 +778,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {members.map((member, idx) => (
+              {(members ?? []).map((member, idx) => (
                 <tr
                   key={member.user_id}
                   style={{

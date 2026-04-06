@@ -196,7 +196,7 @@ function LogCard({
 
       {hasFlagsToShow && (
         <div className="flex flex-wrap gap-1.5">
-          {log.flags.map((flag, i) => (
+          {(log.flags ?? []).map((flag, i) => (
             <FlagBadge key={i} flag={flag} />
           ))}
         </div>

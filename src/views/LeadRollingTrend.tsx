@@ -34,13 +34,13 @@ interface StackedBarProps {
 }
 
 function StackedBarChart({ snapshots }: StackedBarProps) {
-  const maxLeads = Math.max(...snapshots.map((s) => s.totalLeads));
+  const maxLeads = Math.max(...(snapshots ?? []).map((s) => s.totalLeads));
   const chartHeight = 160; // px
 
   return (
     <div>
       <div className="flex items-end gap-6 justify-center" style={{ height: chartHeight }}>
-        {snapshots.map((snap) => {
+        {(snapshots ?? []).map((snap) => {
           const barHeight = (snap.totalLeads / maxLeads) * chartHeight;
           const advancePct = (snap.advanceCount / snap.totalLeads) * 100;
           const parkPct = (snap.parkCount / snap.totalLeads) * 100;
@@ -111,7 +111,7 @@ function RPLLineChart({ snapshots }: RPLLineChartProps) {
   const paddingX = 40;
   const paddingY = 24;
 
-  const rplValues = snapshots.map((s) => s.revenuePerLead);
+  const rplValues = (snapshots ?? []).map((s) => s.revenuePerLead);
   const minRPL = Math.min(...rplValues) - 500;
   const maxRPL = Math.max(...rplValues) + 500;
 
@@ -129,7 +129,7 @@ function RPLLineChart({ snapshots }: RPLLineChartProps) {
     );
   }
 
-  const points = snapshots
+  const points = (snapshots ?? [])
     .map((s, i) => `${toX(i)},${toY(s.revenuePerLead)}`)
     .join(' ');
 
@@ -171,7 +171,7 @@ function RPLLineChart({ snapshots }: RPLLineChartProps) {
       />
 
       {/* Data points + labels */}
-      {snapshots.map((snap, i) => {
+      {(snapshots ?? []).map((snap, i) => {
         const cx = toX(i);
         const cy = toY(snap.revenuePerLead);
         return (

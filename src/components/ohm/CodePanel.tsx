@@ -209,13 +209,10 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
 4. Any jurisdiction-specific notes
 5. Field/practical notes where applicable`
 
-      const response = await fetch('/api/anthropic/v1/messages', {
+      const response = await fetch('/.netlify/functions/claude', {
         method: 'POST',
         headers: {
-          'x-api-key': (import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : '') as string,
-          'anthropic-version': '2023-06-01',
           'content-type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
