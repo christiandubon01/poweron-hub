@@ -19,6 +19,7 @@ import Watermark from '@/components/Watermark'
 import ConclusionCards from '@/components/ConclusionCards'
 import SessionDebrief from '@/components/SessionDebrief'
 import { hasUserSignedNDA } from '@/services/ndaService'
+import { validateInviteToken, markInviteAccepted } from '@/services/inviteService'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
@@ -117,6 +118,9 @@ export function AppShell({ children }: AppShellProps) {
   const [showBetaOnboarding, setShowBetaOnboarding] = useState(false)
   const [betaOnboardingChecked, setBetaOnboardingChecked] = useState(false)
 
+  // Beta invite token — read from ?invite=[token] on mount
+  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null)
+
   // Session Debrief overlay state
   const [showSessionDebrief, setShowSessionDebrief] = useState(false)
   const [debriefConclusions, setDebriefConclusions] = useState<any[]>([])
@@ -142,6 +146,26 @@ export function AppShell({ children }: AppShellProps) {
     if (params.get('demo') === 'true') {
       enableDemoMode()
     }
+  }, [])
+
+  // Beta invite token — check URL for ?invite=[token] on mount
+  // If valid: store in sessionStorage so it survives auth redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('invite')
+    if (!token) return
+
+    validateInviteToken(token).then((result) => {
+      if (result.valid) {
+        sessionStorage.setItem('poweron_invite_token', token)
+        setPendingInviteToken(token)
+        console.log('[AppShell] Valid invite token stored:', token)
+      } else {
+        console.warn('[AppShell] Invalid invite token:', result.reason)
+      }
+    }).catch((err) => {
+      console.warn('[AppShell] Invite token validation failed:', err)
+    })
   }, [])
 
   // Show onboarding modal for new users (legacy profile-level check)
@@ -388,6 +412,13 @@ export function AppShell({ children }: AppShellProps) {
               onSigned={() => {
                 setNdaSigned(true)
                 setShowNdaGate(false)
+                // Mark invite as accepted after NDA is signed
+                const token = pendingInviteToken || sessionStorage.getItem('poweron_invite_token')
+                if (token) {
+                  markInviteAccepted(token).catch(console.warn)
+                  sessionStorage.removeItem('poweron_invite_token')
+                  setPendingInviteToken(null)
+                }
                 setActiveView('home')
               }}
             />
@@ -434,6 +465,13 @@ export function AppShell({ children }: AppShellProps) {
           onSigned={() => {
             setNdaSigned(true)
             setShowNdaGate(false)
+            // Mark invite as accepted after NDA is signed
+            const token = pendingInviteToken || sessionStorage.getItem('poweron_invite_token')
+            if (token) {
+              markInviteAccepted(token).catch(console.warn)
+              sessionStorage.removeItem('poweron_invite_token')
+              setPendingInviteToken(null)
+            }
           }}
         />
       </Suspense>

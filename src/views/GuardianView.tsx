@@ -14,7 +14,17 @@ import {
   Brain,
   Filter,
   FileText,
+  Mail,
+  RefreshCw,
+  Send,
+  Ban,
 } from 'lucide-react';
+import {
+  sendInvite,
+  getInvites,
+  revokeInvite,
+  type BetaInvite,
+} from '../services/inviteService';
 import type { GuardianRule, GuardianViolation, GuardianAuditEntry } from '../types';
 import type { SignedAgreementRecord } from '../services/ndaService';
 import { getUserSignedNDAs, getAllSignedNDAs, revokeSignedNDA, getNDAPdfSignedUrl } from '../services/ndaService';
@@ -992,17 +1002,344 @@ function SignedNDAsAdminTab() {
   );
 }
 
+// ─── Beta Invites Tab (B7) ────────────────────────────────────────────────────
+
+const INDUSTRY_OPTIONS = [
+  'Electrical Contractor',
+  'General Contractor',
+  'HVAC / Mechanical',
+  'Plumbing',
+  'Solar / Renewable Energy',
+  'Property Management',
+  'Commercial Real Estate',
+  'Residential Construction',
+  'Industrial / Manufacturing',
+  'Other',
+];
+
+function statusBadge(status: BetaInvite['status']) {
+  if (status === 'pending') {
+    return (
+      <span
+        className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+        style={{ backgroundColor: '#1e3a5f', color: '#60a5fa', border: '1px solid #1e3a5f' }}
+      >
+        pending
+      </span>
+    );
+  }
+  if (status === 'accepted') {
+    return (
+      <span
+        className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+        style={{ backgroundColor: '#052e16', color: '#4ade80', border: '1px solid #16a34a44' }}
+      >
+        accepted
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+      style={{ backgroundColor: '#3b0a0a', color: '#f87171', border: '1px solid #7f1d1d44' }}
+    >
+      expired
+    </span>
+  );
+}
+
+function BetaInvitesTab() {
+  const [invites, setInvites] = useState<BetaInvite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Send form
+  const [emailInput, setEmailInput] = useState('');
+  const [industryInput, setIndustryInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendSuccess, setSendSuccess] = useState<string | null>(null);
+
+  // Revoke in-progress
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  function load() {
+    setLoading(true);
+    setError(null);
+    getInvites()
+      .then((rows) => setInvites(rows))
+      .catch((e) => setError(e?.message || 'Failed to load invites'))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const pendingCount = invites.filter((i) => i.status === 'pending').length;
+
+  async function handleSend() {
+    setSendError(null);
+    setSendSuccess(null);
+    const trimmed = emailInput.trim();
+    if (!trimmed || !trimmed.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+      setSendError('Please enter a valid email address.');
+      return;
+    }
+    setSending(true);
+    const result = await sendInvite(trimmed, industryInput || undefined);
+    setSending(false);
+    if (result.success) {
+      setSendSuccess(`Invite sent to ${trimmed}`);
+      setEmailInput('');
+      setIndustryInput('');
+      load();
+    } else {
+      setSendError(result.error || 'Failed to send invite.');
+    }
+  }
+
+  async function handleRevoke(invite: BetaInvite) {
+    setRevokingId(invite.id);
+    const result = await revokeInvite(invite.id);
+    setRevokingId(null);
+    if (result.success) {
+      setInvites((prev) =>
+        prev.map((i) => i.id === invite.id ? { ...i, status: 'expired' } : i)
+      );
+    } else {
+      setError(result.error || 'Failed to revoke invite.');
+    }
+  }
+
+  async function handleResend(invite: BetaInvite) {
+    setSendError(null);
+    setSendSuccess(null);
+    setSending(true);
+    const result = await sendInvite(invite.email, invite.industry || undefined);
+    setSending(false);
+    if (result.success) {
+      setSendSuccess(`Re-invite sent to ${invite.email}`);
+      load();
+    } else {
+      setSendError(result.error || 'Failed to resend invite.');
+    }
+  }
+
+  function fmtDate(iso: string) {
+    return new Date(iso).toLocaleString('en', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  const inputCss: React.CSSProperties = {
+    backgroundColor: '#1a1d27',
+    border: '1px solid #2a3040',
+    color: '#e5e7eb',
+    borderRadius: 6,
+    padding: '7px 10px',
+    fontSize: 13,
+    outline: 'none',
+  };
+
+  return (
+    <div
+      className="flex flex-col rounded-xl border overflow-hidden"
+      style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14', height: '100%', minHeight: 0 }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+        style={{ borderColor: '#1e2128', backgroundColor: '#11121a' }}
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+          <Mail size={14} className="text-green-500" />
+          Beta Invites
+          {pendingCount > 0 && (
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-400 border border-blue-800/50 ml-1">
+              {pendingCount} pending
+            </span>
+          )}
+        </div>
+        <button
+          onClick={load}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors"
+          style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}
+        >
+          <RefreshCw size={11} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Send Invite Form */}
+      <div className="px-4 py-4 border-b flex-shrink-0" style={{ borderColor: '#1a1c23' }}>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-600 mb-3">Send Invite</p>
+        <div className="flex items-end gap-2 flex-wrap">
+          <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide">Email</label>
+            <input
+              type="email"
+              placeholder="invitee@example.com"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
+              style={inputCss}
+            />
+          </div>
+          <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide">Industry (optional)</label>
+            <select
+              value={industryInput}
+              onChange={(e) => setIndustryInput(e.target.value)}
+              style={inputCss}
+            >
+              <option value="">— Select industry —</option>
+              {INDUSTRY_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleSend}
+            disabled={sending}
+            className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+            style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', cursor: sending ? 'not-allowed' : 'pointer', height: 34 }}
+          >
+            <Send size={12} />
+            {sending ? 'Sending…' : 'Send Invite'}
+          </button>
+        </div>
+
+        {sendSuccess && (
+          <p className="mt-2 text-xs text-green-400 flex items-center gap-1.5">
+            <CheckCircle size={12} />
+            {sendSuccess}
+          </p>
+        )}
+        {sendError && (
+          <p className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
+            <AlertTriangle size={12} />
+            {sendError}
+          </p>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-x-auto overflow-y-auto">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-xs text-gray-600 gap-2">
+            <div className="w-3 h-3 rounded-full border border-green-800 border-t-green-500 animate-spin" />
+            Loading invites…
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center py-12 text-xs text-red-400 gap-2">
+            <AlertTriangle size={14} />
+            {error}
+          </div>
+        ) : invites.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-2 text-center px-4">
+            <Mail size={24} className="text-gray-700" />
+            <p className="text-sm text-gray-500">No invites sent yet.</p>
+            <p className="text-xs text-gray-700">Use the form above to invite beta users.</p>
+          </div>
+        ) : (
+          <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1e2128', backgroundColor: '#0f1018' }}>
+                {['Email', 'Industry', 'Status', 'Invited', 'Expires', 'Actions'].map((col) => (
+                  <th
+                    key={col}
+                    className="text-left px-4 py-3 font-semibold uppercase tracking-wide text-gray-600"
+                    style={{ fontSize: 10, whiteSpace: 'nowrap' }}
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {invites.map((invite) => (
+                <tr
+                  key={invite.id}
+                  className="border-b hover:bg-white/[0.02] transition-colors"
+                  style={{ borderColor: '#1a1c23', opacity: invite.status === 'expired' ? 0.5 : 1 }}
+                >
+                  <td className="px-4 py-3 text-gray-200 font-medium whitespace-nowrap max-w-[200px] truncate">
+                    {invite.email}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                    {invite.industry || <span className="text-gray-700">—</span>}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {statusBadge(invite.status)}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                    {fmtDate(invite.invited_at)}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                    {fmtDate(invite.expires_at)}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      {/* Resend */}
+                      <button
+                        onClick={() => handleResend(invite)}
+                        disabled={sending}
+                        className="flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40"
+                        style={{ backgroundColor: '#0f2a4a', color: '#60a5fa', border: '1px solid #1e3a5f' }}
+                        title="Resend invite"
+                      >
+                        <Send size={10} />
+                        Resend
+                      </button>
+
+                      {/* Revoke — only for pending */}
+                      {invite.status === 'pending' && (
+                        <button
+                          onClick={() => handleRevoke(invite)}
+                          disabled={revokingId === invite.id}
+                          className="flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40"
+                          style={{ backgroundColor: '#2a0a0a', color: '#f87171', border: '1px solid #7f1d1d44' }}
+                          title="Revoke invite"
+                        >
+                          <Ban size={10} />
+                          {revokingId === invite.id ? 'Revoking…' : 'Revoke'}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Guardian View Root ───────────────────────────────────────────────────────
 
-type GuardianTab = 'monitor' | 'ai-decisions' | 'signed-ndas';
+type GuardianTab = 'monitor' | 'ai-decisions' | 'signed-ndas' | 'beta-invites';
 
 export default function GuardianView() {
   const [activeTab, setActiveTab] = useState<GuardianTab>('monitor');
 
-  const tabs: { id: GuardianTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'monitor', label: 'Monitor', icon: <Shield size={12} /> },
-    { id: 'ai-decisions', label: 'AI Decisions', icon: <Brain size={12} /> },
-    { id: 'signed-ndas', label: 'Signed NDAs', icon: <FileText size={12} /> },
+  // Pending invite badge count — loaded lazily to show on tab
+  const [pendingInviteCount, setPendingInviteCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    import('../services/inviteService').then(({ getInvites }) => {
+      getInvites().then((rows) => {
+        setPendingInviteCount(rows.filter((r) => r.status === 'pending').length);
+      }).catch(() => { /* non-fatal */ });
+    });
+  }, []);
+
+  const tabs: { id: GuardianTab; label: string; icon: React.ReactNode; badge?: number | null }[] = [
+    { id: 'monitor',      label: 'Monitor',       icon: <Shield size={12} /> },
+    { id: 'ai-decisions', label: 'AI Decisions',  icon: <Brain size={12} /> },
+    { id: 'signed-ndas',  label: 'Signed NDAs',   icon: <FileText size={12} /> },
+    { id: 'beta-invites', label: 'Beta Invites',  icon: <Mail size={12} />, badge: pendingInviteCount },
   ];
 
   return (
@@ -1052,6 +1389,14 @@ export default function GuardianView() {
           >
             {tab.icon}
             {tab.label}
+            {tab.badge != null && tab.badge > 0 && (
+              <span
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-none ml-0.5"
+                style={{ backgroundColor: '#1e3a5f', color: '#60a5fa', border: '1px solid #1e3a5f' }}
+              >
+                {tab.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -1077,6 +1422,11 @@ export default function GuardianView() {
             style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14', height: '100%', minHeight: 0 }}
           >
             <SignedNDAsAdminTab />
+          </div>
+        )}
+        {activeTab === 'beta-invites' && (
+          <div className="h-full min-h-0">
+            <BetaInvitesTab />
           </div>
         )}
       </div>
