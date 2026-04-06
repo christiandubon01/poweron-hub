@@ -22,6 +22,8 @@ import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 import { clearConversationThread } from '@/services/nexusLearnedProfile'
 import { extractAndStoreConversationSignals, initEchoMemory } from '@/agents/echo/echoMemory'
 import { MorningBriefingCard } from './MorningBriefingCard'
+import SessionDebrief from '@/components/SessionDebrief'
+import { extractConclusions, saveConclusions, type ConclusionItem } from '@/services/sessionConclusionService'
 import { useAuth } from '@/hooks/useAuth'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
@@ -158,6 +160,12 @@ export function NexusChatPanel() {
   const [agentMode, setAgentMode]           = useState<NexusAgentMode>(getActiveMode)
   const [syncTime, setSyncTime]             = useState<number>(0)
 
+  // B11 — Session Debrief state
+  const [isDebriefOpen, setIsDebriefOpen]           = useState(false)
+  const [debriefConclusions, setDebriefConclusions] = useState<ConclusionItem[]>([])
+  const [debriefSessionId, setDebriefSessionId]     = useState<string>('')
+  const debriefTriggeredRef                         = useRef(false)
+
   // Update syncTime whenever operational context is rebuilt
   // Poll every 30s to keep display current after initial build
   useEffect(() => {
@@ -217,6 +225,32 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
   useEffect(() => {
     initEchoMemory()
   }, [])
+
+  // B11 — Session conclusion extraction: trigger once when the conversation
+  // reaches 5+ message exchanges (user + assistant pairs = 10+ messages).
+  // Shows SessionDebrief so the user can review and save the conclusions to
+  // session_conclusions (used by the ECHO rolling window on next session open).
+  useEffect(() => {
+    const assistantCount = messages.filter(m => m.role === 'assistant').length
+    if (assistantCount >= 5 && !debriefTriggeredRef.current && !isProcessing) {
+      debriefTriggeredRef.current = true
+
+      // Extract conclusions from the conversation so far
+      const rawMessages = messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        agentId: m.agentId,
+      }))
+      const extracted = extractConclusions(rawMessages)
+      const sessionId = `nexus-session-${Date.now()}`
+
+      setDebriefConclusions(extracted)
+      setDebriefSessionId(sessionId)
+      setIsDebriefOpen(true)
+
+      console.log(`[B11] Session debrief triggered — ${extracted.length} conclusions extracted (session: ${sessionId})`)
+    }
+  }, [messages, isProcessing])
 
   // ── Send message ────────────────────────────────────────────────────────
 
@@ -403,6 +437,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     setLastMsgMode('briefing')
     setError(null)
     setPendingProposal(null)
+    debriefTriggeredRef.current = false // Allow debrief to trigger again on next session
     clearConversationThread() // Clear Layer 1 conversation thread from localStorage
   }, [messages])
 
@@ -756,6 +791,17 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           </span>
         </div>
       </div>
+
+      {/* B11 — Session Debrief: slides up after 5+ exchanges */}
+      {profile?.id && (
+        <SessionDebrief
+          isOpen={isDebriefOpen}
+          conclusions={debriefConclusions}
+          userId={profile.id}
+          sessionId={debriefSessionId}
+          onClose={() => setIsDebriefOpen(false)}
+        />
+      )}
     </div>
   )
 }

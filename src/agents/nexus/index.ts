@@ -1776,7 +1776,7 @@ Always combine external research WITH the user's actual operational data — nev
     enrichedMessage,
     request.orgId,
     request.conversationHistory,
-    { isListQuery, isResearchQuery, operationalContext: resolvedContext }
+    { isListQuery, isResearchQuery, operationalContext: resolvedContext, userId: request.userId }
   )
 
   // ── Step 4b: SCOUT improvement detection — silent background logging ────

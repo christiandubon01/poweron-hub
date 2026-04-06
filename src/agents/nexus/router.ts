@@ -15,6 +15,7 @@ import { getLedgerContext } from '@/services/ledgerDataBridge'
 import { getBackupData, getProjectFinancials, num } from '@/services/backupDataService'
 import { buildOwnerProfileContext } from '@/services/ownerProfileService'
 import { useDemoStore } from '@/store/demoStore'
+import { buildEchoRollingBlock, getEmptyEchoBlock } from '@/services/echoRollingWindow'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
 
 // ── Status Bucket Helpers ───────────────────────────────────────────────────
@@ -605,7 +606,7 @@ export async function routeToAgent(
   userMessage:  string,
   orgId:        string,
   conversationHistory: ConversationMessage[],
-  options?: { isListQuery?: boolean; isResearchQuery?: boolean; operationalContext?: string }
+  options?: { isListQuery?: boolean; isResearchQuery?: boolean; operationalContext?: string; userId?: string }
 ): Promise<AgentResponse> {
   const targetAgent = intent.targetAgent
   const agentName   = AGENT_DISPLAY_NAMES[targetAgent]
@@ -716,10 +717,26 @@ If the NEXUS synthesis already fully answered the question — stop there. Do NO
   // Synchronous read from already-loaded backupDataService state — no Supabase calls.
   const liveBusinessCtx = buildLiveBusinessContext()
 
+  // B11 — ECHO rolling window: last 24h session conclusions + recent voice journal notes.
+  // Injected AFTER liveBusinessCtx (B10), BEFORE user messages so NEXUS carries
+  // forward context from previous sessions without opening cold.
+  let echoMemoryBlock = getEmptyEchoBlock()
+  const routerUserId = options?.userId
+  if (routerUserId) {
+    try {
+      const echoResult = await buildEchoRollingBlock(routerUserId)
+      echoMemoryBlock = echoResult.promptBlock
+    } catch (echoErr) {
+      console.warn('[Router] ECHO rolling window fetch failed (non-critical):', echoErr)
+      // echoMemoryBlock stays as the empty placeholder — never skip the block entirely
+    }
+  }
+
   const systemPrompt = [
     demoPersonalityPrefix ? `${demoPersonalityPrefix}\n---\n\n` : '',
     buildSystemPrompt(),
     liveBusinessCtx ? `\n---\n\n${liveBusinessCtx}` : '',
+    `\n---\n\n${echoMemoryBlock}`,
     `\n---\n\n${capabilitySummary}`,
     ownerProfileCtx ? `\n---\n\n${ownerProfileCtx}` : '',
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',

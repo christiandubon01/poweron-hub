@@ -231,6 +231,88 @@ export async function markConclusionCompleted(conclusionId: string): Promise<voi
   });
 }
 
+// ─── extractConclusions ───────────────────────────────────────────────────────
+
+/**
+ * extractConclusions
+ *
+ * B11 — Derives ConclusionItem[] from a completed NEXUS conversation.
+ * Called after 5+ message exchanges so ECHO memory carries forward results.
+ *
+ * Extraction strategy:
+ *  1. Scan assistant messages for decision language and action-item signals.
+ *  2. Scan user messages for confirmed decisions and explicit next steps.
+ *  3. Deduplicate and cap at 6 conclusions per session.
+ *
+ * No Claude API call — purely heuristic, intentionally fast and offline-safe.
+ * For higher-quality extraction, this can be replaced with a Claude call later.
+ */
+export function extractConclusions(
+  messages: Array<{ role: 'user' | 'assistant'; content: string; agentId?: string }>,
+): ConclusionItem[] {
+  const conclusions: ConclusionItem[] = [];
+
+  // Patterns that signal a conclusion / action item in assistant responses
+  const ASSISTANT_CONCLUSION_PATTERNS = [
+    /\bI(?:'ll| will)\s+(?:add|create|log|save|update|schedule|set|send|flag|remind)\b/i,
+    /\byou\s+(?:should|need to|want to|plan to)\b/i,
+    /\baction\s+(?:item|required|needed)\b/i,
+    /\bfollow\s*[- ]?up\b/i,
+    /\bnext\s+step\b/i,
+    /\bworth\s+a\b.*\bcall\b/i,
+    /\brecommend\b/i,
+    /\bcritical\b.*\b(to|that)\b/i,
+  ];
+
+  // Patterns that signal a user decision
+  const USER_DECISION_PATTERNS = [
+    /\b(let's|let me|i('ll| will)|going to|decided|confirmed|approved|do it|proceed)\b/i,
+    /\b(i need to|i should|i want to|i'm going to|planning to)\b/i,
+  ];
+
+  const seenTexts = new Set<string>();
+
+  for (const msg of messages) {
+    if (msg.role === 'assistant') {
+      // Split assistant message into sentences and check each one
+      const sentences = msg.content
+        .split(/(?<=[.!?])\s+/)
+        .map(s => s.trim())
+        .filter(s => s.length > 20 && s.length < 300);
+
+      for (const sentence of sentences) {
+        if (ASSISTANT_CONCLUSION_PATTERNS.some(re => re.test(sentence))) {
+          const key = sentence.toLowerCase().slice(0, 60);
+          if (!seenTexts.has(key)) {
+            seenTexts.add(key);
+            conclusions.push({
+              text: sentence,
+              agentRefs: msg.agentId ? [msg.agentId] : ['nexus'],
+            });
+          }
+        }
+      }
+    } else if (msg.role === 'user') {
+      const trimmed = msg.content.trim();
+      if (trimmed.length > 15 && USER_DECISION_PATTERNS.some(re => re.test(trimmed))) {
+        const key = trimmed.toLowerCase().slice(0, 60);
+        if (!seenTexts.has(key)) {
+          seenTexts.add(key);
+          conclusions.push({
+            text: trimmed.slice(0, 200),
+            agentRefs: ['user'],
+          });
+        }
+      }
+    }
+
+    // Cap at 6 conclusions
+    if (conclusions.length >= 6) break;
+  }
+
+  return conclusions;
+}
+
 // ─── supersededConclusion ─────────────────────────────────────────────────────
 
 /**
