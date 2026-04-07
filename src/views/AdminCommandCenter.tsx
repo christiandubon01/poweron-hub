@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
- * AdminCommandCenter.tsx — B37 | Admin Command Center
+ * AdminCommandCenter.tsx — B38 | Admin Command Center
  *
  * Full-screen admin panel with 11 sub-tabs.
- * B36: Tabs 1–3 implemented. B37: Tabs 4–5 (Economics + Improvement Log).
+ * B36: Tabs 1–3 implemented. B37: Tabs 4–5 (Economics + Improvement Log). B38: Tabs 6–7 (Summary + Checklist, Scripts + Positioning).
  *
  * Admin-only: gated in V15rLayout sidebar (email matches VITE_ADMIN_EMAIL).
  */
@@ -27,8 +27,8 @@ const TABS = [
   { id: 'beta',     label: '3 · Beta Metrics' },
   { id: 'economics',  label: '4 · Economics' },
   { id: 'improvelog', label: '5 · Improvement Log' },
-  { id: 't6',       label: '6' },
-  { id: 't7',       label: '7' },
+  { id: 't6',       label: '6 · Summary + Checklist' },
+  { id: 't7',       label: '7 · Scripts + Positioning' },
   { id: 't8',       label: '8' },
   { id: 't9',       label: '9' },
   { id: 't10',      label: '10' },
@@ -1515,6 +1515,731 @@ function Tab5ImprovementLog() {
   )
 }
 
+// ─── TAB 6 — Summary + Checklist ─────────────────────────────────────────────
+
+type ChecklistItem = {
+  id: string
+  title: string
+  category: string
+  dueDate: string
+  notes: string
+  checked: boolean
+}
+
+const CHECKLIST_DISMISS_KEY = 'poweron_voice_reminder_dismissed'
+const CHECKLIST_CATEGORIES = ['Feature', 'Business', 'Bug', 'UX', 'Performance', 'Legal', 'Security', 'General']
+
+const DEFAULT_CHECKLIST_ITEMS: ChecklistItem[] = [
+  { id: '1', title: 'Follow up with all 6 beta invitees — confirm NDA + onboarding', category: 'Business', dueDate: '2026-04-10', notes: '', checked: false },
+  { id: '2', title: 'Deploy Tab 6 Summary + Checklist to production', category: 'Feature', dueDate: '2026-04-07', notes: '', checked: false },
+  { id: '3', title: 'Deploy Tab 7 Scripts + Positioning to production', category: 'Feature', dueDate: '2026-04-07', notes: '', checked: false },
+  { id: '4', title: 'File provisional patent application', category: 'Legal', dueDate: '2026-04-15', notes: '', checked: false },
+  { id: '5', title: 'Set up Resend for automated beta invite emails', category: 'Feature', dueDate: '2026-04-12', notes: '', checked: false },
+  { id: '6', title: 'Run NEXUS voice demo for first beta user', category: 'Business', dueDate: '2026-04-14', notes: '', checked: false },
+  { id: '7', title: 'Export lender one-pager with live pipeline numbers', category: 'Business', dueDate: '2026-04-20', notes: '', checked: false },
+  { id: '8', title: 'Review and respond to all Voice Hub captures older than 48h', category: 'General', dueDate: '2026-04-08', notes: '', checked: false },
+]
+
+const CATEGORY_CHIP_COLORS: Record<string, string> = {
+  Feature: '#3b82f6', Business: '#34d399', Bug: '#ef4444', UX: '#8b5cf6',
+  Performance: '#f59e0b', Legal: '#a78bfa', Security: '#f87171', General: '#6b7280',
+}
+
+function getWeekLabel(date: Date): string {
+  const start = new Date(date)
+  const day = start.getDay()
+  const diff = start.getDate() - day + (day === 0 ? -6 : 1)
+  start.setDate(diff)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return `Week of ${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+}
+
+function getMonthLabel(date: Date): string {
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' })
+}
+
+function Tab6SummaryChecklist() {
+  const [summary, setSummary] = useState('')
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [items, setItems] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST_ITEMS)
+  const [completions, setCompletions] = useState<any[]>([])
+  const [completionsLoading, setCompletionsLoading] = useState(true)
+  const [filterStart, setFilterStart] = useState('2026-04-06')
+  const [filterEnd, setFilterEnd] = useState(new Date().toISOString().split('T')[0])
+  const [voiceCaptures, setVoiceCaptures] = useState<number>(0)
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(CHECKLIST_DISMISS_KEY) === '1' } catch { return false }
+  })
+
+  // Load voice captures older than 24h
+  useEffect(() => {
+    async function fetchVoice() {
+      try {
+        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+        const { count } = await (supabase as any)
+          .from('voice_journal_entries')
+          .select('*', { count: 'exact', head: true })
+          .lt('created_at', cutoff)
+          .eq('reviewed', false)
+        setVoiceCaptures(count ?? 0)
+      } catch { setVoiceCaptures(0) }
+    }
+    fetchVoice()
+  }, [])
+
+  // Load completions from Supabase
+  useEffect(() => { fetchCompletions() }, [])
+
+  async function fetchCompletions() {
+    setCompletionsLoading(true)
+    try {
+      const { data } = await (supabase as any)
+        .from('checklist_completions')
+        .select('*')
+        .order('completed_at', { ascending: false })
+        .limit(500)
+      setCompletions(data ?? [])
+    } catch { setCompletions([]) }
+    setCompletionsLoading(false)
+  }
+
+  async function handleCheck(id: string) {
+    const item = items.find(i => i.id === id)
+    if (!item || item.checked) return
+    const now = new Date()
+    setItems(prev => prev.map(i => i.id === id ? { ...i, checked: true } : i))
+    try {
+      await (supabase as any).from('checklist_completions').insert({
+        title: item.title,
+        category: item.category,
+        notes: item.notes,
+        completed_at: now.toISOString(),
+        week_label: getWeekLabel(now),
+        month_label: getMonthLabel(now),
+      })
+      await fetchCompletions()
+    } catch (e) { console.warn('[Tab6] checklist completion insert failed:', e) }
+  }
+
+  function handleNotesChange(id: string, notes: string) {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, notes } : i))
+  }
+
+  async function generateSummary() {
+    setSummaryLoading(true)
+    const ctx = getSummaryContext()
+    const pendingCount = items.filter(i => !i.checked).length
+    const completedCount = completions.length
+    const text = await fetchInsight(
+      'You are a senior business advisor for Power On Hub, an electrical contractor operations AI platform. Be executive-level: precise, forward-looking, and actionable. No fluff.',
+      `Platform context: ${ctx}
+Beta status: 6 invitees, early beta, no MRR yet. IP filed. 15 agents live. 6 industries scoped.
+Checklist: ${pendingCount} open items, ${completedCount} completed since April 6 2026.
+
+Generate:
+1. EXECUTIVE SUMMARY (2-3 sentences): Where does the platform stand today?
+2. WHAT IS WORKING (2-3 bullets): strongest signals
+3. NEEDS ATTENTION (2-3 bullets): highest-risk gaps right now
+4. THIS WEEK (3 items): most critical actions
+5. THIS MONTH (3 items): key milestones to hit
+6. NEXT 90 DAYS (3 items): the build/GTM moves that change trajectory
+7. PROJECTED OUTCOME: If all 90-day steps complete, describe platform state in one sentence.
+
+Format as plain text with these exact section labels.`
+    )
+    setSummary(text)
+    setSummaryLoading(false)
+  }
+
+  useEffect(() => { generateSummary() }, [])
+
+  const filteredCompletions = completions.filter(c => {
+    const d = (c.completed_at || '').split('T')[0]
+    return d >= filterStart && d <= filterEnd
+  })
+
+  function exportCompletionsCSV() {
+    const cols = ['id', 'title', 'category', 'notes', 'completed_at', 'week_label', 'month_label']
+    const rows = filteredCompletions.map(c => cols.map(k => JSON.stringify(c[k] ?? '')).join(','))
+    const blob = new Blob([[cols.join(','), ...rows].join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url
+    a.download = `checklist_completions_${filterStart}_${filterEnd}.csv`
+    a.click(); URL.revokeObjectURL(url)
+  }
+
+  function exportCompletionsPDF() {
+    const win = window.open('', '_blank')
+    if (!win) return
+    const rows = filteredCompletions.map(c =>
+      `<tr><td>${c.title}</td><td>${c.category}</td><td>${c.completed_at ? new Date(c.completed_at).toLocaleString() : ''}</td><td>${c.notes || ''}</td></tr>`
+    ).join('')
+    win.document.write(`<html><head><title>Checklist Completions</title><style>
+      body{font-family:sans-serif;font-size:12px;padding:20px}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}
+      th{background:#f3f4f6;font-weight:700}
+      h2{margin-bottom:4px}p{margin:0 0 16px;color:#666}
+    </style></head><body>
+      <h2>Checklist Completions</h2>
+      <p>Period: ${filterStart} → ${filterEnd} · ${filteredCompletions.length} items</p>
+      <table><thead><tr><th>Title</th><th>Category</th><th>Completed At</th><th>Notes</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </body></html>`)
+    win.document.close()
+    win.print()
+  }
+
+  const activeItems = items.filter(i => !i.checked)
+  const checkedLocally = items.filter(i => i.checked)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Voice Hub reminder banner */}
+      {!dismissed && voiceCaptures > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          backgroundColor: '#1c1f2e', border: '1px solid #4f46e5', borderRadius: 10,
+          padding: '12px 16px', gap: 12,
+        }}>
+          <span style={{ fontSize: 13, color: '#c7d2fe' }}>
+            🎙 You have <strong style={{ color: '#a5b4fc' }}>{voiceCaptures} voice capture{voiceCaptures !== 1 ? 's' : ''}</strong> from the last 24 hours that may contain improvement ideas. Review them in Voice Hub.
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button
+              style={{ fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 6, border: '1px solid #6366f1', backgroundColor: '#4f46e5', color: '#fff', cursor: 'pointer' }}
+              onClick={() => { /* navigate to voice hub — handled by sidebar */ }}
+            >
+              Go to Voice Hub
+            </button>
+            <button
+              style={{ fontSize: 11, color: '#6b7280', background: 'transparent', border: 'none', cursor: 'pointer', padding: '5px 8px' }}
+              onClick={() => {
+                setDismissed(true)
+                try { localStorage.setItem(CHECKLIST_DISMISS_KEY, '1') } catch {}
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* AI Summary */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #3b82f655', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 4, height: 24, backgroundColor: '#3b82f6', borderRadius: 2 }} />
+            <div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: '#bfdbfe', margin: 0 }}>Platform Summary</h3>
+              <p style={{ fontSize: 11, color: '#60a5fa', margin: 0 }}>AI-generated cross-tab executive brief</p>
+            </div>
+          </div>
+          <button
+            onClick={generateSummary}
+            disabled={summaryLoading}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 8,
+              border: '1px solid #3b82f666', backgroundColor: 'transparent', color: '#60a5fa',
+              cursor: summaryLoading ? 'not-allowed' : 'pointer', opacity: summaryLoading ? 0.6 : 1,
+            }}
+          >
+            {summaryLoading ? 'Generating…' : '↺ Regenerate'}
+          </button>
+        </div>
+        <div style={{
+          fontSize: 13, lineHeight: 1.75, color: '#d1d5db', whiteSpace: 'pre-wrap',
+          backgroundColor: '#111827', borderRadius: 8, padding: '14px 16px', minHeight: 80,
+        }}>
+          {summaryLoading ? '⏳ Generating executive summary…' : (summary || 'Click Regenerate to generate summary.')}
+        </div>
+      </div>
+
+      {/* Active checklist */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #16a34a55', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#16a34a', borderRadius: 2 }} />
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#bbf7d0', margin: 0 }}>Actionable Checklist</h3>
+            <p style={{ fontSize: 11, color: '#4ade80', margin: 0 }}>{activeItems.length} open · Check to log completion permanently</p>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {activeItems.map(item => (
+            <div key={item.id} style={{
+              backgroundColor: '#111827', border: '1px solid #1e3a2f', borderRadius: 8, padding: '12px 14px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={item.checked}
+                  onChange={() => handleCheck(item.id)}
+                  style={{ marginTop: 2, width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a' }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{item.title}</span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                      backgroundColor: (CATEGORY_CHIP_COLORS[item.category] || '#6b7280') + '22',
+                      color: CATEGORY_CHIP_COLORS[item.category] || '#6b7280',
+                      border: `1px solid ${(CATEGORY_CHIP_COLORS[item.category] || '#6b7280')}44`,
+                    }}>
+                      {item.category}
+                    </span>
+                    {item.dueDate && (
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>Due: {item.dueDate}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={item.notes}
+                    placeholder="Add notes…"
+                    onChange={e => handleNotesChange(item.id, e.target.value)}
+                    style={{
+                      width: '100%', fontSize: 12, color: '#9ca3af', backgroundColor: '#0f172a',
+                      border: '1px solid #1e2d3d', borderRadius: 5, padding: '4px 8px',
+                      outline: 'none', boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Completed items */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #374151', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 4, height: 24, backgroundColor: '#6b7280', borderRadius: 2 }} />
+            <div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: '#d1d5db', margin: 0 }}>Completed Items</h3>
+              <p style={{ fontSize: 11, color: '#6b7280', margin: 0 }}>Permanent record from April 6 2026 · never deleted</p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="date" value={filterStart} onChange={e => setFilterStart(e.target.value)}
+              style={{ fontSize: 12, backgroundColor: '#111827', color: '#d1d5db', border: '1px solid #374151', borderRadius: 5, padding: '4px 8px' }} />
+            <span style={{ fontSize: 12, color: '#6b7280' }}>→</span>
+            <input type="date" value={filterEnd} onChange={e => setFilterEnd(e.target.value)}
+              style={{ fontSize: 12, backgroundColor: '#111827', color: '#d1d5db', border: '1px solid #374151', borderRadius: 5, padding: '4px 8px' }} />
+            <button onClick={exportCompletionsCSV}
+              style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 6, border: '1px solid #374151', backgroundColor: '#1f2937', color: '#9ca3af', cursor: 'pointer' }}>
+              CSV
+            </button>
+            <button onClick={exportCompletionsPDF}
+              style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 6, border: '1px solid #374151', backgroundColor: '#1f2937', color: '#9ca3af', cursor: 'pointer' }}>
+              PDF
+            </button>
+          </div>
+        </div>
+        {completionsLoading ? (
+          <p style={{ fontSize: 13, color: '#6b7280' }}>Loading completions…</p>
+        ) : filteredCompletions.length === 0 ? (
+          <p style={{ fontSize: 13, color: '#4b5563' }}>No completions in this date range yet.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {filteredCompletions.map(c => (
+              <div key={c.id} style={{
+                backgroundColor: '#111827', border: '1px solid #1a2a1e', borderRadius: 8, padding: '10px 14px',
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                <span style={{ fontSize: 14, color: '#4ade80' }}>✓</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, color: '#d1d5db', fontWeight: 600 }}>{c.title}</span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                      backgroundColor: (CATEGORY_CHIP_COLORS[c.category] || '#6b7280') + '22',
+                      color: CATEGORY_CHIP_COLORS[c.category] || '#6b7280',
+                    }}>{c.category}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 2 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>
+                      {c.completed_at ? new Date(c.completed_at).toLocaleString() : ''}
+                    </span>
+                    {c.week_label && <span style={{ fontSize: 11, color: '#4b5563' }}>{c.week_label}</span>}
+                    {c.notes && <span style={{ fontSize: 11, color: '#9ca3af' }}>{c.notes}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+    </div>
+  )
+}
+
+// ─── TAB 7 — Scripts + Positioning ────────────────────────────────────────────
+
+type AudienceSection = {
+  id: string
+  label: string
+  icon: string
+  accentColor: string
+  whatToSay: string
+  whatNotToSay: string
+  dataToShow: string[]
+  readyItems: string[]
+  diveDeeper: {
+    whyThisAudience: string
+    whatTheyCareAbout: string
+    objectionsToExpect: string[]
+    howToHandle: string[]
+  }
+}
+
+const AUDIENCE_SECTIONS: AudienceSection[] = [
+  {
+    id: 'contractors',
+    label: 'Independent Contractors',
+    icon: '🔧',
+    accentColor: '#f59e0b',
+    whatToSay: 'You are running a business with no operations team. This AI is your operations team. It knows your jobs, your money, and your compliance — and it talks to you.',
+    whatNotToSay: 'Nothing about data licensing, enterprise features, API, or platform vision.',
+    dataToShow: ['Pipeline', 'NEXUS voice demo', 'Proactive alerts example'],
+    readyItems: ['Phone with app open', 'NEXUS answering a real question about their type of work'],
+    diveDeeper: {
+      whyThisAudience: 'Independent contractors have zero overhead budget and zero operations staff. Every hour spent on admin is an hour not billed. They feel this pain acutely every day. They are the fastest path to product-market fit because the value proposition is immediate and personal — not organizational or strategic.',
+      whatTheyCareAbout: 'Time savings on invoicing, knowing what they are owed right now, not missing a compliance deadline, and looking professional in front of GCs. They do not care about data moats or V7 licensing plays.',
+      objectionsToExpect: [
+        'I already use QuickBooks / ServiceTitan / Jobber',
+        'I don\'t have time to learn another app',
+        'Sounds expensive — I run lean',
+      ],
+      howToHandle: [
+        'Those tools don\'t talk to you. NEXUS does. Show the voice demo immediately.',
+        'The onboarding is a 15-minute walkthrough. Show them the first screen — it\'s their actual pipeline.',
+        'Start with the Solo tier. At $49/mo you save more in one avoided invoice mistake.',
+      ],
+    },
+  },
+  {
+    id: 'small-org',
+    label: 'Small Organizations (2–10 Crew)',
+    icon: '👥',
+    accentColor: '#34d399',
+    whatToSay: 'Your crew can log from the field with their own login. You see everything they do. No more chasing updates.',
+    whatNotToSay: 'Nothing about multi-tenant architecture or complex enterprise flows.',
+    dataToShow: ['Crew portal', 'Role-based access', 'Field log', 'Project health'],
+    readyItems: ['Live demo of crew portal with sample field log entry', 'Show real-time owner visibility of field activity'],
+    diveDeeper: {
+      whyThisAudience: 'Small organizations have a coordination problem. The owner is doing admin, sales, field oversight, and collections simultaneously. Field staff are not logging consistently. The pain is miscommunication between field and office, and owners making decisions without real data.',
+      whatTheyCareAbout: 'Real-time visibility on what the crew is doing. Reducing the back-and-forth texts. Knowing the project health without calling the foreman. Keeping the crew accountable without micromanaging.',
+      objectionsToExpect: [
+        'My guys won\'t use it',
+        'We already use group text / WhatsApp',
+        'I don\'t want to pay per seat',
+      ],
+      howToHandle: [
+        'The crew login takes 30 seconds. Show them the field log UI — it\'s 3 taps. Easier than texting.',
+        'Group text has no history, no structure, and no visibility for the owner. Show the log vs the text.',
+        'Pricing is per org, not per seat at the entry tiers. Show the Growth plan.',
+      ],
+    },
+  },
+  {
+    id: 'teams',
+    label: 'Teams (10+ Crew)',
+    icon: '🏗️',
+    accentColor: '#60a5fa',
+    whatToSay: 'Role-based access means every person sees only their lane. The owner sees everything. Full audit trail.',
+    whatNotToSay: 'Do not promise features not yet built (RELAY, NEGOTIATE).',
+    dataToShow: ['Multi-user org diagram', 'Audit trail', 'n8n automation overview'],
+    readyItems: ['Role hierarchy diagram printed or on screen', 'n8n automation example running live'],
+    diveDeeper: {
+      whyThisAudience: 'Larger teams need governance. Owners of 10+ person crews are dealing with inconsistent data entry, liability from undocumented decisions, and project managers who need autonomy without unchecked access. This audience sees the platform as an operational control layer.',
+      whatTheyCareAbout: 'Who did what and when. Audit trails for liability. Role separation so crew doesn\'t see financials. Automation that reduces coordinator overhead.',
+      objectionsToExpect: [
+        'We have a system — it\'s painful to switch',
+        'How do I know my data is secure?',
+        'What happens if the AI makes a mistake?',
+      ],
+      howToHandle: [
+        'Migration is one JSON import. The system reads your existing data shape. Show the import flow.',
+        'All data is in your Supabase instance with RLS. You own the database. Show the architecture slide.',
+        'NEXUS surfaces recommendations. You make the decision. The AI doesn\'t execute — it advises.',
+      ],
+    },
+  },
+  {
+    id: 'developers',
+    label: 'App Developers',
+    icon: '💻',
+    accentColor: '#a78bfa',
+    whatToSay: 'The platform is built API-first. When the developer ecosystem opens, revenue share is on the table.',
+    whatNotToSay: 'Do not give architecture details. No source code discussion.',
+    dataToShow: ['Agent system map', 'The 15-agent hierarchy', 'The data layer vision'],
+    readyItems: ['Agent hierarchy diagram', 'One-pager on developer ecosystem timeline'],
+    diveDeeper: {
+      whyThisAudience: 'Developers building vertical SaaS tools for trades are looking for platforms to integrate with or build on top of. They care about APIs, SDKs, and revenue share. They are evaluating whether this is a credible platform or a toy. The agent architecture and data moat story are the proof points.',
+      whatTheyCareAbout: 'API stability, documentation, revenue share structure, data access, and whether the founding team can execute. They will probe on architecture decisions.',
+      objectionsToExpect: [
+        'Is the API public yet?',
+        'What\'s the revenue share model?',
+        'Why would I build on this vs. building my own?',
+      ],
+      howToHandle: [
+        'Developer API opens with the V5 milestone. Early partners get preferred rate access and co-marketing.',
+        'Revenue share details are in negotiation for early partners — express interest now and you\'re in that conversation.',
+        'The data moat compounds with every org. Building on PowerOn gives you access to aggregated trade benchmarks at V7.',
+      ],
+    },
+  },
+  {
+    id: 'lenders',
+    label: 'Lenders',
+    icon: '🏦',
+    accentColor: '#f472b6',
+    whatToSay: 'This borrower has real-time pipeline visibility, AR aging tracking, and documented project completion rates. This is not a tradesperson with a spreadsheet.',
+    whatNotToSay: 'Do not over-promise on data maturity. Stick to what is live.',
+    dataToShow: ['Pipeline', 'Paid', 'Exposure', 'Project health scores', 'CFOT chart'],
+    readyItems: ['Printed or exported one-pager with current real numbers'],
+    diveDeeper: {
+      whyThisAudience: 'Lenders are underwriting risk. Their core problem with contractors is lack of verifiable operational data. A contractor with organized, timestamped, structured operational data is a fundamentally lower risk profile than one with bank statements and a stack of invoices. PowerOn is the credentialing layer for contractor lending.',
+      whatTheyCareAbout: 'Revenue velocity, AR aging, project completion rates, cash flow predictability, and consistency of data over time. They want to see trend data, not a snapshot.',
+      objectionsToExpect: [
+        'How do we know the data isn\'t manipulated?',
+        'What\'s the data history period?',
+        'Is this auditable?',
+      ],
+      howToHandle: [
+        'All entries are timestamped in Supabase with an audit trail. No backdating. Show the audit log.',
+        'Data history starts from first app use. Show the date range on the export.',
+        'Every action is logged with a decision record. The audit decisions table is immutable.',
+      ],
+    },
+  },
+  {
+    id: 'investors',
+    label: 'Investors / Angels',
+    icon: '📈',
+    accentColor: '#fb923c',
+    whatToSay: 'Built by a practitioner. IP filed. 15 agents live. 6 industries. Data moat compounds with every org. V7 data licensing is the exit play.',
+    whatNotToSay: 'Do not discuss current revenue (zero). Frame around trajectory and moat.',
+    dataToShow: ['Blueprint V3 document — Investors tab', 'Scenario sliders live'],
+    readyItems: ['Blueprint V3 investor deck open', 'Live scenario sliders showing growth projections'],
+    diveDeeper: {
+      whyThisAudience: 'Angel investors and early-stage VCs are pattern-matching on founder-market fit, defensibility, and path to scale. The PowerOn story checks all three: a practitioner-founder with 10+ years in the trade, IP filed before beta, a 15-agent architecture that compounds in value with data, and a V7 data licensing exit that is not dependent on consumer scale.',
+      whatTheyCareAbout: 'Defensibility (why can\'t a large player replicate this), TAM, exit path, and whether the founder can execute. They will probe on competition and on why now.',
+      objectionsToExpect: [
+        'ServiceTitan already does this',
+        'Why won\'t a large CRM just add this feature?',
+        'What\'s the realistic exit path?',
+      ],
+      howToHandle: [
+        'ServiceTitan is a $10B scheduling tool. It doesn\'t have a voice AI operations brain or a data licensing play. Show the NEXUS demo.',
+        'The moat is the data, not the features. Aggregated trade operational benchmarks take years of org-level data to build. Features are replicable; a compound data asset is not.',
+        'V7 data licensing to lenders and insurers at 200+ orgs. A strategic acquisition by a fintech or insurtech player is the most likely path. Show the Blueprint V3 scenario sliders.',
+      ],
+    },
+  },
+  {
+    id: 'banks',
+    label: 'Banks / Lending Departments',
+    icon: '🏛️',
+    accentColor: '#38bdf8',
+    whatToSay: 'The platform produces the operational data that predicts repayment risk — AR aging, completion rates, revenue velocity. Available as a data licensing contract at 200+ orgs.',
+    whatNotToSay: 'Do not discuss individual borrower data without consent. Frame as aggregate + per-org licensed access.',
+    dataToShow: ['Blueprint V3 Banks tab'],
+    readyItems: ['Blueprint V3 document open to Banks tab', 'Data licensing term sheet draft if available'],
+    diveDeeper: {
+      whyThisAudience: 'Bank lending departments evaluating commercial contractor portfolios have a chronic data problem: borrowers in the trades are cash-flow volatile, and traditional financial statements lag reality by 30-90 days. PowerOn\'s real-time operational data closes that gap and becomes a risk pricing input.',
+      whatTheyCareAbout: 'Regulatory compliance of data sourcing, accuracy of predictive signals, data licensing cost vs. risk reduction value, and whether this is a one-off tool or a scalable data partnership.',
+      objectionsToExpect: [
+        'We can\'t use unregulated third-party data for underwriting',
+        'How many orgs are on the platform right now?',
+        'What\'s the cost of a data licensing contract?',
+      ],
+      howToHandle: [
+        'The data is opt-in by the borrower as part of their loan application. It supplements — not replaces — traditional underwriting. Show the consent architecture.',
+        'Currently in private beta with 6 organizations. The licensing threshold activates at 200 orgs — we\'re in early conversations now to structure the partnership terms ahead of that milestone.',
+        'Data licensing contracts are structured per-org per-month with volume tiers. Term sheet available for review under NDA.',
+      ],
+    },
+  },
+]
+
+const OFFER_ANALYSIS = {
+  currentValue: 'Pre-revenue, IP filed, working product',
+  atFirstMRR: '$0.2M',
+  at50Orgs: '$2–5M',
+  atV7Platform: '$20–50M+',
+  advice: 'Do not take pre-revenue offers below $500K. The trajectory is too steep to sell early.',
+}
+
+function AudienceCard({ section }: { section: AudienceSection }) {
+  const [open, setOpen] = useState(false)
+  const [diveOpen, setDiveOpen] = useState(false)
+
+  return (
+    <div style={{
+      backgroundColor: '#0f172a', border: `1px solid ${section.accentColor}33`,
+      borderRadius: 12, overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+          padding: '14px 18px', background: 'transparent', border: 'none',
+          cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <span style={{ fontSize: 20 }}>{section.icon}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: section.accentColor, flex: 1 }}>{section.label}</span>
+        <span style={{ fontSize: 16, color: '#6b7280', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▾</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+          {/* What to say */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: section.accentColor, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>✅ What to Say</div>
+            <p style={{ fontSize: 13, color: '#e2e8f0', lineHeight: 1.65, margin: 0, backgroundColor: '#111827', padding: '10px 14px', borderRadius: 8, borderLeft: `3px solid ${section.accentColor}` }}>
+              "{section.whatToSay}"
+            </p>
+          </div>
+
+          {/* What not to say */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>🚫 What Not to Say</div>
+            <p style={{ fontSize: 13, color: '#fca5a5', lineHeight: 1.65, margin: 0, backgroundColor: '#1a0a0a', padding: '10px 14px', borderRadius: 8, borderLeft: '3px solid #ef4444' }}>
+              {section.whatNotToSay}
+            </p>
+          </div>
+
+          {/* Two-column: data to show + have ready */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>📊 Data to Show</div>
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                {section.dataToShow.map((d, i) => (
+                  <li key={i} style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.7 }}>{d}</li>
+                ))}
+              </ul>
+            </div>
+            {section.readyItems.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>🎯 Have Ready</div>
+                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                  {section.readyItems.map((r, i) => (
+                    <li key={i} style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.7 }}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Dive Deeper */}
+          <div>
+            <button
+              onClick={() => setDiveOpen(d => !d)}
+              style={{
+                fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 8,
+                border: `1px solid ${section.accentColor}55`, backgroundColor: 'transparent',
+                color: section.accentColor, cursor: 'pointer',
+              }}
+            >
+              {diveOpen ? '▲ Collapse Full Reasoning' : '▼ Dive Deeper — Full Reasoning'}
+            </button>
+            {diveOpen && (
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+                <div style={{ backgroundColor: '#111827', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Why This Audience</div>
+                  <p style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.7, margin: 0 }}>{section.diveDeeper.whyThisAudience}</p>
+                </div>
+
+                <div style={{ backgroundColor: '#111827', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>What They Care About</div>
+                  <p style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.7, margin: 0 }}>{section.diveDeeper.whatTheyCareAbout}</p>
+                </div>
+
+                <div style={{ backgroundColor: '#111827', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Objections to Expect</div>
+                  {section.diveDeeper.objectionsToExpect.map((obj, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ fontSize: 12, color: '#fca5a5', margin: '0 0 3px', fontStyle: 'italic' }}>"{obj}"</p>
+                        <p style={{ fontSize: 12, color: '#86efac', margin: 0, lineHeight: 1.6 }}>→ {section.diveDeeper.howToHandle[i]}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Tab7ScriptsPositioning() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Header */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #7c3aed55', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#7c3aed', borderRadius: 2 }} />
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#e9d5ff', margin: 0 }}>Scripts + Positioning</h3>
+            <p style={{ fontSize: 11, color: '#a78bfa', margin: 0 }}>Audience-specific messaging, objections, and data to show</p>
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: '#9ca3af', lineHeight: 1.6, margin: 0 }}>
+          Expand each audience section to see the exact script, what to avoid, which data to show, and the full reasoning behind each positioning approach.
+        </p>
+      </div>
+
+      {/* Audience sections */}
+      {AUDIENCE_SECTIONS.map(section => (
+        <AudienceCard key={section.id} section={section} />
+      ))}
+
+      {/* Offer analysis */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #f59e0b55', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#f59e0b', borderRadius: 2 }} />
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#fef3c7', margin: 0 }}>Offer Analysis</h3>
+            <p style={{ fontSize: 11, color: '#fbbf24', margin: 0 }}>If you receive an offer before hitting milestones</p>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
+          {[
+            { label: 'Current Estimated Value', value: OFFER_ANALYSIS.currentValue, color: '#9ca3af' },
+            { label: 'At First MRR', value: OFFER_ANALYSIS.atFirstMRR, color: '#34d399' },
+            { label: 'At 50 Orgs + Data Licensing', value: OFFER_ANALYSIS.at50Orgs, color: '#60a5fa' },
+            { label: 'At V7 Full Platform', value: OFFER_ANALYSIS.atV7Platform, color: '#f59e0b' },
+          ].map((item, i) => (
+            <div key={i} style={{ backgroundColor: '#111827', border: `1px solid ${item.color}33`, borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>{item.label}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: item.color }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ backgroundColor: '#1c1307', border: '1px solid #f59e0b44', borderRadius: 8, padding: '12px 16px' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#fbbf24' }}>⚠ Advisory: </span>
+          <span style={{ fontSize: 13, color: '#fde68a', lineHeight: 1.65 }}>{OFFER_ANALYSIS.advice}</span>
+        </div>
+      </div>
+
+    </div>
+  )
+}
+
 // ─── Coming Soon placeholder for tabs 4–11 ────────────────────────────────────
 function PlaceholderTab({ num }: { num: number }) {
   return (
@@ -1546,8 +2271,8 @@ export default function AdminCommandCenter() {
       case 'beta':    return <Tab3BetaMetrics />
       case 'economics':  return <Tab4Economics />
       case 'improvelog': return <Tab5ImprovementLog />
-      case 't6':      return <PlaceholderTab num={6} />
-      case 't7':      return <PlaceholderTab num={7} />
+      case 't6':      return <Tab6SummaryChecklist />
+      case 't7':      return <Tab7ScriptsPositioning />
       case 't8':      return <PlaceholderTab num={8} />
       case 't9':      return <PlaceholderTab num={9} />
       case 't10':     return <PlaceholderTab num={10} />
@@ -1578,7 +2303,7 @@ export default function AdminCommandCenter() {
           <span style={{
             fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
             backgroundColor: '#ca8a04', color: '#fff', letterSpacing: '0.05em',
-          }}>B37</span>
+          }}>B38</span>
         </div>
         {/* Tab bar */}
         <div style={{ display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 1 }}>
