@@ -24,6 +24,7 @@ import { getBackupData } from '@/services/backupDataService'
 import { supabase } from '@/lib/supabase'
 import { NexusPresenceOrb } from '@/components/nexus/NexusPresenceOrb'
 import { takeDailySnapshotIfNeeded, fetchRecentSnapshots } from '@/services/dailySnapshotService'
+import CommandCenterNeuralMap from './CommandCenterNeuralMap'
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 const TABS = [
@@ -38,6 +39,7 @@ const TABS = [
   { id: 't9',          label: '9 · Industries' },
   { id: 't10',         label: '10 · Compliance' },
   { id: 't11',         label: '11 · Actions + Queue' },
+  { id: 'neural_map',  label: '🧠 Neural Map' },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -4272,6 +4274,7 @@ export default function AdminCommandCenter() {
       case 't9':          return <Tab9IndustryAnalysis />
       case 't10':         return <Tab10Compliance />
       case 't11':         return <Tab11ActionsQueue activeTabId={activeTab} />
+      case 'neural_map':  return <CommandCenterNeuralMap />
       default:            return <Tab1VisionTimeline />
     }
   }
@@ -4353,8 +4356,12 @@ export default function AdminCommandCenter() {
         {/* Content area */}
         <div style={{
           flex: 1,
-          overflowY: 'auto',
-          padding: '24px',
+          overflowY: activeTab === 'neural_map' ? 'hidden' : 'auto',
+          overflow: activeTab === 'neural_map' ? 'hidden' : undefined,
+          padding: activeTab === 'neural_map' ? '0' : '24px',
+          display: activeTab === 'neural_map' ? 'flex' : undefined,
+          flexDirection: activeTab === 'neural_map' ? 'column' : undefined,
+          minHeight: 0,
         }}>
           {renderTab()}
         </div>
