@@ -318,7 +318,7 @@ export default function V15rMoneyPanel() {
   // ── 4 KPIs ─────────────────────────────────────────────────────────────
   const grossRevenue = projectContract + svcQuoted
   const cashReceived = projectPaid + svcCollected
-  const netRevenue = (projectContract - projectLoggedDirectCosts) + svcProfit
+  // netRevenue is computed below after totalCollected and combinedTotalCost are defined
   const totalExposure = projectAR + projectUnbilled + Math.max(0, svcOutstanding)
 
   // 52-week accum
@@ -343,6 +343,11 @@ export default function V15rMoneyPanel() {
 
   // 6. Combined Total Cost = mat + labor + mileage
   const combinedTotalCost = totalMatCost + totalLaborCost + totalMileageCost
+
+  // B43 fix: Net Revenue = Total Collected (projects + service) minus Total Direct Costs (mat + labor + mileage)
+  // Previous formula used projectContract (full contract value, not cash received) which caused
+  // Net Revenue to exceed Pipeline. Correct: only collected cash minus actual logged costs.
+  const netRevenue = totalCollected - combinedTotalCost
 
   // 7. Gross Margin % = ((collected - totalCost) / collected × 100)
   const grossMarginPct = totalCollected > 0 ? ((totalCollected - combinedTotalCost) / totalCollected) * 100 : 0
@@ -434,7 +439,7 @@ export default function V15rMoneyPanel() {
       {/* ── 8 HEADER KPI CARDS (Per-Business Summary) ──────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Contracts + Unbilled' },
+          { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Active contracts + svc outstanding (header bar includes full svc quoted)' },
           { lbl: 'Total Collected', val: fmtK(totalCollected), sub: 'Projects + Service', clr: '#10b981' },
           { lbl: 'Total Material Cost', val: fmtK(totalMatCost), sub: 'All materials', isMaterialCard: true },
           { lbl: 'Total Labor Cost', val: fmtK(totalLaborCost), sub: 'All hours × rate' },
