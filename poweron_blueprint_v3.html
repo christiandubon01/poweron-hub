@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PowerOn Hub — Platform Blueprint V3</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060608;--bg1:#0C0C10;--bg2:#111116;--bg3:#18181F;--bg4:#22222C;--bg5:#2E2E3A;
+  --bdr:rgba(255,255,255,.07);--bdr2:rgba(255,255,255,.12);--bdr3:rgba(255,255,255,.20);
+  --t1:#F0F0FF;--t2:#A8A8C0;--t3:#60607A;--t4:#30303F;
+  --grn:#2EE89A;--grn2:rgba(46,232,154,.1);--grn3:rgba(46,232,154,.06);
+  --blu:#3A8EFF;--blu2:rgba(58,142,255,.12);
+  --gld:#FFD24A;--gld2:rgba(255,210,74,.1);
+  --red:#FF5060;--red2:rgba(255,80,96,.1);
+  --org:#FF9040;--org2:rgba(255,144,64,.1);
+  --pur:#AA6EFF;--pur2:rgba(170,110,255,.1);
+  --tel:#40D4FF;--tel2:rgba(64,212,255,.1);
+  --pnk:#FF5FA0;--pnk2:rgba(255,95,160,.1);
+  --lime:#A8FF3E;--lime2:rgba(168,255,62,.1);
+  --sky:#00C2FF;--sky2:rgba(0,194,255,.1);
+  --font:'Syne',sans-serif;--mono:'IBM Plex Mono',monospace;
+}
+html,body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--bg5);border-radius:3px}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");background-size:200px 200px;pointer-events:none;z-index:0;opacity:.5}
+.grid-bg{position:fixed;inset:0;background-image:linear-gradient(var(--bdr) 1px,transparent 1px),linear-gradient(90deg,var(--bdr) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,black 0%,transparent 80%)}
+.hero-glow{position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:900px;height:500px;background:radial-gradient(ellipse,rgba(46,232,154,.07) 0%,transparent 70%);pointer-events:none;z-index:0}
+.wrap{position:relative;z-index:1;max-width:1140px;margin:0 auto;padding:0 24px 80px}
+header{padding:48px 0 40px;text-align:center;animation:fadeUp .8s ease both}
+.badge{display:inline-flex;align-items:center;gap:6px;background:var(--grn3);border:1px solid rgba(46,232,154,.25);border-radius:100px;padding:5px 14px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--grn);margin-bottom:20px}
+.badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 8px var(--grn);animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+h1{font-size:clamp(28px,5vw,52px);font-weight:800;line-height:1.05;letter-spacing:-.02em;background:linear-gradient(135deg,#F0F0FF 0%,#A8A8C0 55%,var(--grn) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:14px}
+.sub{font-size:15px;color:var(--t2);max-width:640px;margin:0 auto 28px;line-height:1.65}
+.header-chips{display:flex;justify-content:center;gap:7px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;border-radius:100px;padding:3px 10px;font-size:10.5px;font-weight:700}
+.chip-grn{background:var(--grn2);color:var(--grn);border:1px solid rgba(46,232,154,.2)}
+.chip-pur{background:var(--pur2);color:var(--pur);border:1px solid rgba(170,110,255,.2)}
+.chip-blu{background:var(--blu2);color:var(--blu);border:1px solid rgba(58,142,255,.2)}
+.chip-org{background:var(--org2);color:var(--org);border:1px solid rgba(255,144,64,.2)}
+.chip-gld{background:var(--gld2);color:var(--gld);border:1px solid rgba(255,210,74,.2)}
+.chip-tel{background:var(--tel2);color:var(--tel);border:1px solid rgba(64,212,255,.2)}
+.chip-pnk{background:var(--pnk2);color:var(--pnk);border:1px solid rgba(255,95,160,.2)}
+.chip-red{background:var(--red2);color:var(--red);border:1px solid rgba(255,80,96,.2)}
+.chip-lime{background:var(--lime2);color:var(--lime);border:1px solid rgba(168,255,62,.2)}
+.tabs{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:4px;margin-bottom:24px;flex-wrap:wrap}
+.tab{flex:1;min-width:60px;padding:8px 8px;border-radius:10px;font-size:11px;font-weight:700;text-align:center;cursor:pointer;transition:all .2s;color:var(--t3);border:none;background:transparent;font-family:var(--font)}
+.tab:hover{color:var(--t2)}
+.tab.active{background:var(--bg4);color:var(--t1);border:1px solid var(--bdr2)}
+.panel{display:none}.panel.active{display:block}
+.section{margin-bottom:44px;animation:fadeUp .7s ease both}
+.sec-label{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.sec-label span{font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--t3)}
+.sec-label::after{content:'';flex:1;height:1px;background:var(--bdr)}
+.sec-num{font-family:var(--mono);font-size:10px;color:var(--grn);min-width:28px}
+.card{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;padding:20px}
+.card-grn{border-color:rgba(46,232,154,.2);background:linear-gradient(135deg,var(--bg2),rgba(46,232,154,.03))}
+.card-pur{border-color:rgba(170,110,255,.2);background:linear-gradient(135deg,var(--bg2),rgba(170,110,255,.03))}
+.card-gld{border-color:rgba(255,210,74,.2);background:linear-gradient(135deg,var(--bg2),rgba(255,210,74,.03))}
+.card-blu{border-color:rgba(58,142,255,.2);background:linear-gradient(135deg,var(--bg2),rgba(58,142,255,.03))}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid-4{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+@media(max-width:700px){.grid-2,.grid-3{grid-template-columns:1fr}.tabs{gap:2px}.tab{font-size:9px;padding:6px 4px}}
+.label{font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);margin-bottom:6px}
+.val{font-size:22px;font-weight:800;letter-spacing:-.02em}
+.sub-val{font-size:11.5px;color:var(--t3);margin-top:3px}
+.progress-bar{height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-top:8px}
+.progress-fill{height:100%;border-radius:3px}
+.agent-row{display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg3);border-radius:11px;margin-bottom:8px}
+.agent-ico{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.agent-name{font-size:13px;font-weight:700;margin-bottom:2px}
+.agent-role{font-size:11px;color:var(--t3)}
+.feat-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.feat-item{font-size:12px;color:var(--t2);display:flex;gap:7px}
+.feat-item::before{content:'→';color:var(--t3);flex-shrink:0}
+.phase-row{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:16px 18px;display:flex;gap:14px;margin-bottom:8px}
+.phase-num{font-family:var(--mono);font-size:12px;color:var(--t3);flex-shrink:0;padding-top:2px;min-width:22px}
+.phase-title{font-size:14px;font-weight:700;margin-bottom:3px}
+.phase-desc{font-size:12px;color:var(--t2);line-height:1.6}
+.phase-time{display:inline-block;margin-top:6px;background:var(--bg4);border:1px solid var(--bdr);border-radius:6px;padding:2px 8px;font-size:10.5px;font-family:var(--mono);color:var(--gld)}
+.ptag{background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:2px 8px;font-size:10px;color:var(--t3);display:inline-block;margin:2px}
+.ptag-grn{background:var(--grn3);border-color:rgba(46,232,154,.2);color:var(--grn)}
+.table-wrap{background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--bdr)}
+td{padding:11px 14px;border-bottom:1px solid var(--bdr);color:var(--t2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg3)}
+.mono{font-family:var(--mono);font-weight:600;color:var(--t1)}
+.highlight{color:var(--grn);font-weight:700}
+footer{text-align:center;padding:28px 0;color:var(--t4);font-size:11px;font-family:var(--mono);border-top:1px solid var(--bdr);margin-top:40px}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.dot-grn{background:var(--grn)}.dot-org{background:var(--org)}.dot-red{background:var(--red)}
+.status-live{color:var(--grn)}.status-partial{color:var(--gld)}.status-queued{color:var(--t3)}
+
+/* Scenario sliders */
+.slider-wrap{margin:16px 0}
+.slider-label{display:flex;justify-content:space-between;font-size:12px;color:var(--t2);margin-bottom:6px}
+input[type=range]{width:100%;accent-color:var(--grn);background:var(--bg4);border-radius:4px;height:6px;outline:none;cursor:pointer}
+.scenario-output{background:var(--bg3);border:1px solid var(--bdr2);border-radius:12px;padding:16px;margin-top:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.out-item .out-label{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
+.out-item .out-val{font-size:20px;font-weight:800;color:var(--grn)}
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="hero-glow"></div>
+<div class="wrap">
+
+<header>
+  <div class="badge"><span>Blueprint V3 · April 2026 · Live</span></div>
+  <h1>PowerOn Hub<br>Platform Blueprint V3</h1>
+  <p class="sub">The full architecture, current deployment state, 15-agent system, and roadmap to V7. Updated reference document for all stakeholders.</p>
+  <div class="header-chips">
+    <span class="chip chip-grn"><span class="dot dot-grn"></span>V3 Deployed</span>
+    <span class="chip chip-pur">15 Agents</span>
+    <span class="chip chip-gld">IP Filed</span>
+    <span class="chip chip-blu">Beta Imminent</span>
+    <span class="chip chip-tel">6 Industries</span>
+    <span class="chip chip-org">DaSparkyHub Live</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('owner')">Owner View</button>
+  <button class="tab" onclick="switchTab('agents')">15 Agents</button>
+  <button class="tab" onclick="switchTab('v3state')">V3 State</button>
+  <button class="tab" onclick="switchTab('roadmap')">Roadmap</button>
+  <button class="tab" onclick="switchTab('beta')">Beta Users</button>
+  <button class="tab" onclick="switchTab('investors')">Investors</button>
+  <button class="tab" onclick="switchTab('banks')">Banks</button>
+  <button class="tab" onclick="switchTab('scenarios')">Scenarios</button>
+</div>
+
+<!-- OWNER VIEW -->
+<div class="panel active" id="panel-owner">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>What You've Built</span></div>
+    <div class="card card-grn" style="margin-bottom:14px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:10px">You are a licensed C-10 electrical contractor who built an 11→15 agent AI operations platform from scratch while running active job sites.</div>
+      <div style="font-size:13px;color:var(--t2);line-height:1.7">Started as a 12,388-line single HTML file. Rebuilt into a full React + Vite 5 + TypeScript + Supabase platform with 15 coordinated AI agents, voice pipeline, role-based access, NDA gate, offline capture, milestone backups, multi-industry templates, and a complete commercial model. No VC funding. No co-founder. Nights after the job site.</div>
+    </div>
+    <div class="grid-4">
+      <div class="card"><div class="label">Platform Status</div><div class="val status-live">V3 Live</div><div class="sub-val">incomparable-croissant-a86c81.netlify.app</div></div>
+      <div class="card"><div class="label">IP Protection</div><div class="val" style="color:var(--grn)">Filed</div><div class="sub-val">USPTO #99745330 · Copyright #1-15135532761</div></div>
+      <div class="card"><div class="label">Sessions This Week</div><div class="val" style="color:var(--blu)">32+</div><div class="sub-val">Cowork sessions deployed to production</div></div>
+      <div class="card"><div class="label">Beta Readiness</div><div class="val" style="color:var(--gld)">85%</div><div class="sub-val">Auth, NDA, onboarding, invites all live</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>What This Tool Can Do For You Right Now</span></div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="label" style="color:var(--grn)">AI Operations</div>
+        <div class="feat-list">
+          <div class="feat-item">NEXUS knows your active projects, health scores, RFI ages, AR aging, and unbilled exposure — without you telling it</div>
+          <div class="feat-item">Voice commands from job site: "What's my exposure today?" gets a real answer in under 3 seconds</div>
+          <div class="feat-item">Proactive alerts surface critical issues before you ask — 37-day RFI blocks, unbilled SVC over threshold, project health drops</div>
+          <div class="feat-item">ECHO memory carries context between sessions — NEXUS remembers what you discussed yesterday</div>
+          <div class="feat-item">OHM gives NEC 2023 compliance answers for California jurisdiction on demand</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="label" style="color:var(--blu)">Business Intelligence</div>
+        <div class="feat-list">
+          <div class="feat-item">Real-time pipeline, paid, exposure, unbilled SVC, and service net in the header bar — always visible</div>
+          <div class="feat-item">Project health scores with weighted risk factors surfaced automatically</div>
+          <div class="feat-item">Material Intelligence — price comparison across 5 suppliers, Home Depot receipt scanning, project bucket assignment</div>
+          <div class="feat-item">Lead pipeline with rolling trend, conversion rate, revenue per lead tracking</div>
+          <div class="feat-item">Debt Killer with expense buckets, drag-and-drop categorization, payoff waterfall from your actual spreadsheet data</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">03</span><span>Admin-Only Capabilities (Your Account Only)</span></div>
+    <div class="grid-3">
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">🔐 GUARDIAN View</div><div style="font-size:12px;color:var(--t3)">Full audit trail, AI decisions log, signed NDAs with download, beta invite management</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">⚡ n8n Automation</div><div style="font-size:12px;color:var(--t3)">All 15 agents visible, 5 live workflows, activity log, full agent system map</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">📡 SPARK Live Call</div><div style="font-size:12px;color:var(--t3)">Live call scripts with escalation detection (Preview — being tested)</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">☀️ Solar Income</div><div style="font-size:12px;color:var(--t3)">RMO gate, MTZ Solar agreement tracking, margin calculator, idle time accounting</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">💀 Debt Killer</div><div style="font-size:12px;color:var(--t3)">Personal + business expense buckets, payoff waterfall, income target calculator</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">🏭 Template Switcher</div><div style="font-size:12px;color:var(--t3)">Preview any of 6 industry templates without affecting real data</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">04</span><span>Active Business — Current Real Data</span></div>
+    <div class="grid-4">
+      <div class="card"><div class="label">Pipeline</div><div class="val" style="color:var(--grn)">$64.8k</div><div class="sub-val">Active quoted contracts</div></div>
+      <div class="card"><div class="label">Paid</div><div class="val" style="color:var(--blu)">$36.3k</div><div class="sub-val">Collected to date</div></div>
+      <div class="card"><div class="label">Exposure</div><div class="val" style="color:var(--org)">$27.0k</div><div class="sub-val">Work done, not yet billed</div></div>
+      <div class="card"><div class="label">SVC Unbilled</div><div class="val" style="color:var(--red)">$1.4k</div><div class="sub-val">Service calls pending invoice</div></div>
+    </div>
+    <div style="margin-top:12px;padding:14px;background:var(--bg3);border-radius:11px;font-size:12.5px;color:var(--t2)">⚠ Beauty Salon: $13k outstanding on $18k contract · 2 RFIs unanswered 37 days · rough-in milestone blocked by framer coordination with Luis · 26.8h logged of 95h scope</div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">05</span><span>Pending Action Items — This Week</span></div>
+    <div class="feat-list">
+      <div class="feat-item">CDTFA Seller's Permit — call 1-800-400-7115 (reschedule for tomorrow morning)</div>
+      <div class="feat-item">Attorney review — NDA, ToS, Privacy Policy before first external beta user</div>
+      <div class="feat-item">Call Luis — Beauty Salon framer coordination, rough-in milestone billing unblocked</div>
+      <div class="feat-item">Weekly vault backup — export JSON milestone after tonight's wave completes</div>
+      <div class="feat-item">Beta invites — send 6 invite links once attorney review is complete</div>
+      <div class="feat-item">Redesign poweronsolutionsllc.com — contractor brand + PowerOn Hub waitlist</div>
+    </div>
+  </div>
+</div>
+
+<!-- 15 AGENTS -->
+<div class="panel" id="panel-agents">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">T1</span><span>Executive Layer</span></div>
+    <div class="agent-row" style="background:linear-gradient(135deg,var(--bg3),rgba(46,232,154,.06));border:1px solid rgba(46,232,154,.15)">
+      <div class="agent-ico" style="background:var(--grn2);border:1px solid rgba(46,232,154,.3)">🧠</div>
+      <div style="flex:1">
+        <div class="agent-name">NEXUS — Chief of Staff</div>
+        <div class="agent-role">Central command · Voice-enabled · Delegates to all 14 agents · ECHO memory · Live business context injection</div>
+        <div class="feat-list" style="margin-top:8px">
+          <div class="feat-item">Reads live business data before every response — projects, AR, pipeline, leads, mode</div>
+          <div class="feat-item">ECHO rolling 24-hour memory window — carries context between sessions</div>
+          <div class="feat-item">Proactive alerts — surfaces RFI blocks, unbilled exposure, health drops without being asked</div>
+          <div class="feat-item">3 premium voices: Oxley (default), Adam Stone, Marcus + 7 additional (10 total including 4 female)</div>
+          <div class="feat-item">Agent mode switching — Standard, Field, Office, Estimating, Executive</div>
+        </div>
+      </div>
+      <div style="text-align:right"><span class="chip chip-grn">Active</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">T2</span><span>Director Layer</span></div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--blu2)">📊</div>
+      <div style="flex:1"><div class="agent-name">PULSE — CFO Agent</div><div class="agent-role">KPI calculation · Trend analysis · Revenue forecasting · Dashboard briefings</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--org2)">📐</div>
+      <div style="flex:1"><div class="agent-name">BLUEPRINT — COO Agent</div><div class="agent-role">Project phases · RFI tracking · Change orders · Compliance monitoring · Closeout scoring</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--pnk2)">📣</div>
+      <div style="flex:1"><div class="agent-name">SPARK — CMO Agent</div><div class="agent-role">Lead pipeline · GC relationships · Review monitoring · Campaign management · Live call scripts</div></div>
+      <span class="chip chip-grn">Active</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">T3</span><span>Manager Layer</span></div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--gld2)">💰</div>
+      <div style="flex:1"><div class="agent-name">VAULT — Estimating Agent</div><div class="agent-role">Price book (240+ items) · Market competitiveness · Supplier gates · Weekly market report · Estimate building</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--grn2)">📋</div>
+      <div style="flex:1"><div class="agent-name">LEDGER — Invoicing Agent</div><div class="agent-role">Invoice management · AR aging · Cash flow analysis · Payment tracking · Follow-up sequences</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--sky2)">📅</div>
+      <div style="flex:1"><div class="agent-name">CHRONO — Scheduling Agent</div><div class="agent-role">Calendar management · Crew dispatch · Idle slot detection · Job scheduling · Google Calendar sync</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--lime2)">⚡</div>
+      <div style="flex:1"><div class="agent-name">OHM — Electrical Coach</div><div class="agent-role">NEC 2023 compliance · California Title 24 · OSHA 1910 · Trade library · NEC calculators · Voltage drop</div></div>
+      <span class="chip chip-grn">Active</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--red2)">🛡️</div>
+      <div style="flex:1"><div class="agent-name">GUARDIAN — Compliance Agent</div><div class="agent-role">Employee auditing · Policy enforcement · AI decisions log · Signed NDA management · Active violations</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">T4</span><span>Intelligence Layer</span></div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--tel2)">🔬</div>
+      <div style="flex:1"><div class="agent-name">SCOUT — Material Intelligence</div><div class="agent-role">Price comparison across 5 suppliers · Price alerts · Receipt scanning · Bucket analysis · Weekly digest</div></div>
+      <span class="chip chip-grn">Active</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--org2)">🎯</div>
+      <div style="flex:1"><div class="agent-name">HUNTER — Lead Sizing Agent</div><div class="agent-role">Sizes leads to contractor capacity via CHRONO + VAULT + ATLAS · Prevents overcommitment</div></div>
+      <span class="chip chip-org">V4</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--pur2)">💭</div>
+      <div style="flex:1"><div class="agent-name">ECHO — Context Memory Agent</div><div class="agent-role">24-hour rolling context window · Session conclusions · Voice journal integration · Ongoing topic detection</div></div>
+      <span class="chip chip-grn">Active</span>
+    </div>
+    <div class="agent-row">
+      <div class="agent-ico" style="background:var(--blu2)">🗺️</div>
+      <div style="flex:1"><div class="agent-name">ATLAS — Location + Mode Agent</div><div class="agent-role">GPS-based mode detection · Agent mode auto-switching · Location context for scheduling</div></div>
+      <span class="chip chip-gld">Partial</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">V5</span><span>Future Agents</span></div>
+    <div class="agent-row" style="opacity:.6">
+      <div class="agent-ico" style="background:var(--bg4)">🤝</div>
+      <div style="flex:1"><div class="agent-name">NEGOTIATE — Negotiation Co-Pilot</div><div class="agent-role">Real-time estimate call listening · Silent alerts to AirPods + Apple Watch · VAULT price floor enforcement · Sub-5s latency</div></div>
+      <span class="chip" style="background:var(--bg4);color:var(--t3);border:1px solid var(--bdr)">V5</span>
+    </div>
+    <div class="agent-row" style="opacity:.6">
+      <div class="agent-ico" style="background:var(--bg4)">🔒</div>
+      <div style="flex:1"><div class="agent-name">SENTINEL — Security Agent</div><div class="agent-role">Platform security monitoring · Breach attempt detection · Intent analysis · Threat reporting to owner</div></div>
+      <span class="chip" style="background:var(--bg4);color:var(--t3);border:1px solid var(--bdr)">V5</span>
+    </div>
+  </div>
+</div>
+
+<!-- V3 STATE -->
+<div class="panel" id="panel-v3state">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>What's New in V3 vs V2</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Category</th><th>V2 State</th><th>V3 Now</th></tr></thead>
+        <tbody>
+          <tr><td>Auth</td><td class="mono">Magic link only</td><td class="highlight">PIN + Password · one-time magic link · 5 attempts/hr</td></tr>
+          <tr><td>NDA</td><td class="mono">Basic gate</td><td class="highlight">Identity verified · Email PIN · PDF generated · GUARDIAN admin view</td></tr>
+          <tr><td>Onboarding</td><td class="mono">None</td><td class="highlight">5-step flow · industry · AI name · voice selection</td></tr>
+          <tr><td>Industries</td><td class="mono">Electrical only</td><td class="highlight">6 templates: Electrical, Plumbing, GC, Medical, Mechanic, Supplier</td></tr>
+          <tr><td>Demo Mode</td><td class="mono">Basic toggle</td><td class="highlight">Multi-industry · company name per template · shareable URL</td></tr>
+          <tr><td>NEXUS AI</td><td class="mono">Generic responses</td><td class="highlight">Live business context · ECHO memory · proactive alerts · streaming</td></tr>
+          <tr><td>Voice</td><td class="mono">3 voices, desktop</td><td class="highlight">10 voices (4 female) · mobile fixed · orb collapse · noise filter</td></tr>
+          <tr><td>Quick Capture</td><td class="mono">Broken on mobile</td><td class="highlight">Isolated from NEXUS · offline IndexedDB · background sync</td></tr>
+          <tr><td>Backup</td><td class="mono">Rolling Supabase sync</td><td class="highlight">Milestone snapshots · change-triggered · downloadable JSON</td></tr>
+          <tr><td>Sidebar</td><td class="mono">Flat list</td><td class="highlight">6 sections · ADMIN gated to owner email · Voice Hub consolidated</td></tr>
+          <tr><td>n8n</td><td class="mono">Mock UI</td><td class="highlight">5 workflows wired · all 15 agents visible in admin map</td></tr>
+          <tr><td>Feedback</td><td class="mono">None</td><td class="highlight">T1 passive logging · T2 thumbs on every AI output</td></tr>
+          <tr><td>Security</td><td class="mono">Basic</td><td class="highlight">Secrets scanner clean · pre-commit hook · VITE keys stripped · RLS active</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>Session Wave Progress — B1 to B32</span></div>
+    <div class="grid-4">
+      <div class="card"><div class="label">B1–B20</div><div class="val status-live">Done</div><div class="sub-val">Core V3 stability + AI logic</div></div>
+      <div class="card"><div class="label">B21–B26</div><div class="val status-live">Done</div><div class="sub-val">Backup · voice · auth · offline</div></div>
+      <div class="card"><div class="label">B27–B32</div><div class="val status-partial">Running</div><div class="sub-val">n8n · agents · feedback · org</div></div>
+      <div class="card"><div class="label">Phase 2</div><div class="val status-queued">Queued</div><div class="sub-val">Numbers + visuals audit</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">03</span><span>Domain Completion</span></div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">Stability — Every tab loads, no crashes</span><span class="chip chip-grn">92%</span></div><div class="progress-bar"><div class="progress-fill" style="width:92%;background:var(--grn)"></div></div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">AI Logic — NEXUS knows the business</span><span class="chip chip-grn">85%</span></div><div class="progress-bar"><div class="progress-fill" style="width:85%;background:var(--grn)"></div></div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">Numbers Logic — Math accuracy audit</span><span class="chip chip-gld">In Progress</span></div><div class="progress-bar"><div class="progress-fill" style="width:30%;background:var(--gld)"></div></div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">Features End-to-End — Full flow testing</span><span class="chip chip-gld">70%</span></div><div class="progress-bar"><div class="progress-fill" style="width:70%;background:var(--gld)"></div></div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">Security + Legal — Attorney reviewed</span><span class="chip chip-org">85%</span></div><div class="progress-bar"><div class="progress-fill" style="width:85%;background:var(--org)"></div></div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">Visual + Customization — Phase 4</span><span class="chip chip-red">60%</span></div><div class="progress-bar"><div class="progress-fill" style="width:60%;background:var(--red)"></div></div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:700">Beta Operations — Users in and monitored</span><span class="chip" style="background:var(--bg4);color:var(--t3);border:1px solid var(--bdr)">Not Started</span></div><div class="progress-bar"><div class="progress-fill" style="width:0%;background:var(--t3)"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ROADMAP -->
+<div class="panel" id="panel-roadmap">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>Build Sequence V3 → V7</span></div>
+    <div class="phase-row" style="border-color:rgba(46,232,154,.3)">
+      <div class="phase-num" style="color:var(--grn)">V3</div>
+      <div><div class="phase-title">Single-Tenant Ops Tool — CURRENT</div><div class="phase-desc">15 AI agents, voice pipeline, NDA gate, onboarding, 6 industry templates, offline capture, milestone backups, multi-user org foundation, feedback loops T1+T2, admin visualization lab. Beta group: 6 contractors across 5 industries.</div><div class="phase-time">April 2026 — Live</div><span class="ptag ptag-grn">Live</span><span class="ptag">15 agents</span><span class="ptag">6 industries</span></div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-num">V4</div>
+      <div><div class="phase-title">SaaS + Academy + HUNTER + CONNECT Early + RELAY</div><div class="phase-desc">Stripe subscription gating. PowerOn Academy ($99–149/mo coaching add-on). HUNTER lead sizing. RELAY internal org communications (PIN login, project threads, file drops, NEXUS digest). Customer portal. Open API foundation. User-generated tool economy (NEXUS interview → Architecture Agent → hash → you verify → deploy).</div><div class="phase-time">Q3 2026</div><span class="ptag">Stripe</span><span class="ptag">Academy</span><span class="ptag">HUNTER</span><span class="ptag">RELAY</span><span class="ptag">Tool Economy</span></div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-num">V5</div>
+      <div><div class="phase-title">Native Apps + NEGOTIATE + AI Receptionist + SENTINEL</div><div class="phase-desc">iOS App Store, Google Play, Windows 11 (Capacitor + Tauri). NEGOTIATE real-time negotiation co-pilot with sub-5s latency. AI Receptionist (fully auditable). SENTINEL security agent. Push notifications (OneSignal). Custom domain poweron.app.</div><div class="phase-time">Q1 2027</div><span class="ptag">Native</span><span class="ptag">NEGOTIATE</span><span class="ptag">SENTINEL</span></div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-num">V6</div>
+      <div><div class="phase-title">CONNECT Full Marketplace + Predictive + DaSparkyHub Commercial</div><div class="phase-desc">Full CONNECT marketplace (GCs post needs → platform matches subs via CHRONO + ATLAS + VAULT). Transaction fee model. Predictive analytics across all agent data. DaSparkyHub architecture adapted into commercial personal OS offering for Pro+ tier.</div><div class="phase-time">Q3 2027</div><span class="ptag">CONNECT</span><span class="ptag">Predictive</span><span class="ptag">Marketplace</span></div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-num">V7</div>
+      <div><div class="phase-title">Platform + SDK + Data Licensing Launch</div><div class="phase-desc">Full open API with developer SDK (revenue share model). Data licensing contracts activated at 50+ org threshold: Tesla/Enphase (solar installation patterns), Generac (standby demand signals), electrical distributors (material usage + price sensitivity), insurers (project delay risk signals), lenders (contractor financial health patterns), government programs (EV + solar adoption data). Ecosystem target: $37M–$62M valuation.</div><div class="phase-time">Q1 2028</div><span class="ptag">SDK</span><span class="ptag">Data licensing</span><span class="ptag" style="background:var(--gld2);border-color:rgba(255,210,74,.2);color:var(--gld)">$37M–$62M</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>New V4+ Features vs V2 Blueprint</span></div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="label" style="color:var(--grn)">Added Since V2</div>
+        <div class="feat-list">
+          <div class="feat-item">RELAY — internal org communications platform (replaces email chains)</div>
+          <div class="feat-item">User-Generated Tool Economy — NEXUS interview → Architecture Agent → custom feature</div>
+          <div class="feat-item">Admin Premium Visualization Lab — 3D orb states, neural map, force-directed agent graph</div>
+          <div class="feat-item">Milestone backup system — change-triggered, downloadable JSON vault</div>
+          <div class="feat-item">Offline capture — IndexedDB with background sync for dead zones</div>
+          <div class="feat-item">Feedback loop tiers T1–T4 — passive logging through beta council</div>
+          <div class="feat-item">Intent security layer — AI analyzes tool requests for breach patterns before building</div>
+          <div class="feat-item">Versioned custom tools — tier-based maintenance model</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="label" style="color:var(--gld)">Unchanged from V2</div>
+        <div class="feat-list">
+          <div class="feat-item">15-agent hierarchy (T1 Executive → T2 Director → T3 Manager → T4 Intelligence)</div>
+          <div class="feat-item">MiroFish 5-step verification chain — human approval required before agent action</div>
+          <div class="feat-item">Data licensing model — 50-org anonymization threshold</div>
+          <div class="feat-item">Commercial tiers — Solo $49 → Growth $129 → Pro $299 → Pro+ $499 → Enterprise $800+</div>
+          <div class="feat-item">Three-tool workflow — Claude (Architect) + Cowork (Builder) + Console (Git)</div>
+          <div class="feat-item">Protected files — authStore.ts, netlify.toml, backupDataService.ts, vite.config.ts, SVGCharts.tsx</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BETA USERS -->
+<div class="panel" id="panel-beta">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>What Beta Users Get</span></div>
+    <div class="card card-grn" style="margin-bottom:14px">
+      <div style="font-size:16px;font-weight:800;margin-bottom:8px">You are testing an AI operations platform built by an electrical contractor who needed it himself.</div>
+      <div style="font-size:13px;color:var(--t2);line-height:1.7">Full V3 access across all features relevant to your trade. Your feedback shapes what gets built next. First paying users lock in their price permanently — what you pay on day one is what you pay forever, regardless of future pricing changes.</div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="label">What You Can Do</div>
+        <div class="feat-list">
+          <div class="feat-item">Talk to your AI (NEXUS) about your jobs — it knows your projects, pipeline, and alerts</div>
+          <div class="feat-item">Log field notes via voice from the job site — offline, syncs when you have reception</div>
+          <div class="feat-item">Track project health scores, RFIs, and milestone billing in one place</div>
+          <div class="feat-item">Compare material prices across suppliers, scan receipts from Home Depot</div>
+          <div class="feat-item">Invite crew members with role-based access (they see only their lane)</div>
+          <div class="feat-item">Get proactive alerts when something needs your attention — no checking required</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="label">What We Need From You</div>
+        <div class="feat-list">
+          <div class="feat-item">Use it on real jobs — not just to explore, but to actually log your work</div>
+          <div class="feat-item">Tell us when something doesn't match how you actually work</div>
+          <div class="feat-item">Rate AI outputs (thumbs up/down) — one tap, massive signal for improvement</div>
+          <div class="feat-item">Day 30 + Day 60 surveys — 5 questions, $25 Amazon gift card for completion</div>
+          <div class="feat-item">If you have a tool idea that would change your workflow — describe it to NEXUS</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>Beta Group — 6 Industries</span></div>
+    <div class="grid-3">
+      <div class="card"><div style="font-size:13px;font-weight:700;color:var(--grn)">⚡ Electrical</div><div style="font-size:12px;color:var(--t3);margin-top:4px">Power On Solutions LLC · Christian Dubon · C-10 #1151468 · Desert Hot Springs CA</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;color:var(--blu)">🔧 Plumbing</div><div style="font-size:12px;color:var(--t3);margin-top:4px">Template: Pacific Coast Plumbing LLC · UPC jurisdiction</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;color:var(--org)">🏗️ General Contractor</div><div style="font-size:12px;color:var(--t3);margin-top:4px">Template: Summit General Contractors Inc · IBC jurisdiction</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;color:var(--pnk)">🏥 Medical Billing</div><div style="font-size:12px;color:var(--t3);margin-top:4px">Template: Clarity Medical Billing Services</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;color:var(--gld)">🔩 Mechanic</div><div style="font-size:12px;color:var(--t3);margin-top:4px">Template: Desert Auto Works</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;color:var(--tel)">🏭 Electrical Supplier</div><div style="font-size:12px;color:var(--t3);margin-top:4px">Template: Southwest Electrical Supply Co · NEC</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- INVESTORS -->
+<div class="panel" id="panel-investors">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>The Opportunity</span></div>
+    <div class="card card-grn" style="margin-bottom:16px">
+      <div style="font-size:16px;font-weight:800;margin-bottom:8px">The trades industry has 7M+ contractors in the US. None of them have AI that actually knows their business.</div>
+      <div style="font-size:13px;color:var(--t2);line-height:1.7">Jobber, ServiceTitan, and Buildertrend manage scheduling and invoicing. None of them have AI agents, voice interfaces, NEC compliance, or a data layer that compounds over time. PowerOn Hub is the first platform where the AI knows your pipeline, your RFI age, your unbilled exposure, and your supplier prices — simultaneously, without you having to enter it twice.</div>
+    </div>
+    <div class="grid-4">
+      <div class="card"><div class="label">Target Market</div><div class="val" style="color:var(--grn)">7M+</div><div class="sub-val">US contractors across 6 trade verticals</div></div>
+      <div class="card"><div class="label">24-Month MRR Target</div><div class="val" style="color:var(--blu)">$91.8k</div><div class="sub-val">550 users at $167 avg/mo blended</div></div>
+      <div class="card"><div class="label">ARR at Target</div><div class="val" style="color:var(--gld)">$1.1M</div><div class="sub-val">Subscription only, excludes data licensing</div></div>
+      <div class="card"><div class="label">Ecosystem Valuation</div><div class="val" style="color:var(--pur)">$37M+</div><div class="sub-val">With V7 data licensing layer at 8-15x ARR</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>The Moat — Why This Can't Be Easily Copied</span></div>
+    <div class="grid-2">
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">🧠 Built by a practitioner</div><div style="font-size:12px;color:var(--t3)">7 years field experience, C-10 licensed, active job sites. Every feature was needed before it was built. No VC team guessing at contractor pain.</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">📊 Data flywheel</div><div style="font-size:12px;color:var(--t3)">Every org adds to the dataset. Better pattern matching, pricing intelligence, and CONNECT marketplace accuracy compounds over time.</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">🔗 Switching cost compounds</div><div style="font-size:12px;color:var(--t3)">After 90 days: full job history, price book, crew profiles, ECHO memory all inside the platform. Leaving means starting over.</div></div>
+      <div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:6px">⚖️ IP protected from day one</div><div style="font-size:12px;color:var(--t3)">USPTO #99745330 · Copyright #1-15135532761 · MiroFish arbitration system under provisional patent consideration.</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">03</span><span>Revenue Projection</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Milestone</th><th>Users</th><th>Avg MRR/User</th><th>MRR</th><th>ARR</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip chip-org">Beta Launch</span></td><td class="mono">6</td><td class="mono">$0</td><td class="mono">$0</td><td class="mono">—</td></tr>
+          <tr><td><span class="chip chip-gld">Month 6</span></td><td class="mono">80</td><td class="mono">$129</td><td class="mono">$10.3k</td><td class="mono">$124k</td></tr>
+          <tr><td><span class="chip chip-grn">Month 12</span></td><td class="mono">200</td><td class="mono">$155</td><td class="mono">$31k</td><td class="mono">$372k</td></tr>
+          <tr><td><span class="chip chip-blu">Month 18</span></td><td class="mono">350</td><td class="mono">$167</td><td class="mono">$58.5k</td><td class="mono">$702k</td></tr>
+          <tr><td><span class="chip chip-pur">Month 24</span></td><td class="mono">550</td><td class="mono">$167</td><td class="mono highlight">$91.8k</td><td class="mono highlight">$1.1M</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- BANKS -->
+<div class="panel" id="panel-banks">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>PowerOn Hub Changes the Borrower Profile</span></div>
+    <div class="card card-blu" style="margin-bottom:16px">
+      <div style="font-size:16px;font-weight:800;margin-bottom:8px">This is not a tradesperson with a spreadsheet. This is an operator with a data-backed system showing pipeline, margins, AR aging, and project health in real time.</div>
+      <div style="font-size:13px;color:var(--t2);line-height:1.7">Traditional construction lenders underwrite contractors on tax returns and bank statements. PowerOn Hub provides a live operational dashboard that shows revenue velocity, payment behavior, project completion rates, and cash flow patterns — the data that actually predicts repayment risk but that most contractors can't produce.</div>
+    </div>
+    <div class="grid-4">
+      <div class="card"><div class="label">Live Pipeline</div><div class="val" style="color:var(--grn)">$64.8k</div><div class="sub-val">Active quoted contracts</div></div>
+      <div class="card"><div class="label">Collection Rate</div><div class="val" style="color:var(--blu)">56%</div><div class="sub-val">$36.3k collected of $64.8k pipeline</div></div>
+      <div class="card"><div class="label">Active Projects</div><div class="val" style="color:var(--gld)">2</div><div class="sub-val">Beauty Salon + Surgery Center</div></div>
+      <div class="card"><div class="label">Open RFIs</div><div class="val" style="color:var(--org)">3</div><div class="sub-val">Tracked with age and owner</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>What the Platform Produces for Lending</span></div>
+    <div class="feat-list">
+      <div class="feat-item">AR aging report — outstanding invoices with age, client, and amount — exportable</div>
+      <div class="feat-item">Project completion rate — jobs completed on time vs delayed, tracked over rolling 12 months</div>
+      <div class="feat-item">Revenue consistency — weekly and monthly logged income, not self-reported</div>
+      <div class="feat-item">Cash flow pattern — CFOT chart showing projection vs actual vs historical</div>
+      <div class="feat-item">Unbilled exposure — work done but not yet invoiced, showing earning potential</div>
+      <div class="feat-item">Material cost tracking — Home Depot receipts + supplier comparison showing cost discipline</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">03</span><span>The V7 Data Licensing Opportunity for Financial Institutions</span></div>
+    <div class="card">
+      <div style="font-size:13px;color:var(--t2);line-height:1.7;margin-bottom:12px">At 200+ orgs on the platform, PowerOn Hub produces anonymized aggregated contractor financial behavior data — payment velocity, AR aging distributions, project completion rates, cash flow cycles. This is credit model input that construction lenders currently estimate from incomplete self-reported data.</div>
+      <div class="grid-2">
+        <div style="background:var(--bg3);border-radius:10px;padding:14px"><div class="label">Data Product</div><div style="font-size:13px;color:var(--t1);margin-top:4px">Contractor credit risk patterns by trade, region, and project type</div></div>
+        <div style="background:var(--bg3);border-radius:10px;padding:14px"><div class="label">Est. Contract Value</div><div style="font-size:13px;color:var(--grn);font-weight:700;margin-top:4px">$150k–$400k/yr at 200+ orgs</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SCENARIOS -->
+<div class="panel" id="panel-scenarios">
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">01</span><span>Interactive Revenue Scenarios</span></div>
+    <div class="card">
+      <div class="slider-wrap">
+        <div class="slider-label"><span>Active Users</span><span id="usersVal">200</span></div>
+        <input type="range" id="users" min="10" max="1000" value="200" oninput="calcScenario()">
+      </div>
+      <div class="slider-wrap">
+        <div class="slider-label"><span>Avg Monthly Revenue per User</span><span>$<span id="arpuVal">129</span></span></div>
+        <input type="range" id="arpu" min="49" max="499" value="129" oninput="calcScenario()">
+      </div>
+      <div class="slider-wrap">
+        <div class="slider-label"><span>Annual Churn Rate</span><span id="churnVal">15</span>%</div>
+        <input type="range" id="churn" min="5" max="60" value="15" oninput="calcScenario()">
+      </div>
+      <div class="slider-wrap">
+        <div class="slider-label"><span>Data Licensing Revenue (annual)</span><span>$<span id="dataVal">0</span>k</span></div>
+        <input type="range" id="dataRev" min="0" max="2000" value="0" oninput="calcScenario()">
+      </div>
+      <div class="scenario-output" id="scenarioOut">
+        <div class="out-item"><div class="out-label">MRR</div><div class="out-val" id="outMRR">$25.8k</div></div>
+        <div class="out-item"><div class="out-label">ARR</div><div class="out-val" id="outARR">$309k</div></div>
+        <div class="out-item"><div class="out-label">Net ARR (churn)</div><div class="out-val" id="outNet">$263k</div></div>
+        <div class="out-item"><div class="out-label">Total Revenue</div><div class="out-val" id="outTotal">$263k</div></div>
+        <div class="out-item"><div class="out-label">Val @ 8x</div><div class="out-val" id="outVal8">$2.1M</div></div>
+        <div class="out-item"><div class="out-label">Val @ 15x</div><div class="out-val" id="outVal15">$3.9M</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-label"><span class="sec-num">02</span><span>Scenario Presets</span></div>
+    <div class="grid-3">
+      <div class="card" style="cursor:pointer" onclick="setScenario(50,49,40,0)">
+        <div class="label" style="color:var(--red)">Worst Case</div>
+        <div style="font-size:13px;font-weight:700;margin:6px 0">50 users · $49 avg · 40% churn</div>
+        <div style="font-size:12px;color:var(--t3)">Slow adoption, price sensitive market, high turnover</div>
+        <div style="font-size:14px;font-weight:800;color:var(--red);margin-top:8px">~$29k ARR</div>
+      </div>
+      <div class="card card-gld" style="cursor:pointer" onclick="setScenario(200,129,15,0)">
+        <div class="label" style="color:var(--gld)">Base Case</div>
+        <div style="font-size:13px;font-weight:700;margin:6px 0">200 users · $129 avg · 15% churn</div>
+        <div style="font-size:12px;color:var(--t3)">Steady growth, mid-tier adoption, normal retention</div>
+        <div style="font-size:14px;font-weight:800;color:var(--gld);margin-top:8px">~$263k ARR</div>
+      </div>
+      <div class="card card-grn" style="cursor:pointer" onclick="setScenario(550,167,8,500)">
+        <div class="label" style="color:var(--grn)">Target Case</div>
+        <div style="font-size:13px;font-weight:700;margin:6px 0">550 users · $167 avg · 8% churn · data licensing</div>
+        <div style="font-size:12px;color:var(--t3)">24-month goal with V7 data layer activated</div>
+        <div style="font-size:14px;font-weight:800;color:var(--grn);margin-top:8px">~$1.6M total revenue</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+<footer>POWERON HUB · PLATFORM BLUEPRINT V3 · APRIL 2026 · POWER ON SOLUTIONS LLC · ALL RIGHTS RESERVED</footer>
+
+<script>
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  event.target.classList.add('active');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function fmt(n){
+  if(n>=1000000)return'$'+(n/1000000).toFixed(1)+'M';
+  if(n>=1000)return'$'+(n/1000).toFixed(0)+'k';
+  return'$'+n.toFixed(0);
+}
+function calcScenario(){
+  const u=parseInt(document.getElementById('users').value);
+  const a=parseInt(document.getElementById('arpu').value);
+  const c=parseInt(document.getElementById('churn').value)/100;
+  const d=parseInt(document.getElementById('dataRev').value)*1000;
+  document.getElementById('usersVal').textContent=u;
+  document.getElementById('arpuVal').textContent=a;
+  document.getElementById('churnVal').textContent=document.getElementById('churn').value;
+  document.getElementById('dataVal').textContent=document.getElementById('dataRev').value;
+  const mrr=u*a;
+  const arr=mrr*12;
+  const net=arr*(1-c);
+  const total=net+d;
+  document.getElementById('outMRR').textContent=fmt(mrr);
+  document.getElementById('outARR').textContent=fmt(arr);
+  document.getElementById('outNet').textContent=fmt(net);
+  document.getElementById('outTotal').textContent=fmt(total);
+  document.getElementById('outVal8').textContent=fmt(total*8);
+  document.getElementById('outVal15').textContent=fmt(total*15);
+}
+function setScenario(u,a,c,d){
+  document.getElementById('users').value=u;
+  document.getElementById('arpu').value=a;
+  document.getElementById('churn').value=c;
+  document.getElementById('dataRev').value=d;
+  calcScenario();
+}
+calcScenario();
+</script>
+</body>
+</html>
