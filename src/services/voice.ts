@@ -183,6 +183,37 @@ function emitOrbState(status: VoiceSessionStatus): void {
   _orbListeners.forEach(fn => { try { fn(status) } catch { /* ignore */ } })
 }
 
+// ── TTS Audio Element Emitter ──────────────────────────────────────────────────
+// B56: Allows OrbLab to connect to TTS audio for frequency analysis and orb reaction.
+// Emits the live HTMLAudioElement when TTS playback starts, null when it ends.
+// This fires AFTER the element is created — so OrbLab always receives a valid ref.
+
+type TTSAudioListener = (audio: HTMLAudioElement | null) => void
+const _ttsAudioListeners: Set<TTSAudioListener> = new Set()
+
+/** Subscribe to TTS audio element changes. Returns unsubscribe function. */
+export function onTTSAudioChange(fn: TTSAudioListener): () => void {
+  _ttsAudioListeners.add(fn)
+  return () => _ttsAudioListeners.delete(fn)
+}
+
+/** Emit TTS audio element to all subscribers. Called when playback starts/ends. */
+function emitTTSAudio(audio: HTMLAudioElement | null): void {
+  _ttsAudioListeners.forEach(fn => { try { fn(audio) } catch { /* ignore */ } })
+}
+
+// ── Orb Lab Mode ───────────────────────────────────────────────────────────────
+// B56: When active, suppresses NEXUS drawer so ORB LAB stays pure-visual.
+// Voice pipeline still runs (STT → Claude → TTS); only chat UI is suppressed.
+
+let _orbLabMode = false
+
+/** Enable/disable ORB LAB mode. When true, drawer stays closed during voice. */
+export function setOrbLabMode(active: boolean): void { _orbLabMode = active }
+
+/** Returns true when voice was initiated from AdminVisualizationLab OrbLab. */
+export function isOrbLabMode(): boolean { return _orbLabMode }
+
 // ── iOS AudioContext Singleton ───────────────────────────────────────────────
 // iOS Safari only allows AudioContext creation and resume during a user gesture.
 // This module-level singleton is unlocked on the first mic-button tap and reused
@@ -401,6 +432,7 @@ export class VoiceSubsystem {
         this.currentAudio.src = ''
       } catch { /* ignore cleanup errors */ }
       this.currentAudio = null
+      emitTTSAudio(null) // B56: clear TTS element so orb stops reacting on interrupt
     }
   }
 
@@ -1079,6 +1111,8 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
       audio.playbackRate = 1.0
       document.body.appendChild(audio)
       this.currentAudio = audio
+      // B56 FIX 1+3: emit audio element so OrbLab can connect it to AudioContext analyser
+      emitTTSAudio(audio)
 
       audio.onended = () => {
         // AUDIO FIX: add 300ms delay before cleanup to ensure full audio drains
@@ -1089,6 +1123,7 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
           URL.revokeObjectURL(url)
           try { document.body.removeChild(audio) } catch { /* already removed */ }
           this.currentAudio = null
+          emitTTSAudio(null) // B56: clear TTS element so orb stops reacting
           safeResolve()
         }, 300)
       }
@@ -1099,6 +1134,7 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
         URL.revokeObjectURL(url)
         try { document.body.removeChild(audio) } catch { /* already removed */ }
         this.currentAudio = null
+        emitTTSAudio(null) // B56: clear TTS element
         this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
       }
 
@@ -1114,6 +1150,7 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
             URL.revokeObjectURL(url)
             try { document.body.removeChild(audio) } catch { /* already removed */ }
             this.currentAudio = null
+            emitTTSAudio(null) // B56: clear TTS element
             this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
           })
       }
@@ -1125,6 +1162,7 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
         try { audio.pause(); document.body.removeChild(audio) } catch { /* ignore */ }
         URL.revokeObjectURL(url)
         this.currentAudio = null
+        emitTTSAudio(null) // B56: clear TTS element
         safeResolve()
       }, 35000)
     })

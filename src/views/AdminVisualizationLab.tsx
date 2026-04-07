@@ -18,7 +18,8 @@ import { getBackupData, health, getKPIs } from '../services/backupDataService'
 import { callClaude, extractText } from '../services/claudeProxy'
 import VisualSuitePanel from '../components/v15r/AIVisualSuite/VisualSuitePanel'
 // B53: NEXUS voice pipeline for OrbLab mic
-import { getVoiceSubsystem, unlockAudioContext, onOrbStateChange, type VoiceSessionStatus } from '../services/voice'
+// B56: + onTTSAudioChange (orb reacts to TTS) + setOrbLabMode (suppress drawer) + isOrbLabMode
+import { getVoiceSubsystem, unlockAudioContext, onOrbStateChange, onTTSAudioChange, setOrbLabMode, type VoiceSessionStatus } from '../services/voice'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrbState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'MULTI_AGENT'
@@ -718,17 +719,20 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
   // B53: NEXUS voice state for audio-reactive visuals
   const [voiceStatus, setVoiceStatus] = useState<VoiceSessionStatus>('inactive')
   const [ttsElement, setTtsElement] = useState<HTMLAudioElement | null>(null)
+  // B56 FIX 2: status text replaces full chat panel in ORB LAB
+  const [nexusStatusText, setNexusStatusText] = useState<string | null>(null)
 
   const BG_OPTIONS = [{ label: '🌌 Deep Space', value: 'deepspace' as BgMode },{ label: '💻 Data Stream', value: 'datastream' as BgMode },{ label: '⬡ Grid', value: 'grid' as BgMode },{ label: '⬛ Solid Dark', value: 'soliddark' as BgMode }]
   const healthLabel = healthAvg>70?'HEALTHY':healthAvg>40?'WARNING':'CRITICAL'
   const healthClr = healthAvg>70?'#00ff88':healthAvg>40?'#ffcc00':'#ff6600'
 
-  // B53: Subscribe to NEXUS voice status so ttsElement + micStream stay in sync
+  // B53+B56: Subscribe to NEXUS voice status so micStream + nexusState stay in sync.
+  // B56 FIX 3: ttsElement is now set via onTTSAudioChange (fires after audio is created),
+  // not getCurrentAudio() inside onOrbStateChange (which fires before audio exists).
   useEffect(() => {
-    const unsub = onOrbStateChange((status: VoiceSessionStatus) => {
+    const unsubOrb = onOrbStateChange((status: VoiceSessionStatus) => {
       setVoiceStatus(status)
       const vs = getVoiceSubsystem()
-      setTtsElement(vs.getCurrentAudio())
       const ms = vs.getMicStream()
       if (ms && ms !== micStreamRef.current) {
         micStreamRef.current = ms
@@ -736,30 +740,49 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
       }
       if (status === 'inactive' || status === 'complete') {
         setMicActive(false)
+        setOrbLabMode(false) // B56: reset orb lab mode when session ends
+        setNexusStatusText(null)
       } else if (status === 'recording' || status === 'listening') {
         setMicActive(true)
+        setNexusStatusText(null)
+      } else if (status === 'transcribing' || status === 'processing') {
+        setNexusStatusText('NEXUS THINKING...')
+      } else if (status === 'responding') {
+        setNexusStatusText('NEXUS SPEAKING...')
       }
     })
-    return unsub
+    // B56 FIX 1+3: subscribe to TTS audio element — fires when audio is actually created,
+    // giving useNEXUSAudio a valid HTMLAudioElement to connect to AudioContext analyser.
+    const unsubTTS = onTTSAudioChange((audio: HTMLAudioElement | null) => {
+      setTtsElement(audio)
+    })
+    return () => { unsubOrb(); unsubTTS() }
   }, [])
 
-  // B53: handleMicToggle now routes through NEXUS voice pipeline
+  // B53+B56: handleMicToggle routes through NEXUS voice pipeline.
+  // B56 FIX 2: sets orbLabMode=true so drawer stays closed (pure-visual mode).
   const handleMicToggle = async () => {
     const voice = getVoiceSubsystem()
     if (micActive) {
+      setOrbLabMode(false)
       if (voiceStatus === 'recording') { await voice.stopRecording() }
       else if (voiceStatus === 'responding') { try { await voice.stopSpeaking() } catch {} }
       setMicActive(false)
       micStreamRef.current = null; setMicStream(null)
       setOrbState('IDLE')
+      setNexusStatusText(null)
     } else {
       try {
         unlockAudioContext()
+        setOrbLabMode(true) // B56: suppress NEXUS drawer — ORB LAB is pure-visual
         voice.setConversationHistory([])
         await voice.startRecording('normal')
         setMicActive(true)
         setOrbState('LISTENING')
-      } catch (e) { console.warn('[OrbLab] NEXUS voice start failed', e) }
+      } catch (e) {
+        setOrbLabMode(false)
+        console.warn('[OrbLab] NEXUS voice start failed', e)
+      }
     }
   }
 
@@ -800,6 +823,17 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
           </div>
         )}
         <div style={{ display:'flex', alignItems:'center', gap:6, marginLeft:'auto' }}>
+          {/* B56 FIX 2: NEXUS status text — replaces chat panel in ORB LAB pure-visual mode */}
+          {nexusStatusText && (
+            <span style={{
+              fontSize:9, fontWeight:800, letterSpacing:'0.12em', textTransform:'uppercase',
+              color: nexusStatusText.includes('SPEAKING') ? '#7c3aed' : '#3A8EFF',
+              padding:'2px 8px', borderRadius:4,
+              backgroundColor: nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.12)' : 'rgba(58,142,255,0.12)',
+              border: `1px solid ${nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.3)' : 'rgba(58,142,255,0.3)'}`,
+              animation:'orbMicPulse 1.2s ease-in-out infinite',
+            }}>{nexusStatusText}</span>
+          )}
           <div style={{ width:8, height:8, borderRadius:'50%', backgroundColor:healthClr, boxShadow:`0 0 6px ${healthClr}` }} />
           <span style={{ fontSize:10, color:healthClr, fontWeight:700, letterSpacing:'0.08em' }}>{healthLabel} ({Math.round(healthAvg)})</span>
         </div>

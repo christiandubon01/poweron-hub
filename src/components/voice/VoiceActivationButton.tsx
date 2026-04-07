@@ -22,7 +22,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, onOrbStateChange, type VoiceSessionStatus } from '@/services/voice'
+import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, onOrbStateChange, isOrbLabMode, type VoiceSessionStatus } from '@/services/voice'
 import { useAuth } from '@/hooks/useAuth'
 import { NexusDrawerPanel, type DrawerMessage } from '@/components/nexus/NexusDrawerPanel'
 import type { OrbState } from '@/components/nexus/NexusPresenceOrb'
@@ -220,8 +220,11 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
           lastCleanedTranscriptRef.current = ''
         }
 
-        setDrawerOpen(true)
-        setDrawerExpanded(true)
+        // B56 FIX 2: suppress drawer when voice runs from ORB LAB (pure-visual mode)
+        if (!isOrbLabMode()) {
+          setDrawerOpen(true)
+          setDrawerExpanded(true)
+        }
       }
 
       if (event.type === 'error') {
