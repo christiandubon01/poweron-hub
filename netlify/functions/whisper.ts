@@ -67,10 +67,11 @@ exports.handler = async (event: any, _context: any) => {
     const boundary = '----WhisperProxy' + Date.now()
     const CRLF = '\r\n'
 
+    // B57-hotfix: use response_format=text — returns plain string, fastest Whisper response.
+    // Removed verbose_json + timestamp_granularities to eliminate segment-parsing overhead.
     const fieldParts: Array<{ name: string; value: string }> = [
       { name: 'model', value: 'whisper-1' },
-      { name: 'response_format', value: 'verbose_json' },
-      { name: 'timestamp_granularities[]', value: 'segment' },
+      { name: 'response_format', value: 'text' },
     ]
     if (language) fieldParts.push({ name: 'language', value: language })
     if (temperature !== undefined) fieldParts.push({ name: 'temperature', value: String(temperature) })
@@ -136,39 +137,29 @@ exports.handler = async (event: any, _context: any) => {
     console.log(`[whisper-proxy] OpenAI returned status ${openaiResult.statusCode}`)
 
     // ── Parse & return ──────────────────────────────────────────────────────
-    let result: any
-    try {
-      result = JSON.parse(openaiResult.body)
-    } catch (parseErr) {
-      console.error(`[whisper-proxy] Failed to parse OpenAI response: ${openaiResult.body.slice(0, 500)}`)
-      return {
-        statusCode: 502,
-        headers,
-        body: JSON.stringify({
-          error: 'Failed to parse OpenAI response',
-          raw: openaiResult.body.slice(0, 500),
-        }),
-      }
-    }
-
+    // B57-hotfix: response_format=text returns a plain string (not JSON).
+    // Wrap it as { text, language, duration } so the client parseWhisperResponse works unchanged.
     if (openaiResult.statusCode !== 200) {
-      console.error(`[whisper-proxy] OpenAI error: ${JSON.stringify(result)}`)
+      let errDetail: any = {}
+      try { errDetail = JSON.parse(openaiResult.body) } catch { /* body may not be JSON */ }
+      console.error(`[whisper-proxy] OpenAI error ${openaiResult.statusCode}:`, openaiResult.body.slice(0, 500))
       return {
         statusCode: openaiResult.statusCode,
         headers,
         body: JSON.stringify({
-          error: result.error?.message || 'Whisper API error',
-          detail: result,
+          error: errDetail?.error?.message || 'Whisper API error',
+          detail: errDetail,
         }),
       }
     }
 
-    console.log(`[whisper-proxy] Transcribed: "${(result.text || '').slice(0, 80)}"`)
+    const transcribedText = openaiResult.body.trim()
+    console.log(`[whisper-proxy] Transcribed: "${transcribedText.slice(0, 80)}"`)
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify(result),
+      body: JSON.stringify({ text: transcribedText, language: language || 'en', duration: 0 }),
     }
   } catch (err: any) {
     console.error(`[whisper-proxy] Unhandled error: ${err?.message}`, err?.stack)

@@ -38,19 +38,19 @@ exports.handler = async (event: any, _context: any) => {
 
   try {
     const body = JSON.parse(event.body || '{}')
-    const { voiceId, text } = body
+    const { text, voice_id } = body
 
-    if (!voiceId || !text) {
+    if (!voice_id || !text) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'voiceId and text are required' }),
+        body: JSON.stringify({ error: 'voice_id and text are required' }),
       }
     }
 
-    console.log(`[speak] Synthesising voice=${voiceId} text="${text.slice(0, 60)}"`)
+    console.log(`[speak] Synthesising voice=${voice_id} text="${text.slice(0, 60)}"`)
 
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`, {
       method: 'POST',
       headers: {
         'xi-api-key': apiKey,

@@ -98,12 +98,6 @@ const WORDS_PER_MINUTE = 150   // Average speaking rate for duration estimation
  * Returns audio blob and object URL for playback.
  */
 export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTSResponse> {
-  const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY || import.meta.env.VITE_ELEVENLABS_API_KEY
-
-  if (!apiKey) {
-    throw new Error('ElevenLabs API key not configured. Set VITE_ELEVENLABS_API_KEY in your .env file.')
-  }
-
   if (!request.text || request.text.trim().length === 0) {
     throw new Error('Text is required for speech synthesis.')
   }
@@ -129,39 +123,30 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
   console.log('[ElevenLabs] Using speech rate:', rate)
   console.log(`[ElevenLabs] Synthesizing ${text.length} chars with voice ${voiceId}...`)
 
-  const response = await fetch(
-    `${ELEVEN_LABS_BASE_URL}/text-to-speech/${voiceId}`,
-    {
-      method: 'POST',
-      headers: {
-        'xi-api-key': apiKey,
-        'Content-Type': 'application/json',
-        Accept: 'audio/mpeg',
-      },
-      body: JSON.stringify({
-        text,
-        model_id: request.model_id || 'eleven_turbo_v2_5',
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-          // FIX: speed belongs inside voice_settings for eleven_turbo_v2_5.
-          // Previously was top-level (ignored by the model). Now correctly placed.
-          speed: rate,
-          ...(request.voice_settings || {}),
-        },
-      }),
-    }
-  )
+  // B57-hotfix: Route through Netlify proxy so API key stays server-side.
+  // speak.ts reads voice_id (snake_case) from body and calls ElevenLabs server-side.
+  const response = await fetch('/.netlify/functions/speak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      voice_id: voiceId || DEFAULT_VOICE_ID,
+      model_id: request.model_id || 'eleven_turbo_v2_5',
+    }),
+  })
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => 'Unknown error')
     if (response.status === 401) {
-      console.error('[ElevenLabs] 401 Unauthorized — check that VITE_ELEVENLABS_API_KEY is set correctly in Netlify environment variables and is a valid, active ElevenLabs API key.')
+      console.error('[ElevenLabs] 401 Unauthorized — check ELEVENLABS_API_KEY in Netlify environment variables.')
     }
-    throw new Error(`ElevenLabs API error (${response.status}): ${errorBody}`)
+    throw new Error(`ElevenLabs proxy error (${response.status}): ${errorBody}`)
   }
 
-  const audioBlob = await response.blob()
+  // Proxy returns { audio: base64, contentType: 'audio/mpeg' }
+  const data = await response.json()
+  const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))
+  const audioBlob = new Blob([audioBytes], { type: data.contentType || 'audio/mpeg' })
   const audioUrl = URL.createObjectURL(audioBlob)
 
   // Estimate duration from word count (use the resolved rate)
