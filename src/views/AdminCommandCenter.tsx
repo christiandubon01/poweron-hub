@@ -4321,6 +4321,52 @@ function Tab13UnifiedCommand() {
   const [deployCount, setDeployCount] = React.useState<number | null>(null)
   const [recentEvents, setRecentEvents] = React.useState<Array<{ event_type: string; event_label: string | null; created_at: string }>>([])
 
+  // B51 — Cross-domain Insight Panel
+  const [insightOpen, setInsightOpen] = React.useState(false)
+  const [insight, setInsight] = React.useState<string>('')
+  const [insightLoading, setInsightLoading] = React.useState(false)
+  const [insightTs, setInsightTs] = React.useState<string | null>(null)
+
+  // B51 — Wins swimlane
+  const [recentWins, setRecentWins] = React.useState<Array<{ id: string; title: string; category: string; impact?: string; created_at: string }>>([])
+
+  const WIN_CAT_COLORS: Record<string, string> = {
+    business: '#00ff9f', platform: '#ff00ff', personal: '#ffaa00', financial: '#ffd700', milestone: '#ff4444',
+  }
+
+  async function generateInsight() {
+    if (!kpis) return
+    setInsightLoading(true)
+    const CACHE_KEY = 'b51_insight_cache'
+    const CACHE_TS_KEY = 'b51_insight_ts'
+    const cached = localStorage.getItem(CACHE_KEY)
+    const cachedTs = localStorage.getItem(CACHE_TS_KEY)
+    if (cached && cachedTs && Date.now() - Number(cachedTs) < 3600000) {
+      setInsight(cached)
+      setInsightTs(new Date(Number(cachedTs)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      setInsightLoading(false)
+      return
+    }
+    try {
+      const kpiMsg = `Electrical: Pipeline ${cFmt(kpis.pipeline)}, Paid ${cFmt(kpis.paid)}, Exposure ${cFmt(kpis.exposure)}, Active Projects ${kpis.activeProjects}. Platform: V3 Live, 15 AI agents, 2 IP filings, beta pipeline forming.`
+      const res = await callClaude({
+        system: 'You are NEXUS analyzing Christian Dubon dual-entity operation. Electrical contracting and platform build metrics. Identify patterns risks opportunities spanning both. Direct. 3-5 sentences max. No bullet points.',
+        messages: [{ role: 'user', content: kpiMsg }],
+        max_tokens: 300,
+      })
+      const text = extractText(res)
+      setInsight(text)
+      const now = Date.now()
+      localStorage.setItem(CACHE_KEY, text)
+      localStorage.setItem(CACHE_TS_KEY, String(now))
+      setInsightTs(new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    } catch (e) {
+      setInsight('Unable to generate insight at this time.')
+    } finally {
+      setInsightLoading(false)
+    }
+  }
+
   React.useEffect(() => {
     // Deploy count
     supabase
@@ -4335,6 +4381,13 @@ function Tab13UnifiedCommand() {
       .order('created_at', { ascending: false })
       .limit(5)
       .then(({ data }) => { if (data) setRecentEvents(data) })
+    // B51 — Recent wins
+    supabase
+      .from('wins_log')
+      .select('id, title, category, impact, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5)
+      .then(({ data }) => { if (data) setRecentWins(data) })
   }, [])
 
   function relativeTime(iso: string): string {
@@ -4374,7 +4427,6 @@ function Tab13UnifiedCommand() {
   }
 
   const swimStyle: React.CSSProperties = {
-    flex: 1,
     overflowY: 'auto',
     padding: '18px 20px',
     minWidth: 0,
@@ -4427,11 +4479,65 @@ function Tab13UnifiedCommand() {
         </div>
       </div>
 
-      {/* SECTION 3 — Two Swimlanes */}
+      {/* SECTION 2.5 — Cross-domain Insight Panel (collapsible) */}
+      <div style={{ borderBottom: insightOpen ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
+        <button
+          onClick={() => setInsightOpen(o => !o)}
+          style={{
+            width: '100%', padding: '8px 24px', display: 'flex', alignItems: 'center', gap: 8,
+            background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 800, color: '#a78bfa' }}>🧠 NEXUS CROSS-DOMAIN INSIGHT</span>
+          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', marginLeft: 4 }}>{insightOpen ? '▲ collapse' : '▼ expand'}</span>
+          {insightTs && <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', marginLeft: 'auto' }}>Generated {insightTs}</span>}
+        </button>
+        {insightOpen && (
+          <div style={{ padding: '0 24px 14px' }}>
+            {!insight && !insightLoading && (
+              <button
+                onClick={generateInsight}
+                style={{
+                  padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(167,139,250,0.4)',
+                  backgroundColor: 'rgba(167,139,250,0.1)', color: '#a78bfa',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                GENERATE INSIGHT
+              </button>
+            )}
+            {insightLoading && (
+              <div style={{ fontSize: 12, color: '#a78bfa', fontStyle: 'italic', padding: '8px 0' }}>
+                NEXUS is analyzing… ✦
+              </div>
+            )}
+            {insight && !insightLoading && (
+              <div style={{
+                padding: '12px 16px', borderRadius: 10, backgroundColor: '#0d1321',
+                border: '1px solid rgba(167,139,250,0.25)', boxShadow: '0 0 20px rgba(167,139,250,0.08)',
+              }}>
+                <p style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.65, margin: 0 }}>{insight}</p>
+                <button
+                  onClick={generateInsight}
+                  style={{
+                    marginTop: 10, padding: '4px 12px', borderRadius: 6,
+                    border: '1px solid rgba(167,139,250,0.3)', background: 'none',
+                    color: '#a78bfa', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                  }}
+                >
+                  ↺ Regenerate
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 3 — Three Swimlanes */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
 
-        {/* LEFT SWIMLANE — Electrical Operations */}
-        <div style={swimStyle}>
+        {/* LEFT SWIMLANE — Electrical Operations (35%) */}
+        <div style={{ ...swimStyle, width: '35%', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: '#e2e8f0' }}>⚡ ELECTRICAL OPERATIONS</span>
           </div>
@@ -4491,8 +4597,8 @@ function Tab13UnifiedCommand() {
         {/* Divider */}
         <div style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
 
-        {/* RIGHT SWIMLANE — Platform Operations */}
-        <div style={swimStyle}>
+        {/* RIGHT SWIMLANE — Platform Operations (35%) */}
+        <div style={{ ...swimStyle, width: '35%', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: '#e2e8f0' }}>🧠 PLATFORM OPERATIONS</span>
           </div>
@@ -4576,6 +4682,58 @@ function Tab13UnifiedCommand() {
                 </div>
               )
             })}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+        {/* WINS SWIMLANE — Recent Wins (30%) */}
+        <div style={{ ...swimStyle, width: '30%', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#ffd700' }}>🏆 RECENT WINS</span>
+          </div>
+
+          <div style={{ ...secHdr, marginTop: 0 }}>Last 5 Wins</div>
+          {recentWins.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', fontStyle: 'italic' }}>No wins logged yet</div>
+          ) : (
+            recentWins.map((w, i) => {
+              const catColor = WIN_CAT_COLORS[w.category] ?? '#9ca3af'
+              return (
+                <div key={i} style={{
+                  ...cCard, borderLeft: `3px solid ${catColor}`,
+                  padding: '8px 12px', marginBottom: 6,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: catColor, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {w.title}
+                    </span>
+                  </div>
+                  {w.impact && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 20,
+                      backgroundColor: '#1a1a1a', color: catColor, textTransform: 'uppercase', letterSpacing: '0.06em',
+                    }}>
+                      {w.impact}
+                    </span>
+                  )}
+                  <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: 3 }}>
+                    {(() => {
+                      try { return new Date(w.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
+                      catch { return '' }
+                    })()}
+                  </div>
+                </div>
+              )
+            })
+          )}
+
+          <div style={{ ...secHdr, marginTop: 20 }}>Summary</div>
+          <div style={cCard}>
+            <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Total Logged</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#ffd700' }}>{recentWins.length}</div>
           </div>
         </div>
       </div>

@@ -1,5 +1,15 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 import {
   Shield,
   AlertTriangle,
@@ -1519,9 +1529,233 @@ function BetaInvitesTab() {
   );
 }
 
+// ─── B51 | GUARDIAN Tuning Sub-tab ───────────────────────────────────────────
+
+interface TuningSetting {
+  key: string;
+  label: string;
+  description: string;
+  type: 'slider' | 'select';
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  defaultValue: number | string;
+}
+
+const TUNING_SETTINGS: TuningSetting[] = [
+  { key: 'nexus_confidence_threshold', label: 'NEXUS Confidence Threshold', description: 'Minimum confidence score to accept a NEXUS response', type: 'slider', min: 0, max: 100, step: 1, defaultValue: 70 },
+  { key: 'ledger_activation_sensitivity', label: 'LEDGER Activation Sensitivity', description: 'How sensitive LEDGER is to financial triggers', type: 'select', options: ['low', 'medium', 'high'], defaultValue: 'medium' },
+  { key: 'scout_suggestion_frequency', label: 'SCOUT Suggestion Frequency', description: 'How often SCOUT surfaces suggestions', type: 'select', options: ['off', 'low', 'normal', 'high'], defaultValue: 'normal' },
+  { key: 'spark_lead_scoring_threshold', label: 'SPARK Lead Scoring Threshold', description: 'Minimum lead score to trigger SPARK actions', type: 'slider', min: 0, max: 100, step: 1, defaultValue: 60 },
+  { key: 'guardian_audit_verbosity', label: 'GUARDIAN Audit Log Verbosity', description: 'Detail level for guardian audit entries', type: 'select', options: ['minimal', 'normal', 'verbose'], defaultValue: 'normal' },
+];
+
+function GuardianTuningTab() {
+  const [values, setValues] = useState<Record<string, number | string>>(() => {
+    const init: Record<string, number | string> = {};
+    TUNING_SETTINGS.forEach(s => { init[s.key] = s.defaultValue; });
+    return init;
+  });
+  const [updatedAt, setUpdatedAt] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [agentCalls, setAgentCalls] = useState<Array<{ agent: string; count: number }>>([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState<Array<{ alert_text: string; agent: string; ts: string }>>([]);
+
+  // Load current config from supabase
+  useEffect(() => {
+    supabase.from('guardian_config').select('*').then(({ data }) => {
+      if (!data) return;
+      const newVals: Record<string, number | string> = { ...values };
+      const newTs: Record<string, string> = {};
+      data.forEach((row: any) => {
+        newVals[row.key] = row.value?.v ?? row.value;
+        newTs[row.key] = row.updated_at;
+      });
+      setValues(newVals);
+      setUpdatedAt(newTs);
+    });
+
+    // Agent activity last 24h
+    const since = new Date(Date.now() - 86400000).toISOString();
+    supabase
+      .from('hub_platform_events')
+      .select('event_label')
+      .eq('event_type', 'agent_call')
+      .gte('created_at', since)
+      .then(({ data }) => {
+        if (!data) return;
+        const counts: Record<string, number> = {};
+        data.forEach((r: any) => {
+          const agent = r.event_label ?? 'unknown';
+          counts[agent] = (counts[agent] ?? 0) + 1;
+        });
+        setAgentCalls(Object.entries(counts).map(([agent, count]) => ({ agent, count })));
+      });
+
+    // Dismissed alerts
+    supabase
+      .from('hub_platform_events')
+      .select('event_label, created_at')
+      .eq('event_type', 'dismissed_alert')
+      .order('created_at', { ascending: false })
+      .limit(20)
+      .then(({ data }) => {
+        if (!data) return;
+        setDismissedAlerts(data.map((r: any) => ({
+          alert_text: r.event_label ?? '(unknown alert)',
+          agent: 'GUARDIAN',
+          ts: r.created_at,
+        })));
+      });
+  }, []);
+
+  async function saveSetting(key: string) {
+    setSaving(s => ({ ...s, [key]: true }));
+    const val = values[key];
+    await supabase.from('guardian_config').upsert({ key, value: { v: val }, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    const now = new Date().toISOString();
+    setUpdatedAt(t => ({ ...t, [key]: now }));
+    setSaving(s => ({ ...s, [key]: false }));
+  }
+
+  function fmtTs(iso?: string) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    catch { return iso; }
+  }
+
+  const rowStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+    backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)',
+    borderRadius: 8, marginBottom: 8,
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Section A — Tunable Settings */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          A · Agent Settings
+        </div>
+        {TUNING_SETTINGS.map(s => (
+          <div key={s.key} style={rowStyle}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', marginBottom: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>{s.description}</div>
+              {s.type === 'slider' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="range" min={s.min} max={s.max} step={s.step}
+                    value={Number(values[s.key])}
+                    onChange={e => setValues(v => ({ ...v, [s.key]: Number(e.target.value) }))}
+                    style={{ flex: 1, accentColor: '#4ade80' }}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#4ade80', minWidth: 28, textAlign: 'right' }}>
+                    {values[s.key]}
+                  </span>
+                </div>
+              )}
+              {s.type === 'select' && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {s.options?.map(opt => (
+                    <button
+                      key={opt}
+                      onClick={() => setValues(v => ({ ...v, [s.key]: opt }))}
+                      style={{
+                        padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                        border: values[s.key] === opt ? '1px solid #4ade80' : '1px solid rgba(255,255,255,0.1)',
+                        backgroundColor: values[s.key] === opt ? 'rgba(74,222,128,0.15)' : 'transparent',
+                        color: values[s.key] === opt ? '#4ade80' : '#6b7280',
+                      }}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {updatedAt[s.key] && (
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: 4 }}>
+                  Last saved: {fmtTs(updatedAt[s.key])}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => saveSetting(s.key)}
+              disabled={saving[s.key]}
+              style={{
+                padding: '6px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.4)',
+                backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80',
+                fontSize: 11, fontWeight: 700, cursor: saving[s.key] ? 'not-allowed' : 'pointer',
+                opacity: saving[s.key] ? 0.5 : 1, flexShrink: 0,
+              }}
+            >
+              {saving[s.key] ? '…' : 'Save'}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Section B — Agent Activity Last 24h */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          B · Agent Activity (Last 24h)
+        </div>
+        <div style={{ backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '14px' }}>
+          {agentCalls.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '16px 0' }}>No agent calls in last 24h</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={agentCalls} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="agent" tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#0d1321', border: '1px solid rgba(74,222,128,0.3)', borderRadius: 8, fontSize: 11 }}
+                  labelStyle={{ color: '#e2e8f0' }}
+                  itemStyle={{ color: '#4ade80' }}
+                />
+                <Bar dataKey="count" fill="#4ade80" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Section C — Dismissed Alerts Log */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          C · Dismissed Alerts Log
+        </div>
+        <div style={{ backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, overflow: 'hidden' }}>
+          {dismissedAlerts.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '16px 0' }}>No dismissed alerts</div>
+          ) : (
+            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+              {dismissedAlerts.map((a, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px',
+                  borderBottom: i < dismissedAlerts.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                }}>
+                  <span style={{ fontSize: 11, color: '#d1d5db', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {a.alert_text}
+                  </span>
+                  <span style={{ fontSize: 10, color: '#4ade80', flexShrink: 0 }}>{a.agent}</span>
+                  <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtTs(a.ts)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Guardian View Root ───────────────────────────────────────────────────────
 
-type GuardianTab = 'monitor' | 'ai-decisions' | 'signed-ndas' | 'beta-invites';
+type GuardianTab = 'monitor' | 'ai-decisions' | 'signed-ndas' | 'beta-invites' | 'tuning';
 
 export default function GuardianView() {
   const [activeTab, setActiveTab] = useState<GuardianTab>('monitor');
@@ -1542,6 +1776,7 @@ export default function GuardianView() {
     { id: 'ai-decisions', label: 'AI Decisions',  icon: <Brain size={12} /> },
     { id: 'signed-ndas',  label: 'Signed NDAs',   icon: <FileText size={12} /> },
     { id: 'beta-invites', label: 'Beta Invites',  icon: <Mail size={12} />, badge: pendingInviteCount },
+    { id: 'tuning',       label: 'Tuning',         icon: <ToggleRight size={12} /> },
   ];
 
   return (
@@ -1634,6 +1869,11 @@ export default function GuardianView() {
         {activeTab === 'beta-invites' && (
           <div className="h-full min-h-0">
             <BetaInvitesTab />
+          </div>
+        )}
+        {activeTab === 'tuning' && (
+          <div className="h-full min-h-0 overflow-y-auto">
+            <GuardianTuningTab />
           </div>
         )}
       </div>

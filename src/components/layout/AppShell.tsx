@@ -101,6 +101,8 @@ const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminComm
 
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
+// B51 — Wins Log floating button + drawer
+const WinsLogPanel = lazy(() => import('@/components/v15r/WinsLog/WinsLogPanel').then(m => ({ default: m.WinsLogPanel })).catch(() => ({ default: () => null })))
 const OnboardingModal = lazy(() => chunkRetry(() => import('@/components/onboarding/OnboardingModal')))
 
 // Beta onboarding flow — fires once after NDA, checks orgs.onboarding_complete
@@ -655,6 +657,13 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         </Suspense>
       </ErrorBoundary>
+
+      {/* B51 — Wins Log floating button (above NEXUS orb) — bottom right */}
+      <Suspense fallback={null}>
+        <div style={{ position: 'fixed', bottom: '164px', right: '24px', zIndex: 58 }}>
+          <WinsLogPanel />
+        </div>
+      </Suspense>
 
       {/* Floating NEXUS voice button — bottom right on all panels */}
       <Suspense fallback={null}>
