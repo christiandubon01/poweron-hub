@@ -1,24 +1,32 @@
 /**
  * LoginFlow — top-level auth orchestrator.
  *
+ * B24 | Auth Flow Overhaul
+ *
  * Reads auth status from the store and renders the appropriate screen:
  *
  *   loading              → Splash / spinner
- *   unauthenticated      → Email sign-in form
- *   needs_passcode_setup → PasscodeScreen (setup mode) → BiometricPrompt (enrollment)
- *   needs_passcode       → PasscodeScreen (verify mode)
+ *   unauthenticated      → PinAuth (if PIN stored) OR email sign-in form
+ *   needs_passcode_setup → InitialSetupFlow (create 6-digit PIN + password)
+ *   needs_passcode       → PinAuth (verify mode; calls submitPasscode on success)
  *   biometric_prompt     → BiometricPrompt (verify mode)
  *   locked               → PasscodeScreen shows lockout timer
  *   authenticated        → children (dashboard)
+ *
+ * Changes from original:
+ *   - needs_passcode_setup now uses InitialSetupFlow (PIN + password together)
+ *   - needs_passcode now shows PinAuth keypad (calls submitPasscode on success)
+ *   - Resend magic link UI removed from EmailSignIn
  */
 
-import { useState, useEffect, useRef } from 'react'
-import { Zap, Mail, ArrowRight, CheckCircle, Clock } from 'lucide-react'
+import { useState } from 'react'
+import { Zap, Mail, ArrowRight, CheckCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import { PasscodeScreen } from '@/components/auth/PasscodeScreen'
 import { BiometricPrompt } from '@/components/auth/BiometricPrompt'
 import { PinAuth } from '@/components/auth/PinAuth'
+import { InitialSetupFlow } from '@/components/auth/InitialSetupFlow'
 
 // Key used by PinAuth to store the hashed PIN in localStorage
 const PIN_STORAGE_KEY = 'poweron_pin_hash'
@@ -28,6 +36,8 @@ function hasPinStored(): boolean {
 }
 
 // ── Email Sign-In ────────────────────────────────────────────────────────────
+// B24: Resend magic link UI removed. Magic links are one-time; user must start
+// a new sign-in if they need another link.
 function EmailSignIn() {
   const { signInWithEmail, signInWithMagicLink, error, clearError } = useAuth()
   const [email, setEmail]   = useState('')
@@ -35,44 +45,19 @@ function EmailSignIn() {
   const [password, setPassword] = useState('')
   const [sent, setSent]     = useState(false)
   const [loading, setLoading] = useState(false)
-  const [cooldown, setCooldown] = useState(0)
-  const cooldownRef = useRef<any>(null)
-
-  // Countdown timer for magic link cooldown
-  useEffect(() => {
-    if (cooldown <= 0) return
-    cooldownRef.current = setInterval(() => {
-      setCooldown(prev => {
-        if (prev <= 1) { clearInterval(cooldownRef.current); return 0 }
-        return prev - 1
-      })
-    }, 1000)
-    return () => clearInterval(cooldownRef.current)
-  }, [cooldown > 0])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email.trim()) return
-    if (mode === 'magic' && cooldown > 0) return
     setLoading(true)
     clearError()
 
     if (mode === 'magic') {
       await signInWithMagicLink(email.trim())
       setSent(true)
-      setCooldown(60)
     } else {
       await signInWithEmail(email.trim(), password)
     }
-    setLoading(false)
-  }
-
-  const handleResend = async () => {
-    if (cooldown > 0 || !email.trim()) return
-    setLoading(true)
-    clearError()
-    await signInWithMagicLink(email.trim())
-    setCooldown(60)
     setLoading(false)
   }
 
@@ -95,28 +80,9 @@ function EmailSignIn() {
           <p className="text-xs text-text-3">
             Click the link in your email to sign in. It expires in 1 hour.
           </p>
-
-          {/* Resend with cooldown */}
-          <div className="mt-6">
-            {cooldown > 0 ? (
-              <div className="flex items-center justify-center gap-2 text-xs text-text-3">
-                <Clock size={14} />
-                <span>Resend available in {cooldown}s</span>
-              </div>
-            ) : (
-              <button
-                onClick={handleResend}
-                disabled={loading}
-                className="text-sm text-green hover:text-green/80 transition-colors font-semibold disabled:opacity-50"
-              >
-                {loading ? 'Sending...' : 'Resend magic link'}
-              </button>
-            )}
-          </div>
-
           <button
-            onClick={() => { setSent(false); setCooldown(0) }}
-            className="mt-4 text-sm text-text-3 hover:text-text-2 transition-colors"
+            onClick={() => setSent(false)}
+            className="mt-6 text-sm text-text-3 hover:text-text-2 transition-colors"
           >
             Use a different email
           </button>
@@ -306,14 +272,19 @@ function AuthSpinner() {
 
 
 // ── LoginFlow (router) ───────────────────────────────────────────────────────
+// B24: Updated routing:
+//   needs_passcode_setup → InitialSetupFlow (PIN + password first-time setup)
+//   needs_passcode       → PinAuth with onVerify=submitPasscode (returning user)
+//   unauthenticated      → PinAuth (local) or EmailSignIn
+
 interface LoginFlowProps {
   children: React.ReactNode
 }
 
 export function LoginFlow({ children }: LoginFlowProps) {
   const { status, submitPasscode, signOut } = useAuth()
-  // Track whether the user has chosen to fall back to magic link for this session.
-  // We initialise it to false — PinAuth is shown first whenever a PIN is stored.
+  // Track whether the user has chosen to fall back to email sign-in.
+  // PinAuth is shown first whenever a PIN is stored in localStorage.
   const [pinFallback, setPinFallback] = useState(false)
 
   switch (status) {
@@ -321,9 +292,9 @@ export function LoginFlow({ children }: LoginFlowProps) {
       return <AuthSpinner />
 
     case 'unauthenticated': {
-      // Show PIN pad as the primary auth method when the user has set one up.
-      // If no PIN is stored, or the user has explicitly chosen to use a link,
-      // fall through to the magic-link / email sign-in screen.
+      // Show PIN pad if PIN is stored locally and user hasn't chosen to fall back.
+      // Pin-auth success dispatches 'poweron:pin-auth-success'; the Supabase JWT
+      // auto-refresh will re-trigger initialize() if the session is still valid.
       const showPin = hasPinStored() && !pinFallback
       if (showPin) {
         return (
@@ -333,15 +304,17 @@ export function LoginFlow({ children }: LoginFlowProps) {
       return <EmailSignIn />
     }
 
+    // B24: First-time setup — collect 6-digit PIN + password together.
     case 'needs_passcode_setup':
-      return <PasscodeSetupFlow />
+      return <InitialSetupFlow />
 
+    // B24: Returning user — show PIN keypad; on success call submitPasscode
+    // (creates Redis app session and transitions state to 'authenticated').
     case 'needs_passcode':
       return (
-        <PasscodeScreen
-          mode="verify"
-          onComplete={submitPasscode}
-          onCancel={signOut}
+        <PinAuth
+          onVerify={submitPasscode}
+          onFallbackToMagicLink={signOut}
         />
       )
 

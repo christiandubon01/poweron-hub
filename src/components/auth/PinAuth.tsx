@@ -1,16 +1,20 @@
 /**
- * PinAuth — Local PIN authentication (4 or 6 digit, default 6).
+ * PinAuth — Local PIN authentication (6 digit).
  *
- * This is a foundation build: UI + localStorage PIN hash storage.
- * Full Supabase auth integration comes in a later session.
+ * B24 | Auth Flow Overhaul
  *
  * Flows:
  *   1. verify      — User has a PIN stored; enter to authenticate.
  *   2. setup-create  — No PIN stored; enter new PIN.
  *   3. setup-confirm — Confirm the new PIN; save on match.
  *
- * On success: dispatches CustomEvent 'poweron:pin-auth-success' on window.
- * On failure: shakes + clears after 500 ms; lockout after 5 wrong attempts.
+ * On verify success:
+ *   - If `onVerify` prop provided → calls onVerify(pin) (used when status='needs_passcode'
+ *     so submitPasscode is called and the auth state machine advances).
+ *   - Otherwise → dispatches CustomEvent 'poweron:pin-auth-success' on window
+ *     (used in 'unauthenticated' state as a local gate).
+ *
+ * On failure: shakes + clears after 500 ms; 5 failed attempts → 1-hour lockout.
  */
 
 import React, { useState, useEffect } from 'react'
@@ -19,10 +23,10 @@ import { clsx } from 'clsx'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const PIN_LENGTH    = 6       // default 6; change to 4 for 4-digit PIN
+const PIN_LENGTH    = 6
 const STORAGE_KEY   = 'poweron_pin_hash'
 const MAX_ATTEMPTS  = 5
-const LOCKOUT_MS    = 30_000  // 30 seconds
+const LOCKOUT_MS    = 3_600_000  // 1 hour (B24: 5 attempts per hour)
 
 // ── Crypto ────────────────────────────────────────────────────────────────────
 
@@ -49,13 +53,19 @@ function saveHash(hash: string): void {
 type FlowMode = 'verify' | 'setup-create' | 'setup-confirm'
 
 interface PinAuthProps {
-  /** Called when the user taps "Use magic link instead" */
+  /** Called when the user taps "Use magic link instead" or "Use password instead" */
   onFallbackToMagicLink?: () => void
+  /**
+   * B24: When provided, called with the raw PIN on successful local verification
+   * instead of dispatching the window event.
+   * Use this when status='needs_passcode' to wire submitPasscode from authStore.
+   */
+  onVerify?: (pin: string) => void | Promise<void>
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function PinAuth({ onFallbackToMagicLink }: PinAuthProps) {
+export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
   const hasPinStored = Boolean(getStoredHash())
 
   const [mode, setMode]         = useState<FlowMode>(hasPinStored ? 'verify' : 'setup-create')
@@ -147,7 +157,12 @@ export function PinAuth({ onFallbackToMagicLink }: PinAuthProps) {
     const hash = await sha256(pin)
     if (hash === stored) {
       setAttempts(0)
-      window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
+      if (onVerify) {
+        // B24: delegate to authStore.submitPasscode (for needs_passcode state)
+        await onVerify(pin)
+      } else {
+        window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
+      }
       // Leave isSubmitting=true while auth state propagates
     } else {
       const next = attempts + 1
@@ -157,7 +172,7 @@ export function PinAuth({ onFallbackToMagicLink }: PinAuthProps) {
         const end = Date.now() + LOCKOUT_MS
         setLockoutEnd(end)
         setTimeLeft(Math.ceil(LOCKOUT_MS / 1000))
-        setError(`Too many attempts. Locked out for ${Math.ceil(LOCKOUT_MS / 1000)} seconds.`)
+        setError('Too many attempts. Locked out for 1 hour.')
       } else {
         const left = MAX_ATTEMPTS - next
         setError(`Incorrect PIN. ${left} attempt${left !== 1 ? 's' : ''} remaining.`)
@@ -341,7 +356,7 @@ export function PinAuth({ onFallbackToMagicLink }: PinAuthProps) {
           onClick={onFallbackToMagicLink}
           className="mt-8 text-sm text-text-3 hover:text-text-2 transition-colors"
         >
-          Use magic link instead
+          {onVerify ? 'Sign out and use password instead' : 'Use email instead'}
         </button>
       )}
 

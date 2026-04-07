@@ -123,9 +123,23 @@ export function AppShell({ children }: AppShellProps) {
   const { isDemoMode, enableDemoMode, disableDemoMode, setHasHydrated, getDemoCompanyName } = useDemoStore()
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
-  // NDA gate — check if current user has signed NDA; show flow if not
+  // NDA gate — check if current user has signed NDA; show flow if not.
+  // B24: Cache result in localStorage so it never re-triggers after signing.
+  // Key: 'poweron_nda_signed_{userId}' → '1'
   const [ndaSigned, setNdaSigned] = useState<boolean | null>(null)
   const [showNdaGate, setShowNdaGate] = useState(false)
+
+  function getNdaCacheKey(userId: string) {
+    return `poweron_nda_signed_${userId}`
+  }
+
+  function isNdaCachedSigned(userId: string): boolean {
+    try { return localStorage.getItem(getNdaCacheKey(userId)) === '1' } catch { return false }
+  }
+
+  function setNdaCached(userId: string): void {
+    try { localStorage.setItem(getNdaCacheKey(userId), '1') } catch { /* storage unavailable */ }
+  }
 
   // Beta onboarding gate — fires once after NDA, before main app loads
   const [showBetaOnboarding, setShowBetaOnboarding] = useState(false)
@@ -263,13 +277,26 @@ export function AppShell({ children }: AppShellProps) {
   }, [])
 
   // NDA gate — check on auth. Non-demo, non-read-only sessions only.
+  // B24: Check localStorage cache first — if the user signed before, skip the
+  // Supabase call entirely so the NDA flow never re-triggers after signing.
   useEffect(() => {
     if (isReadOnly || isDemoMode) return
     if (!profile?.id) return
+
+    // Fast path: cached signed status (set after first confirmed sign)
+    if (isNdaCachedSigned(profile.id)) {
+      setNdaSigned(true)
+      setShowNdaGate(false)
+      return
+    }
+
+    // Slow path: verify with Supabase
     hasUserSignedNDA(profile.id)
       .then((signed) => {
         setNdaSigned(signed)
         setShowNdaGate(!signed)
+        // Persist so future loads skip the Supabase call
+        if (signed) setNdaCached(profile.id)
       })
       .catch(() => {
         // On error, don't block the app
@@ -427,6 +454,8 @@ export function AppShell({ children }: AppShellProps) {
               onSigned={() => {
                 setNdaSigned(true)
                 setShowNdaGate(false)
+                // B24: Cache signed status so this never re-triggers
+                if (profile?.id) setNdaCached(profile.id)
                 // Mark invite as accepted after NDA is signed
                 const token = pendingInviteToken || sessionStorage.getItem('poweron_invite_token')
                 if (token) {
@@ -483,6 +512,8 @@ export function AppShell({ children }: AppShellProps) {
           onSigned={() => {
             setNdaSigned(true)
             setShowNdaGate(false)
+            // B24: Cache signed status so this never re-triggers
+            if (profile?.id) setNdaCached(profile.id)
             // Mark invite as accepted after NDA is signed
             const token = pendingInviteToken || sessionStorage.getItem('poweron_invite_token')
             if (token) {
