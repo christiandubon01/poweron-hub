@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * AdminVisualizationLab.tsx — B34 | Admin Visualization Lab (Orb Fix + Neural Map Polish)
+ * AdminVisualizationLab.tsx — B35 | Neural Map Insight Layer
  *
  * Two main tabs:
  *   ORB LAB   — Organic Orb (Three.js particles) + Geometric Orb (wireframe icosahedron)
@@ -842,6 +842,14 @@ function NeuralMap() {
   useEffect(() => { activeTabRef.current = activeTab }, [activeTab])
   useEffect(() => { togglesRef.current = layerToggles }, [layerToggles])
 
+  // B35 state
+  const [selectedNode, setSelectedNode] = useState<NNode | null>(null)
+  const setSelectedNodeRef = useRef<(n: NNode | null) => void>(() => {})
+  useEffect(() => { setSelectedNodeRef.current = setSelectedNode }, [])
+  const [summaryData, setSummaryData] = useState({ activeProjects: 0, agentsOnline: 0, decisionsLogged: 0, systemHealth: 75 })
+  const setSummaryRef = useRef<(d: any) => void>(() => {})
+  useEffect(() => { setSummaryRef.current = setSummaryData }, [])
+
   // Build node/edge data
   function buildGraphData(tab: NeuralTab, toggles: typeof layerToggles): { nodes: NNode[]; edges: NEdge[] } {
     const nodes: NNode[] = []
@@ -1003,6 +1011,37 @@ function NeuralMap() {
     let simulationActive = true
     let edgesAsTubes = false // B34: upgrade edges to tubes after simulation settles
 
+    // B35: Label overlay system
+    let labelContainer: HTMLDivElement | null = null
+    let labelDivs: HTMLDivElement[] = []
+    const _labelV3 = new THREE.Vector3()
+
+    function createLabelContainer() {
+      labelContainer = document.createElement('div')
+      labelContainer.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:10;'
+      mount.appendChild(labelContainer)
+    }
+    createLabelContainer()
+
+    function getEdgeDescription(a: NNode, b: NNode): string {
+      const la = a?.label || '?', lb = b?.label || '?'
+      if (a?.type === 'agent' && b?.type === 'agent') {
+        return `${la} → ${lb}: Delegated coordination tasks`
+      }
+      if ((a?.type === 'agent' && b?.type === 'project') || (a?.type === 'project' && b?.type === 'agent')) {
+        const agent = a?.type === 'agent' ? la : lb
+        const proj = a?.type === 'project' ? la : lb
+        return `${agent}: Active monitoring of ${proj}`
+      }
+      if ((a?.type === 'project' && b?.type === 'data') || (a?.type === 'data' && b?.type === 'project')) {
+        const proj = a?.type === 'project' ? la : lb
+        const data = a?.type === 'data' ? la : lb
+        const val = (a?.type === 'data' ? a : b)?.meta?.valueStr || ''
+        return `${proj} → ${data}: Contributes ${val}`
+      }
+      return `${la} ↔ ${lb}: Related`
+    }
+
     // B34 Fix 2: Create premium node mesh based on type
     function createNodeMesh(n: NNode): THREE.Mesh | THREE.Group {
       if (n.type === 'project') {
@@ -1084,6 +1123,9 @@ function NeuralMap() {
       // Clear old hitSpheres from scene
       hitSpheres.forEach((s) => scene.remove(s))
       hitSpheres = []
+      // B35: Clear old labels
+      if (labelContainer) labelContainer.innerHTML = ''
+      labelDivs = []
 
       // Clear old nodes/edges
       while (nodeGroup.children.length) nodeGroup.remove(nodeGroup.children[0])
@@ -1113,6 +1155,35 @@ function NeuralMap() {
         hitSpheres.push(hs)
       })
 
+      // B35: Create node label divs
+      if (labelContainer) {
+        labelDivs = currentNodes.map((n) => {
+          const div = document.createElement('div')
+          div.style.cssText = [
+            'position:absolute;pointer-events:none;white-space:nowrap;',
+            'font-family:monospace;font-size:10px;font-weight:700;letter-spacing:0.04em;',
+            'background:rgba(4,8,18,0.82);border:1px solid rgba(255,255,255,0.08);',
+            'border-radius:5px;padding:2px 6px;color:#e2e8f0;',
+            'transform:translate(-50%,-100%);margin-top:-8px;transition:opacity 0.3s;',
+          ].join('')
+          if (n.type === 'project') {
+            const h = n.meta?.healthScore ?? '?'
+            const hc = (h as number) > 70 ? '#00ff88' : (h as number) > 40 ? '#ffcc00' : '#ff6600'
+            div.innerHTML = `<span style="color:${hc}">${n.label}</span> <span style="color:#6b7280;font-size:9px">${h}</span>`
+          } else if (n.type === 'agent') {
+            div.innerHTML = `<span style="color:#ca8a04">${n.label}</span><span style="background:rgba(0,255,136,0.15);color:#00ff88;font-size:8px;padding:1px 4px;border-radius:3px;margin-left:3px">Active</span>`
+          } else if (n.type === 'decision') {
+            const fb = n.meta?.feedback
+            const emoji = fb > 0 ? '👍' : fb < 0 ? '👎' : '•'
+            div.innerHTML = `<span style="color:#a855f7;font-size:9px">${n.label}</span> <span>${emoji}</span>`
+          } else {
+            div.innerHTML = `<span style="color:#06b6d4">${n.label}</span> <span style="color:#9ca3af;font-size:9px">${n.meta?.valueStr ?? ''}</span>`
+          }
+          labelContainer!.appendChild(div)
+          return div
+        })
+      }
+
       // B34 Fix 2: Create initial edge lines (fast update during simulation)
       currentEdges.forEach((e) => {
         const a = currentNodes[e.a], b = currentNodes[e.b]
@@ -1129,6 +1200,13 @@ function NeuralMap() {
 
       simulationActive = true
       sceneDataRef.current = { nodes: currentNodes, edges: currentEdges }
+      // B35: Update summary stats
+      setSummaryRef.current({
+        activeProjects: currentNodes.filter((n) => n.type === 'project').length,
+        agentsOnline: currentNodes.filter((n) => n.type === 'agent').length,
+        decisionsLogged: currentNodes.filter((n) => n.type === 'decision').length,
+        systemHealth: Math.round(getAvgHealth()),
+      })
     }
 
     rebuildScene()
@@ -1194,6 +1272,20 @@ function NeuralMap() {
         const force = spring * (dist - target)
         a.fx += dx / dist * force; a.fy += dy / dist * force; a.fz += dz / dist * force
         b.fx -= dx / dist * force; b.fy -= dy / dist * force; b.fz -= dz / dist * force
+      }
+
+      // B35: Cluster grouping — weak attractive force toward type-specific centers
+      const clusterStrength = 0.015
+      const clusterTargets: Record<string, [number, number, number]> = {
+        project: [-3, 0, 0], agent: [3, 0, 0], decision: [0, 3, 0], data: [0, -3, 0],
+      }
+      for (const n of currentNodes) {
+        const ct = clusterTargets[n.type]
+        if (ct) {
+          n.fx += (ct[0] - n.x) * clusterStrength
+          n.fy += (ct[1] - n.y) * clusterStrength
+          n.fz += (ct[2] - n.z) * clusterStrength
+        }
       }
 
       // Gravity + integrate
@@ -1327,6 +1419,39 @@ function NeuralMap() {
       } else {
         hoveredNode = null
         if (tooltipDiv) tooltipDiv.style.display = 'none'
+        // B35: Edge hover detection — check proximity to edge midpoints projected to screen
+        const edgeRect = mount.getBoundingClientRect()
+        const emx = e.clientX - edgeRect.left
+        const emy = e.clientY - edgeRect.top
+        let closestEdge: NEdge | null = null
+        let closestDist = 28
+        currentEdges.forEach((edge) => {
+          const a = currentNodes[edge.a], b = currentNodes[edge.b]
+          if (!a || !b) return
+          _labelV3.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2)
+          _labelV3.project(camera)
+          if (_labelV3.z > 1) return
+          const ex = (_labelV3.x + 1) / 2 * (mount.clientWidth || 600)
+          const ey = (-_labelV3.y + 1) / 2 * (mount.clientHeight || 600)
+          const dist = Math.sqrt((emx - ex) ** 2 + (emy - ey) ** 2)
+          if (dist < closestDist) { closestDist = dist; closestEdge = edge }
+        })
+        if (closestEdge && tooltipDiv) {
+          const ea = currentNodes[closestEdge.a], eb = currentNodes[closestEdge.b]
+          if (ea && eb) {
+            tooltipDiv.innerHTML = `
+              <div style="color:#1a6080;font-size:8px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px">Edge</div>
+              <div style="color:#e2e8f0;font-size:11px">${getEdgeDescription(ea, eb)}</div>
+            `
+            tooltipDiv.style.display = 'block'
+            _labelV3.set((ea.x + eb.x) / 2, (ea.y + eb.y) / 2, (ea.z + eb.z) / 2)
+            _labelV3.project(camera)
+            const etx = (_labelV3.x + 1) / 2 * (mount.clientWidth || 600)
+            const ety = (-_labelV3.y + 1) / 2 * (mount.clientHeight || 600)
+            tooltipDiv.style.left = (etx + 15) + 'px'
+            tooltipDiv.style.top = (ety - 5) + 'px'
+          }
+        }
       }
     }
     function onWheel(e: WheelEvent) {
@@ -1344,7 +1469,12 @@ function NeuralMap() {
       if (hits.length > 0) {
         const hitIdx = hitSpheres.indexOf(hits[0].object as THREE.Mesh)
         const n = currentNodes[hitIdx]
-        if (n) targetLookAt.set(n.x, n.y, n.z)
+        if (n) {
+          targetLookAt.set(n.x, n.y, n.z)
+          setSelectedNodeRef.current(n) // B35: open detail sidebar
+        }
+      } else {
+        setSelectedNodeRef.current(null) // B35: close sidebar on empty canvas click
       }
     }
 
@@ -1449,6 +1579,22 @@ function NeuralMap() {
         }
       })
 
+      // B35: Update node label positions (project to screen space)
+      const _fadeLabels = camR > 15
+      currentNodes.forEach((n, i) => {
+        const div = labelDivs[i]
+        if (!div) return
+        _labelV3.set(n.x, n.y, n.z)
+        _labelV3.project(camera)
+        if (_labelV3.z > 1) { div.style.display = 'none'; return }
+        const lx = (_labelV3.x + 1) / 2 * (mount.clientWidth || 600)
+        const ly = (-_labelV3.y + 1) / 2 * (mount.clientHeight || 600)
+        div.style.left = lx + 'px'
+        div.style.top = ly + 'px'
+        div.style.display = 'block'
+        div.style.opacity = _fadeLabels ? '0' : '1'
+      })
+
       renderer.render(scene, camera)
     }
     animate()
@@ -1492,6 +1638,7 @@ function NeuralMap() {
       hitMat.dispose()
       renderer.dispose()
       if (tooltipDiv?.parentNode) tooltipDiv.parentNode.removeChild(tooltipDiv)
+      if (labelContainer?.parentNode) labelContainer.parentNode.removeChild(labelContainer)
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1569,8 +1716,249 @@ function NeuralMap() {
         </div>
       </div>
 
-      {/* Three.js canvas */}
-      <div ref={mountRef} style={{ flex: 1, position: 'relative', overflow: 'hidden' }} />
+      {/* Main content: canvas with overlays + optional sidebar */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Canvas wrapper — overlays sit absolutely inside this */}
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0 }} />
+
+          {/* B35 Summary Bar — fixed top of canvas */}
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20,
+            pointerEvents: 'none', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', gap: 28, padding: '7px 20px',
+            background: 'linear-gradient(180deg,rgba(4,8,18,0.88) 0%,rgba(4,8,18,0) 100%)',
+          }}>
+            {[
+              { icon: '⬡', label: `${summaryData.activeProjects} Active Projects`, color: '#00ff88' },
+              { icon: '◆', label: `${summaryData.agentsOnline} Agents Online`, color: '#ca8a04' },
+              { icon: '▲', label: `${summaryData.decisionsLogged} Decisions Logged`, color: '#a855f7' },
+              {
+                icon: '⚡',
+                label: `System Health: ${summaryData.systemHealth}%`,
+                color: summaryData.systemHealth > 70 ? '#00ff88' : summaryData.systemHealth > 40 ? '#ffcc00' : '#ff6600',
+              },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ fontSize: 11, color: item.color }}>{item.icon}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: item.color, letterSpacing: '0.05em' }}>{item.label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* B35 Permanent Legend — fixed bottom-left */}
+          <div style={{
+            position: 'absolute', bottom: 16, left: 16, zIndex: 20, pointerEvents: 'none',
+            background: 'rgba(4,8,18,0.80)', border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(4px)',
+            minWidth: 130,
+          }}>
+            <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 7 }}>Legend</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {[
+                { shape: '●', label: 'Project (Sphere)', color: '#00ff88' },
+                { shape: '◆', label: 'Agent (Gem)', color: '#ca8a04' },
+                { shape: '◆', label: 'Decision (Diamond)', color: '#a855f7' },
+                { shape: '⬡', label: 'Data (Hex)', color: '#06b6d4' },
+              ].map((l) => (
+                <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ color: l.color, fontSize: 11, lineHeight: 1, minWidth: 12 }}>{l.shape}</span>
+                  <span style={{ fontSize: 9, color: '#9ca3af' }}>{l.label}</span>
+                </div>
+              ))}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 5, paddingTop: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
+                  <div style={{ width: 16, height: 1, background: 'rgba(30,80,128,0.85)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 9, color: '#9ca3af' }}>Weak link</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <div style={{ width: 16, height: 3, background: 'rgba(30,80,128,0.85)', borderRadius: 2, flexShrink: 0 }} />
+                  <span style={{ fontSize: 9, color: '#9ca3af' }}>Strong link</span>
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 5, paddingTop: 5, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {[
+                  { color: '#00ff88', label: 'Healthy / Active' },
+                  { color: '#ffcc00', label: 'Warning / Partial' },
+                  { color: '#ff6600', label: 'Critical' },
+                  { color: '#6b7280', label: 'Future / Inactive' },
+                ].map((c) => (
+                  <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: c.color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 9, color: '#9ca3af' }}>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* B35 Node Detail Sidebar — slides in from right on node click */}
+        {selectedNode && (
+          <div style={{
+            width: 300, height: '100%', flexShrink: 0,
+            backgroundColor: 'rgba(4,8,18,0.97)',
+            borderLeft: '1px solid rgba(255,255,255,0.08)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            fontFamily: 'ui-monospace, monospace',
+            animation: 'nmSlideIn 0.2s ease-out',
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)',
+              backgroundColor: 'rgba(0,0,0,0.35)',
+            }}>
+              <div>
+                <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+                  {selectedNode.type} · Detail
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: '#e2e8f0', letterSpacing: '0.04em' }}>
+                  {selectedNode.label}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedNode(null)}
+                style={{
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                  color: '#9ca3af', borderRadius: 6, padding: '5px 9px', fontSize: 13,
+                  cursor: 'pointer', lineHeight: 1,
+                }}
+              >✕</button>
+            </div>
+
+            {/* Content */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+
+              {/* PROJECT panel */}
+              {selectedNode.type === 'project' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Health Score</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.08)' }}>
+                        <div style={{
+                          height: '100%', borderRadius: 3,
+                          width: `${selectedNode.meta?.healthScore ?? 0}%`,
+                          background: (selectedNode.meta?.healthScore ?? 0) > 70 ? '#00ff88' : (selectedNode.meta?.healthScore ?? 0) > 40 ? '#ffcc00' : '#ff6600',
+                        }} />
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', minWidth: 24 }}>{selectedNode.meta?.healthScore ?? '?'}</span>
+                    </div>
+                  </div>
+                  {[
+                    { label: 'Quoted Amount', value: selectedNode.meta?.contract ? `$${(selectedNode.meta.contract / 1000).toFixed(0)}k` : 'N/A' },
+                    { label: 'Open RFIs', value: '—' },
+                    { label: 'Last Activity', value: 'Recently' },
+                  ].map((r) => (
+                    <div key={r.label}>
+                      <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>{r.label}</div>
+                      <div style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 600 }}>{r.value}</div>
+                    </div>
+                  ))}
+                  <button style={{
+                    marginTop: 4, padding: '8px 14px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                    background: 'rgba(0,255,136,0.10)', border: '1px solid rgba(0,255,136,0.28)',
+                    color: '#00ff88', cursor: 'pointer', letterSpacing: '0.05em',
+                  }}>Navigate to Project →</button>
+                </div>
+              )}
+
+              {/* AGENT panel */}
+              {selectedNode.type === 'agent' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{
+                      padding: '3px 8px', borderRadius: 4, fontSize: 9, fontWeight: 800,
+                      background: `${TIER_COLORS_HEX[Math.min((selectedNode.meta?.tier ?? 1) - 1, 4)]}22`,
+                      color: TIER_COLORS_HEX[Math.min((selectedNode.meta?.tier ?? 1) - 1, 4)],
+                      border: `1px solid ${TIER_COLORS_HEX[Math.min((selectedNode.meta?.tier ?? 1) - 1, 4)]}44`,
+                      letterSpacing: '0.06em',
+                    }}>TIER {selectedNode.meta?.tier ?? '?'}</div>
+                    <div style={{
+                      padding: '3px 8px', borderRadius: 4, fontSize: 9, fontWeight: 800,
+                      background: 'rgba(0,255,136,0.12)', color: '#00ff88',
+                      border: '1px solid rgba(0,255,136,0.25)', letterSpacing: '0.06em',
+                    }}>ACTIVE</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Role</div>
+                    <div style={{ fontSize: 12, color: '#9ca3af' }}>{selectedNode.meta?.desc ?? '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Capabilities</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {['Query classification', 'Context injection', 'Multi-agent routing', 'Prompt assembly', 'Structured response parsing'].map((cap) => (
+                        <div key={cap} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#00ff88', flexShrink: 0 }} />
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>{cap}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button style={{
+                    marginTop: 4, padding: '8px 14px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                    background: `${TIER_COLORS_HEX[0]}15`, border: `1px solid ${TIER_COLORS_HEX[0]}44`,
+                    color: TIER_COLORS_HEX[0], cursor: 'pointer', letterSpacing: '0.05em',
+                  }}>Open Agent Panel →</button>
+                </div>
+              )}
+
+              {/* DECISION panel */}
+              {selectedNode.type === 'decision' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Decision</div>
+                    <div style={{ fontSize: 12, color: '#e2e8f0' }}>{selectedNode.label}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Feedback</div>
+                    <div style={{ fontSize: 22 }}>
+                      {selectedNode.meta?.feedback > 0 ? '👍' : selectedNode.meta?.feedback < 0 ? '👎' : '•'}
+                      <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 8 }}>
+                        {selectedNode.meta?.feedback > 0 ? 'Approved' : selectedNode.meta?.feedback < 0 ? 'Issue flagged' : 'Pending review'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Context</div>
+                    <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>Decision logged via NEXUS orchestration layer during current session.</div>
+                  </div>
+                </div>
+              )}
+
+              {/* DATA panel */}
+              {selectedNode.type === 'data' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Metric</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#06b6d4' }}>{selectedNode.label}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Current Value</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0' }}>{selectedNode.meta?.valueStr ?? '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>7-Day Trend</div>
+                    <div style={{ fontSize: 20, color: '#00ff88' }}>↗ <span style={{ fontSize: 11, color: '#6b7280' }}>Trending up</span></div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>What Affects This</div>
+                    <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>Project billing events, service call completions, and payment receipts contribute to this metric.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <style>{`
+        @keyframes nmSlideIn {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
     </div>
   )
 }
@@ -1632,7 +2020,7 @@ export default function AdminVisualizationLab() {
           </span>
         </div>
 
-        <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B34 · Admin Only</span>
+        <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B35 · Admin Only</span>
 
         {/* Main tabs */}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
