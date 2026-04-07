@@ -24,7 +24,8 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2, VolumeX } from 'lucide-react'
+import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2, VolumeX, Pin, Check } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 import { clsx } from 'clsx'
 import { NexusThreeOrb } from './NexusThreeOrb'
 import type { OrbState } from './NexusPresenceOrb'
@@ -113,6 +114,24 @@ function orbStateLabel(status: VoiceSessionStatus): string {
 function MessageBubble({ msg, faded }: { msg: DrawerMessage; faded?: boolean }) {
   const isUser = msg.role === 'user'
   const agentColor = msg.agentId ? AGENT_COLORS[msg.agentId] ?? '#8b5cf6' : '#8b5cf6'
+  // B52: Pin state
+  const [pinned, setPinned] = React.useState(false)
+
+  async function handlePin() {
+    if (pinned) return
+    try {
+      await supabase.from('pinned_insights').insert({
+        source:   'nexus',
+        content:  msg.content,
+        context:  'NEXUS conversation',
+        category: msg.agentId ?? 'NEXUS',
+      })
+      setPinned(true)
+      window.dispatchEvent(new CustomEvent('poweron:insight-pinned'))
+      // Auto-reset after 2s
+      setTimeout(() => setPinned(false), 2000)
+    } catch {}
+  }
 
   return (
     <div
@@ -144,6 +163,7 @@ function MessageBubble({ msg, faded }: { msg: DrawerMessage; faded?: boolean }) 
             ? 'rounded-tr-sm bg-emerald-600/90 text-white'
             : 'rounded-tl-sm bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)] text-gray-200'
         )}
+        style={{ position: 'relative' }}
       >
         {/* Agent badge for NEXUS messages */}
         {!isUser && msg.agentId && (
@@ -171,15 +191,42 @@ function MessageBubble({ msg, faded }: { msg: DrawerMessage; faded?: boolean }) 
           </p>
         )}
 
-        {/* Timestamp */}
-        <p
-          className={clsx(
-            'text-[9px] font-mono mt-1 m-0',
-            isUser ? 'text-emerald-200/70 text-right' : 'text-gray-500'
+        {/* Timestamp + pin button row */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+          <p
+            className={clsx(
+              'text-[9px] font-mono m-0',
+              isUser ? 'text-emerald-200/70' : 'text-gray-500'
+            )}
+          >
+            {formatTime(msg.timestamp)}
+          </p>
+          {/* B52: Pin button — only on NEXUS (non-user) messages */}
+          {!isUser && (
+            <button
+              onClick={handlePin}
+              title={pinned ? 'Pinned!' : 'Pin this insight'}
+              style={{
+                background:  'none',
+                border:      'none',
+                cursor:      pinned ? 'default' : 'pointer',
+                color:       pinned ? '#00e5ff' : '#374151',
+                padding:     '2px 4px',
+                display:     'flex',
+                alignItems:  'center',
+                gap:         3,
+                fontSize:    9,
+                fontFamily:  'Courier New, monospace',
+                transition:  'color 0.15s',
+              }}
+              onMouseEnter={e => { if (!pinned) (e.currentTarget as HTMLButtonElement).style.color = '#00e5ff' }}
+              onMouseLeave={e => { if (!pinned) (e.currentTarget as HTMLButtonElement).style.color = '#374151' }}
+            >
+              {pinned ? <Check size={10} /> : <Pin size={10} />}
+              {pinned ? 'Pinned' : ''}
+            </button>
           )}
-        >
-          {formatTime(msg.timestamp)}
-        </p>
+        </div>
       </div>
 
       {/* FIX 2 — Mic icon badge beside user voice messages (appears left of bubble in flex-row-reverse) */}

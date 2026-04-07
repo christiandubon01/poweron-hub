@@ -10,6 +10,7 @@
  */
 
 import React, { useRef, useEffect, useCallback, useState } from 'react'
+import { Mic, MicOff } from 'lucide-react'
 import { useNEXUSAudio } from './useNEXUSAudio'
 
 import { B1_DRAWS }            from './modes/bucket1'
@@ -171,10 +172,15 @@ export default function VisualSuitePanel({
   const [showInfo,  setShowInfo]  = useState(false)
   // B50: Bucket dropdown state
   const [openDropdown, setOpenDropdown] = useState<'B1' | 'B2' | 'B3' | null>(null)
+  // B52: Local mic stream (for standalone use when no micStream prop passed)
+  const [localMicStream, setLocalMicStream] = useState<MediaStream | null>(null)
+  const [micError, setMicError] = useState<string | null>(null)
+
+  const effectiveMicStream = micStream ?? localMicStream
 
   // ── Live audio bands from useNEXUSAudio ──────────────────────────────────
   const { bass, mid, high, isLive } = useNEXUSAudio(
-    micStream ?? null,
+    effectiveMicStream ?? null,
     ttsElement ?? null,
   )
 
@@ -218,6 +224,23 @@ export default function VisualSuitePanel({
   const setHue = (v: number) => { hueRef.current = v; setHueState(v);   lsSet(LS_HUE,   v) }
   const setSpeed = (v: number) => { speedRef.current = v; setSpeedState(v); lsSet(LS_SPEED, v) }
   const setInt = (v: number) => { intensityRef.current = v; setIntState(v);   lsSet(LS_INT,   v) }
+
+  // B52: Toggle local mic
+  const toggleMic = async () => {
+    if (localMicStream) {
+      localMicStream.getTracks().forEach(t => t.stop())
+      setLocalMicStream(null)
+      setMicError(null)
+    } else {
+      try {
+        setMicError(null)
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        setLocalMicStream(stream)
+      } catch (e: any) {
+        setMicError('Mic blocked')
+      }
+    }
+  }
 
   // ── rAF loop ─────────────────────────────────────────────────────────────
   const loop = useCallback((ts: number) => {
@@ -454,11 +477,48 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Bottom controls ── */}
-      <div style={{ padding: '6px 10px 8px', display: 'flex', flexDirection: 'column', gap: 6, backgroundColor: '#060810' }}>
+      {/* ── Bottom controls — B52: fixed 80px height ── */}
+      <div style={{ height: 80, flexShrink: 0, padding: '6px 10px 6px', display: 'flex', flexDirection: 'column', gap: 5, backgroundColor: '#060810', justifyContent: 'space-between' }}>
 
-        {/* Mode label + action buttons */}
+        {/* Mode label + mic + action buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* B52: MIC button — leftmost, always visible */}
+          <button
+            onClick={toggleMic}
+            title={isLive ? 'MIC LIVE — click to stop' : micError ?? 'Click to activate mic'}
+            style={{
+              width:           48,
+              height:          36,
+              borderRadius:    8,
+              border:          `1.5px solid ${isLive ? '#00ff88' : micError ? '#ff4444' : '#333'}`,
+              backgroundColor: isLive ? '#00ff8822' : micError ? '#ff444411' : 'transparent',
+              color:           isLive ? '#00ff88' : micError ? '#ff4444' : '#555',
+              cursor:          'pointer',
+              display:         'flex',
+              flexDirection:   'column',
+              alignItems:      'center',
+              justifyContent:  'center',
+              gap:             2,
+              flexShrink:      0,
+              position:        'relative',
+              overflow:        'hidden',
+            }}
+          >
+            {isLive ? <Mic size={14} /> : <MicOff size={14} />}
+            <span style={{ fontSize: 7, fontFamily: 'Courier New, monospace', letterSpacing: '0.08em', fontWeight: 800 }}>
+              {isLive ? 'LIVE' : 'MIC'}
+            </span>
+            {/* Pulse ring when live */}
+            {isLive && (
+              <span style={{
+                position: 'absolute', inset: 0, borderRadius: 8,
+                border: '1.5px solid #00ff88',
+                animation: 'ping 1.4s cubic-bezier(0,0,0.2,1) infinite',
+                opacity: 0.4,
+              }} />
+            )}
+          </button>
+
           {/* Mode badge */}
           <div style={{
             display:         'flex',
@@ -562,7 +622,7 @@ export default function VisualSuitePanel({
         </div>
 
         {/* Sliders */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <Slider label="MTZ"  value={mtz}       onChange={setMtz}   color="#ff44ff" />
           <Slider label="INT"  value={intensity}  onChange={setInt}   color="#00ff88" />
           <Slider label="SPD"  value={speed}      onChange={setSpeed} color="#44aaff" />

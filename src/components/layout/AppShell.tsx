@@ -103,6 +103,8 @@ const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminComm
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
 // B51 — Wins Log floating button + drawer
 const WinsLogPanel = lazy(() => import('@/components/v15r/WinsLog/WinsLogPanel').then(m => ({ default: m.WinsLogPanel })).catch(() => ({ default: () => null })))
+// B52 — Pinned Insights floating button + panel
+const PinnedInsightsButton = lazy(() => import('@/components/v15r/PinnedInsights/PinnedInsightsButton').then(m => ({ default: m.PinnedInsightsButton })).catch(() => ({ default: () => null })))
 const OnboardingModal = lazy(() => chunkRetry(() => import('@/components/onboarding/OnboardingModal')))
 
 // Beta onboarding flow — fires once after NDA, checks orgs.onboarding_complete
@@ -510,9 +512,9 @@ export function AppShell({ children }: AppShellProps) {
       case 'viz-lab':
         return <Suspense fallback={<PanelLoading />}><AdminVisualizationLab /></Suspense>
 
-      // B50 — Visual Suite Standalone (fullscreen 43-mode ambient display)
+      // B52 — Visual Suite Standalone (fullscreen 43-mode ambient display)
       case 'visual-suite':
-        return <Suspense fallback={<PanelLoading />}><VisualSuiteStandalone /></Suspense>
+        return <Suspense fallback={<PanelLoading />}><VisualSuiteStandalone onExit={() => handleNav('home')} /></Suspense>
 
       // B36 — Admin Command Center
       case 'admin-command-center':
@@ -662,6 +664,13 @@ export function AppShell({ children }: AppShellProps) {
       <Suspense fallback={null}>
         <div style={{ position: 'fixed', bottom: '164px', right: '24px', zIndex: 58 }}>
           <WinsLogPanel />
+        </div>
+      </Suspense>
+
+      {/* B52 — Pinned Insights floating button (above Wins Log) — bottom right */}
+      <Suspense fallback={null}>
+        <div style={{ position: 'fixed', bottom: '224px', right: '24px', zIndex: 58 }}>
+          <PinnedInsightsButton />
         </div>
       </Suspense>
 

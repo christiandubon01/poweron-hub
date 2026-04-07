@@ -40,6 +40,7 @@ import {
   FlaskConical,
   Terminal,
   Trophy,
+  Pin,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -387,6 +388,18 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }
   }, [sidebarOpen, isMobile])
 
+  // B52: Listen for sidebar-collapse events from VisualSuiteStandalone
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      const collapse = e.detail as boolean
+      setDesktopCollapsed(collapse)
+      localStorage.setItem('sidebar_collapsed', String(collapse))
+      if (collapse && (isMobile || isTablet)) setSidebarOpen(false)
+    }
+    window.addEventListener('poweron:sidebar-collapse', handler as EventListener)
+    return () => window.removeEventListener('poweron:sidebar-collapse', handler as EventListener)
+  }, [isMobile, isTablet])
+
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -732,6 +745,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Visualization Lab', icon: FlaskConical, view: 'viz-lab', badge: 'B42', subtitle: 'ORB LAB · NEURAL MAP · admin' },
     { label: 'Command Center', icon: Terminal, view: 'admin-command-center', badge: 'B36' },
     { label: 'Wins Log', icon: Trophy, view: 'wins-log', badge: 'B51', subtitle: '🏆 log your wins' },
+    { label: 'Pinned Insights', icon: Pin, view: 'pinned-insights', badge: 'B52', subtitle: '📌 saved NEXUS insights' },
   ]
 
   // Toggle and close helpers
@@ -739,16 +753,27 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const closeSidebar = () => { if (isMobile || isTablet) setSidebarOpen(false) }
   const handleNavClick = (view: string) => {
     if (view === 'nexus-voice') {
-      // Dispatch custom event to open NEXUS drawer
       window.dispatchEvent(new CustomEvent('poweron:open-nexus-drawer'))
       if (isMobile) setSidebarOpen(false)
       return
     }
     if (view === 'wins-log') {
-      // Dispatch custom event to open Wins Log drawer
       window.dispatchEvent(new CustomEvent('poweron:open-wins-log'))
       if (isMobile) setSidebarOpen(false)
       return
+    }
+    if (view === 'pinned-insights') {
+      window.dispatchEvent(new CustomEvent('poweron:open-pinned-insights'))
+      if (isMobile) setSidebarOpen(false)
+      return
+    }
+    // B52: Auto-collapse sidebar when entering visual-suite fullscreen mode
+    if (view === 'visual-suite') {
+      if (!isMobile) {
+        setDesktopCollapsed(true)
+        localStorage.setItem('sidebar_collapsed', 'true')
+      }
+      if (isMobile || isTablet) setSidebarOpen(false)
     }
     onNav(view)
     if (isMobile) setSidebarOpen(false)
@@ -1260,8 +1285,16 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       </aside>
 
       {/* MAIN LAYOUT */}
-      <div className="flex flex-col flex-1 transition-all duration-300" style={{ marginLeft: isMobile ? 0 : sidebarWidth }}>
-        {/* TOP BAR - TWO ROWS */}
+      {/* B52: fullscreen override when visual-suite is active */}
+      <div
+        className="flex flex-col flex-1 transition-all duration-300"
+        style={activeView === 'visual-suite'
+          ? { position: 'fixed', inset: 0, zIndex: 55, marginLeft: 0 }
+          : { marginLeft: isMobile ? 0 : sidebarWidth }
+        }
+      >
+        {/* TOP BAR — hidden in visual-suite fullscreen */}
+        {activeView === 'visual-suite' ? null : (
         <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
@@ -1581,25 +1614,34 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           </div>
           )}
         </header>
+        )} {/* end conditional header — not shown in visual-suite fullscreen */}
 
-        {/* CONTENT AREA — B50: responsive overflow with min-width */}
-        <main className="flex-1" style={{ backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'auto', overflowY: 'auto', minWidth: 320, display: 'flex', flexDirection: 'column' }}>
+        {/* CONTENT AREA — B52: fullscreen when visual-suite, otherwise normal */}
+        <main
+          className="flex-1"
+          style={activeView === 'visual-suite'
+            ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
+            : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'auto', overflowY: 'auto', minWidth: 320, display: 'flex', flexDirection: 'column' }
+          }
+        >
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             {children}
           </div>
         </main>
 
-        {/* Toast Notification */}
-        {toastMessage && (
+        {/* Toast Notification — hidden in fullscreen mode */}
+        {toastMessage && activeView !== 'visual-suite' && (
           <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-pulse" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-primary)' }}>
             {toastMessage}
           </div>
         )}
 
-        {/* Copyright Footer */}
-        <div className="text-center text-[10px] text-gray-600 py-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-          &copy; 2026 Power On Solutions LLC &middot; PowerOn Hub V3.0
-        </div>
+        {/* Copyright Footer — hidden in fullscreen mode */}
+        {activeView !== 'visual-suite' && (
+          <div className="text-center text-[10px] text-gray-600 py-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+            &copy; 2026 Power On Solutions LLC &middot; PowerOn Hub V3.0
+          </div>
+        )}
       </div>
 
       {/* ── Quick Capture Floating Button (bottom-left) ── */}
