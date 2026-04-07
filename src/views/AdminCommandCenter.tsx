@@ -4023,7 +4023,7 @@ export default function AdminCommandCenter() {
       color: '#e2e8f0',
     }}>
       {/* Main area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         {/* Header */}
         <div style={{
           borderBottom: '1px solid #1e2d3d',

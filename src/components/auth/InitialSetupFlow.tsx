@@ -20,7 +20,7 @@
  * Magic link is already single-use in Supabase — invalidated on first use.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Zap, Eye, EyeOff, Check } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
@@ -101,6 +101,29 @@ function PinKeypad({ title, subtitle, onComplete, onBack, errorMsg }: PinKeypadP
     }
     setDigits(next)
   }
+
+  // Keep refs current so the keydown listener always closes over fresh state
+  const handleDigitRef = useRef(handleDigit)
+  const handleBackRef  = useRef(handleBack)
+  handleDigitRef.current = handleDigit
+  handleBackRef.current  = handleBack
+
+  // ── Keyboard / numpad support ────────────────────────────────────────────
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      if (/^(Digit|Numpad)[0-9]$/.test(e.code)) {
+        e.preventDefault()
+        handleDigitRef.current(e.code.slice(-1))
+        return
+      }
+      if (e.code === 'Backspace' || e.code === 'NumpadDecimal') {
+        e.preventDefault()
+        handleBackRef.current()
+      }
+    }
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, []) // mount/unmount only
 
   return (
     <div className="flex flex-col items-center w-full">

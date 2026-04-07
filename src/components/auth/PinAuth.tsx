@@ -17,7 +17,7 @@
  * On failure: shakes + clears after 500 ms; 5 failed attempts → 1-hour lockout.
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Zap } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -97,6 +97,38 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [lockoutEnd])
+
+  // ── Keyboard (numpad) support ────────────────────────────────────────────
+
+  // Keep a stable ref to handleDigit / handleBackspace so the listener
+  // always closes over the current state without needing re-registration.
+  const handleDigitRef    = useRef<(d: string) => void>(() => {})
+  const handleBackspaceRef = useRef<() => void>(() => {})
+
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      // Digit keys: Digit0-Digit9 or Numpad0-Numpad9
+      if (/^(Digit|Numpad)[0-9]$/.test(e.code)) {
+        e.preventDefault()
+        handleDigitRef.current(e.code.slice(-1))
+        return
+      }
+      // Backspace or NumpadDecimal → delete last digit
+      if (e.code === 'Backspace' || e.code === 'NumpadDecimal') {
+        e.preventDefault()
+        handleBackspaceRef.current()
+        return
+      }
+      // Enter → submit if PIN is complete (auto-submit already fires on last digit,
+      // but provide Enter as an explicit trigger for partial completion safety)
+      if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+        // auto-submit is handled inside handleDigit when filledCount === PIN_LENGTH - 1
+        // Nothing extra needed here; guard is a no-op.
+      }
+    }
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, []) // mount/unmount only — refs keep the handler current
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -219,6 +251,10 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     }
     setError('')
   }
+
+  // Keep keyboard listener refs current after every render
+  handleDigitRef.current    = handleDigit
+  handleBackspaceRef.current = handleBackspace
 
   // ── Derived display ───────────────────────────────────────────────────────
 

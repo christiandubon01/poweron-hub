@@ -154,6 +154,7 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
   const mountRef = useRef<HTMLDivElement>(null)
   const stateRef = useRef<OrbState>(orbState)
   const healthRef = useRef<number>(healthAvg)
+  const orbInitialized = useRef(false) // B41 Fix 3: prevent double-init
 
   useEffect(() => { stateRef.current = orbState }, [orbState])
   useEffect(() => { healthRef.current = healthAvg }, [healthAvg])
@@ -162,10 +163,11 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
     const mount = mountRef.current
     if (!mount) return
 
-    // B34 Fix 1: Hoist for cleanup access after deferred init
+    // B41 Fix 3: Hoist for cleanup access after deferred init
     let animFrame: number
     let renderer: THREE.WebGLRenderer
     let ro: ResizeObserver
+    let io: IntersectionObserver
     // Hoist satellite arrays so removeSatellites() is accessible from cleanup
     const satellites: THREE.Mesh[] = []
     const satLabelDivs: HTMLDivElement[] = []
@@ -180,19 +182,21 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
       satLabelDivs.length = 0
     }
 
-    // B34 Fix 1: Defer init 100ms to ensure DOM has layout before reading clientWidth/clientHeight
-    const initTimer = setTimeout(() => {
+    // B41 Fix 3: Use IntersectionObserver — init only when container is visible
+    function doInit() {
+      if (orbInitialized.current) return
+      if (!mount.clientWidth || !mount.clientHeight) return
+      orbInitialized.current = true
       console.log('orb init started')
-      const W = Math.max(mount.clientWidth || 400, 100)
-      const H = Math.max(mount.clientHeight || 400, 100)
+      const W = Math.max(mount.clientWidth, 100)
+      const H = Math.max(mount.clientHeight, 100)
 
       const scene = new THREE.Scene()
       const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100)
       camera.position.z = 3
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-      // B34 Fix 1: setSize after renderer creation with actual container dimensions
-      renderer.setSize(mount.clientWidth || W, mount.clientHeight || H)
+      renderer.setSize(W, H)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
       renderer.setClearColor(0x000000, 0)
       mount.appendChild(renderer.domElement)
@@ -446,7 +450,7 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
 
       animate()
 
-      // B34 Fix 1: ResizeObserver calls renderer.setSize on dimension changes
+      // ResizeObserver keeps renderer size in sync
       ro = new ResizeObserver(() => {
         if (!mount) return
         const w = mount.clientWidth
@@ -457,10 +461,21 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
         renderer.setSize(w, h)
       })
       ro.observe(mount)
-    }, 100) // 100ms defer ensures DOM has layout
+    } // end doInit
+
+    // B41 Fix 3: IntersectionObserver triggers init when container becomes visible
+    io = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && mount.clientWidth > 0) {
+        doInit()
+      }
+    }, { threshold: 0 })
+    io.observe(mount)
+
+    // Also attempt init immediately in case already visible
+    doInit()
 
     return () => {
-      clearTimeout(initTimer)
+      if (io) io.disconnect()
       if (animFrame) cancelAnimationFrame(animFrame)
       if (ro) ro.disconnect()
       removeSatellites()
@@ -471,7 +486,6 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // B34 Fix 1: explicit minHeight so container has dimensions at mount time
   return <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '400px' }} />
 }
 
@@ -480,6 +494,7 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
   const mountRef = useRef<HTMLDivElement>(null)
   const stateRef = useRef<OrbState>(orbState)
   const healthRef = useRef<number>(healthAvg)
+  const orbInitialized = useRef(false) // B41 Fix 3: prevent double-init
 
   useEffect(() => { stateRef.current = orbState }, [orbState])
   useEffect(() => { healthRef.current = healthAvg }, [healthAvg])
@@ -488,24 +503,27 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
     const mount = mountRef.current
     if (!mount) return
 
-    // B34 Fix 1: Hoist for cleanup access after deferred init
+    // B41 Fix 3: Hoist for cleanup access
     let animFrame: number
     let renderer: THREE.WebGLRenderer
     let ro: ResizeObserver
+    let io: IntersectionObserver
 
-    // B34 Fix 1: Defer init 100ms to ensure DOM has layout
-    const initTimer = setTimeout(() => {
+    // B41 Fix 3: init only when container is visible
+    function doInit() {
+      if (orbInitialized.current) return
+      if (!mount.clientWidth || !mount.clientHeight) return
+      orbInitialized.current = true
       console.log('orb init started')
-      const W = Math.max(mount.clientWidth || 400, 100)
-      const H = Math.max(mount.clientHeight || 400, 100)
+      const W = Math.max(mount.clientWidth, 100)
+      const H = Math.max(mount.clientHeight, 100)
 
       const scene = new THREE.Scene()
       const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100)
       camera.position.z = 3
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-      // B34 Fix 1: setSize after renderer creation with actual container dimensions
-      renderer.setSize(mount.clientWidth || W, mount.clientHeight || H)
+      renderer.setSize(W, H)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
       renderer.setClearColor(0x000000, 0)
       mount.appendChild(renderer.domElement)
@@ -627,7 +645,7 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
 
       animate()
 
-      // B34 Fix 1: ResizeObserver calls renderer.setSize on dimension changes
+      // ResizeObserver keeps renderer size in sync
       ro = new ResizeObserver(() => {
         if (!mount) return
         const w = mount.clientWidth
@@ -638,10 +656,21 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
         renderer.setSize(w, h)
       })
       ro.observe(mount)
-    }, 100) // 100ms defer ensures DOM has layout
+    } // end doInit
+
+    // B41 Fix 3: IntersectionObserver triggers init when container becomes visible
+    io = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && mount.clientWidth > 0) {
+        doInit()
+      }
+    }, { threshold: 0 })
+    io.observe(mount)
+
+    // Also attempt init immediately in case already visible
+    doInit()
 
     return () => {
-      clearTimeout(initTimer)
+      if (io) io.disconnect()
       if (animFrame) cancelAnimationFrame(animFrame)
       if (ro) ro.disconnect()
       if (renderer) {
@@ -651,12 +680,11 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // B34 Fix 1: explicit minHeight so container has dimensions at mount time
   return <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '400px' }} />
 }
 
 // ─── Orb Lab ──────────────────────────────────────────────────────────────────
-function OrbLab({ healthAvg }: { healthAvg: number }) {
+function OrbLab({ healthAvg, activeTab: _activeTab }: { healthAvg: number; activeTab?: string }) {
   const [orbState, setOrbState] = useState<OrbState>('IDLE')
   const [bgMode, setBgMode] = useState<BgMode>('deepspace')
   const [fullscreen, setFullscreen] = useState<'left' | 'right' | null>(null)
@@ -2043,12 +2071,14 @@ export default function AdminVisualizationLab() {
         </div>
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {activeTab === 'ORB_LAB'
-          ? <OrbLab healthAvg={healthAvg} />
-          : <NeuralMap />
-        }
+      {/* Content — both canvases stay mounted; CSS display:flex/none toggles visibility */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ display: activeTab === 'ORB_LAB' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+          <OrbLab healthAvg={healthAvg} activeTab={activeTab} />
+        </div>
+        <div style={{ display: activeTab === 'NEURAL_MAP' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+          <NeuralMap />
+        </div>
       </div>
     </div>
   )

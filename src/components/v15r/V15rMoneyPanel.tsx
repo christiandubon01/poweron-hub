@@ -728,10 +728,23 @@ export default function V15rMoneyPanel() {
       </div>
 
       {/* ── 52-WEEK VISUALIZATION ────────────────────────────────────────── */}
-      {weeklyData.length > 0 && (
-  <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
-    <div className="flex items-center justify-between mb-3">
-      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">52-Week Cash Flow</h3>
+      {weeklyData.length > 0 && (() => {
+        // B41 Fix 5: Compute Monday of current week as base for week 1
+        const todayBase = new Date()
+        const dayOfWeek = todayBase.getDay() // 0=Sun, 1=Mon, ...
+        const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+        const currentMonday = new Date(todayBase)
+        currentMonday.setHours(0, 0, 0, 0)
+        currentMonday.setDate(todayBase.getDate() + daysToMonday)
+        // weekStartDate(wk) = currentMonday + (wk - 1) * 7 days
+        function weekStartDate(wkNum: number): string {
+          const d = new Date(currentMonday.getTime() + (wkNum - 1) * 7 * 86400000)
+          return d.toISOString().slice(0, 10)
+        }
+        return (
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">52-Week Cash Flow</h3>
       <div className="flex gap-2">
         <button
           onClick={recalcWeeklyFromData}
@@ -772,11 +785,12 @@ export default function V15rMoneyPanel() {
             const inc = num(w.proj) + num(w.svc)
             const exposure = num(w.unbilled) + num(w.pendingInv)
 
-            // Determine week status
+            // B41 Fix 5: use computed week start (Monday-based from current week)
+            const computedStart = weekStartDate(w.wk)
             const today = new Date()
-            const weekStart = w.start ? new Date(w.start) : null
-            const isCurrentWeek = weekStart && weekStart <= today && new Date(weekStart.getTime() + 7 * 86400000) > today
-            const isPast = weekStart && weekStart < today && !isCurrentWeek
+            const weekStart = new Date(computedStart + 'T00:00:00')
+            const isCurrentWeek = weekStart <= today && new Date(weekStart.getTime() + 7 * 86400000) > today
+            const isPast = weekStart < today && !isCurrentWeek
             const hasNoActivity = num(w.proj) === 0 && num(w.svc) === 0
             const isGapWeek = isPast && hasNoActivity && showWeeklyGaps
 
@@ -794,7 +808,7 @@ export default function V15rMoneyPanel() {
             return (
               <tr key={w.wk} className={`border-b border-gray-800/30 ${rowBorderClass} ${rowBgClass}`}>
                 <td className="py-1.5 px-1 font-mono text-gray-300">{w.wk}</td>
-                <td className="py-1.5 px-1 font-mono text-gray-300">{w.start}</td>
+                <td className="py-1.5 px-1 font-mono text-gray-300">{computedStart}</td>
                 <td className="py-1.5 px-1 text-right font-mono text-gray-300">{inc || '\u2014'}</td>
                 <td className="py-1.5 px-1 text-right font-mono text-gray-300">
                   {isGapWeek && !w.proj ? (
@@ -818,9 +832,10 @@ export default function V15rMoneyPanel() {
           })}
         </tbody>
       </table>
+      </div>
     </div>
-  </div>
-      )}
+        ) // end IIFE return
+      })(/* B41 Fix 5 IIFE */)}
 
       <AskAIPanel
         panelName="Money"

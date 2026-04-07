@@ -71,6 +71,11 @@ export function PasscodeScreen({
     inputRefs.current[0]?.focus()
   }, [])
 
+  // Ref for global listener — populated after handleChange is defined
+  const handleChangeRef = useRef<(index: number, value: string) => void>(() => {})
+  const digitsRef = useRef(digits)
+  useEffect(() => { digitsRef.current = digits }, [digits])
+
   // ── Input handling ──────────────────────────────────────────────────────────
   const handleChange = useCallback((index: number, value: string) => {
     if (!/^\d?$/.test(value)) return   // digits only
@@ -107,6 +112,27 @@ export function PasscodeScreen({
   }, [digits, mode, toConfirm, onComplete, clearError])
 
   const handleKeyDown = useCallback((index: number, e: React.KeyboardEvent) => {
+    // Numpad digit keys (Numpad0–Numpad9) → treat as digit input
+    if (/^Numpad[0-9]$/.test(e.code)) {
+      e.preventDefault()
+      handleChange(index, e.code.slice(-1))
+      return
+    }
+    // NumpadDecimal → backspace
+    if (e.code === 'NumpadDecimal') {
+      e.preventDefault()
+      if (digits[index]) {
+        const next = [...digits]
+        next[index] = ''
+        setDigits(next)
+      } else if (index > 0) {
+        const next = [...digits]
+        next[index - 1] = ''
+        setDigits(next)
+        inputRefs.current[index - 1]?.focus()
+      }
+      return
+    }
     if (e.key === 'Backspace') {
       if (digits[index]) {
         const next = [...digits]
@@ -119,7 +145,7 @@ export function PasscodeScreen({
         inputRefs.current[index - 1]?.focus()
       }
     }
-  }, [digits])
+  }, [digits, handleChange])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault()
@@ -132,6 +158,40 @@ export function PasscodeScreen({
       onComplete(pasted)
     }
   }, [onComplete])
+
+  // Keep ref current so the global listener always closes over the latest handleChange
+  handleChangeRef.current = handleChange
+
+  // ── Global numpad / keyboard support ───────────────────────────────────────
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      // Skip if one of our own inputs is focused — native onChange handles it
+      const activeEl = document.activeElement
+      const isOwnInput = inputRefs.current.some(ref => ref === activeEl)
+      if (isOwnInput) return
+
+      if (/^(Digit|Numpad)[0-9]$/.test(e.code)) {
+        e.preventDefault()
+        const idx = digitsRef.current.findIndex(d => d === '')
+        if (idx >= 0) handleChangeRef.current(idx, e.code.slice(-1))
+        return
+      }
+      if (e.code === 'Backspace' || e.code === 'NumpadDecimal') {
+        e.preventDefault()
+        const cur = digitsRef.current
+        const revIdx = [...cur].reverse().findIndex(d => d !== '')
+        if (revIdx >= 0) {
+          const realIdx = CODE_LENGTH - 1 - revIdx
+          const next = [...cur]
+          next[realIdx] = ''
+          setDigits(next)
+          inputRefs.current[realIdx]?.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, []) // mount/unmount only — refs keep handler/digits current
 
   // ── Formatting ──────────────────────────────────────────────────────────────
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
