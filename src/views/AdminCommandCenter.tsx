@@ -20,7 +20,7 @@ import {
   AreaChart, Area, Legend,
 } from 'recharts'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { getBackupData } from '@/services/backupDataService'
+import { getBackupData, getKPIs, num } from '@/services/backupDataService'
 import { supabase } from '@/lib/supabase'
 import { NexusPresenceOrb } from '@/components/nexus/NexusPresenceOrb'
 import { takeDailySnapshotIfNeeded, fetchRecentSnapshots } from '@/services/dailySnapshotService'
@@ -39,6 +39,8 @@ const TABS = [
   { id: 't9',          label: '9 · Industries' },
   { id: 't10',         label: '10 · Compliance' },
   { id: 't11',         label: '11 · Actions + Queue' },
+  { id: 't12',         label: '12 · Split View' },
+  { id: 't13',         label: '13 · Unified Command' },
   { id: 'neural_map',  label: '🧠 Neural Map' },
 ]
 
@@ -4035,6 +4037,490 @@ function Tab11ActionsQueue({ activeTabId }: { activeTabId: string }) {
 
 // ─── NEXUS Command Center Panel ───────────────────────────────────────────────
 
+// ─── TAB 12 + 13 — Shared static data ────────────────────────────────────────
+const HUB_BUILD_MILESTONES = [
+  { date: 'Apr 7, 2026', title: 'AI Visual Suite deployed',
+    note: 'B46 · 18 files · 43 visual modes · QuantumFoam as NEXUS default' },
+  { date: 'Apr 7, 2026', title: 'B42–B45 wave complete',
+    note: 'Neural Map glow, Orb Lab fixed, Vision Timeline, PIN fix' },
+  { date: 'Apr 5, 2026', title: 'V3 deployed to production',
+    note: 'Commit 449c20d · 14 new views · 12 new agents · NEXUS Prompt Engine live' },
+  { date: 'Apr 5, 2026', title: 'IP protection filed',
+    note: 'USPTO Serial #99745330 · Copyright #1-15135532761' },
+  { date: 'Apr 5, 2026', title: 'DaSparkyHub Session 1 live',
+    note: 'Katsuro Raijin · Text + voice · Deployed to Netlify' },
+  { date: 'Apr 4, 2026', title: 'Commercial model locked',
+    note: 'Solo $49 / Growth $129 / Pro $299 / Pro+ $499 / Enterprise $800+' },
+  { date: 'Mar 2026', title: 'V3 full architecture built',
+    note: 'GUARDIAN, Crew Portal, HR Docs, Demo Mode, Blueprint AI' },
+  { date: 'Mar 2026', title: 'V2 React+Vite5+TS rebuild complete',
+    note: '19 panels · Supabase · ElevenLabs · Bundle 893kb→347kb' },
+  { date: 'Mar 2026', title: 'RMO deal negotiated',
+    note: 'MTZ Solar · 10-job cap · Dual-role separation clause' },
+  { date: 'Mar 2026', title: 'HTML monolith — the origin',
+    note: '12,388 lines · 14 Excel refs · 2,189 formulas · V7→V8→V14+' },
+]
+
+const HUB_PLATFORM_STATS = [
+  { label: 'Total Panels',       value: '28+' },
+  { label: 'AI Agents',          value: '15' },
+  { label: 'Admin Tabs',         value: '13' },
+  { label: 'ElevenLabs Voices',  value: '3' },
+  { label: 'Supabase Tables',    value: '40+' },
+  { label: 'Beta Contacts',      value: '5' },
+  { label: 'IP Filings',         value: '2' },
+  { label: 'Visual Modes',       value: '43' },
+  { label: 'Production Deploys', value: '6+' },
+  { label: 'Lines of Code',      value: '25,000+' },
+  { label: 'Launch Status',      value: 'Pre-Beta' },
+]
+
+const HUB_AGENTS = [
+  'NEXUS', 'GUARDIAN', 'SPARK', 'CHRONO', 'HUNTER',
+  'SENTINEL', 'SCOUT', 'VAULT', 'MIRROR', 'SIGNAL',
+  'BRIDGE', 'LEDGER', 'OHM', 'BLUEPRINT', 'MIRO',
+]
+
+const HUB_TIERS = [
+  { label: 'Solo',       price: '$49' },
+  { label: 'Growth',     price: '$129' },
+  { label: 'Pro',        price: '$299' },
+  { label: 'Pro+',       price: '$499' },
+  { label: 'Enterprise', price: '$800+' },
+]
+
+function cFmt(v: number): string {
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
+function useElectricalData() {
+  const d = getBackupData()
+  if (!d) return { kpis: null, openProjects: [] as any[], lastLog: null as any, serviceNet: 0, activeCrew: 0 }
+  const kpis = getKPIs(d)
+  const projects = d.projects || []
+  const openProjects = projects.filter((p: any) => {
+    const s = (p.status || '').toLowerCase()
+    return s === 'active' || s === 'coming'
+  })
+  const serviceLogs = d.serviceLogs || []
+  const serviceNet = serviceLogs.reduce((s: number, l: any) => s + num(l.collected) - num(l.opCost), 0)
+  const activeCrew = (d.employees || []).length
+  const allLogs = [...(d.logs || [])].sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')))
+  const lastLog = allLogs[0] || null
+  return { kpis, openProjects, lastLog, serviceNet, activeCrew }
+}
+
+// ─── TAB 12 — Split View ──────────────────────────────────────────────────────
+function Tab12SplitView() {
+  const { kpis, openProjects, lastLog, serviceNet, activeCrew } = useElectricalData()
+
+  const colStyle: React.CSSProperties = {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '20px 22px',
+    minWidth: 0,
+  }
+
+  const colHeaderStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+  }
+
+  const secHdr: React.CSSProperties = {
+    fontSize: 10,
+    fontWeight: 700,
+    color: 'rgba(255,255,255,0.4)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.08em',
+    marginBottom: 8,
+    marginTop: 16,
+  }
+
+  function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+    return (
+      <div style={{
+        backgroundColor: '#0d1321',
+        border: '1px solid rgba(255,255,255,0.07)',
+        borderRadius: 8,
+        padding: '10px 14px',
+        marginBottom: 7,
+      }}>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>{label}</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: '#00ff9f', lineHeight: 1.2 }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>{sub}</div>}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', height: '100%' }}>
+      {/* LEFT — Power On Solutions LLC */}
+      <div style={colStyle}>
+        <div style={colHeaderStyle}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#e2e8f0' }}>⚡ POWER ON SOLUTIONS LLC</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, backgroundColor: '#1e3a5f', color: '#93c5fd', padding: '2px 7px', borderRadius: 4 }}>C-10 #1151468</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#00ff9f', fontWeight: 700 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#00ff9f', display: 'inline-block' }} />
+                ACTIVE
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {kpis ? (
+          <>
+            <StatCard label="Pipeline" value={cFmt(kpis.pipeline)} />
+            <StatCard label="Paid" value={cFmt(kpis.paid)} />
+            <StatCard label="Exposure" value={cFmt(kpis.exposure)} />
+            <StatCard label="SVC Unbilled" value={cFmt(kpis.svcUnbilled)} />
+          </>
+        ) : (
+          <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 13 }}>No backup data found.</div>
+        )}
+
+        <div style={secHdr}>Open Projects ({openProjects.length})</div>
+        {openProjects.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', padding: '4px 0' }}>No open projects</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {openProjects.map((p: any) => (
+              <div key={p.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                backgroundColor: '#0d1321',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 6, padding: '7px 12px', fontSize: 12,
+              }}>
+                <span style={{ flex: 1, color: '#d1d5db', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, flexShrink: 0,
+                  backgroundColor: p.status === 'active' ? '#14532d' : '#1e2d3d',
+                  color: p.status === 'active' ? '#86efac' : '#93c5fd',
+                }}>
+                  {(p.status || 'active').toUpperCase()}
+                </span>
+                <span style={{ fontSize: 11, color: '#ffd700', fontWeight: 700, flexShrink: 0 }}>{cFmt(p.contract || 0)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 12 }}>
+          <StatCard label="Open RFIs" value={String(kpis?.openRfis ?? 0)} />
+          <StatCard label="Service Net" value={cFmt(serviceNet)} />
+          <StatCard label="Active Crew" value={String(activeCrew)} />
+        </div>
+
+        <div style={secHdr}>Last Field Log</div>
+        {lastLog ? (
+          <div style={{ backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '10px 14px' }}>
+            <div style={{ fontSize: 11, color: '#ffd700', fontWeight: 700, marginBottom: 3 }}>{lastLog.date}</div>
+            <div style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.5 }}>{(lastLog.notes || '').split('\n')[0] || '(no notes)'}</div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>No field logs recorded</div>
+        )}
+      </div>
+
+      {/* Divider */}
+      <div style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+      {/* RIGHT — PowerOn Hub */}
+      <div style={colStyle}>
+        <div style={colHeaderStyle}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#e2e8f0' }}>🧠 POWERON HUB</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, backgroundColor: '#2d1e5f', color: '#c4b5fd', padding: '2px 7px', borderRadius: 4 }}>V3 · PRODUCTION</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#00ff9f', fontWeight: 700 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#00ff9f', display: 'inline-block' }} />
+                LIVE
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section A — Build Timeline */}
+        <div style={{ ...secHdr, marginTop: 0 }}>Build Timeline</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {HUB_BUILD_MILESTONES.map((m, i) => (
+            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00ff9f', flexShrink: 0, marginTop: 4 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{m.date}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{m.title}</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{m.note}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Section B — Platform Stats */}
+        <div style={secHdr}>Platform Stats</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+          {HUB_PLATFORM_STATS.map((s, i) => (
+            <div key={i} style={{ backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, padding: '8px 10px' }}>
+              <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#00ff9f' }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Section C — Agent Roster */}
+        <div style={secHdr}>Agent Roster</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {HUB_AGENTS.map((agent, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              backgroundColor: '#0d1321', border: '1px solid rgba(0,255,159,0.2)',
+              borderRadius: 20, padding: '4px 10px', fontSize: 11, fontWeight: 700, color: '#e2e8f0',
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#00ff9f', display: 'inline-block' }} />
+              {agent}
+            </div>
+          ))}
+        </div>
+
+        {/* Section D — Commercial Model */}
+        <div style={secHdr}>Commercial Model</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+          {HUB_TIERS.map((t, i) => (
+            <div key={i} style={{
+              flex: 1, minWidth: 64,
+              backgroundColor: '#0d1321', border: '1px solid rgba(255,215,0,0.2)',
+              borderRadius: 8, padding: '10px 8px', textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontWeight: 600, marginBottom: 4 }}>{t.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#ffd700' }}>{t.price}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ backgroundColor: '#0d1321', border: '1px solid rgba(255,215,0,0.18)', borderRadius: 8, padding: '12px 14px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#ffd700', marginBottom: 3 }}>Prove It Tier</div>
+          <div style={{ fontSize: 12, color: '#d1d5db' }}>$0 base · 90 days · 5% platform-attributed revenue share</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── TAB 13 — Unified Command ─────────────────────────────────────────────────
+function Tab13UnifiedCommand() {
+  const { kpis, openProjects, serviceNet, activeCrew } = useElectricalData()
+  const d = getBackupData()
+  const recentLogs = [...(d?.logs || [])].sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 3)
+  const last3 = HUB_BUILD_MILESTONES.slice(0, 3)
+
+  const secHdr: React.CSSProperties = {
+    fontSize: 10,
+    fontWeight: 700,
+    color: 'rgba(255,255,255,0.4)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.08em',
+    marginBottom: 8,
+    marginTop: 14,
+  }
+
+  const cCard: React.CSSProperties = {
+    backgroundColor: '#0d1321',
+    border: '1px solid rgba(255,255,255,0.07)',
+    borderRadius: 8,
+    padding: '10px 14px',
+    marginBottom: 7,
+  }
+
+  const swimStyle: React.CSSProperties = {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '18px 20px',
+    minWidth: 0,
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+
+      {/* SECTION 1 — Operator Identity Header */}
+      <div style={{ backgroundColor: '#0d1321', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', flexShrink: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: '#e2e8f0', marginBottom: 2 }}>
+          Christian Dubon · Managing Member &amp; Platform Founder
+        </div>
+        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 10 }}>
+          Power On Solutions LLC · C-10 #1151468 · PowerOn Hub V3 Production
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[
+            { icon: '⚡', label: 'Electrical: ACTIVE', color: '#00ff9f', bg: '#0a2010' },
+            { icon: '🧠', label: 'Platform: LIVE',     color: '#a78bfa', bg: '#1a1030' },
+            { icon: '📋', label: 'IP: FILED',          color: '#ffd700', bg: '#1a1400' },
+            { icon: '👥', label: 'Beta: FORMING',      color: '#93c5fd', bg: '#0a1830' },
+          ].map((b, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              backgroundColor: b.bg, border: `1px solid ${b.color}44`,
+              borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, color: b.color,
+            }}>
+              {b.icon} {b.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* SECTION 2 — Cross-entity KPI Row */}
+      <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {[
+            { label: 'Pipeline Activity',  value: kpis ? cFmt(kpis.pipeline) : '—',             big: true },
+            { label: 'Platform Build',     value: 'V3 Live · 45 days · $0 external capital',    big: false },
+            { label: 'Active Operations',  value: kpis ? `${kpis.activeProjects} + 1 platform` : '— + 1 platform', big: false },
+            { label: 'Agents Deployed',    value: '15 AI agents',                                big: false },
+            { label: 'IP Protected',       value: '2 filings · April 2026',                      big: false },
+          ].map((c, i) => (
+            <div key={i} style={{ flex: 1, backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '10px 12px', minWidth: 0 }}>
+              <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{c.label}</div>
+              <div style={{ fontSize: c.big ? 20 : 12, fontWeight: 700, color: '#00ff9f', lineHeight: 1.3, wordBreak: 'break-word' }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* SECTION 3 — Two Swimlanes */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+
+        {/* LEFT SWIMLANE — Electrical Operations */}
+        <div style={swimStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#e2e8f0' }}>⚡ ELECTRICAL OPERATIONS</span>
+          </div>
+
+          <div style={{ ...secHdr, marginTop: 0 }}>Financial Snapshot</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+            {kpis ? [
+              { label: 'Pipeline',    value: cFmt(kpis.pipeline) },
+              { label: 'Paid',        value: cFmt(kpis.paid) },
+              { label: 'Exposure',    value: cFmt(kpis.exposure) },
+              { label: 'Unbilled',    value: cFmt(kpis.svcUnbilled) },
+              { label: 'Service Net', value: cFmt(serviceNet) },
+            ].map((s, i) => (
+              <div key={i} style={cCard}>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{s.label}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#00ff9f' }}>{s.value}</div>
+              </div>
+            )) : <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', gridColumn: '1 / -1' }}>No data loaded.</div>}
+          </div>
+
+          <div style={secHdr}>Open Projects</div>
+          {openProjects.slice(0, 8).map((p: any) => (
+            <div key={p.id} style={{ ...cCard, display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px' }}>
+              <span style={{ flex: 1, fontSize: 12, color: '#d1d5db', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+              <span style={{ fontSize: 11, color: '#ffd700', fontWeight: 700, flexShrink: 0 }}>{cFmt(p.contract || 0)}</span>
+              <span style={{ fontSize: 10, flexShrink: 0, color: p.status === 'active' ? '#86efac' : '#93c5fd' }}>{(p.status || 'active').toUpperCase()}</span>
+            </div>
+          ))}
+          {openProjects.length === 0 && <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', padding: '4px 0' }}>No open projects</div>}
+
+          <div style={secHdr}>Recent Field Logs</div>
+          {recentLogs.length === 0
+            ? <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>No logs</div>
+            : recentLogs.map((l: any, i: number) => (
+              <div key={i} style={cCard}>
+                <div style={{ fontSize: 10, color: '#ffd700', fontWeight: 700, marginBottom: 2 }}>{l.date}</div>
+                <div style={{ fontSize: 12, color: '#d1d5db' }}>{(l.notes || '').split('\n')[0] || '(no notes)'}</div>
+              </div>
+            ))
+          }
+
+          <div style={secHdr}>Quick Stats</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[
+              { label: 'Open RFIs',   value: String(kpis?.openRfis ?? 0) },
+              { label: 'Active Crew', value: String(activeCrew) },
+              { label: 'Last Sync',   value: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+            ].map((s, i) => (
+              <div key={i} style={{ flex: 1, backgroundColor: '#0d1321', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{s.label}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#00ff9f' }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+        {/* RIGHT SWIMLANE — Platform Operations */}
+        <div style={swimStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#e2e8f0' }}>🧠 PLATFORM OPERATIONS</span>
+          </div>
+
+          <div style={{ ...secHdr, marginTop: 0 }}>Current Sprint</div>
+          <div style={{ ...cCard, border: '1px solid rgba(0,255,159,0.25)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, backgroundColor: '#0a2010', color: '#00ff9f' }}>B47 RUNNING</span>
+              <span style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 600 }}>Command Center dual view</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Status: In Progress</div>
+          </div>
+
+          <div style={secHdr}>Next in Queue</div>
+          <div style={cCard}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#ffd700' }}>B48+ · Post-audit wave · Beta prep</div>
+          </div>
+
+          <div style={secHdr}>Build Velocity</div>
+          <div style={cCard}>
+            <div style={{ fontSize: 12, color: '#d1d5db', marginBottom: 4 }}>6+ production deploys since March 2026</div>
+            <div style={{ fontSize: 12, color: '#d1d5db' }}>18 files changed in B46 alone</div>
+          </div>
+
+          <div style={secHdr}>Beta Pipeline</div>
+          <div style={cCard}>
+            <div style={{ fontSize: 12, color: '#d1d5db', marginBottom: 4 }}>5 contacts identified</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Launch sequence: pending attorney NDA review</div>
+          </div>
+
+          <div style={secHdr}>Revenue Model</div>
+          <div style={{ display: 'flex', gap: 5, marginBottom: 8, flexWrap: 'wrap' }}>
+            {HUB_TIERS.map((t, i) => (
+              <div key={i} style={{
+                flex: 1, minWidth: 58,
+                backgroundColor: i === 2 ? '#1a1000' : '#0d1321',
+                border: `1px solid ${i === 2 ? '#ffd700' : 'rgba(255,255,255,0.07)'}`,
+                borderRadius: 7, padding: '7px 6px', textAlign: 'center',
+              }}>
+                <div style={{ fontSize: 9, color: i === 2 ? '#ffd700' : 'rgba(255,255,255,0.4)', fontWeight: 600, marginBottom: 2 }}>{t.label}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: i === 2 ? '#ffd700' : '#e2e8f0' }}>{t.price}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={secHdr}>Recent Milestones</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {last3.map((m, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00ff9f', flexShrink: 0, marginTop: 4 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{m.date}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{m.title}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{m.note}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const NEXUS_CONTEXT_BY_TAB: Record<string, string> = {
   vision:     'The user is viewing the Vision Timeline tab, which shows the journey from the original HTML file to V3 deployment, platform radar scores, and beta milestone progress.',
   backend:    'The user is viewing the Backend Analysis tab, which shows Supabase table health, API response times, RLS coverage, and storage metrics.',
@@ -4047,6 +4533,8 @@ const NEXUS_CONTEXT_BY_TAB: Record<string, string> = {
   t9:         'The user is viewing the Industry Analysis tab, which evaluates the platform fit across 16 trade verticals and shows expansion roadmap opportunities.',
   t10:        'The user is viewing the Compliance Overview tab, which tracks legal, business, tech, and beta compliance items including licenses, IP filings, and security requirements.',
   t11:        'The user is viewing the Pending Actions + Sessions Queue tab, which shows the owner operating rhythm, last 10 build sessions (B21–B40), and the NEXUS voice interview debrief tool.',
+  t12:        'The user is viewing the Split View tab, which shows Power On Solutions LLC electrical KPIs (pipeline, paid, exposure, projects) side by side with the PowerOn Hub build timeline, platform stats, agent roster, and commercial model.',
+  t13:        'The user is viewing the Unified Command tab, which combines the operator identity header, cross-entity KPI row, and dual swimlanes for electrical operations and platform operations in a single command view.',
 }
 
 function NexusCommandPanel({ activeTabId }: { activeTabId: string }) {
@@ -4274,6 +4762,8 @@ export default function AdminCommandCenter() {
       case 't9':          return <Tab9IndustryAnalysis />
       case 't10':         return <Tab10Compliance />
       case 't11':         return <Tab11ActionsQueue activeTabId={activeTab} />
+      case 't12':         return <Tab12SplitView />
+      case 't13':         return <Tab13UnifiedCommand />
       case 'neural_map':  return <CommandCenterNeuralMap />
       default:            return <Tab1VisionTimeline />
     }
@@ -4356,11 +4846,11 @@ export default function AdminCommandCenter() {
         {/* Content area */}
         <div style={{
           flex: 1,
-          overflowY: activeTab === 'neural_map' ? 'hidden' : 'auto',
-          overflow: activeTab === 'neural_map' ? 'hidden' : undefined,
-          padding: activeTab === 'neural_map' ? '0' : '24px',
-          display: activeTab === 'neural_map' ? 'flex' : undefined,
-          flexDirection: activeTab === 'neural_map' ? 'column' : undefined,
+          overflowY: (activeTab === 'neural_map' || activeTab === 't12' || activeTab === 't13') ? 'hidden' : 'auto',
+          overflow: (activeTab === 'neural_map' || activeTab === 't12' || activeTab === 't13') ? 'hidden' : undefined,
+          padding: (activeTab === 'neural_map' || activeTab === 't12' || activeTab === 't13') ? '0' : '24px',
+          display: (activeTab === 'neural_map' || activeTab === 't12' || activeTab === 't13') ? 'flex' : undefined,
+          flexDirection: (activeTab === 'neural_map' || activeTab === 't12' || activeTab === 't13') ? 'column' : undefined,
           minHeight: 0,
         }}>
           {renderTab()}
