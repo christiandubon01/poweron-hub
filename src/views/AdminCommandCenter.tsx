@@ -11,7 +11,7 @@
  * Admin-only: gated in V15rLayout sidebar (email matches VITE_ADMIN_EMAIL).
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip,

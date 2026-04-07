@@ -29,6 +29,22 @@ import { clsx } from 'clsx'
 import { NexusThreeOrb } from './NexusThreeOrb'
 import type { OrbState } from './NexusPresenceOrb'
 import type { VoiceSessionStatus } from '@/services/voice'
+// B46 — AI Visual Suite: QuantumFoam is the default NEXUS orb visual
+import { VisualRenderer, getVizMode } from '@/components/v15r/AIVisualSuite'
+
+// Map OrbState to VisualRenderer audio-reactive props
+function orbStateToAudio(state: OrbState): { bass: number; mid: number; high: number; mtz: number; hue: number } {
+  switch (state) {
+    case 'listening':    return { bass: 0.25, mid: 0.45, high: 0.05, mtz: 0.0,  hue: 200 }
+    case 'recording':    return { bass: 0.65, mid: 0.35, high: 0.30, mtz: 0.0,  hue: 0   }
+    case 'transcribing': return { bass: 0.30, mid: 0.55, high: 0.40, mtz: 0.2,  hue: 55  }
+    case 'processing':   return { bass: 0.50, mid: 0.70, high: 0.50, mtz: 0.45, hue: 280 }
+    case 'responding':   return { bass: 0.75, mid: 0.55, high: 0.60, mtz: 0.1,  hue: 160 }
+    case 'complete':     return { bass: 0.05, mid: 0.05, high: 0.0,  mtz: 0.0,  hue: 160 }
+    case 'error':        return { bass: 0.40, mid: 0.20, high: 0.80, mtz: 0.65, hue: 28  }
+    default:             return { bass: 0.0,  mid: 0.0,  high: 0.0,  mtz: 0.0,  hue: 160 }
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -197,7 +213,7 @@ function CollapsedOrbButton({ onClick, orbState }: { onClick: () => void; orbSta
     >
       {/* Mini orb visual with mic icon fallback */}
       <div className="relative w-6 h-6">
-        <NexusThreeOrb state={orbState} />
+        <VisualRenderer mode={getVizMode()} {...orbStateToAudio(orbState)} style={{ width: 24, height: 24, borderRadius: '50%', overflow: 'hidden' }} />
         {/* Mic SVG fallback — visible when orb canvas is transparent */}
         <svg className="absolute inset-0 w-6 h-6 text-emerald-300 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" x2="12" y1="19" y2="22" />
@@ -366,12 +382,12 @@ export function NexusDrawerPanel({
             </span>
           </div>
 
-          {/* Orb — fills the left half */}
+          {/* Orb — fills the left half — B46: QuantumFoam is default (nexus_viz_mode=0) */}
           <div
             className="w-full flex-1"
             style={{ maxHeight: '100%', minHeight: 0 }}
           >
-            <NexusThreeOrb state={orbState} />
+            <VisualRenderer mode={getVizMode()} {...orbStateToAudio(orbState)} style={{ width: '100%', height: '100%' }} />
           </div>
 
           {/* State label */}

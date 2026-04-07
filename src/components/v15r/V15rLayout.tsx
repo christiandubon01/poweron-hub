@@ -710,6 +710,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const adminItems = [
     { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null },
     { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null },
+    { label: 'VISUAL SUITE', icon: FlaskConical, view: 'viz-lab', badge: 'B46' },
     { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview' },
     { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null },
     { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null },

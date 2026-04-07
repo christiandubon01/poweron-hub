@@ -732,6 +732,14 @@ function CCNeuralMapCanvas({
     renderer.setClearColor(0x020408, 1)
     mount.appendChild(renderer.domElement)
 
+    // ── B46 FIX 3: Decoration overlay (2D canvas) for glow + dash effects ─────
+    const overlayCanvas = document.createElement('canvas')
+    overlayCanvas.width = W; overlayCanvas.height = H
+    overlayCanvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:5;'
+    mount.appendChild(overlayCanvas)
+    let overlayCtx: CanvasRenderingContext2D | null = overlayCanvas.getContext('2d')
+    let lineDashOffset = 0
+
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.25); scene.add(ambientLight)
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.4); dirLight.position.set(5, 8, 5); scene.add(dirLight)
 
@@ -1070,6 +1078,52 @@ function CCNeuralMapCanvas({
       })
 
       renderer.render(scene, camera)
+
+      // ── B46 Decoration overlay pass: node glows + animated edge dashes ──────
+      if (overlayCtx) {
+        const oc = overlayCtx
+        const OW = overlayCanvas.width, OH = overlayCanvas.height
+        oc.clearRect(0, 0, OW, OH)
+        lineDashOffset -= 0.5
+
+        // Soft radial glow per node, sized to node radius * 2
+        currentNodes.forEach((n) => {
+          const proj = new THREE.Vector3(n.x, n.y, n.z).project(camera)
+          if (proj.z > 1) return // behind camera
+          const sx = (proj.x + 1) / 2 * OW
+          const sy = (-proj.y + 1) / 2 * OH
+          const pixR = Math.max(6, n.size * 55)
+          const glowR = pixR * 2
+          const hex = '#' + n.color.toString(16).padStart(6, '0')
+          // Hot nodes: agents and goalstep nodes and high-health projects pulse with sin(t) brightness
+          const isHot = n.type === 'agent' || n.type === 'goalstep' || ((n.meta?.healthScore ?? 75) > 70)
+          const brightness = isHot ? 0.5 + Math.sin(pulseTick * 4) * 0.28 : 0.2
+          const a1 = Math.round(brightness * 180).toString(16).padStart(2, '0')
+          const a2 = Math.round(brightness * 50).toString(16).padStart(2, '0')
+          const grad = oc.createRadialGradient(sx, sy, 0, sx, sy, glowR)
+          grad.addColorStop(0, hex + a1)
+          grad.addColorStop(0.55, hex + a2)
+          grad.addColorStop(1, 'transparent')
+          oc.fillStyle = grad
+          oc.beginPath(); oc.arc(sx, sy, glowR, 0, Math.PI * 2); oc.fill()
+        })
+
+        // Faint animated dash offset on connection lines
+        oc.setLineDash([4, 10])
+        oc.lineDashOffset = lineDashOffset
+        oc.strokeStyle = 'rgba(100,200,255,0.06)'
+        oc.lineWidth = 0.8
+        currentEdges.forEach((e) => {
+          const a = currentNodes[e.a], b = currentNodes[e.b]; if (!a || !b) return
+          const pa = new THREE.Vector3(a.x, a.y, a.z).project(camera)
+          const pb = new THREE.Vector3(b.x, b.y, b.z).project(camera)
+          if (pa.z > 1 || pb.z > 1) return
+          const ax = (pa.x + 1) / 2 * OW, ay = (-pa.y + 1) / 2 * OH
+          const bx = (pb.x + 1) / 2 * OW, by = (-pb.y + 1) / 2 * OH
+          oc.beginPath(); oc.moveTo(ax, ay); oc.lineTo(bx, by); oc.stroke()
+        })
+        oc.setLineDash([])
+      }
     }
     animate()
 
@@ -1077,6 +1131,9 @@ function CCNeuralMapCanvas({
       if (!mount) return
       const w = mount.clientWidth, h = mount.clientHeight; if (!w || !h) return
       camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h)
+      // Also resize the decoration overlay canvas
+      overlayCanvas.width = w; overlayCanvas.height = h
+      overlayCtx = overlayCanvas.getContext('2d')
     })
     ro.observe(mount)
 
@@ -1097,6 +1154,7 @@ function CCNeuralMapCanvas({
       if (tooltipDiv?.parentNode) tooltipDiv.parentNode.removeChild(tooltipDiv)
       if (labelContainer?.parentNode) labelContainer.parentNode.removeChild(labelContainer)
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+      if (mount.contains(overlayCanvas)) mount.removeChild(overlayCanvas)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

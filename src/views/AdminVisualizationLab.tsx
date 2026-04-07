@@ -441,6 +441,7 @@ function makeGoalStepCanvas(goalColorHex: string, stepIndex: number): HTMLCanvas
 
 // ─── Background Layer ─────────────────────────────────────────────────────────
 function BackgroundLayer({ mode }: { mode: BgMode }) {
+  // FIX B46: canvasRef always rendered (display toggled via CSS) so ref is always assigned
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -449,8 +450,11 @@ function BackgroundLayer({ mode }: { mode: BgMode }) {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight
-    const cols = Math.floor(canvas.width / 16)
+    // Use actual rendered size fallback so canvas.width is never 0
+    const W = canvas.clientWidth || canvas.parentElement?.clientWidth || 800
+    const H = canvas.clientHeight || canvas.parentElement?.clientHeight || 600
+    canvas.width = W; canvas.height = H
+    const cols = Math.floor(W / 16)
     const drops: number[] = new Array(cols).fill(0)
     const chars = '01アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ'
     let frame: number
@@ -469,33 +473,53 @@ function BackgroundLayer({ mode }: { mode: BgMode }) {
     return () => cancelAnimationFrame(frame)
   }, [mode])
 
+  // Canvas always present in DOM — only visibility toggled — so canvasRef.current is always assigned
+  const canvasStyle: React.CSSProperties = {
+    position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.6,
+    display: mode === 'datastream' ? 'block' : 'none',
+    pointerEvents: 'none',
+  }
+
   if (mode === 'deepspace') {
     return (
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, #0a0f1e 0%, #020408 100%)' }} />
-        {Array.from({ length: 120 }, (_, i) => (
-          <div key={i} style={{
-            position: 'absolute', left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`,
-            width: Math.random() > 0.8 ? 2 : 1, height: Math.random() > 0.8 ? 2 : 1,
-            borderRadius: '50%', backgroundColor: `rgba(255,255,255,${0.3 + Math.random() * 0.7})`,
-            animation: `twinkle ${2 + Math.random() * 4}s ease-in-out infinite`,
-            animationDelay: `${Math.random() * 4}s`,
-          }} />
-        ))}
-      </div>
+      <>
+        <canvas ref={canvasRef} style={canvasStyle} />
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, #0a0f1e 0%, #020408 100%)' }} />
+          {Array.from({ length: 120 }, (_, i) => (
+            <div key={i} style={{
+              position: 'absolute', left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`,
+              width: Math.random() > 0.8 ? 2 : 1, height: Math.random() > 0.8 ? 2 : 1,
+              borderRadius: '50%', backgroundColor: `rgba(255,255,255,${0.3 + Math.random() * 0.7})`,
+              animation: `twinkle ${2 + Math.random() * 4}s ease-in-out infinite`,
+              animationDelay: `${Math.random() * 4}s`,
+            }} />
+          ))}
+        </div>
+      </>
     )
   }
   if (mode === 'datastream') {
-    return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.6 }} />
+    return <canvas ref={canvasRef} style={canvasStyle} />
   }
   if (mode === 'grid') {
-    return <div style={{
-      position: 'absolute', inset: 0, pointerEvents: 'none',
-      backgroundImage: 'linear-gradient(rgba(0,255,136,0.07) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,136,0.07) 1px,transparent 1px)',
-      backgroundSize: '40px 40px', animation: 'gridScroll 20s linear infinite',
-    }} />
+    return (
+      <>
+        <canvas ref={canvasRef} style={canvasStyle} />
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'linear-gradient(rgba(0,255,136,0.07) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,136,0.07) 1px,transparent 1px)',
+          backgroundSize: '40px 40px', animation: 'gridScroll 20s linear infinite',
+        }} />
+      </>
+    )
   }
-  return <div style={{ position: 'absolute', inset: 0, backgroundColor: '#060608', pointerEvents: 'none' }} />
+  return (
+    <>
+      <canvas ref={canvasRef} style={canvasStyle} />
+      <div style={{ position: 'absolute', inset: 0, backgroundColor: '#060608', pointerEvents: 'none' }} />
+    </>
+  )
 }
 
 // ─── Organic Orb ──────────────────────────────────────────────────────────────
@@ -611,7 +635,8 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
       ro = new ResizeObserver(() => { if(!mount)return; const w=mount.clientWidth,h=mount.clientHeight; if(!w||!h)return; camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h) }); ro.observe(mount)
     }
     io = new IntersectionObserver((entries) => { if(entries[0].isIntersecting && mount.clientWidth>0) doInit() }, { threshold: 0 }); io.observe(mount)
-    doInit()
+    // FIX B46: defer doInit by one rAF so flex layout is fully computed before reading clientWidth/Height
+    requestAnimationFrame(() => doInit())
     return () => { if(io)io.disconnect(); if(animFrame)cancelAnimationFrame(animFrame); if(ro)ro.disconnect(); removeSatellites(); if(renderer){renderer.dispose(); if(mount&&mount.contains(renderer.domElement))mount.removeChild(renderer.domElement)} }
   }, [])
 
@@ -665,7 +690,9 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
       animate()
       ro=new ResizeObserver(()=>{if(!mount)return;const w=mount.clientWidth,h=mount.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)}); ro.observe(mount)
     }
-    io=new IntersectionObserver((entries)=>{if(entries[0].isIntersecting&&mount.clientWidth>0)doInit()},{threshold:0}); io.observe(mount); doInit()
+    io=new IntersectionObserver((entries)=>{if(entries[0].isIntersecting&&mount.clientWidth>0)doInit()},{threshold:0}); io.observe(mount)
+    // FIX B46: defer doInit by one rAF so flex layout is fully computed before reading clientWidth/Height
+    requestAnimationFrame(() => doInit())
     return ()=>{if(io)io.disconnect();if(animFrame)cancelAnimationFrame(animFrame);if(ro)ro.disconnect();if(renderer){renderer.dispose();if(mount&&mount.contains(renderer.domElement))mount.removeChild(renderer.domElement)}}
   }, [])
 
