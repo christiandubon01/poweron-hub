@@ -459,8 +459,8 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Canvas — B53: absolute fill, leaving 80px for controls ── */}
-      <div style={{ position: 'absolute', inset: 0, width: '100%', height: 'calc(100% - 80px)' }}>
+      {/* ── Canvas — B54: top/right/left=0, bottom=80 (avoids inset+height conflict) ── */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 80 }}>
         <canvas
           ref={canvasRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}

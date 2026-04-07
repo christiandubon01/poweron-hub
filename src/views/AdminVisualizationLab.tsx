@@ -811,8 +811,8 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         </div>
       </div>
       <style>{`@keyframes orbMicPulse { 0%,100%{box-shadow:0 0 10px rgba(0,255,136,0.35)} 50%{box-shadow:0 0 20px rgba(0,255,136,0.7)} }`}</style>
-      {/* B53: wrapper — flex:1 min-height:0 position:relative for full-canvas orb */}
-      <div style={{ flex:1, minHeight:0, width:'100%', position:'relative', overflow:'hidden' }}>
+      {/* B54: explicit height so VisualSuitePanel height:100% resolves; flex:1 had no effect (parent not flex) */}
+      <div style={{ height:'calc(100vh - 106px)', width:'100%', position:'relative', overflow:'hidden' }}>
         <VisualSuitePanel
           micStream={micStream}
           ttsElement={ttsElement}
@@ -1362,14 +1362,15 @@ function NeuralMap() {
 
     let _animFrame: number
     let _renderer: THREE.WebGLRenderer | null = null
-    let _ro: ResizeObserver | null = null
-    let _io: IntersectionObserver | null = null
-    let _cleanup: (() => void) | null = null
+    let _ro:       ResizeObserver | null = null
+    let _cleanup:  (() => void) | null = null
 
     function doInit() {
-    if (_renderer) return  // B53: prevent double-init (e.g. when display:none at mount)
-    const W = Math.max(mount.clientWidth || 900, 100)
-    const H = Math.max(mount.clientHeight || 600, 100)
+    // B54: if tab is display:none, clientWidth/Height=0 — defer until visible
+    if (mount.clientWidth === 0 || mount.clientHeight === 0) { requestAnimationFrame(doInit); return }
+    if (_renderer) return  // already initialised with real dimensions
+    const W = Math.max(mount.clientWidth, 100)
+    const H = Math.max(mount.clientHeight, 100)
 
     const scene    = new THREE.Scene()
     const camera   = new THREE.PerspectiveCamera(55, W / H, 0.1, 100)
@@ -1876,15 +1877,10 @@ function NeuralMap() {
     }
     } // end doInit
 
-    // B53: defer by one rAF; also watch via IntersectionObserver so init fires when tab becomes visible
-    requestAnimationFrame(() => doInit())
-    const _nmIo = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && mount.clientWidth > 0) doInit()
-    }, { threshold: 0 })
-    _nmIo.observe(mount)
+    // B54: rAF defer only — doInit polls itself until mount has real dimensions
+    requestAnimationFrame(doInit)
 
     return () => {
-      _nmIo.disconnect()
       if (_cleanup) _cleanup(); else { if (_ro) _ro.disconnect() }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
