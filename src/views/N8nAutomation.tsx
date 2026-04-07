@@ -13,6 +13,8 @@ import {
   ToggleLeft,
   ToggleRight,
   Activity,
+  Network,
+  Shield,
 } from 'lucide-react';
 import {
   initN8nAutomationAgent,
@@ -22,6 +24,9 @@ import {
 } from '../agents/n8nAutomation';
 import { getRecentActivity } from '../services/activityLog';
 import type { ActivityEntry } from '../services/activityLog';
+import { getQueueFor } from '../services/agentBus';
+import type { AgentName } from '../services/agentBus';
+import { useAuth } from '@/hooks/useAuth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +50,48 @@ interface ActivityEvent {
   result: EventResult;
   description: string;
 }
+
+// ─── Agent System Map Types ───────────────────────────────────────────────────
+
+type ViewTab = 'workflows' | 'agent-map';
+
+type AgentWireStatus = 'yes' | 'partial' | 'not-built';
+type AgentLiveStatus = 'Active' | 'V4' | 'V5';
+
+interface AgentDef {
+  name: string;
+  tier: string;
+  tierLabel: string;
+  role: string;
+  liveStatus: AgentLiveStatus;
+  wired: AgentWireStatus;
+  busName: AgentName | null;
+}
+
+// ─── Agent Registry (all 15) ──────────────────────────────────────────────────
+
+const AGENT_DEFS: AgentDef[] = [
+  // T1 Executive
+  { name: 'NEXUS',     tier: 'T1', tierLabel: 'Executive',    role: 'Chief of Staff',   liveStatus: 'Active', wired: 'yes',       busName: 'NEXUS'      },
+  // T2 Directors
+  { name: 'PULSE',     tier: 'T2', tierLabel: 'Directors',    role: 'CFO',              liveStatus: 'Active', wired: 'partial',   busName: 'PULSE'      },
+  { name: 'BLUEPRINT', tier: 'T2', tierLabel: 'Directors',    role: 'COO',              liveStatus: 'Active', wired: 'partial',   busName: 'BLUEPRINT'  },
+  { name: 'SPARK',     tier: 'T2', tierLabel: 'Directors',    role: 'CMO',              liveStatus: 'Active', wired: 'yes',       busName: 'SPARK'      },
+  // T3 Managers
+  { name: 'VAULT',     tier: 'T3', tierLabel: 'Managers',     role: 'Estimating',       liveStatus: 'Active', wired: 'partial',   busName: 'VAULT'      },
+  { name: 'LEDGER',    tier: 'T3', tierLabel: 'Managers',     role: 'Invoicing',        liveStatus: 'Active', wired: 'partial',   busName: 'LEDGER'     },
+  { name: 'CHRONO',    tier: 'T3', tierLabel: 'Managers',     role: 'Scheduling',       liveStatus: 'Active', wired: 'partial',   busName: 'CHRONO'     },
+  { name: 'OHM',       tier: 'T3', tierLabel: 'Managers',     role: 'Code Compliance',  liveStatus: 'Active', wired: 'yes',       busName: 'OHM'        },
+  { name: 'GUARDIAN',  tier: 'T3', tierLabel: 'Managers',     role: 'Compliance',       liveStatus: 'Active', wired: 'partial',   busName: null         },
+  // T4 Intelligence
+  { name: 'SCOUT',     tier: 'T4', tierLabel: 'Intelligence', role: 'System Analyzer',  liveStatus: 'Active', wired: 'partial',   busName: 'SCOUT'      },
+  { name: 'HUNTER',    tier: 'T4', tierLabel: 'Intelligence', role: 'Lead Sizing',      liveStatus: 'V4',     wired: 'not-built', busName: null         },
+  { name: 'ECHO',      tier: 'T4', tierLabel: 'Intelligence', role: 'Context Memory',   liveStatus: 'Active', wired: 'yes',       busName: null         },
+  { name: 'ATLAS',     tier: 'T4', tierLabel: 'Intelligence', role: 'Location/Mode',    liveStatus: 'Active', wired: 'partial',   busName: null         },
+  // V5 Future
+  { name: 'NEGOTIATE', tier: 'V5', tierLabel: 'Future',       role: 'Negotiation',      liveStatus: 'V5',     wired: 'not-built', busName: null         },
+  { name: 'SENTINEL',  tier: 'V5', tierLabel: 'Future',       role: 'Security',         liveStatus: 'V5',     wired: 'not-built', busName: null         },
+];
 
 // ─── Workflow Definitions (static metadata) ───────────────────────────────────
 // lastRun + status are derived from real agentBus/activityLog data at runtime.
@@ -379,9 +426,162 @@ function buildActivityFromRuns(): ActivityEvent[] {
   }));
 }
 
+// ─── Agent Card (System Map) ──────────────────────────────────────────────────
+
+/** Get the most-recent bus message timestamp for an agent, or null. */
+function getAgentLastActivity(busName: AgentName | null): string | null {
+  if (!busName) return null;
+  const queue = getQueueFor(busName);
+  if (queue.length === 0) return null;
+  const latest = queue.reduce((a, b) => (a.timestamp > b.timestamp ? a : b));
+  return new Date(latest.timestamp).toISOString();
+}
+
+function AgentCard({ agent }: { agent: AgentDef }) {
+  const lastActivity = getAgentLastActivity(agent.busName);
+
+  // ── Tier badge colors ──────────────────────────────────────────────────────
+  const tierColors: Record<string, { bg: string; text: string; border: string }> = {
+    T1: { bg: '#1a0a2e', text: '#c084fc', border: '#7c3aed44' },
+    T2: { bg: '#0a1f2e', text: '#38bdf8', border: '#0369a144' },
+    T3: { bg: '#0a1f14', text: '#4ade80', border: '#16a34a44' },
+    T4: { bg: '#1f1a0a', text: '#fbbf24', border: '#d9770644' },
+    V5: { bg: '#1a1a1a', text: '#6b7280', border: '#37415144' },
+  };
+  const tierStyle = tierColors[agent.tier] ?? tierColors.V5;
+
+  // ── Status chip ────────────────────────────────────────────────────────────
+  const statusChip: Record<AgentLiveStatus, { bg: string; text: string; border: string; label: string }> = {
+    Active: { bg: '#052e16aa', text: '#4ade80', border: '#16a34a55', label: 'Active' },
+    V4:     { bg: '#1c1917aa', text: '#a8a29e', border: '#57534e55', label: 'V4' },
+    V5:     { bg: '#111111aa', text: '#6b7280', border: '#37415155', label: 'V5' },
+  };
+  const chip = statusChip[agent.liveStatus];
+
+  // ── Wired indicator ────────────────────────────────────────────────────────
+  const wiredDot: Record<AgentWireStatus, { dot: string; label: string; text: string }> = {
+    'yes':       { dot: 'bg-green-400',  label: 'Wired',     text: 'text-green-400'  },
+    'partial':   { dot: 'bg-yellow-400', label: 'Partial',   text: 'text-yellow-400' },
+    'not-built': { dot: 'bg-gray-600',   label: 'Not wired', text: 'text-gray-500'   },
+  };
+  const wd = wiredDot[agent.wired];
+
+  // ── Card border accent by wired status ────────────────────────────────────
+  const cardBorderColor =
+    agent.wired === 'yes'       ? '#16a34a33' :
+    agent.wired === 'partial'   ? '#d9770633' :
+                                  '#1e2128';
+
+  return (
+    <div
+      className="rounded-xl border p-4 flex flex-col gap-3"
+      style={{ borderColor: cardBorderColor, backgroundColor: '#0d0e14' }}
+    >
+      {/* Top row: name + status chip */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-bold text-gray-100 tracking-wide">{agent.name}</span>
+          <span className="text-xs text-gray-500">{agent.role}</span>
+        </div>
+        <span
+          className="text-xs font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 mt-0.5"
+          style={{ backgroundColor: chip.bg, color: chip.text, borderColor: chip.border }}
+        >
+          {chip.label}
+        </span>
+      </div>
+
+      {/* Tier badge */}
+      <div className="flex items-center gap-2">
+        <span
+          className="text-xs font-semibold px-2 py-0.5 rounded border"
+          style={{ backgroundColor: tierStyle.bg, color: tierStyle.text, borderColor: tierStyle.border }}
+        >
+          {agent.tier}
+        </span>
+        <span className="text-xs text-gray-600">{agent.tierLabel}</span>
+      </div>
+
+      {/* Wired status */}
+      <div className="flex items-center gap-1.5">
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${wd.dot}`} />
+        <span className={`text-xs font-medium ${wd.text}`}>{wd.label}</span>
+      </div>
+
+      {/* Last activity */}
+      {lastActivity && (
+        <div className="flex items-center gap-1 text-xs text-gray-600">
+          <Clock size={10} />
+          <span>{formatTimestamp(lastActivity)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Agent System Map Panel ───────────────────────────────────────────────────
+
+function AgentSystemMap() {
+  // Group agents by tier for section headers
+  const tiers: Array<{ key: string; label: string }> = [
+    { key: 'T1', label: 'T1 · Executive' },
+    { key: 'T2', label: 'T2 · Directors' },
+    { key: 'T3', label: 'T3 · Managers' },
+    { key: 'T4', label: 'T4 · Intelligence' },
+    { key: 'V5', label: 'V5 · Future' },
+  ];
+
+  const fullyWired  = AGENT_DEFS.filter((a) => a.wired === 'yes').length;
+  const partial     = AGENT_DEFS.filter((a) => a.wired === 'partial').length;
+  const notBuilt    = AGENT_DEFS.filter((a) => a.wired === 'not-built').length;
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Legend + summary */}
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+          <span className="w-2.5 h-2.5 rounded-full bg-green-400 inline-block" />
+          Fully wired ({fullyWired})
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+          <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block" />
+          Partial ({partial})
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+          <span className="w-2.5 h-2.5 rounded-full bg-gray-600 inline-block" />
+          Not built ({notBuilt})
+        </div>
+        <span className="text-xs text-gray-600 ml-auto italic">Read-only · {AGENT_DEFS.length} agents</span>
+      </div>
+
+      {/* Agent grid grouped by tier */}
+      {tiers.map(({ key, label }) => {
+        const agents = AGENT_DEFS.filter((a) => a.tier === key);
+        if (agents.length === 0) return null;
+        return (
+          <div key={key}>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">
+              {label}
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {agents.map((agent) => (
+                <AgentCard key={agent.name} agent={agent} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main N8nAutomation View ──────────────────────────────────────────────────
 
 export default function N8nAutomation() {
+  const { user } = useAuth();
+  const isAdmin = !!user?.email && user.email === import.meta.env.VITE_ADMIN_EMAIL;
+  const [activeTab, setActiveTab] = useState<ViewTab>('workflows');
+
   // Track which workflows the user has manually paused
   const [pausedIds, setPausedIds] = useState<Set<string>>(new Set());
   // Derived workflow list — refreshed when agentBus events arrive
@@ -483,6 +683,15 @@ export default function N8nAutomation() {
           >
             B27 · Agent Wired
           </span>
+          {isAdmin && (
+            <span
+              className="text-xs font-medium px-2 py-0.5 rounded-full border flex items-center gap-1"
+              style={{ color: '#c084fc', borderColor: '#7c3aed44', backgroundColor: '#1a0a2e88' }}
+            >
+              <Shield size={10} />
+              Admin
+            </span>
+          )}
         </div>
         <p className="text-sm text-gray-500">
           Monitor and control your n8n automation workflows. Status and last-run times reflect real
@@ -490,66 +699,105 @@ export default function N8nAutomation() {
         </p>
       </div>
 
-      {/* ── Stats Row ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-4 gap-3">
-        <StatCard label="Total" value={total} accent="text-gray-200" />
-        <StatCard label="Active" value={active} accent="text-green-400" />
-        <StatCard label="Paused" value={paused} accent="text-yellow-400" />
-        <StatCard label="Errors" value={errors} accent="text-red-400" />
-      </div>
-
-      {/* ── Workflow Grid ──────────────────────────────────────────────────── */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">
-          Automation Workflows
-        </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {workflows.map((wf) => (
-            <WorkflowCard key={wf.id} workflow={wf} onToggle={handleToggle} />
-          ))}
-        </div>
-      </div>
-
-      {/* ── Activity Log ───────────────────────────────────────────────────── */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Activity size={14} className="text-green-400" />
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-600">
-            Activity Log
-          </p>
-          <span
-            className="text-xs font-medium px-1.5 py-0.5 rounded-full border"
-            style={{ color: '#4ade80', borderColor: '#16a34a33', backgroundColor: '#052e1688' }}
-          >
-            {activityEvents.length > 0
-              ? `Last ${activityEvents.length} events — live`
-              : 'Waiting for events'}
-          </span>
-        </div>
+      {/* ── Admin Tab Bar ───────────────────────────────────────────────────── */}
+      {isAdmin && (
         <div
-          className="rounded-xl border overflow-hidden"
-          style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+          className="flex items-center gap-1 border-b"
+          style={{ borderColor: '#1e2128' }}
         >
-          {activityEvents.length > 0 ? (
-            activityEvents.map((event) => (
-              <ActivityRow key={event.id} event={event} />
-            ))
-          ) : (
-            <div className="px-4 py-8 text-center text-xs text-gray-600">
-              No automation events yet — workflows will log here as they run.
-            </div>
-          )}
+          <button
+            onClick={() => setActiveTab('workflows')}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold transition-colors border-b-2 -mb-px"
+            style={{
+              borderColor:  activeTab === 'workflows' ? '#4ade80' : 'transparent',
+              color:        activeTab === 'workflows' ? '#4ade80' : '#6b7280',
+            }}
+          >
+            <Workflow size={13} />
+            Workflows
+          </button>
+          <button
+            onClick={() => setActiveTab('agent-map')}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold transition-colors border-b-2 -mb-px"
+            style={{
+              borderColor:  activeTab === 'agent-map' ? '#c084fc' : 'transparent',
+              color:        activeTab === 'agent-map' ? '#c084fc' : '#6b7280',
+            }}
+          >
+            <Network size={13} />
+            Agent System Map
+          </button>
         </div>
-      </div>
+      )}
 
-      {/* ── Footer note ────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 pb-2">
-        <AlertCircle size={12} className="text-gray-700 flex-shrink-0" />
-        <p className="text-xs text-gray-700">
-          Activity sourced from activityLog (Supabase) with in-memory fallback. Workflow statuses
-          reflect real agent runs via SPARK, LEDGER, VAULT, PULSE, and NEXUS.
-        </p>
-      </div>
+      {/* ── Workflows Tab ───────────────────────────────────────────────────── */}
+      {(!isAdmin || activeTab === 'workflows') && (
+        <>
+          {/* Stats Row */}
+          <div className="grid grid-cols-4 gap-3">
+            <StatCard label="Total" value={total} accent="text-gray-200" />
+            <StatCard label="Active" value={active} accent="text-green-400" />
+            <StatCard label="Paused" value={paused} accent="text-yellow-400" />
+            <StatCard label="Errors" value={errors} accent="text-red-400" />
+          </div>
+
+          {/* Workflow Grid */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">
+              Automation Workflows
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {workflows.map((wf) => (
+                <WorkflowCard key={wf.id} workflow={wf} onToggle={handleToggle} />
+              ))}
+            </div>
+          </div>
+
+          {/* Activity Log */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Activity size={14} className="text-green-400" />
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-600">
+                Activity Log
+              </p>
+              <span
+                className="text-xs font-medium px-1.5 py-0.5 rounded-full border"
+                style={{ color: '#4ade80', borderColor: '#16a34a33', backgroundColor: '#052e1688' }}
+              >
+                {activityEvents.length > 0
+                  ? `Last ${activityEvents.length} events — live`
+                  : 'Waiting for events'}
+              </span>
+            </div>
+            <div
+              className="rounded-xl border overflow-hidden"
+              style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+            >
+              {activityEvents.length > 0 ? (
+                activityEvents.map((event) => (
+                  <ActivityRow key={event.id} event={event} />
+                ))
+              ) : (
+                <div className="px-4 py-8 text-center text-xs text-gray-600">
+                  No automation events yet — workflows will log here as they run.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer note */}
+          <div className="flex items-center gap-2 pb-2">
+            <AlertCircle size={12} className="text-gray-700 flex-shrink-0" />
+            <p className="text-xs text-gray-700">
+              Activity sourced from activityLog (Supabase) with in-memory fallback. Workflow statuses
+              reflect real agent runs via SPARK, LEDGER, VAULT, PULSE, and NEXUS.
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* ── Agent System Map Tab (admin only) ──────────────────────────────── */}
+      {isAdmin && activeTab === 'agent-map' && <AgentSystemMap />}
     </div>
   );
 }
