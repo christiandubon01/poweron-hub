@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# ── API key leak guard ─────────────────────────────────────────────────────────
+if git diff --cached | grep -qE "sk-(ant|proj)-[a-zA-Z0-9]{20}"; then
+  echo "ERROR: Possible API key detected in staged files. Commit blocked."
+  exit 1
+fi
+
+# ── Protected file guard (B44) ─────────────────────────────────────────────────
+# These files must never be modified without an explicit B-ticket audit sign-off.
+PROTECTED="netlify.toml src/store/authStore.ts src/services/backupDataService.ts vite.config.ts src/components/v15r/charts/SVGCharts.tsx"
+
+for f in $PROTECTED; do
+  if git diff --cached --name-only | grep -qF "$f"; then
+    echo "ERROR: Attempt to commit protected file: $f"
+    echo "       Changes to this file require a B-ticket audit sign-off."
+    echo "       If this is intentional, temporarily rename this hook to bypass, then restore it."
+    exit 1
+  fi
+done

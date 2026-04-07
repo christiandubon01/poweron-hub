@@ -1,0 +1,13 @@
+# ── B44 — Protected file declarations ─────────────────────────────────────────
+# These files are locked for audit purposes. Modifications require explicit
+# B-ticket sign-off and must pass the pre-commit hook guard.
+#
+# The -diff attribute signals to git and diff tools that content diffs on these
+# files should be treated with caution (shown verbatim, not inlined).
+# The merge=ours attribute prevents auto-merge from silently altering them.
+
+netlify.toml                               merge=ours
+src/store/authStore.ts                     merge=ours
+src/services/backupDataService.ts          merge=ours
+vite.config.ts                             merge=ours
+src/components/v15r/charts/SVGCharts.tsx   merge=ours
