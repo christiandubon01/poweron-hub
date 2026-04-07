@@ -17,6 +17,8 @@ import * as THREE from 'three'
 import { getBackupData, health, getKPIs } from '../services/backupDataService'
 import { callClaude, extractText } from '../services/claudeProxy'
 import VisualSuitePanel from '../components/v15r/AIVisualSuite/VisualSuitePanel'
+// B53: NEXUS voice pipeline for OrbLab mic
+import { getVoiceSubsystem, unlockAudioContext, onOrbStateChange, type VoiceSessionStatus } from '../services/voice'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrbState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'MULTI_AGENT'
@@ -713,20 +715,51 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
   const [micActive, setMicActive] = useState(false)
   const [micStream, setMicStream] = useState<MediaStream | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
+  // B53: NEXUS voice state for audio-reactive visuals
+  const [voiceStatus, setVoiceStatus] = useState<VoiceSessionStatus>('inactive')
+  const [ttsElement, setTtsElement] = useState<HTMLAudioElement | null>(null)
 
   const BG_OPTIONS = [{ label: '🌌 Deep Space', value: 'deepspace' as BgMode },{ label: '💻 Data Stream', value: 'datastream' as BgMode },{ label: '⬡ Grid', value: 'grid' as BgMode },{ label: '⬛ Solid Dark', value: 'soliddark' as BgMode }]
   const healthLabel = healthAvg>70?'HEALTHY':healthAvg>40?'WARNING':'CRITICAL'
   const healthClr = healthAvg>70?'#00ff88':healthAvg>40?'#ffcc00':'#ff6600'
 
+  // B53: Subscribe to NEXUS voice status so ttsElement + micStream stay in sync
+  useEffect(() => {
+    const unsub = onOrbStateChange((status: VoiceSessionStatus) => {
+      setVoiceStatus(status)
+      const vs = getVoiceSubsystem()
+      setTtsElement(vs.getCurrentAudio())
+      const ms = vs.getMicStream()
+      if (ms && ms !== micStreamRef.current) {
+        micStreamRef.current = ms
+        setMicStream(ms)
+      }
+      if (status === 'inactive' || status === 'complete') {
+        setMicActive(false)
+      } else if (status === 'recording' || status === 'listening') {
+        setMicActive(true)
+      }
+    })
+    return unsub
+  }, [])
+
+  // B53: handleMicToggle now routes through NEXUS voice pipeline
   const handleMicToggle = async () => {
+    const voice = getVoiceSubsystem()
     if (micActive) {
-      if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null }
-      setMicStream(null); setMicActive(false); setOrbState('IDLE')
+      if (voiceStatus === 'recording') { await voice.stopRecording() }
+      else if (voiceStatus === 'responding') { try { await voice.stopSpeaking() } catch {} }
+      setMicActive(false)
+      micStreamRef.current = null; setMicStream(null)
+      setOrbState('IDLE')
     } else {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        micStreamRef.current = stream; setMicStream(stream); setMicActive(true); setOrbState('LISTENING')
-      } catch (e) { console.warn('[OrbLab] Mic access denied', e) }
+        unlockAudioContext()
+        voice.setConversationHistory([])
+        await voice.startRecording('normal')
+        setMicActive(true)
+        setOrbState('LISTENING')
+      } catch (e) { console.warn('[OrbLab] NEXUS voice start failed', e) }
     }
   }
 
@@ -778,16 +811,17 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         </div>
       </div>
       <style>{`@keyframes orbMicPulse { 0%,100%{box-shadow:0 0 10px rgba(0,255,136,0.35)} 50%{box-shadow:0 0 20px rgba(0,255,136,0.7)} }`}</style>
-      <div style={{ flex:1, overflow:'hidden', padding:'8px', display:'flex', flexDirection:'column' }}>
+      {/* B53: wrapper — flex:1 min-height:0 position:relative for full-canvas orb */}
+      <div style={{ flex:1, minHeight:0, width:'100%', position:'relative', overflow:'hidden' }}>
         <VisualSuitePanel
           micStream={micStream}
+          ttsElement={ttsElement}
           nexusState={
-            micActive ? 'listening' :
-            orbState === 'IDLE'        ? 'idle'       :
-            orbState === 'LISTENING'   ? 'listening'  :
-            orbState === 'THINKING'    ? 'thinking'   :
-            orbState === 'SPEAKING'    ? 'speaking'   :
-            orbState === 'MULTI_AGENT' ? 'multiAgent' : 'idle'
+            voiceStatus === 'recording'    ? 'listening'  :
+            voiceStatus === 'transcribing' ? 'thinking'   :
+            voiceStatus === 'processing'   ? 'thinking'   :
+            voiceStatus === 'responding'   ? 'speaking'   :
+            micActive                      ? 'listening'  : 'idle'
           }
         />
       </div>
@@ -1333,7 +1367,8 @@ function NeuralMap() {
     let _cleanup: (() => void) | null = null
 
     function doInit() {
-    const W = Math.max(mount.clientWidth || 800, 100)
+    if (_renderer) return  // B53: prevent double-init (e.g. when display:none at mount)
+    const W = Math.max(mount.clientWidth || 900, 100)
     const H = Math.max(mount.clientHeight || 600, 100)
 
     const scene    = new THREE.Scene()
@@ -1841,9 +1876,17 @@ function NeuralMap() {
     }
     } // end doInit
 
+    // B53: defer by one rAF; also watch via IntersectionObserver so init fires when tab becomes visible
     requestAnimationFrame(() => doInit())
+    const _nmIo = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && mount.clientWidth > 0) doInit()
+    }, { threshold: 0 })
+    _nmIo.observe(mount)
 
-    return () => { if (_cleanup) _cleanup(); else { if (_ro) _ro.disconnect() } }
+    return () => {
+      _nmIo.disconnect()
+      if (_cleanup) _cleanup(); else { if (_ro) _ro.disconnect() }
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trigger rebuild when tab/toggles change

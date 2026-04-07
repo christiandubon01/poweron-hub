@@ -368,20 +368,20 @@ export default function VisualSuitePanel({
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{
+      position:        'relative',
       width:           '100%',
       height:          '100%',
       flex:            1,
+      minHeight:       0,
       backgroundColor: '#000',
       borderRadius:    10,
       overflow:        'hidden',
       fontFamily:      'Courier New, monospace',
-      display:         'flex',
-      flexDirection:   'column',
       userSelect:      'none',
     }}>
 
-      {/* ── Mode bucket dropdowns (B50) ── */}
-      <div style={{ padding: '8px 8px 4px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+      {/* ── Mode bucket dropdowns (B50) — absolute overlay at top ── */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, padding: '8px 8px 4px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
         onClick={(e) => { if (e.target === e.currentTarget) setOpenDropdown(null) }}>
         {([['B1', b1Modes], ['B2', b2Modes], ['B3', b3Modes]] as const).map(([bKey, group]) => {
           const bc = bucketColor(bKey)
@@ -459,8 +459,8 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Canvas — B50: flex:1 to fill available height ── */}
-      <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 200 }}>
+      {/* ── Canvas — B53: absolute fill, leaving 80px for controls ── */}
+      <div style={{ position: 'absolute', inset: 0, width: '100%', height: 'calc(100% - 80px)' }}>
         <canvas
           ref={canvasRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
@@ -477,8 +477,8 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Bottom controls — B52: fixed 80px height ── */}
-      <div style={{ height: 80, flexShrink: 0, padding: '6px 10px 6px', display: 'flex', flexDirection: 'column', gap: 5, backgroundColor: '#060810', justifyContent: 'space-between' }}>
+      {/* ── Bottom controls — B53: absolute at bottom, 80px height ── */}
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 80, padding: '6px 10px 6px', display: 'flex', flexDirection: 'column', gap: 5, backgroundColor: '#060810', justifyContent: 'space-between' }}>
 
         {/* Mode label + mic + action buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -111,7 +111,15 @@ export function useNEXUSAudio(
       let targetHigh: number
 
       if (hasLive) {
-        if (curMic && !micSourceRef.current) connectMic(curMic)
+        // B53 FIX 4: reconnect if stream changed (handles new session mic streams)
+        if (curMic) {
+          const activeStream = (micSourceRef.current as any)?.mediaStream
+          if (!micSourceRef.current || activeStream !== curMic) connectMic(curMic)
+        } else if (!curMic && micSourceRef.current) {
+          // stream removed — disconnect and clear so next stream reconnects cleanly
+          try { micSourceRef.current.disconnect() } catch {}
+          micSourceRef.current = null
+        }
         if (curTTS && ttsElementRef.current !== curTTS) connectTTS(curTTS)
 
         if (analyserRef.current && dataArrayRef.current) {
