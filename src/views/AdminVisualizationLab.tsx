@@ -853,8 +853,8 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         </div>
       </div>
       <style>{`@keyframes orbMicPulse { 0%,100%{box-shadow:0 0 10px rgba(0,255,136,0.35)} 50%{box-shadow:0 0 20px rgba(0,255,136,0.7)} }`}</style>
-      {/* B54: explicit height so VisualSuitePanel height:100% resolves; flex:1 had no effect (parent not flex) */}
-      <div style={{ height:'calc(100vh - 106px)', width:'100%', position:'relative', overflow:'hidden' }}>
+      {/* B58: flex column so VisualSuitePanel controls bar is always visible */}
+      <div style={{ height:'calc(100vh - 106px)', width:'100%', display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <VisualSuitePanel
           micStream={micStream}
           ttsElement={ttsElement}
@@ -1415,7 +1415,7 @@ function NeuralMap() {
     const H = Math.max(mount.clientHeight, 100)
 
     const scene    = new THREE.Scene()
-    const camera   = new THREE.PerspectiveCamera(55, W / H, 0.1, 100)
+    const camera   = new THREE.PerspectiveCamera(55, W / H, 0.1, 2000)
     camera.position.z = 10
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
@@ -1435,6 +1435,34 @@ function NeuralMap() {
     const nodeGroup = new THREE.Group(); scene.add(nodeGroup)
     const edgeGroup = new THREE.Group(); scene.add(edgeGroup)
     const goalGroup = new THREE.Group(); scene.add(goalGroup)
+
+    // B58 Enhancement 5: Static constellation star field
+    const b58StarGeo = new THREE.BufferGeometry()
+    const b58StarPos = new Float32Array(1200 * 3)
+    for (let si = 0; si < 1200; si++) {
+      const sTheta = Math.random() * Math.PI * 2
+      const sPhi = Math.acos(2 * Math.random() - 1)
+      const sR = 800
+      b58StarPos[si*3]   = sR * Math.sin(sPhi) * Math.cos(sTheta)
+      b58StarPos[si*3+1] = sR * Math.sin(sPhi) * Math.sin(sTheta)
+      b58StarPos[si*3+2] = sR * Math.cos(sPhi) - 500
+    }
+    b58StarGeo.setAttribute('position', new THREE.BufferAttribute(b58StarPos, 3))
+    const b58StarMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1, transparent: true, opacity: 0.4, sizeAttenuation: false })
+    const b58StarField = new THREE.Points(b58StarGeo, b58StarMat)
+    scene.add(b58StarField)
+
+    // B58 Enhancement 1: Edge particle flow group
+    const b58ParticleGroup = new THREE.Group(); scene.add(b58ParticleGroup)
+    let b58EdgeParticles: { points: THREE.Points; tValues: Float32Array }[] = []
+
+    // B58 Enhancement 2: Node pulse rings group
+    const b58PulseGroup = new THREE.Group(); scene.add(b58PulseGroup)
+    let b58PulseRings: { ring1: THREE.Mesh; ring2: THREE.Mesh; nodeIndex: number; startTime: number }[] = []
+
+    // B58 Enhancement 4: Health corona glow group
+    const b58CoronaGroup = new THREE.Group(); scene.add(b58CoronaGroup)
+    let b58CoronaSprites: { sprite: THREE.Sprite; nodeIndex: number; pulseSpeed: number }[] = []
 
     // Invisible hit spheres for raycasting
     const hitGeo = new THREE.SphereGeometry(1, 5, 5)
@@ -1549,6 +1577,9 @@ function NeuralMap() {
         decisionsLogged: currentNodes.filter((n) => n.type === 'decision').length,
         systemHealth: Math.round(getAvgHealth()),
       })
+      b58RebuildParticles()
+      b58RebuildPulseRings()
+      b58RebuildCoronas()
     }
 
     rebuildScene()
@@ -1569,6 +1600,79 @@ function NeuralMap() {
         const tubeMat = new THREE.MeshBasicMaterial({ color: edgeColor, transparent: true, opacity: e.isPath ? 0.65 : 0.4 })
         const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat)
         edgeGroup.add(tubeMesh); e.line = tubeMesh
+      })
+    }
+
+    // ── B58 Enhancement 1: Rebuild edge particle flow ────────────────────────
+    function b58RebuildParticles() {
+      while (b58ParticleGroup.children.length) b58ParticleGroup.remove(b58ParticleGroup.children[0])
+      b58EdgeParticles = []
+      currentEdges.forEach((e) => {
+        const a = currentNodes[e.a], b = currentNodes[e.b]
+        if (!a || !b) return
+        const PCOUNT = 4
+        const pGeo = new THREE.BufferGeometry()
+        const positions = new Float32Array(PCOUNT * 3)
+        pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+        const srcColor = new THREE.Color(a.color)
+        const pMat = new THREE.PointsMaterial({ color: srcColor, size: 2, transparent: true, opacity: 0.8, sizeAttenuation: false, depthWrite: false })
+        const pts = new THREE.Points(pGeo, pMat)
+        b58ParticleGroup.add(pts)
+        const tValues = new Float32Array(PCOUNT)
+        for (let pi = 0; pi < PCOUNT; pi++) tValues[pi] = pi / PCOUNT
+        b58EdgeParticles.push({ points: pts, tValues })
+      })
+    }
+
+    // ── B58 Enhancement 2: Rebuild pulse rings for agent nodes ───────────────
+    function b58RebuildPulseRings() {
+      while (b58PulseGroup.children.length) b58PulseGroup.remove(b58PulseGroup.children[0])
+      b58PulseRings = []
+      currentNodes.forEach((n, idx) => {
+        if (n.type !== 'agent') return
+        const baseR = n.size * 0.9
+        const rGeo1 = new THREE.RingGeometry(baseR, baseR + baseR * 0.1, 24)
+        const rMat1 = new THREE.MeshBasicMaterial({ color: n.color, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false })
+        const ring1 = new THREE.Mesh(rGeo1, rMat1)
+        ring1.position.set(n.x, n.y, n.z)
+        b58PulseGroup.add(ring1)
+        const rGeo2 = new THREE.RingGeometry(baseR, baseR + baseR * 0.1, 24)
+        const rMat2 = new THREE.MeshBasicMaterial({ color: n.color, transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false })
+        const ring2 = new THREE.Mesh(rGeo2, rMat2)
+        ring2.position.set(n.x, n.y, n.z)
+        b58PulseGroup.add(ring2)
+        b58PulseRings.push({ ring1, ring2, nodeIndex: idx, startTime: performance.now() })
+      })
+    }
+
+    // ── B58 Enhancement 4: Rebuild health corona glows ───────────────────────
+    function b58RebuildCoronas() {
+      while (b58CoronaGroup.children.length) b58CoronaGroup.remove(b58CoronaGroup.children[0])
+      b58CoronaSprites = []
+      currentNodes.forEach((n, idx) => {
+        const h = (n.meta?.healthScore as number) ?? 75
+        const daysStalled = (n.meta?.daysStalled as number) ?? 0
+        const isCritical = n.type === 'project' && h < 40
+        const isStalled  = n.type === 'project' && daysStalled > 3 && !isCritical
+        let glowColor = 0x00ff9f, pulseSpeed = 1.5
+        if (isCritical)     { glowColor = 0xff4444; pulseSpeed = 0.8 }
+        else if (isStalled) { glowColor = 0xffd700; pulseSpeed = 2.0 }
+        const gc = document.createElement('canvas')
+        gc.width = 64; gc.height = 64
+        const gctx = gc.getContext('2d')!
+        const hexStr = '#' + glowColor.toString(16).padStart(6, '0')
+        const grad = gctx.createRadialGradient(32, 32, 0, 32, 32, 32)
+        grad.addColorStop(0, hexStr + 'cc')
+        grad.addColorStop(0.5, hexStr + '44')
+        grad.addColorStop(1, 'transparent')
+        gctx.fillStyle = grad; gctx.fillRect(0, 0, 64, 64)
+        const gTex = new THREE.CanvasTexture(gc)
+        const sMat = new THREE.SpriteMaterial({ map: gTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })
+        const sprite = new THREE.Sprite(sMat)
+        sprite.scale.setScalar(n.size * 4.0)
+        sprite.position.set(n.x, n.y, n.z)
+        b58CoronaGroup.add(sprite)
+        b58CoronaSprites.push({ sprite, nodeIndex: idx, pulseSpeed })
       })
     }
 
@@ -1861,6 +1965,68 @@ function NeuralMap() {
         }
       })
 
+      // B58 Enhancement 5: Slow star field rotation
+      if (!isPaused) b58StarField.rotation.y += 0.00005 * speedMult
+
+      // B58 Enhancement 3: Depth fog (scene-scale adapted)
+      currentNodes.forEach((n) => {
+        if (!n.mesh) return
+        const dx = camera.position.x - n.x
+        const dy = camera.position.y - n.y
+        const dz = camera.position.z - n.z
+        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz)
+        const sp = n.mesh as THREE.Sprite
+        let opacity: number
+        if (dist < 8)       opacity = 1.0
+        else if (dist < 14) opacity = 0.7 + (0.3) * (1 - (dist - 8) / 6)
+        else                opacity = 0.4 + (0.3) * (1 - Math.min(1, (dist - 14) / 8))
+        sp.material.opacity = opacity
+        sp.material.needsUpdate = true
+      })
+
+      // B58 Enhancement 1: Update edge particle flow
+      if (!isPaused) {
+        b58EdgeParticles.forEach((ep, ei) => {
+          const e = currentEdges[ei]; if (!e) return
+          const a = currentNodes[e.a], b = currentNodes[e.b]; if (!a || !b) return
+          const posAttr = ep.points.geometry.attributes.position as THREE.BufferAttribute
+          for (let pi = 0; pi < ep.tValues.length; pi++) {
+            ep.tValues[pi] = (ep.tValues[pi] + 0.003 * speedMult) % 1.0
+            const t = ep.tValues[pi]
+            posAttr.setXYZ(pi, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t)
+          }
+          posAttr.needsUpdate = true
+        })
+      }
+
+      // B58 Enhancement 2: Update pulse rings
+      const b58Now = performance.now()
+      b58PulseRings.forEach((pr) => {
+        const n = currentNodes[pr.nodeIndex]; if (!n) return
+        const DURATION = 1500
+        const baseR = n.size * 0.9
+        // Ring 1
+        const t1 = ((b58Now - pr.startTime) % DURATION) / DURATION
+        pr.ring1.scale.setScalar(1 + t1 * 2)
+        ;(pr.ring1.material as THREE.MeshBasicMaterial).opacity = (1 - t1) * 0.6
+        pr.ring1.position.set(n.x, n.y, n.z)
+        pr.ring1.lookAt(camera.position)
+        // Ring 2 staggered 0.75s
+        const t2 = ((b58Now - pr.startTime + 750) % DURATION) / DURATION
+        pr.ring2.scale.setScalar(1 + t2 * 2)
+        ;(pr.ring2.material as THREE.MeshBasicMaterial).opacity = (1 - t2) * 0.6
+        pr.ring2.position.set(n.x, n.y, n.z)
+        pr.ring2.lookAt(camera.position)
+      })
+
+      // B58 Enhancement 4: Update corona glows
+      b58CoronaSprites.forEach((cs) => {
+        const n = currentNodes[cs.nodeIndex]; if (!n) return
+        const sine = Math.sin(pulseTick * cs.pulseSpeed) * 0.5 + 0.5
+        cs.sprite.scale.setScalar(n.size * 4.0 * (0.85 + sine * 0.3))
+        cs.sprite.position.set(n.x, n.y, n.z)
+      })
+
       // Goal group gentle float
       if (!isPaused) {
         goalGroup.children.forEach((child, i) => {
@@ -1911,6 +2077,11 @@ function NeuralMap() {
       nodeGroup.traverse((obj) => { if (obj instanceof THREE.Sprite) { obj.material.map?.dispose(); obj.material.dispose() } })
       edgeGroup.traverse((obj) => { if ((obj as any).geometry) (obj as any).geometry.dispose(); if ((obj as any).material) (obj as any).material.dispose() })
       goalGroup.traverse((obj) => { if (obj instanceof THREE.Sprite) { obj.material.map?.dispose(); obj.material.dispose() } })
+      // B58: dispose enhancement groups
+      b58StarGeo.dispose(); b58StarMat.dispose()
+      b58ParticleGroup.traverse((obj) => { if ((obj as any).geometry) (obj as any).geometry.dispose(); if ((obj as any).material) (obj as any).material.dispose() })
+      b58PulseGroup.traverse((obj) => { if ((obj as any).geometry) (obj as any).geometry.dispose(); if ((obj as any).material) (obj as any).material.dispose() })
+      b58CoronaGroup.traverse((obj) => { if (obj instanceof THREE.Sprite) { obj.material.map?.dispose(); obj.material.dispose() } })
       hitSpheres.forEach((s) => scene.remove(s)); hitGeo.dispose(); hitMat.dispose()
       renderer.dispose()
       if (tooltipDiv?.parentNode) tooltipDiv.parentNode.removeChild(tooltipDiv)

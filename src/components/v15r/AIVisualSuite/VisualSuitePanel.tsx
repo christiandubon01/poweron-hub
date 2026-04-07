@@ -381,7 +381,8 @@ export default function VisualSuitePanel({
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{
-      position:        'relative',
+      display:         'flex',
+      flexDirection:   'column',
       width:           '100%',
       height:          '100%',
       flex:            1,
@@ -472,8 +473,8 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Canvas — B54: top/right/left=0, bottom=80 (avoids inset+height conflict) ── */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 80 }}>
+      {/* ── Canvas — B58: flex:1 fills remaining height above controls bar ── */}
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <canvas
           ref={canvasRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
@@ -490,8 +491,8 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Bottom controls — B53: absolute at bottom, 80px height ── */}
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 80, padding: '6px 10px 6px', display: 'flex', flexDirection: 'column', gap: 5, backgroundColor: '#060810', justifyContent: 'space-between' }}>
+      {/* ── Bottom controls — B58: flex-shrink:0, always visible ── */}
+      <div style={{ height: 80, flexShrink: 0, padding: '6px 10px 6px', display: 'flex', flexDirection: 'column', gap: 5, backgroundColor: '#060810', justifyContent: 'space-between' }}>
 
         {/* Mode label + mic + action buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
