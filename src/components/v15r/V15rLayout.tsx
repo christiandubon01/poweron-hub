@@ -53,6 +53,8 @@ import { initSparkBusListeners } from '@/agents/spark'
 // NOTE: voice.ts intentionally NOT imported in QuickCaptureButton — mic uses MediaRecorder API only
 import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
 import { callClaude, extractText as claudeExtractText } from '@/services/claudeProxy'
+// B32 — Multi-User Role Permission Foundation
+import { getUserRole, canAccess, logAuditDecision, type B32Role, type B32Feature } from '@/services/rolePermissionService'
 
 /** Header metric formatter — precise rounding for all KPI pills.
  *  <$1k → exact ($471) | $1k–$9.9k → one decimal ($1.4k) | $10k–$99k → one decimal ($14.7k) | $100k+ → whole ($105k)
@@ -132,6 +134,35 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const authUser = useAuthStore(s => s.user)
   const adminEmail = import.meta.env.VITE_ADMIN_EMAIL as string | undefined
   const isAdmin = !!(authUser?.email && adminEmail && authUser.email === adminEmail)
+
+  // ── B32 | Multi-User Role Foundation ────────────────────────────────────────
+  // Resolve the current user's B32 org role. Defaults to 'owner' so the
+  // single-user experience is unchanged; expands to full multi-user gating
+  // once the org_members table is populated via the invite flow.
+  const [b32Role, setB32Role] = useState<B32Role>('owner')
+  useEffect(() => {
+    const resolved = getUserRole(authUser?.id ?? '', authUser?.email ?? '')
+    setB32Role(resolved)
+    // Log session start to audit_decisions
+    if (authUser?.id) {
+      logAuditDecision({
+        user_id: authUser.id,
+        role: resolved,
+        action: 'session_start',
+        entity_type: 'auth',
+        description: `User session started as ${resolved}`,
+      })
+    }
+  }, [authUser?.id, authUser?.email])
+
+  /**
+   * filterByRole — filters a nav item list to only those allowed for the current role.
+   * Composes with filterByTemplate for preview mode support.
+   * Falls back to showing all items if feature key is not in B32Feature union (safe default).
+   */
+  function filterByRole<T extends { view: string }>(items: T[]): T[] {
+    return items.filter((item) => canAccess(b32Role, item.view as B32Feature))
+  }
 
   // ── B26 | Template Preview Gating ────────────────────────────────────────
   // When poweron_preview_industry is set in sessionStorage, only sidebar panels
@@ -786,7 +817,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionWorkspace && (
               <nav className="space-y-1">
-                {filterByTemplate(workspaceItems).map((item) => {
+                {filterByRole(filterByTemplate(workspaceItems)).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -877,7 +908,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionBusiness && (
               <nav className="space-y-1">
-                {filterByTemplate(businessItems).map((item) => {
+                {filterByRole(filterByTemplate(businessItems)).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -926,7 +957,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionOperations && (
               <nav className="space-y-1">
-                {filterByTemplate(operationsItems).map((item) => {
+                {filterByRole(filterByTemplate(operationsItems)).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -975,7 +1006,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionTeam && (
               <nav className="space-y-1">
-                {filterByTemplate(teamItems).map((item) => {
+                {filterByRole(filterByTemplate(teamItems)).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -1024,7 +1055,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionIntelligence && (
               <nav className="space-y-1">
-                {filterByTemplate(intelligenceItems).map((item) => {
+                {filterByRole(filterByTemplate(intelligenceItems)).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -1047,8 +1078,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             )}
           </div>
 
-          {/* ADMIN Section — B14 | visible only to owner email match */}
-          {isAdmin && !isPreviewMode && (
+          {/* ADMIN Section — B14 + B32 | visible only to owner (email match + role gate) */}
+          {isAdmin && !isPreviewMode && b32Role === 'owner' && (
             <div className="pt-6 border-t border-yellow-800/40">
               {showLabels ? (
                 <button
