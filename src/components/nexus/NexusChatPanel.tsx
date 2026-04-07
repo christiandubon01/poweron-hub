@@ -12,7 +12,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
+import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw, Volume2, VolumeX, ChevronLeft } from 'lucide-react'
+import { NexusPresenceOrb } from './NexusPresenceOrb'
 import { clsx } from 'clsx'
 import { processMessage, detectMode, getLastContextSyncTime, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
 import { getActiveMode, setActiveMode, MODE_CONFIGS, type NexusAgentMode } from '@/services/nexusMode'
@@ -160,6 +161,20 @@ export function NexusChatPanel() {
   const [lastMsgMode, setLastMsgMode]       = useState<NexusMode>('briefing')
   const [agentMode, setAgentMode]           = useState<NexusAgentMode>(getActiveMode)
   const [syncTime, setSyncTime]             = useState<number>(0)
+
+  // FIX 2 — Streaming token animation
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null)
+
+  // FIX 4 — Mute toggle (fresh read from localStorage, no stale state)
+  const [muted, setMuted] = useState<boolean>(() => localStorage.getItem('nexus_mute') === 'true')
+
+  // FIX 5 — Orb collapse (persist to localStorage, default collapsed on mobile)
+  const [orbCollapsed, setOrbCollapsed] = useState<boolean>(() => {
+    const stored = localStorage.getItem('nexus_orb_collapsed')
+    if (stored !== null) return stored === 'true'
+    // Default: collapsed on mobile
+    return typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  })
 
   // B11 — Session Debrief state
   const [isDebriefOpen, setIsDebriefOpen]           = useState(false)
@@ -353,11 +368,12 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         console.log('[NexusChat] SCOUT response suppressed → silent queue')
         // Do NOT add to the messages thread — no notification, no badge
       } else {
-        // Direct response — add to thread
+        // FIX 2 — Direct response: add empty bubble first, then stream text in
+        const newMsgId = crypto.randomUUID()
         const assistantMsg: ChatMessage = {
-          id:          crypto.randomUUID(),
+          id:          newMsgId,
           role:        'assistant',
-          content:     response.agent.content,
+          content:     '',  // starts empty — streamResponseText fills it in
           timestamp:   Date.now(),
           agentId:     response.agent.agentId,
           impactLevel: response.intent.impactLevel,
@@ -366,6 +382,8 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         setMessages(prev => [...prev, assistantMsg])
         setConversationHistory(prev => [...prev, response.conversationMessage])
         setLastMsgMode(response.mode)
+        // Stream text in character by character for perceived first-token speed
+        streamResponseText(newMsgId, response.agent.content)
       }
 
     } catch (err) {
@@ -445,6 +463,42 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     clearConversationThread() // Clear Layer 1 conversation thread from localStorage
   }, [messages])
 
+  // FIX 4 — Mute toggle: writes to localStorage synchronously on every tap
+  const toggleMute = useCallback(() => {
+    setMuted(prev => {
+      const next = !prev
+      // Synchronous localStorage write — no stale state, fresh read in voice.ts
+      localStorage.setItem('nexus_mute', String(next))
+      return next
+    })
+  }, [])
+
+  // FIX 5 — Orb collapse toggle: persist to localStorage
+  const toggleOrb = useCallback(() => {
+    setOrbCollapsed(prev => {
+      const next = !prev
+      localStorage.setItem('nexus_orb_collapsed', String(next))
+      return next
+    })
+  }, [])
+
+  // FIX 2 — Stream response text character by character for perceived streaming UX
+  const streamResponseText = useCallback(async (msgId: string, fullText: string) => {
+    setStreamingMsgId(msgId)
+    const CHARS_PER_FRAME = 6
+    const FRAME_MS = 18
+    let pos = 0
+    while (pos < fullText.length) {
+      pos = Math.min(pos + CHARS_PER_FRAME, fullText.length)
+      const chunk = fullText.slice(0, pos)
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: chunk } : m))
+      if (pos < fullText.length) {
+        await new Promise(r => setTimeout(r, FRAME_MS))
+      }
+    }
+    setStreamingMsgId(null)
+  }, [])
+
   // Trigger deep dive mode
   const triggerDeepDive = useCallback(() => {
     setMode('deepdive')
@@ -464,10 +518,41 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full bg-bg">
+    <div className="flex h-full bg-bg overflow-hidden">
+
+      {/* FIX 5 — Orb panel: collapsible left side */}
+      {!orbCollapsed && (
+        <div className="relative flex-shrink-0 w-48 flex flex-col items-center justify-center bg-bg-1 border-r border-bg-4">
+          {/* Collapse chevron — top-left of orb */}
+          <button
+            onClick={toggleOrb}
+            className="absolute top-3 left-2 w-7 h-7 rounded-md bg-bg-2 border border-bg-4 flex items-center justify-center hover:bg-bg-3 transition-colors z-10"
+            title="Collapse orb"
+          >
+            <ChevronLeft size={13} className="text-text-3" />
+          </button>
+          <NexusPresenceOrb state={isProcessing ? 'processing' : 'inactive'} size={120} />
+          <span className="mt-2 text-[9px] font-mono text-text-4 uppercase tracking-wider">NEXUS</span>
+        </div>
+      )}
+
+      {/* Main chat column */}
+      <div className="flex flex-col flex-1 min-w-0 bg-bg">
+
+      {/* FIX 5 — Collapsed orb: expand button */}
+      {orbCollapsed && (
+        <button
+          onClick={toggleOrb}
+          className="absolute top-3 left-3 z-20 w-7 h-7 rounded-md bg-bg-2 border border-bg-4 flex items-center justify-center hover:bg-bg-3 transition-colors"
+          title="Expand orb"
+        >
+          <Zap size={11} className="text-green" />
+        </button>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-bg-4 bg-bg-1/80 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${orbCollapsed ? 'pl-8' : ''}`}>
           <div className="w-8 h-8 rounded-lg bg-green-subtle border border-green-border flex items-center justify-center">
             <Zap className="w-4 h-4 text-green" fill="currentColor" />
           </div>
@@ -489,6 +574,17 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* FIX 4 — Mute toggle: synchronous localStorage write, no stale state */}
+          <button
+            onClick={toggleMute}
+            className={clsx(
+              'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
+              muted ? 'bg-amber-900/40 text-amber-400 border border-amber-700/40' : 'bg-bg-3 text-text-3 hover:text-text-1 hover:bg-bg-4'
+            )}
+            title={muted ? 'NEXUS muted — tap to unmute' : 'Mute NEXUS voice'}
+          >
+            {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+          </button>
           {mode === 'deepdive' && (
             <button
               onClick={resetToNewAnalysis}
@@ -806,6 +902,7 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
           onClose={() => setIsDebriefOpen(false)}
         />
       )}
+      </div>
     </div>
   )
 }

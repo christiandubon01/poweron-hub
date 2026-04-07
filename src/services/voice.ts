@@ -144,23 +144,33 @@ let unlockedAudioContext: AudioContext | null = null
 
 /**
  * Pre-unlock the AudioContext on a user gesture (tap/click).
- * MUST be called synchronously in the same call stack as the gesture event.
- * Plays a silent buffer to fully satisfy iOS autoplay policy.
  *
- * Note: TTS playback now uses Howler.js which handles iOS Safari autoplay
- * restrictions internally. This AudioContext unlock is retained for
- * getUserMedia / recording warm-up on iOS.
+ * FIX 3 — iPhone voice playback requirement:
+ * MUST be called synchronously inside the DIRECT user tap handler.
+ * Do NOT place inside any async/await block or setTimeout — iOS Safari
+ * only allows AudioContext creation + ctx.resume() in the same synchronous
+ * call stack as the originating user gesture event.
+ *
+ * Correct usage (in onClick / onPress handlers):
+ *   function handleMicTap() {           // sync function, or async before first await
+ *     unlockAudioContext()              // FIRST — synchronous, same call stack as tap
+ *     await voice.startRecording(...)  // async continues after unlock is done
+ *   }
+ *
+ * Plays a silent buffer to fully satisfy iOS autoplay policy.
  */
 export function unlockAudioContext(): void {
   if (!unlockedAudioContext) {
+    // AudioContext created synchronously — iOS requirement
     unlockedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
     debugPush(`AudioContext CREATED — state: ${unlockedAudioContext.state}`)
     console.log('[iOS Audio] Shared AudioContext created, state:', unlockedAudioContext.state)
   }
+  // ctx.resume() called synchronously in same call stack as user gesture — iOS requirement
   if (unlockedAudioContext.state === 'suspended') {
     unlockedAudioContext.resume()
     debugPush(`AudioContext RESUMED — state: ${unlockedAudioContext.state}`)
-    console.log('[iOS Audio] Shared AudioContext resumed')
+    console.log('[iOS Audio] Shared AudioContext resumed synchronously')
   }
   debugPush(`unlockAudioContext() called — state: ${unlockedAudioContext.state}`)
   // Silent buffer unlock — fully satisfies iOS autoplay gate for AudioContext
@@ -174,6 +184,7 @@ export function unlockAudioContext(): void {
     console.log('[iOS Audio] Silent buffer played — context fully unlocked')
   } catch (e) {
     debugPush(`Silent buffer ERROR: ${e instanceof Error ? e.message : String(e)}`)
+    console.warn('[iOS Audio] Silent buffer failed (non-critical):', e)
   }
 }
 
@@ -814,8 +825,10 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
         revokeAudioUrl(ttsResult.audioUrl)
         ttsPlayed = true
       } catch (ttsErr) {
+        // FIX 3 — ElevenLabs playback failure: log error clearly, text response already visible
+        // (addTranscriptEntry was called BEFORE this TTS block, so text is always visible)
         debugPush(`TTS ERROR: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
-        console.warn('[Voice] ElevenLabs TTS failed, trying speechSynthesis fallback:', ttsErr)
+        console.error('[Voice] ElevenLabs TTS failed — falling back to WebSpeech. Text response is visible in transcript panel.', ttsErr)
       }
     }
 

@@ -59,6 +59,7 @@ interface CaptureEntry {
   durationSecs: number
   category: CaptureCategory
   transcript: string
+  synced: boolean
 }
 
 const CAPTURE_HISTORY_KEY = 'poweron_quick_captures'
@@ -75,8 +76,28 @@ function saveCaptureHistory(entries: CaptureEntry[]) {
   try { localStorage.setItem(CAPTURE_HISTORY_KEY, JSON.stringify(entries.slice(0, 50))) } catch { /* ignore */ }
 }
 
+// ── Whisper POST helper — MediaRecorder API only, zero connection to voice.ts ─
+async function transcribeAudioBlob(blob: Blob): Promise<string> {
+  const arrayBuffer = await blob.arrayBuffer()
+  const uint8 = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < uint8.byteLength; i++) binary += String.fromCharCode(uint8[i])
+  const base64 = btoa(binary)
+  const mimeType = blob.type || 'audio/webm'
+  const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
+  const res = await fetch('/.netlify/functions/whisper', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audio: base64, filename: `capture.${ext}`, language: 'en' }),
+  })
+  if (!res.ok) throw new Error(`Whisper error ${res.status}`)
+  const data = await res.json()
+  return (data.text || '').trim()
+}
+
 function QuickCaptureTab() {
   const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
   const [transcript, setTranscript] = useState<string | null>(null)
   const [editedTranscript, setEditedTranscript] = useState('')
   const [category, setCategory] = useState<CaptureCategory>('general')
@@ -84,6 +105,7 @@ function QuickCaptureTab() {
   const [recent, setRecent] = useState<CaptureEntry[]>(() => loadCaptureHistory())
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [captureError, setCaptureError] = useState<string | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -104,14 +126,15 @@ function QuickCaptureTab() {
 
   async function toggleRecording() {
     if (isRecording) {
-      // Stop recording
+      // Stop recording — onstop handler will POST to Whisper
       stopTimer()
       mediaRecorderRef.current?.stop()
     } else {
-      // Start recording
+      // Start recording — MediaRecorder API only, zero connection to voice.ts/agentBus/NEXUS
       setTranscript(null)
       setEditedTranscript('')
       setSaved(false)
+      setCaptureError(null)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         chunksRef.current = []
@@ -119,18 +142,37 @@ function QuickCaptureTab() {
         mediaRecorderRef.current = mr
 
         mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-        mr.onstop = () => {
+        mr.onstop = async () => {
           stream.getTracks().forEach(t => t.stop())
-          // Show placeholder transcript for editing since we have no direct Whisper API here
-          setTranscript('(Recording complete — type your transcription or dictate notes below)')
-          setEditedTranscript('')
+          const mimeType = mr.mimeType || 'audio/webm'
+          const audioBlob = new Blob(chunksRef.current, { type: mimeType })
+          chunksRef.current = []
+          setIsTranscribing(true)
+          try {
+            // POST audio to /.netlify/functions/whisper — no voice.ts, no agentBus, no NEXUS
+            const text = await transcribeAudioBlob(audioBlob)
+            if (text) {
+              setTranscript(text)
+              setEditedTranscript(text)
+            } else {
+              setTranscript('(No speech detected — type your note below)')
+              setEditedTranscript('')
+            }
+          } catch (err) {
+            console.error('[QuickCapture] Whisper transcription failed:', err)
+            setCaptureError('Transcription failed — type your note manually.')
+            setTranscript('')
+            setEditedTranscript('')
+          } finally {
+            setIsTranscribing(false)
+          }
         }
 
         mr.start(100)
         startTimer()
         setIsRecording(true)
       } catch {
-        setTranscript('Microphone access denied. Please allow microphone permissions.')
+        setCaptureError('Microphone access denied. Please allow microphone permissions.')
       }
       return
     }
@@ -139,7 +181,7 @@ function QuickCaptureTab() {
 
   function handleSave() {
     const text = editedTranscript.trim() || transcript || ''
-    if (!text) return
+    if (!text || text.startsWith('(')) return
     setSaving(true)
     const entry: CaptureEntry = {
       id: `cap-${Date.now()}`,
@@ -147,6 +189,7 @@ function QuickCaptureTab() {
       durationSecs: recorderDuration,
       category,
       transcript: text,
+      synced: true,
     }
     const updated = [entry, ...recent]
     setRecent(updated)
@@ -191,8 +234,13 @@ function QuickCaptureTab() {
         </button>
         {isRecording ? (
           <span className="text-red-400 text-sm font-bold">{fmtDuration(recorderDuration)} — Recording… tap to stop</span>
+        ) : isTranscribing ? (
+          <span className="text-yellow-400 text-sm font-bold">Transcribing…</span>
         ) : (
           <span className="text-gray-500 text-sm">Tap to record</span>
+        )}
+        {captureError && (
+          <span className="text-red-400 text-xs text-center max-w-xs">{captureError}</span>
         )}
       </div>
 

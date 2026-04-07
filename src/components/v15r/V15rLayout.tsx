@@ -49,7 +49,7 @@ import { subscribeLedgerToEvents } from '@/agents/ledger'
 import { initPulseBusSubscriptions } from '@/agents/pulse'
 import { initAlertEngine } from '@/services/proactiveAlertService'
 import { initSparkBusListeners } from '@/agents/spark'
-import { getVoiceSubsystem, unlockAudioContext } from '@/services/voice'
+// NOTE: voice.ts intentionally NOT imported in QuickCaptureButton — mic uses MediaRecorder API only
 import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
 import { callClaude, extractText as claudeExtractText } from '@/services/claudeProxy'
 
@@ -1490,13 +1490,13 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
   const [manualRouteCategory, setManualRouteCategory] = useState('Field Ops')
   const routingAbortRef = useRef<AbortController | null>(null)
 
-  const voiceUnsubRef = useRef<(() => void) | null>(null)
+  // MediaRecorder refs — direct recording without voice.ts
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const analyserStreamRef = useRef<MediaStream | null>(null)
   const analyserCtxRef = useRef<AudioContext | null>(null)
   const silenceStartRef = useRef<number | null>(null)
-  const wasRecordingRef = useRef(false)
-  const transcriptArrivedRef = useRef(false)
 
   const projects = (backupData?.projects || []).filter((p: any) => p.status === 'active')
 
@@ -1514,76 +1514,11 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
     routingAbortRef.current?.abort()
   }, [domain])
 
-  // ── Voice event subscription ───────────────────────────────────────────────
-  // BUG FIX: voice.ts emit() wraps all data under event.data, NOT at event root level.
-  // event structure: { type, session, data: { text, confidence } }  ← must use event.data?.text
-  // Previously was checking event.transcript (undefined) and event.status (undefined).
+  // Cleanup on unmount
   useEffect(() => {
-    const voice = getVoiceSubsystem()
-    const unsub = voice.on((event: any) => {
-      const evData = event.data as any
-
-      if (event.type === 'transcript_ready') {
-        const transcript = evData?.text
-        console.log('[QuickCapture] transcript_ready received, text:', transcript?.substring(0, 60))
-        if (transcript) {
-          transcriptArrivedRef.current = true
-          setText(transcript)
-          setRecording(false)
-          setSilenceCountdown(null)
-          setVoiceError(null)  // FIX: clear any prior error state on successful transcript
-          // FIX 7 — Only open capture panel when user says a capture keyword
-          const CAPTURE_TRIGGER = /\b(capture|save\s+that|remember|remind\s+me|note\s+that|memorize)\b/i
-          if (CAPTURE_TRIGGER.test(transcript)) {
-            setOpen(true)
-          }
-        }
-      }
-
-      if (event.type === 'status_changed') {
-        // FIX: status is at event.data.status, not event.status
-        // FIX: valid statuses are 'inactive', 'responding' — not 'idle'/'speaking'
-        const st: string = evData?.status || ''
-        console.log('[QuickCapture] status_changed:', st)
-        if (st === 'recording') {
-          wasRecordingRef.current = true
-          setRecording(true)
-        } else {
-          // Any non-recording status clears the mic active state
-          setRecording(false)
-          setSilenceCountdown(null)
-          if (st === 'transcribing') {
-            console.log('[QuickCapture] transcribing — waiting for transcript_ready')
-          }
-          // If pipeline returned to inactive without delivering a transcript, inform user
-          if ((st === 'inactive' || st === 'complete') && wasRecordingRef.current && !transcriptArrivedRef.current) {
-            console.log('[QuickCapture] Pipeline ended without transcript — likely no voice activity')
-            setVoiceError('No speech detected. Speak clearly and try again.')
-            setTimeout(() => setVoiceError(null), 4000)
-          }
-          if (st === 'inactive' || st === 'complete') {
-            wasRecordingRef.current = false
-            transcriptArrivedRef.current = false
-          }
-        }
-      }
-
-      if (event.type === 'error') {
-        const errMsg = typeof evData?.error === 'string' ? evData.error : 'Voice error — check mic permission'
-        console.log('[QuickCapture] voice error:', errMsg)
-        setRecording(false)
-        setSilenceCountdown(null)
-        wasRecordingRef.current = false
-        transcriptArrivedRef.current = false
-        stopSilenceDetection()
-        setVoiceError(errMsg)
-        setTimeout(() => setVoiceError(null), 5000)
-      }
-    })
-    voiceUnsubRef.current = unsub
     return () => {
-      voiceUnsubRef.current?.()
       stopSilenceDetection()
+      mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop())
     }
   }, [])
 
@@ -1618,7 +1553,10 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
             if (elapsed >= 2500) {
               console.log('[QuickCapture] Auto-stop: 2.5s silence detected')
               stopSilenceDetection()
-              getVoiceSubsystem().stopRecording()
+              // Stop own MediaRecorder directly — no voice.ts dependency
+              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                mediaRecorderRef.current.stop()
+              }
             }
           } else {
             // Audio detected — reset silence timer
@@ -1653,24 +1591,111 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
     setSilenceCountdown(null)
   }
 
-  // ── handleMicTap — unlockAudioContext MUST be first synchronous call ──────
+  // ── iOS AudioContext inline unlock — synchronous, no voice.ts dependency ──
+  function unlockAudioContextInline(): void {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = new AudioCtx()
+      // ctx.resume() called synchronously in same call stack as user gesture (iOS requirement)
+      if (ctx.state === 'suspended') ctx.resume()
+      // Play silent buffer to fully satisfy iOS autoplay gate
+      const buf = ctx.createBuffer(1, 1, 22050)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      src.start(0)
+      // Close after unlock — we only needed it for the gesture gate
+      setTimeout(() => ctx.close().catch(() => {}), 500)
+    } catch { /* ignore — non-iOS browsers don't need this */ }
+  }
+
+  // ── handleMicTap — MediaRecorder API only, zero connection to voice.ts ──────
   async function handleMicTap() {
-    unlockAudioContext()  // synchronous — iOS AudioContext gate, must be first in tap handler
-    const voice = getVoiceSubsystem()
+    // Synchronous AudioContext unlock — must be first call in tap handler for iOS
+    unlockAudioContextInline()
+
     if (recording) {
       console.log('[QuickCapture] Manual stop recording')
       stopSilenceDetection()
-      voice.stopRecording()
-      // recording state cleared by status_changed event
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop()
+      }
+      setRecording(false)
     } else {
       console.log('[QuickCapture] Starting recording')
       setOpen(true)
       setVoiceError(null)
-      transcriptArrivedRef.current = false
-      wasRecordingRef.current = false
-      await voice.startRecording('normal')
-      // After startRecording resolves, status_changed 'recording' has already fired
-      startSilenceDetection()
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        audioChunksRef.current = []
+
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+          : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
+          : ''
+        const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+        mediaRecorderRef.current = mr
+
+        mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+
+        mr.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop())
+          setRecording(false)
+          setSilenceCountdown(null)
+
+          const recordedMime = mr.mimeType || mimeType || 'audio/webm'
+          const audioBlob = new Blob(audioChunksRef.current, { type: recordedMime })
+          audioChunksRef.current = []
+
+          if (audioBlob.size < 1000) {
+            setVoiceError('Recording too short — speak clearly and try again.')
+            setTimeout(() => setVoiceError(null), 4000)
+            return
+          }
+
+          // POST to /.netlify/functions/whisper — no voice.ts, no agentBus, no NEXUS
+          try {
+            const arrayBuffer = await audioBlob.arrayBuffer()
+            const uint8 = new Uint8Array(arrayBuffer)
+            let binary = ''
+            for (let i = 0; i < uint8.byteLength; i++) binary += String.fromCharCode(uint8[i])
+            const base64 = btoa(binary)
+            const ext = recordedMime.includes('mp4') ? 'mp4' : recordedMime.includes('ogg') ? 'ogg' : 'webm'
+
+            const res = await fetch('/.netlify/functions/whisper', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio: base64, filename: `capture.${ext}`, language: 'en' }),
+            })
+            if (!res.ok) throw new Error(`Whisper error ${res.status}`)
+            const data = await res.json()
+            const transcriptText = (data.text || '').trim()
+            if (transcriptText) {
+              setText(transcriptText)
+              setVoiceError(null)
+            } else {
+              setVoiceError('No speech detected. Speak clearly and try again.')
+              setTimeout(() => setVoiceError(null), 4000)
+            }
+          } catch (err: any) {
+            console.error('[QuickCapture] Whisper error:', err?.message)
+            setVoiceError('Transcription failed — type your note manually.')
+            setTimeout(() => setVoiceError(null), 5000)
+          }
+        }
+
+        mr.start(100)
+        setRecording(true)
+        startSilenceDetection()
+        console.log('[QuickCapture] MediaRecorder started (isolated from voice.ts)')
+      } catch (err: any) {
+        const isPermDenied = err?.name === 'NotAllowedError' || err?.message?.includes('Permission')
+        setVoiceError(isPermDenied
+          ? 'Microphone access blocked. Allow mic permission in browser settings.'
+          : `Mic error: ${err?.message || 'unknown'}`)
+        setTimeout(() => setVoiceError(null), 5000)
+      }
     }
   }
 
