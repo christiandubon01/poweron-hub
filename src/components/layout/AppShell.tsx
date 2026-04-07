@@ -675,8 +675,9 @@ export function AppShell({ children }: AppShellProps) {
       </Suspense>
 
       {/* Floating NEXUS voice button — bottom right on all panels */}
+      {/* B57 FIX 2: hideFloatingOrb=true when ORB LAB is active to avoid conflict with canvas orb */}
       <Suspense fallback={null}>
-        <VoiceActivationButton />
+        <VoiceActivationButton hideFloatingOrb={activeView === 'viz-lab'} />
       </Suspense>
 
       {/* Watermark — fixed bottom-right, always visible */}

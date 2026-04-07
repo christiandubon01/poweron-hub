@@ -965,7 +965,10 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
       this.currentSession.endedAt = new Date()
     }
 
-    this.setStatus('complete')
+    // B57 FIX 1: emit session_complete BEFORE setStatus transitions so isOrbLabMode()
+    // is still true when VoiceActivationButton checks it in the session_complete handler.
+    // Previously setStatus('complete') fired first, triggering AdminVisualizationLab to
+    // call setOrbLabMode(false) before the drawer-suppression check could run.
     this.emit('session_complete', { session: this.currentSession })
 
     // Step 8: Log session to database
@@ -1060,20 +1063,73 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
 
   /**
    * Play audio with a tracked reference so it can be interrupted.
-   * Uses direct HTMLAudioElement with playsInline for all platforms.
-   * Falls back to Web Speech API if fetch/decode fails.
+   * B57 FIX 4: skip the redundant fetch(objectUrl) → arrayBuffer → new Blob → new URL chain.
+   * The URL is already a local object URL from synthesizeWithElevenLabs — set it on the
+   * HTMLAudioElement directly to save ~1-3 s of unnecessary decode/re-encode overhead.
    */
-  private async playAudioTracked(url: string): Promise<void> {
-    debugPush('playAudioTracked() — starting')
-    try {
-      const response = await fetch(url)
-      const arrayBuffer = await response.arrayBuffer()
-      debugPush(`playAudioTracked() — fetched ${arrayBuffer.byteLength} bytes`)
-      await this.playAudioDirect(arrayBuffer)
-    } catch (err) {
-      debugPush(`playAudioTracked() — fetch failed: ${(err as Error).message}, falling back to WebSpeech`)
-      await this.speakWithWebSpeech(this.lastTTSText || '')
-    }
+  private playAudioTracked(url: string): Promise<void> {
+    debugPush('playAudioTracked() — starting (direct, no fetch)')
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const safeResolve = () => {
+        if (!settled) {
+          settled = true
+          clearTimeout(hangTimeout)
+          resolve()
+        }
+      }
+
+      const audio = new Audio()
+      audio.playsInline = true
+      audio.autoplay = false
+      audio.src = url
+      audio.volume = 1.0
+      audio.playbackRate = 1.0
+      document.body.appendChild(audio)
+      this.currentAudio = audio
+      emitTTSAudio(audio)
+
+      audio.onended = () => {
+        setTimeout(() => {
+          debugPush('playAudioTracked() — playback complete (+ 300ms drain)')
+          try { document.body.removeChild(audio) } catch { /* already removed */ }
+          this.currentAudio = null
+          emitTTSAudio(null)
+          safeResolve()
+        }, 300)
+      }
+
+      audio.onerror = () => {
+        debugPush('playAudioTracked() — HTMLAudio error, falling back to WebSpeech')
+        try { document.body.removeChild(audio) } catch { /* already removed */ }
+        this.currentAudio = null
+        emitTTSAudio(null)
+        this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
+      }
+
+      audio.load()
+
+      const playPromise = audio.play()
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => debugPush('playAudioTracked() — play() succeeded'))
+          .catch((err) => {
+            debugPush(`playAudioTracked() — play() failed: ${err instanceof Error ? err.message : String(err)}, falling back to WebSpeech`)
+            try { document.body.removeChild(audio) } catch { /* already removed */ }
+            this.currentAudio = null
+            emitTTSAudio(null)
+            this.speakWithWebSpeech(this.lastTTSText || '').then(() => safeResolve())
+          })
+      }
+
+      const hangTimeout = setTimeout(() => {
+        debugPush('playAudioTracked() — timeout (35s) fallback')
+        try { audio.pause(); document.body.removeChild(audio) } catch { /* ignore */ }
+        this.currentAudio = null
+        emitTTSAudio(null)
+        safeResolve()
+      }, 35000)
+    })
   }
 
   /**

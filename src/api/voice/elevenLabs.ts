@@ -42,6 +42,14 @@ export interface TTSResponse {
 // ── Available Voices ─────────────────────────────────────────────────────────
 
 export const AVAILABLE_VOICES: ElevenLabsVoice[] = [
+  // B57 FIX 3: Oxley is the configured NEXUS voice — listed first so DEFAULT_VOICE_ID resolves correctly
+  {
+    voice_id: 'gOkFV1JMCt0G0n9xmBwV',
+    name: 'Oxley',
+    category: 'cloned',
+    gender: 'male',
+    settings: { stability: 0.5, similarity_boost: 0.75 },
+  },
   {
     voice_id: 'pNInz6obpgDQGcFmaJgB',
     name: 'Adam',
@@ -72,7 +80,10 @@ export const AVAILABLE_VOICES: ElevenLabsVoice[] = [
   },
 ]
 
-export const DEFAULT_VOICE_ID = AVAILABLE_VOICES[0].voice_id // Adam
+// B57 FIX 3: DEFAULT_VOICE_ID = Oxley (gOkFV1JMCt0G0n9xmBwV) — the configured NEXUS voice.
+// Previously defaulted to Adam. If localStorage has no voice set and DB prefs are empty,
+// the pipeline now falls back to Oxley instead of Adam.
+export const DEFAULT_VOICE_ID = AVAILABLE_VOICES[0].voice_id // Oxley
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

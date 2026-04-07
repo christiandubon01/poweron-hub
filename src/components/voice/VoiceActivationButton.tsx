@@ -54,11 +54,13 @@ export function cleanTranscript(raw: string): string {
 
 interface VoiceActivationButtonProps {
   className?: string
+  // B57 FIX 2: hide the floating NEXUS orb button when ORB LAB is active
+  hideFloatingOrb?: boolean
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function VoiceActivationButton({ className }: VoiceActivationButtonProps) {
+export function VoiceActivationButton({ className, hideFloatingOrb = false }: VoiceActivationButtonProps) {
   const { user, profile } = useAuth()
 
   const [status, setStatus]               = useState<VoiceSessionStatus>('inactive')
@@ -433,8 +435,8 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
   return (
     <>
       {/* ── Permanent NEXUS floating button (bottom-right, always visible) ── */}
-      {/* Hidden only when the full drawer is expanded — the panel itself is the CTA */}
-      {!(isVisible && drawerExpanded) && (
+      {/* Hidden when: (a) full drawer is expanded, OR (b) ORB LAB is active (B57 FIX 2) */}
+      {!(isVisible && drawerExpanded) && !hideFloatingOrb && (
         <button
           onClick={handleOpenNexus}
           title="Talk to NEXUS"

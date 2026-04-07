@@ -738,9 +738,17 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         micStreamRef.current = ms
         setMicStream(ms)
       }
-      if (status === 'inactive' || status === 'complete') {
+      // B57 FIX 1: only reset orbLabMode on 'inactive' — NOT on 'complete'.
+      // 'complete' fired before session_complete event in B56, causing isOrbLabMode()
+      // to return false by the time VoiceActivationButton checked it, opening the drawer.
+      // Now session_complete fires before setStatus('inactive'), keeping orbLabMode true
+      // through the drawer-suppression check.
+      if (status === 'inactive') {
         setMicActive(false)
-        setOrbLabMode(false) // B56: reset orb lab mode when session ends
+        setOrbLabMode(false)
+        setNexusStatusText(null)
+      } else if (status === 'complete') {
+        setMicActive(false)
         setNexusStatusText(null)
       } else if (status === 'recording' || status === 'listening') {
         setMicActive(true)
