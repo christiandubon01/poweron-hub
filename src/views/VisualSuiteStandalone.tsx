@@ -38,13 +38,13 @@ export default function VisualSuiteStandalone({ onExit }: VisualSuiteStandaloneP
 
   return (
     <div style={{
-      width:           '100%',
-      height:          '100%',
-      display:         'flex',
-      flexDirection:   'column',
-      backgroundColor: '#000',
-      overflow:        'hidden',
-      position:        'relative',
+      height:   '100vh',
+      width:    '100vw',
+      position: 'fixed',
+      top:      0,
+      left:     0,
+      background: '#000',
+      zIndex:   50,
     }}>
       {/* Floating EXIT button — top-left */}
       <button

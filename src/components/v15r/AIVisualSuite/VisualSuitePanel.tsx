@@ -301,8 +301,8 @@ export default function VisualSuitePanel({
     function resize() {
       const dpr  = window.devicePixelRatio || 1
       const rect = canvas.getBoundingClientRect()
-      const w    = rect.width  || 640
-      const h    = rect.height || 360
+      const w    = rect.width  || window.innerWidth
+      const h    = rect.height || window.innerHeight - 80
       if (canvas.width  !== Math.round(w * dpr) ||
           canvas.height !== Math.round(h * dpr)) {
         canvas.width  = Math.round(w * dpr)
@@ -312,19 +312,32 @@ export default function VisualSuitePanel({
       }
     }
 
-    resize()
-    runningRef.current   = true
-    startTsRef.current   = 0
-    autoTimerRef.current = performance.now()
-    rafRef.current       = requestAnimationFrame(loop)
+    let roRef: ResizeObserver | null = null
 
-    const ro = new ResizeObserver(resize)
-    ro.observe(canvas)
+    function startWhenReady() {
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const w = rect.width || window.innerWidth
+      const h = rect.height || window.innerHeight - 80
+      if (w === 0 || h === 0) {
+        requestAnimationFrame(startWhenReady)
+        return
+      }
+      resize()
+      runningRef.current   = true
+      startTsRef.current   = 0
+      autoTimerRef.current = performance.now()
+      rafRef.current       = requestAnimationFrame(loop)
+      roRef = new ResizeObserver(resize)
+      roRef.observe(canvas)
+    }
+
+    requestAnimationFrame(startWhenReady)
 
     return () => {
       runningRef.current = false
       cancelAnimationFrame(rafRef.current)
-      ro.disconnect()
+      if (roRef) roRef.disconnect()
     }
   }, [loop])
 

@@ -1950,7 +1950,7 @@ function NeuralMap() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas wrapper */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }} />
+          <div ref={mountRef} style={{ position: 'relative', width: '100%', height: 'calc(100vh - 106px)', overflow: 'hidden' }} />
 
           {/* Goal Paths Drawer — Feature 4 */}
           <GoalPathsDrawer open={goalPathsOpen} onClose={() => setGoalPathsOpen(false)} onProfilesChange={handleProfilesChange} />
