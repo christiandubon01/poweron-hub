@@ -33,6 +33,16 @@ import SnapshotPanel from '@/components/SnapshotPanel'
 import { ProposalQueue } from '@/components/ProposalQueue'
 import { useDemoStore } from '@/store/demoStore'
 import { DEMO_COMPANY, DEMO_OWNER, DEMO_LICENSE } from '@/services/demoDataService'
+import {
+  createMilestone,
+  exportCurrentData,
+  listMilestoneSnapshots,
+  getMilestoneSnapshot,
+  restoreMilestone,
+  formatSizeBytes,
+  type MilestoneSnapshotMeta,
+  type SnapshotFilter,
+} from '@/services/milestoneBackupService'
 
 function NoData() {
   return (
@@ -1442,6 +1452,9 @@ export default function V15rSettingsPanel() {
 
           {/* IMPORT HISTORY */}
           <ImportHistoryCard />
+
+          {/* B21 — BACKUP AND RESTORE */}
+          <MilestoneBackupCard />
 
           {/* 10. MTO PHASES */}
           <SettingCard title="MTO Phases">
@@ -2960,6 +2973,267 @@ function OwnerProfileCard() {
             className="w-full text-xs px-3 py-2 rounded border theme-input resize-none"
           />
         </div>
+
+      </div>
+    </SettingCard>
+  )
+}
+
+// ── B21: Milestone Backup + Change History Sub-Component ─────────────────────
+
+function MilestoneBackupCard() {
+  const [snapshots, setSnapshots] = useState<MilestoneSnapshotMeta[]>([])
+  const [filter, setFilter] = useState<SnapshotFilter>('all')
+  const [milestoneLabel, setMilestoneLabel] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [loadingSnaps, setLoadingSnaps] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<MilestoneSnapshotMeta | null>(null)
+  const [restoreConfirmText, setRestoreConfirmText] = useState('')
+  const [restoring, setRestoring] = useState(false)
+  const [statusMsg, setStatusMsg] = useState('')
+
+  const loadSnapshots = useCallback(async (f: SnapshotFilter = filter) => {
+    setLoadingSnaps(true)
+    const data = await listMilestoneSnapshots(f)
+    setSnapshots(data)
+    setLoadingSnaps(false)
+  }, [filter])
+
+  useEffect(() => {
+    loadSnapshots(filter)
+  }, [filter])
+
+  const handleExportNow = useCallback(() => {
+    exportCurrentData()
+    setStatusMsg('Export downloaded ✓')
+    setTimeout(() => setStatusMsg(''), 3000)
+  }, [])
+
+  const handleCreateMilestone = useCallback(async () => {
+    const label = milestoneLabel.trim() || `Milestone ${new Date().toLocaleDateString()}`
+    setLoading(true)
+    const saved = await createMilestone(label)
+    setLoading(false)
+    if (saved) {
+      setStatusMsg('Milestone saved + downloaded ✓')
+      setMilestoneLabel('')
+      loadSnapshots(filter)
+    } else {
+      setStatusMsg('Downloaded locally (Supabase save failed)')
+    }
+    setTimeout(() => setStatusMsg(''), 4000)
+  }, [milestoneLabel, filter, loadSnapshots])
+
+  const handleRestoreClick = useCallback((snap: MilestoneSnapshotMeta) => {
+    setRestoreTarget(snap)
+    setRestoreConfirmText('')
+  }, [])
+
+  const handleConfirmRestore = useCallback(async () => {
+    if (!restoreTarget || restoreConfirmText !== 'RESTORE') return
+    setRestoring(true)
+    const full = await getMilestoneSnapshot(restoreTarget.id)
+    if (!full) {
+      setRestoring(false)
+      setStatusMsg('Failed to fetch snapshot data')
+      setTimeout(() => setStatusMsg(''), 3000)
+      return
+    }
+    restoreMilestone(full)
+    // restoreMilestone calls window.location.reload() — this line won't be reached
+    setRestoring(false)
+  }, [restoreTarget, restoreConfirmText])
+
+  const triggerLabel = (t: string) => {
+    const map: Record<string, string> = {
+      project_created: 'Project Created',
+      project_updated: 'Project Updated',
+      project_deleted: 'Project Deleted',
+      field_log_added: 'Field Log Added',
+      service_log_added: 'Service Log Added',
+      service_status_changed: 'Service Status',
+      invoice_created: 'Invoice Created',
+      invoice_paid: 'Invoice Paid',
+      phase_changed: 'Phase Changed',
+      lead_status_changed: 'Lead Status',
+      manual: 'Manual',
+      weekly_auto: 'Weekly Auto',
+    }
+    return map[t] || t
+  }
+
+  const FILTERS: { key: SnapshotFilter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'manual', label: 'Manual' },
+    { key: 'auto', label: 'Auto' },
+    { key: 'weekly', label: 'Weekly' },
+  ]
+
+  return (
+    <SettingCard title="Backup and Restore">
+      <div className="space-y-4">
+
+        {/* Status message */}
+        {statusMsg && (
+          <div className="text-xs text-emerald-400 px-3 py-2 rounded bg-emerald-500/10 border border-emerald-500/20">
+            {statusMsg}
+          </div>
+        )}
+
+        {/* Export Now */}
+        <div>
+          <button
+            onClick={handleExportNow}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600/25 hover:bg-blue-600/35 text-blue-300 rounded text-xs font-medium border border-blue-500/30 transition"
+          >
+            <Download size={12} />
+            Export Now
+          </button>
+          <p className="text-[10px] text-gray-600 mt-1">Downloads current app state as JSON immediately. No Supabase write.</p>
+        </div>
+
+        {/* Create Milestone */}
+        <div className="space-y-2">
+          <label className="block text-xs font-semibold text-gray-400 uppercase">Create Milestone</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={milestoneLabel}
+              onChange={e => setMilestoneLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleCreateMilestone() }}
+              placeholder="Milestone label (optional)…"
+              className="flex-1 text-xs px-3 py-2 rounded border theme-input"
+            />
+            <button
+              onClick={handleCreateMilestone}
+              disabled={loading}
+              className="flex items-center gap-1 px-3 py-2 bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 rounded text-xs font-medium border border-emerald-500/30 disabled:opacity-50 transition"
+            >
+              {loading ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+              Save + Download
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-600">Saves to Supabase and triggers a JSON file download.</p>
+        </div>
+
+        {/* Filter tabs */}
+        <div>
+          <div className="flex gap-1 mb-2">
+            {FILTERS.map(f => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`px-2 py-1 rounded text-[10px] font-medium border transition ${
+                  filter === f.key
+                    ? 'bg-cyan-600/30 text-cyan-300 border-cyan-500/40'
+                    : 'bg-transparent text-gray-500 border-gray-700/50 hover:text-gray-300'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+            <button
+              onClick={() => loadSnapshots(filter)}
+              className="ml-auto px-2 py-1 text-gray-500 hover:text-gray-300 transition"
+              title="Refresh"
+            >
+              <RefreshCw size={10} />
+            </button>
+          </div>
+
+          {/* Snapshot history table */}
+          <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--border-secondary)' }}>
+            <div className="grid text-[10px] font-semibold text-gray-500 uppercase px-3 py-1.5 border-b" style={{ gridTemplateColumns: '1fr 1.5fr 1fr 0.6fr auto', borderColor: 'var(--border-secondary)', backgroundColor: 'var(--bg-input)' }}>
+              <span>Date</span>
+              <span>Label</span>
+              <span>Trigger</span>
+              <span>Size</span>
+              <span></span>
+            </div>
+
+            {loadingSnaps ? (
+              <div className="flex items-center justify-center py-6 text-gray-600 text-xs gap-2">
+                <Loader2 size={12} className="animate-spin" />
+                Loading…
+              </div>
+            ) : snapshots.length === 0 ? (
+              <div className="text-center py-6 text-xs text-gray-600">No snapshots found</div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto">
+                {snapshots.map(snap => (
+                  <div
+                    key={snap.id}
+                    className="grid items-center px-3 py-2 border-b text-xs hover:bg-white/5 transition"
+                    style={{ gridTemplateColumns: '1fr 1.5fr 1fr 0.6fr auto', borderColor: 'var(--border-secondary)' }}
+                  >
+                    <span className="text-gray-400 text-[10px]">
+                      {new Date(snap.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <span className="text-gray-300 truncate text-[10px] pr-2" title={snap.label}>{snap.label}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-medium w-fit" style={{
+                      backgroundColor: snap.trigger_event === 'manual' ? 'rgba(99,102,241,0.2)' : snap.trigger_event === 'weekly_auto' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)',
+                      color: snap.trigger_event === 'manual' ? '#a5b4fc' : snap.trigger_event === 'weekly_auto' ? '#fbbf24' : '#6ee7b7',
+                    }}>
+                      {triggerLabel(snap.trigger_event)}
+                    </span>
+                    <span className="text-gray-500 text-[10px]">{formatSizeBytes(snap.size_bytes)}</span>
+                    <button
+                      onClick={() => handleRestoreClick(snap)}
+                      className="text-[10px] px-2 py-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 rounded border border-amber-500/30 transition"
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Restore confirmation modal (inline) */}
+        {restoreTarget && (
+          <div className="rounded-lg border border-red-500/40 p-4 space-y-3 mt-2" style={{ backgroundColor: 'var(--bg-input)' }}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-red-300">Confirm Restore</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">"{restoreTarget.label}"</p>
+                <p className="text-[10px] text-gray-500 mt-1">
+                  This will overwrite ALL current localStorage data with this snapshot and reload the app.
+                </p>
+              </div>
+              <button onClick={() => setRestoreTarget(null)} className="text-gray-500 hover:text-gray-300 mt-0.5">
+                <X size={14} />
+              </button>
+            </div>
+            <div>
+              <p className="text-[10px] text-gray-500 mb-1">Type <span className="font-mono font-bold text-red-400">RESTORE</span> to confirm:</p>
+              <input
+                type="text"
+                value={restoreConfirmText}
+                onChange={e => setRestoreConfirmText(e.target.value)}
+                placeholder="RESTORE"
+                className="w-full text-xs px-3 py-2 rounded border theme-input font-mono"
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleConfirmRestore}
+                disabled={restoreConfirmText !== 'RESTORE' || restoring}
+                className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                {restoring ? <Loader2 size={12} className="animate-spin" /> : null}
+                Restore + Reload
+              </button>
+              <button
+                onClick={() => setRestoreTarget(null)}
+                className="px-3 py-2 text-xs text-gray-400 rounded border border-gray-700/50 hover:text-gray-200 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
       </div>
     </SettingCard>
