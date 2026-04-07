@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
- * AdminCommandCenter.tsx — B38 | Admin Command Center
+ * AdminCommandCenter.tsx — B39 | Admin Command Center
  *
  * Full-screen admin panel with 11 sub-tabs.
- * B36: Tabs 1–3 implemented. B37: Tabs 4–5 (Economics + Improvement Log). B38: Tabs 6–7 (Summary + Checklist, Scripts + Positioning).
+ * B36: Tabs 1–3 implemented. B37: Tabs 4–5 (Economics + Improvement Log). B38: Tabs 6–7 (Summary + Checklist, Scripts + Positioning). B39: Tabs 8–9 (AI Agent Organization + Industry Analysis).
  *
  * Admin-only: gated in V15rLayout sidebar (email matches VITE_ADMIN_EMAIL).
  */
@@ -29,8 +29,8 @@ const TABS = [
   { id: 'improvelog', label: '5 · Improvement Log' },
   { id: 't6',       label: '6 · Summary + Checklist' },
   { id: 't7',       label: '7 · Scripts + Positioning' },
-  { id: 't8',       label: '8' },
-  { id: 't9',       label: '9' },
+  { id: 't8',       label: '8 · AI Agents' },
+  { id: 't9',       label: '9 · Industries' },
   { id: 't10',      label: '10' },
   { id: 't11',      label: '11' },
 ]
@@ -2240,6 +2240,907 @@ function Tab7ScriptsPositioning() {
   )
 }
 
+// ─── TAB 8 — AI Agent Organization ───────────────────────────────────────────
+
+const CURRENT_AGENTS = [
+  { name: 'NEXUS',    role: 'Orchestration / Query Routing',    efficiency: 92, quality: 88, lastActive: '2026-04-07', wiring: 'full' },
+  { name: 'GUARDIAN', role: 'Project Health Monitor',           efficiency: 78, quality: 82, lastActive: '2026-04-06', wiring: 'full' },
+  { name: 'SPARK',    role: 'Live Call Intelligence',           efficiency: 85, quality: 90, lastActive: '2026-04-07', wiring: 'full' },
+  { name: 'HUNTER',   role: 'Lead Hunting / Pipeline Intel',    efficiency: 20, quality: 45, lastActive: '—',          wiring: 'planned' },
+  { name: 'VAULT',    role: 'Financial Vault / Payment Track',  efficiency: 70, quality: 75, lastActive: '2026-04-05', wiring: 'partial' },
+  { name: 'OHM',      role: 'NEC Code Compliance Advisor',      efficiency: 80, quality: 87, lastActive: '2026-04-06', wiring: 'partial' },
+  { name: 'LEDGER',   role: 'Billing / Unbilled Work Tracking', efficiency: 74, quality: 80, lastActive: '2026-04-06', wiring: 'partial' },
+  { name: 'BLUEPRINT',role: 'Blueprint Doc Analysis AI',        efficiency: 68, quality: 83, lastActive: '2026-04-04', wiring: 'partial' },
+  { name: 'CHRONO',   role: 'Scheduling / Calendar Intel',      efficiency: 60, quality: 72, lastActive: '2026-04-03', wiring: 'partial' },
+  { name: 'ATLAS',    role: 'Map / Location Intelligence',      efficiency: 35, quality: 55, lastActive: '2026-04-01', wiring: 'planned' },
+  { name: 'ECHO',     role: 'Context Window / Memory',          efficiency: 88, quality: 91, lastActive: '2026-04-07', wiring: 'full' },
+  { name: 'FORGE',    role: 'Estimating / Material Takeoff',    efficiency: 72, quality: 78, lastActive: '2026-04-05', wiring: 'partial' },
+  { name: 'SENTINEL', role: 'Collections Queue Monitor',        efficiency: 65, quality: 70, lastActive: '2026-04-04', wiring: 'partial' },
+  { name: 'HERALD',   role: 'Notifications / Alerts Delivery',  efficiency: 55, quality: 68, lastActive: '2026-04-02', wiring: 'planned' },
+  { name: 'CREW',     role: 'Crew / Team Coordination',         efficiency: 62, quality: 74, lastActive: '2026-04-05', wiring: 'partial' },
+]
+
+const NEW_AGENT_SUGGESTIONS = [
+  {
+    name: 'IRIS',
+    role: 'Visual Inspection AI',
+    problem: 'Contractors photo job sites daily but no AI analyzes photos for defects, permit compliance, or safety issues.',
+    tier: 'Intelligence',
+    vVersion: 'V4',
+    revenueImpact: 'High — reduces rework cost, premium feature upsell',
+    detail: 'IRIS would process field photos through vision models, flagging code violations, safety hazards, or missed work items. Integrates with GUARDIAN for automatic alert creation and BLUEPRINT for project-context matching.',
+  },
+  {
+    name: 'PERMIT',
+    role: 'Permit Tracking & Compliance',
+    problem: 'Permit status is manually tracked in spreadsheets. Missed inspections cause project delays and fines.',
+    tier: 'Business',
+    vVersion: 'V4',
+    revenueImpact: 'Medium — compliance value prevents costly delays',
+    detail: 'PERMIT watches permit status across jurisdiction portals, sends inspection reminders, and flags expiring permits. Connects with CHRONO for scheduling and GUARDIAN for violation alerts.',
+  },
+  {
+    name: 'SAGE',
+    role: 'Tax & Financial Advisory',
+    problem: 'Contractor owners miss quarterly tax events, depreciation opportunities, and deductible categories.',
+    tier: 'Business',
+    vVersion: 'V5',
+    revenueImpact: 'High — direct ROI visible to owner',
+    detail: 'SAGE analyzes expense patterns, flags likely deductions, and estimates quarterly tax liability in real time. Coordinates with LEDGER and VAULT for full financial picture.',
+  },
+  {
+    name: 'PULSE',
+    role: 'Real-Time Job Cost Tracker',
+    problem: 'Job cost vs. estimate variance is only visible at project close — no mid-project warning system.',
+    tier: 'Intelligence',
+    vVersion: 'V4',
+    revenueImpact: 'High — directly protects margins on every job',
+    detail: 'PULSE monitors labor hours, material purchases, and change order history to project final cost vs. original estimate. Fires alerts when jobs trend 10%+ over estimate.',
+  },
+  {
+    name: 'ORACLE',
+    role: 'Predictive Analytics Engine',
+    problem: 'No forward-looking revenue forecasting based on pipeline + historical close rates.',
+    tier: 'Intelligence',
+    vVersion: 'V5',
+    revenueImpact: 'High — investor-grade feature for enterprise tier',
+    detail: 'ORACLE uses historical win rates, seasonal patterns, and current pipeline to project 90-day revenue. Generates weekly forecast cards and trend alerts.',
+  },
+  {
+    name: 'CODEX',
+    role: 'Building Code Library Agent',
+    problem: 'OHM covers NEC but not local amendments, energy codes, or ADA requirements across jurisdictions.',
+    tier: 'Intelligence',
+    vVersion: 'V5',
+    revenueImpact: 'Medium — compliance depth differentiator',
+    detail: 'CODEX maintains a jurisdiction-aware code library, answering questions about local amendments, energy codes, and fire code requirements. NEXUS routes non-NEC code queries here.',
+  },
+  {
+    name: 'RELAY',
+    role: 'Client Communication Automation',
+    problem: 'Client updates are manual — no automated job status emails, estimate follow-ups, or invoice reminders.',
+    tier: 'Business',
+    vVersion: 'V4',
+    revenueImpact: 'High — reduces admin hours, improves collections',
+    detail: 'RELAY drafts and schedules client-facing communication — job start/completion notices, estimate follow-ups, invoice reminders, and satisfaction check-ins — using SPARK and HERALD data.',
+  },
+  {
+    name: 'SCOUT',
+    role: 'Competitive Intelligence',
+    problem: 'No visibility into competitor pricing, service area changes, or review patterns.',
+    tier: 'Intelligence',
+    vVersion: 'V6',
+    revenueImpact: 'Medium — positioning and pricing decisions',
+    detail: 'SCOUT monitors public review platforms and bidding history to identify competitor rate changes and service area expansion, feeding into pricing strategy recommendations.',
+  },
+  {
+    name: 'TITAN',
+    role: 'Enterprise Multi-Org Management',
+    problem: 'No tools for managing multiple org accounts from a single admin seat.',
+    tier: 'Business',
+    vVersion: 'V6',
+    revenueImpact: 'Very High — unlocks franchise and multi-location enterprise tier',
+    detail: 'TITAN provides aggregated dashboards, cross-org benchmarking, and bulk policy management for enterprise customers running 3+ locations. Prerequisite for $500+/mo tier.',
+  },
+  {
+    name: 'EMBER',
+    role: 'Invoice Automation Agent',
+    problem: 'Invoicing is a manual process; contractors lose revenue to slow billing cycles.',
+    tier: 'Business',
+    vVersion: 'V4',
+    revenueImpact: 'High — accelerates cash collection directly',
+    detail: 'EMBER auto-generates invoices from completed work logs, matches against estimates, applies correct line items, and pushes to QuickBooks or Stripe. Coordinates with LEDGER.',
+  },
+  {
+    name: 'FLEET',
+    role: 'Vehicle & Equipment Tracking',
+    problem: 'Fuel costs, maintenance schedules, and vehicle utilization are untracked beyond basic mileage.',
+    tier: 'Business',
+    vVersion: 'V5',
+    revenueImpact: 'Medium — overhead reduction and fleet ROI',
+    detail: 'FLEET tracks vehicle costs, maintenance due dates, and job site routing efficiency. Connects vehicle overhead to specific jobs for accurate cost allocation.',
+  },
+  {
+    name: 'LINK',
+    role: 'Supplier & Vendor Coordination',
+    problem: 'Material ordering is manual with no vendor comparison, backorder alerts, or bulk discount tracking.',
+    tier: 'Business',
+    vVersion: 'V5',
+    revenueImpact: 'Medium — direct cost reduction on materials',
+    detail: 'LINK connects to distributor APIs to compare pricing, check availability, and flag substitutes when items are backordered. Works with FORGE for MTO-driven purchasing.',
+  },
+  {
+    name: 'BADGE',
+    role: 'Licensing & Certification Tracker',
+    problem: 'License expiration, continuing education deadlines, and worker certifications are tracked manually.',
+    tier: 'Business',
+    vVersion: 'V4',
+    revenueImpact: 'Low-Medium — compliance protection, crew management feature',
+    detail: 'BADGE tracks license renewal dates, CE requirements, OSHA certifications, and insurance certificates for both the company and individual crew members. Fires reminders 60/30/7 days out.',
+  },
+  {
+    name: 'MATRIX',
+    role: 'Cross-Industry Benchmarking',
+    problem: 'No benchmarking against industry averages for labor rates, close rates, or project margins.',
+    tier: 'Intelligence',
+    vVersion: 'V6',
+    revenueImpact: 'High — data licensing foundation, investor narrative',
+    detail: 'MATRIX aggregates anonymized performance data across the PowerOn Hub customer base to generate industry benchmarks. Powers the data licensing revenue stream at scale.',
+  },
+  {
+    name: 'MIRROR',
+    role: 'AI-Powered Audit & Replay',
+    problem: 'When business decisions go wrong there is no tool to replay the data state at that moment.',
+    tier: 'Intelligence',
+    vVersion: 'V7',
+    revenueImpact: 'Medium — enterprise compliance and accountability tier',
+    detail: 'MIRROR captures decision snapshots — what data was visible, what AI said, what action was taken — enabling time-travel replay of business decisions for auditing and learning.',
+  },
+]
+
+const N8N_IMPROVEMENTS = [
+  {
+    title: 'Lead Capture → SPARK Pipeline',
+    current: 'Manual form submission triggers; no deduplication',
+    improvement: 'Add webhook dedup layer + auto-route new leads to SPARK queue with context pre-loaded',
+    effort: 'Now',
+  },
+  {
+    title: 'Invoice Sent → Collections Watch',
+    current: 'Collections queue is manually updated',
+    improvement: 'Trigger: invoice sent → start 7-day watch → auto-escalate to SENTINEL if unpaid',
+    effort: 'Now',
+  },
+  {
+    title: 'Job Completion → Auto-Invoice',
+    current: 'Manual invoice creation after work log close',
+    improvement: 'GUARDIAN task_completed event → n8n → EMBER draft invoice → review queue',
+    effort: 'V4+',
+  },
+  {
+    title: 'Weekly Snapshot → Supabase',
+    current: 'Snapshot sync is manual / on-demand',
+    improvement: 'Cron every Sunday midnight → snapshot all org data → push to weekly_snapshots table',
+    effort: 'Now',
+  },
+  {
+    title: 'New User Onboarding Sequence',
+    current: 'No automated onboarding flow',
+    improvement: '5-email drip over 14 days triggered on first login → feature highlights, tip cards',
+    effort: 'Now',
+  },
+]
+
+const NEXT_3_N8N = [
+  {
+    name: 'Collections Escalation Workflow',
+    desc: 'Auto-watch invoices older than 7 days → reminder SMS/email at 14d → flag in SENTINEL at 30d',
+    impact: 'Directly improves cash collection rate',
+  },
+  {
+    name: 'Weekly Business Health Digest',
+    desc: 'Every Monday 7AM → pull KPIs from Supabase → format digest card → push to GUARDIAN + email to owner',
+    impact: 'Reduces manual review time, surfaces hidden patterns',
+  },
+  {
+    name: 'New Org Welcome Sequence',
+    desc: 'On org_created event → send welcome email → create onboarding checklist → fire GUARDIAN starter rules',
+    impact: 'Reduces time-to-value for new beta customers',
+  },
+]
+
+function EfficiencyBar({ score, max = 100 }: { score: number; max?: number }) {
+  const pct = Math.round((score / max) * 100)
+  const color = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : score >= 40 ? '#f97316' : '#ef4444'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, height: 6, backgroundColor: '#1f2937', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, backgroundColor: color, borderRadius: 4, transition: 'width 0.4s' }} />
+      </div>
+      <span style={{ fontSize: 11, fontWeight: 700, color, minWidth: 28, textAlign: 'right' }}>{score}</span>
+    </div>
+  )
+}
+
+function WiringBadge({ status }: { status: string }) {
+  const config = {
+    full:    { color: '#10b981', bg: '#10b98120', label: 'FULL' },
+    partial: { color: '#f59e0b', bg: '#f59e0b20', label: 'PARTIAL' },
+    planned: { color: '#6b7280', bg: '#6b728020', label: 'PLANNED' },
+  }[status] ?? { color: '#6b7280', bg: '#6b728020', label: status.toUpperCase() }
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+      backgroundColor: config.bg, color: config.color, letterSpacing: '0.06em',
+    }}>
+      {config.label}
+    </span>
+  )
+}
+
+function NewAgentCard({ agent }: { agent: typeof NEW_AGENT_SUGGESTIONS[0] }) {
+  const [expanded, setExpanded] = useState(false)
+  const [diveOpen, setDiveOpen] = useState(false)
+  const vColors: Record<string, string> = { V4: '#60a5fa', V5: '#a78bfa', V6: '#f59e0b', V7: '#f87171' }
+  const vColor = vColors[agent.vVersion] ?? '#9ca3af'
+
+  return (
+    <div style={{
+      backgroundColor: '#0f172a',
+      border: '1px solid #1e2d3d',
+      borderRadius: 10,
+      overflow: 'hidden',
+    }}>
+      <div
+        style={{ padding: '14px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}
+        onClick={() => setExpanded(e => !e)}
+      >
+        <div style={{
+          width: 36, height: 36, borderRadius: 8, backgroundColor: '#111827',
+          border: '1px solid #374151', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', fontSize: 14, flexShrink: 0,
+        }}>⚡</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{agent.name}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, backgroundColor: `${vColor}20`, color: vColor }}>{agent.vVersion}</span>
+            <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 600 }}>{agent.tier}</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{agent.role}</div>
+        </div>
+        <span style={{ color: '#4b5563', fontSize: 16 }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+      {expanded && (
+        <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ backgroundColor: '#111827', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Problem It Solves</div>
+            <p style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.65, margin: 0 }}>{agent.problem}</p>
+          </div>
+          <div style={{ backgroundColor: '#111827', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Revenue Impact</div>
+            <p style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.65, margin: 0 }}>{agent.revenueImpact}</p>
+          </div>
+          <button
+            onClick={() => setDiveOpen(d => !d)}
+            style={{
+              alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, padding: '6px 12px',
+              borderRadius: 7, border: `1px solid ${vColor}55`, backgroundColor: 'transparent',
+              color: vColor, cursor: 'pointer',
+            }}
+          >
+            {diveOpen ? '▲ Collapse' : '▼ Dive Deeper'}
+          </button>
+          {diveOpen && (
+            <div style={{ backgroundColor: '#0a0f1a', borderRadius: 8, padding: '12px 14px', border: `1px solid ${vColor}33` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: vColor, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Full Build Detail</div>
+              <p style={{ fontSize: 12, color: '#d1d5db', lineHeight: 1.7, margin: 0 }}>{agent.detail}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Tab8AIAgentOrganization() {
+  const [sortField, setSortField] = useState<'efficiency' | 'quality' | 'name'>('efficiency')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [improvementInsight, setImprovementInsight] = useState('')
+  const [improvementLoading, setImprovementLoading] = useState(false)
+  const [founderInsight, setFounderInsight] = useState('')
+  const [founderLoading, setFounderLoading] = useState(false)
+
+  const sorted = [...CURRENT_AGENTS].sort((a, b) => {
+    const av = sortField === 'name' ? a.name : a[sortField]
+    const bv = sortField === 'name' ? b.name : b[sortField]
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
+  })
+
+  function toggleSort(field: typeof sortField) {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('desc') }
+  }
+
+  async function loadImprovementInsight() {
+    setImprovementLoading(true)
+    const agentList = CURRENT_AGENTS.map(a => `${a.name} (${a.role}, wiring: ${a.wiring}, efficiency: ${a.efficiency}%)`).join('\n')
+    const result = await fetchInsight(
+      'You are an AI systems architect analyzing agents for a contractor operations platform called PowerOn Hub.',
+      `Analyze these 15 agents and for each identify: (1) a key skill currently missing, (2) data it should be reading that it isn't, (3) one agent it should coordinate with more. Format as a concise markdown-like list. Keep each agent to 2-3 lines.\n\nAgents:\n${agentList}`,
+    )
+    setImprovementInsight(result)
+    setImprovementLoading(false)
+  }
+
+  async function loadFounderInsight() {
+    setFounderLoading(true)
+    const ctx = getSummaryContext()
+    const result = await fetchInsight(
+      'You are an experienced founder who has successfully scaled a contractor AI platform to $10M ARR and is now advising the early-stage PowerOn Hub team. Speak candidly.',
+      `Context: ${ctx}. We have 15 agents, V3 deployed, 6 beta orgs, aiming for 50 orgs by Q4 2026 and data licensing by 2027. From your vantage point: what would you prioritize differently right now? What would you automate immediately? What would you NOT build yet? What one partnership would you pursue first? Be specific and direct.`,
+    )
+    setFounderInsight(result)
+    setFounderLoading(false)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+      {/* Header */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #3b82f655', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#3b82f6', borderRadius: 2 }} />
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: '#bfdbfe', margin: 0 }}>AI Agent Organization</h3>
+        </div>
+        <p style={{ fontSize: 13, color: '#9ca3af', lineHeight: 1.6, margin: 0 }}>
+          Full inventory of current agents, improvement analysis, new agent roadmap, n8n process optimization, and founder-perspective strategy.
+        </p>
+      </div>
+
+      {/* SECTION A — Efficiency Map */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section A</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 12px' }}>Current 15 Agent Efficiency Map</h4>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1e2d3d' }}>
+                {[
+                  { key: 'name',       label: 'Agent' },
+                  { key: 'role',       label: 'Role' },
+                  { key: 'efficiency', label: 'Efficiency' },
+                  { key: 'quality',    label: 'Output Quality' },
+                  { key: 'lastActive', label: 'Last Active' },
+                  { key: 'wiring',     label: 'Wiring' },
+                ].map(col => (
+                  <th
+                    key={col.key}
+                    onClick={() => ['name', 'efficiency', 'quality'].includes(col.key) ? toggleSort(col.key as any) : null}
+                    style={{
+                      textAlign: 'left', padding: '8px 10px', color: '#6b7280', fontWeight: 600,
+                      cursor: ['name', 'efficiency', 'quality'].includes(col.key) ? 'pointer' : 'default',
+                      userSelect: 'none',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {col.label}{sortField === col.key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : ''}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((agent, i) => (
+                <tr key={agent.name} style={{ borderBottom: '1px solid #111827', backgroundColor: i % 2 === 0 ? 'transparent' : '#080d14' }}>
+                  <td style={{ padding: '10px 10px', fontWeight: 700, color: '#e2e8f0', whiteSpace: 'nowrap' }}>{agent.name}</td>
+                  <td style={{ padding: '10px 10px', color: '#9ca3af', fontSize: 11 }}>{agent.role}</td>
+                  <td style={{ padding: '10px 10px', minWidth: 120 }}><EfficiencyBar score={agent.efficiency} /></td>
+                  <td style={{ padding: '10px 10px', minWidth: 120 }}><EfficiencyBar score={agent.quality} /></td>
+                  <td style={{ padding: '10px 10px', color: '#6b7280', fontSize: 11, whiteSpace: 'nowrap' }}>{agent.lastActive}</td>
+                  <td style={{ padding: '10px 10px' }}><WiringBadge status={agent.wiring} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* SECTION B — Improvement Analysis */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section B</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 8px' }}>Agent Improvement Analysis</h4>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px', lineHeight: 1.6 }}>
+          Claude analyzes all 15 agents — missing skills, unread data sources, and coordination gaps.
+        </p>
+        {!improvementInsight && !improvementLoading && (
+          <button
+            onClick={loadImprovementInsight}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '8px 16px', borderRadius: 8,
+              border: '1px solid #a78bfa55', backgroundColor: 'transparent',
+              color: '#a78bfa', cursor: 'pointer',
+            }}
+          >
+            ⚡ Run Agent Analysis
+          </button>
+        )}
+        {(improvementInsight || improvementLoading) && (
+          <InsightCard
+            title="Agent Improvement Analysis"
+            accent="#a78bfa"
+            insight={improvementInsight}
+            loading={improvementLoading}
+            onRegenerate={loadImprovementInsight}
+          />
+        )}
+      </div>
+
+      {/* SECTION C — 15 New Agent Suggestions */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section C</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>15 New Agent Suggestions</h4>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 16px', lineHeight: 1.6 }}>
+          Agents beyond the current 15 — V4 through V7 scope. Click to expand, Dive Deeper for full build reasoning.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {NEW_AGENT_SUGGESTIONS.map(agent => (
+            <NewAgentCard key={agent.name} agent={agent} />
+          ))}
+        </div>
+      </div>
+
+      {/* SECTION D — n8n Process Improvement */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section D</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 16px' }}>n8n Process Improvement</h4>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+          {N8N_IMPROVEMENTS.map((item, i) => (
+            <div key={i} style={{ backgroundColor: '#111827', borderRadius: 8, padding: '12px 14px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <span style={{
+                fontSize: 9, fontWeight: 700, padding: '3px 7px', borderRadius: 4, flexShrink: 0, marginTop: 2,
+                backgroundColor: item.effort === 'Now' ? '#10b98120' : '#3b82f620',
+                color: item.effort === 'Now' ? '#10b981' : '#60a5fa',
+              }}>{item.effort}</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', marginBottom: 3 }}>{item.title}</div>
+                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Current: {item.current}</div>
+                <div style={{ fontSize: 11, color: '#d1d5db' }}>{item.improvement}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ borderTop: '1px solid #1e2d3d', paddingTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
+            Recommended Next 3 n8n Workflows to Build
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+            {NEXT_3_N8N.map((w, i) => (
+              <div key={i} style={{ backgroundColor: '#111827', borderRadius: 8, padding: '12px 14px', border: '1px solid #f59e0b22' }}>
+                <div style={{ fontSize: 10, color: '#f59e0b', fontWeight: 700, marginBottom: 6 }}>#{i + 1}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#fde68a', marginBottom: 6 }}>{w.name}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.6, marginBottom: 6 }}>{w.desc}</div>
+                <div style={{ fontSize: 11, color: '#10b981', fontStyle: 'italic' }}>Impact: {w.impact}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION E — Experienced Founder Lens */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #ef444455', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section E — Forward-Looking Strategic Perspective</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>The Experienced Founder Lens</h4>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px', lineHeight: 1.6 }}>
+          Perspective from someone who has successfully scaled a contractor AI platform. What they would prioritize, automate, avoid, and pursue first.
+          <span style={{ color: '#ef4444', fontStyle: 'italic' }}> This section reflects forward-looking strategic opinion, not current state facts.</span>
+        </p>
+        {!founderInsight && !founderLoading && (
+          <button
+            onClick={loadFounderInsight}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '8px 16px', borderRadius: 8,
+              border: '1px solid #f8717155', backgroundColor: 'transparent',
+              color: '#f87171', cursor: 'pointer',
+            }}
+          >
+            ⚡ Generate Founder Perspective
+          </button>
+        )}
+        {(founderInsight || founderLoading) && (
+          <InsightCard
+            title="Experienced Founder Lens"
+            accent="#f87171"
+            insight={founderInsight}
+            loading={founderLoading}
+            onRegenerate={loadFounderInsight}
+          />
+        )}
+      </div>
+
+    </div>
+  )
+}
+
+// ─── TAB 9 — Industry Analysis ────────────────────────────────────────────────
+
+const CURRENT_INDUSTRIES = [
+  {
+    name: 'Electrical',
+    icon: '⚡',
+    completeness: 95,
+    marketSize: '$28B',
+    missingFeatures: ['Permit auto-filing integration', 'NEC code version selector', 'Utility interconnect workflow'],
+    revenueAt50: '$47,500/mo',
+    color: '#f59e0b',
+  },
+  {
+    name: 'Plumbing',
+    icon: '🔧',
+    completeness: 55,
+    marketSize: '$14B',
+    missingFeatures: ['Fixture-specific estimating line items', 'Inspection schedule integration', 'Water pressure/flow calculation tools'],
+    revenueAt50: '$23,750/mo',
+    color: '#60a5fa',
+  },
+  {
+    name: 'General Contractor',
+    icon: '🏗️',
+    completeness: 45,
+    marketSize: '$45B',
+    missingFeatures: ['Subcontractor bid management', 'Multi-phase project coordination', 'Lien waiver + retainage tracking'],
+    revenueAt50: '$42,500/mo',
+    color: '#a78bfa',
+  },
+  {
+    name: 'Medical Billing',
+    icon: '🏥',
+    completeness: 30,
+    marketSize: '$5.5B',
+    missingFeatures: ['CPT/ICD code database', 'Payer rule engine', 'ERA/EOB parsing and posting'],
+    revenueAt50: '$35,000/mo',
+    color: '#34d399',
+  },
+  {
+    name: 'Mechanic / Auto',
+    icon: '🔩',
+    completeness: 40,
+    marketSize: '$8.5B',
+    missingFeatures: ['VIN lookup + parts catalog', 'Labor time guide integration', 'Multi-vehicle service history'],
+    revenueAt50: '$20,000/mo',
+    color: '#f87171',
+  },
+  {
+    name: 'Electrical Supplier',
+    icon: '📦',
+    completeness: 35,
+    marketSize: '$12B',
+    missingFeatures: ['Inventory / PO management', 'Distributor API integrations', 'Territory rep tracking + deal tracking'],
+    revenueAt50: '$27,500/mo',
+    color: '#fb923c',
+  },
+]
+
+const NEW_INDUSTRIES = [
+  {
+    name: 'HVAC',
+    icon: '❄️',
+    fitScore: 9,
+    buildEffort: 'Low — ~75% feature overlap with Electrical template',
+    marketSize: '$18B',
+    features: ['Tonnage / BTU estimating calculator', 'Equipment model lookup + warranty tracking', 'Seasonal maintenance scheduling'],
+    vVersion: 'V4',
+    color: '#60a5fa',
+    rationale: 'HVAC contractors have near-identical business workflows to electrical: licensed technicians, permit-required installs, material MTO, service calls. Highest ROI new vertical.',
+  },
+  {
+    name: 'Roofing',
+    icon: '🏠',
+    fitScore: 8,
+    buildEffort: 'Low-Medium — squares/pitch calculation layer needed',
+    marketSize: '$22B',
+    features: ['Roof area / pitch-to-squares calculator', 'Material waste factor by roof type', 'Storm damage claim workflow'],
+    vVersion: 'V4',
+    color: '#a78bfa',
+    rationale: 'Roofing has strong seasonal demand patterns and insurance-driven sales cycles. Storm season = high volume + high urgency for ops tools.',
+  },
+  {
+    name: 'Landscaping / Irrigation',
+    icon: '🌿',
+    fitScore: 7,
+    buildEffort: 'Medium — zone-based estimating model required',
+    marketSize: '$11B',
+    features: ['Zone map + irrigation head calculator', 'Recurring maintenance contract billing', 'Seasonal crew scaling tools'],
+    vVersion: 'V5',
+    color: '#10b981',
+    rationale: 'Irrigation aligns well with our n8n automation + recurring billing model. Landscaping contracts create predictable MRR anchor for the platform.',
+  },
+  {
+    name: 'Solar Installation',
+    icon: '☀️',
+    fitScore: 8,
+    buildEffort: 'Medium — the RMO/Income Calc is already built for this',
+    marketSize: '$35B',
+    features: ['Site assessment + shading analysis', 'Utility incentive + rebate tracker', 'Net metering & interconnect workflow'],
+    vVersion: 'V4',
+    color: '#f59e0b',
+    rationale: 'PowerOn Hub already has a partial Solar RMO calculator. Solar installation has the highest market size of any new vertical and strong permit + utility workflow overlap with Electrical.',
+  },
+  {
+    name: 'Pool Service',
+    icon: '🏊',
+    fitScore: 6,
+    buildEffort: 'Low — maps well to recurring service model',
+    marketSize: '$6B',
+    features: ['Chemical dosing calculator', 'Route optimization for weekly service', 'Equipment lifecycle + repair log'],
+    vVersion: 'V5',
+    color: '#38bdf8',
+    rationale: 'Pool service is subscription-based (weekly visits), which maps directly to our recurring service log model. Route optimization adds AI differentiator.',
+  },
+  {
+    name: 'Pest Control',
+    icon: '🐛',
+    fitScore: 6,
+    buildEffort: 'Low-Medium — chemical log + EPA compliance layer',
+    marketSize: '$9B',
+    features: ['Chemical application log (EPA compliance)', 'Recurring treatment schedule manager', 'Infestation photo documentation'],
+    vVersion: 'V5',
+    color: '#86efac',
+    rationale: 'Recurring revenue model + licensed applicator tracking aligns with our compliance and crew management features.',
+  },
+  {
+    name: 'Security Systems',
+    icon: '🔐',
+    fitScore: 7,
+    buildEffort: 'Medium — monitoring contract + UL certification workflows',
+    marketSize: '$16B',
+    features: ['Panel and zone configuration log', 'UL certification + license tracking', 'Monitoring contract RMR tracking'],
+    vVersion: 'V5',
+    color: '#c084fc',
+    rationale: 'Security integrators are licensed contractors with similar permit and inspection workflows. RMR (recurring monthly revenue) per account creates strong LTV story.',
+  },
+  {
+    name: 'Fire Protection',
+    icon: '🔥',
+    fitScore: 7,
+    buildEffort: 'Medium — NFPA code compliance layer + AHJ tracking',
+    marketSize: '$7B',
+    features: ['NFPA inspection checklist builder', 'AHJ (Authority Having Jurisdiction) contact tracker', 'Deficiency report + corrective action log'],
+    vVersion: 'V5',
+    color: '#f87171',
+    rationale: 'Fire protection aligns with GUARDIAN\'s compliance monitoring capabilities. Highly regulated, high liability — contractors pay for tools that reduce citation risk.',
+  },
+  {
+    name: 'Painting / Coating',
+    icon: '🖌️',
+    fitScore: 5,
+    buildEffort: 'Low — simple surface area estimating model',
+    marketSize: '$4.5B',
+    features: ['Surface area estimating by room/surface type', 'Paint quantity calculator with waste factor', 'Color spec + product tracking per project'],
+    vVersion: 'V6',
+    color: '#fbbf24',
+    rationale: 'Lower barrier to entry than technical trades. Useful for smaller operators who lack estimating tools but have less willingness to pay for premium features.',
+  },
+  {
+    name: 'Janitorial / Facilities',
+    icon: '🧹',
+    fitScore: 4,
+    buildEffort: 'Medium — contract-based, multiple-site scheduling model',
+    marketSize: '$25B',
+    features: ['Facility schedule + checklist builder', 'Supplies ordering + reorder tracking', 'Client site contact management'],
+    vVersion: 'V6',
+    color: '#9ca3af',
+    rationale: 'Large market but lowest technical overlap. Janitorial operators don\'t require permits, inspections, or material takeoffs — core platform features would feel irrelevant.',
+  },
+]
+
+const NON_FIT_MARKETS = [
+  {
+    market: 'Healthcare Providers (clinics, hospitals)',
+    disqualifiers: ['HIPAA compliance requires certified PHI handling — far beyond current architecture', 'Clinical workflow complexity not addressable by a single operator platform', 'Would require $500K+ in legal/compliance infrastructure'],
+  },
+  {
+    market: 'Real Estate Brokerage',
+    disqualifiers: ['MLS integration requires licensed data partnerships', 'Transaction-based model incompatible with our per-org subscription', 'CRM and contract management are a completely different software category'],
+  },
+  {
+    market: 'Restaurant / Food Service',
+    disqualifiers: ['No permit, labor licensing, or material estimating overlap', 'POS systems and health code workflows are entirely different problem set', 'Extremely price-sensitive market — low willingness to pay for AI ops tools'],
+  },
+  {
+    market: 'Manufacturing / Industrial',
+    disqualifiers: ['ERP-level supply chain complexity exceeds platform scope', 'Multi-site operations require enterprise infrastructure beyond V7 roadmap', 'Requires deep CAD/BOM integration that conflicts with field-service architecture'],
+  },
+  {
+    market: 'Professional Services (law, accounting)',
+    disqualifiers: ['Billable time tracking + client matter management is a fully separate category (Clio, PracticePanther)', 'No material, permit, or field labor concept — zero feature overlap', 'High regulatory sensitivity (bar, CPA licensing) creates compliance liability'],
+  },
+]
+
+const EXPANSION_ROADMAP = [
+  { version: 'V4 (Q3 2026)', industries: ['HVAC', 'Roofing', 'Solar Installation'], rationale: 'Highest feature overlap, largest market sizes, fastest time-to-template' },
+  { version: 'V5 (Q1 2027)', industries: ['Pool Service', 'Pest Control', 'Security Systems', 'Fire Protection', 'Landscaping'], rationale: 'Recurring revenue models + compliance workflows already in platform' },
+  { version: 'V6 (Q3 2027)', industries: ['Painting/Coating', 'Janitorial/Facilities', 'GC (full)', 'Electrical Supplier (full)'], rationale: 'Lower-overlap verticals after platform has hardened multi-industry routing' },
+  { version: 'V7 (2028)', industries: ['Medical Billing (rebuilt)', 'International markets', 'Franchise/multi-location'], rationale: 'Requires TITAN agent, compliance layers, and data licensing infrastructure' },
+]
+
+function FitScoreBar({ score }: { score: number }) {
+  const color = score >= 8 ? '#10b981' : score >= 6 ? '#f59e0b' : '#ef4444'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ flex: 1, height: 5, backgroundColor: '#1f2937', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${score * 10}%`, backgroundColor: color, borderRadius: 3 }} />
+      </div>
+      <span style={{ fontSize: 11, fontWeight: 700, color, minWidth: 20 }}>{score}/10</span>
+    </div>
+  )
+}
+
+function Tab9IndustryAnalysis() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+      {/* Header */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #10b98155', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#10b981', borderRadius: 2 }} />
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: '#a7f3d0', margin: 0 }}>Industry Analysis</h3>
+        </div>
+        <p style={{ fontSize: 13, color: '#9ca3af', lineHeight: 1.6, margin: 0 }}>
+          Current 6 industry verticals vs. 10 new opportunities, honest analysis of where the platform doesn't fit, and a V4–V7 expansion roadmap.
+        </p>
+      </div>
+
+      {/* SECTION A — Current Industries */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section A</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 16px' }}>Current 6 Industries vs. Horizon</h4>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {CURRENT_INDUSTRIES.map((ind, i) => (
+            <div key={i} style={{ backgroundColor: '#111827', borderRadius: 10, padding: '14px 16px', border: `1px solid ${ind.color}22` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: 18 }}>{ind.icon}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{ind.name}</div>
+                  <div style={{ fontSize: 11, color: '#6b7280' }}>Market size: {ind.marketSize}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 2 }}>Template Completeness</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: ind.color }}>{ind.completeness}%</div>
+                </div>
+              </div>
+              <div style={{ height: 4, backgroundColor: '#1f2937', borderRadius: 3, marginBottom: 10, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${ind.completeness}%`, backgroundColor: ind.color, borderRadius: 3 }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'start' }}>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Top 3 Missing Features</div>
+                  {ind.missingFeatures.map((f, j) => (
+                    <div key={j} style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.7, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#374151' }}>•</span>{f}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ backgroundColor: '#0a0f1a', borderRadius: 8, padding: '8px 12px', textAlign: 'center', minWidth: 120 }}>
+                  <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 2 }}>Revenue @ 50 orgs</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: ind.color }}>{ind.revenueAt50}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* SECTION B — New Industry Opportunities */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section B</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>10 New Industry Opportunities</h4>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 16px', lineHeight: 1.6 }}>
+          Where the PowerOn Hub architecture fits beyond the current 6 verticals.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+          {NEW_INDUSTRIES.map((ind, i) => {
+            const vColors: Record<string, string> = { V4: '#60a5fa', V5: '#a78bfa', V6: '#f59e0b', V7: '#f87171' }
+            const vColor = vColors[ind.vVersion] ?? '#9ca3af'
+            return (
+              <div key={i} style={{ backgroundColor: '#111827', borderRadius: 10, padding: '14px 16px', border: `1px solid ${ind.color}22`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 18 }}>{ind.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{ind.name}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, backgroundColor: `${vColor}20`, color: vColor }}>{ind.vVersion}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>Market: {ind.marketSize}</div>
+                  </div>
+                </div>
+                <FitScoreBar score={ind.fitScore} />
+                <div style={{ fontSize: 11, color: '#6b7280' }}>Build effort: {ind.buildEffort}</div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>First 3 Features Needed</div>
+                  {ind.features.map((f, j) => (
+                    <div key={j} style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.7, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#374151' }}>•</span>{f}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ backgroundColor: '#0a0f1a', borderRadius: 6, padding: '8px 10px', fontSize: 11, color: '#d1d5db', lineHeight: 1.6, fontStyle: 'italic' }}>
+                  {ind.rationale}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* SECTION C — Markets Where Platform Does NOT Fit */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #ef444455', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section C</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>Markets Where the Platform Does NOT Fit</h4>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 16px', lineHeight: 1.6 }}>
+          Honest analysis of where attempting to expand would require rebuilding the platform rather than extending it.
+          <span style={{ color: '#ef4444', fontStyle: 'italic' }}> This section builds investor credibility by demonstrating awareness of platform limits.</span>
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {NON_FIT_MARKETS.map((m, i) => (
+            <div key={i} style={{ backgroundColor: '#1a0a0a', borderRadius: 8, padding: '12px 14px', border: '1px solid #ef444422' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#fca5a5', marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, backgroundColor: '#ef444420', color: '#f87171' }}>NO FIT</span>
+                {m.market}
+              </div>
+              {m.disqualifiers.map((d, j) => (
+                <div key={j} style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.7, display: 'flex', gap: 6 }}>
+                  <span style={{ color: '#ef4444' }}>✕</span>{d}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* SECTION D — Expansion Roadmap */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e2d3d', borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Section D</div>
+        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', margin: '0 0 4px' }}>Industry Expansion Roadmap</h4>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 16px', lineHeight: 1.6 }}>
+          Recommended sequence based on effort, market size, and feature overlap — overlaid on V4–V7 timeline.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {EXPANSION_ROADMAP.map((phase, i) => {
+            const colors = ['#60a5fa', '#a78bfa', '#f59e0b', '#f87171']
+            const color = colors[i] ?? '#9ca3af'
+            return (
+              <div key={i} style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                <div style={{
+                  minWidth: 110, padding: '6px 10px', borderRadius: 7, backgroundColor: `${color}15`,
+                  border: `1px solid ${color}33`, textAlign: 'center', flexShrink: 0,
+                }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color }}>{phase.version.split(' ')[0]}</div>
+                  <div style={{ fontSize: 9, color: '#6b7280' }}>{phase.version.split(' ').slice(1).join(' ')}</div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                    {phase.industries.map((ind, j) => (
+                      <span key={j} style={{
+                        fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 5,
+                        backgroundColor: '#111827', color: '#d1d5db', border: '1px solid #374151',
+                      }}>{ind}</span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>{phase.rationale}</div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+    </div>
+  )
+}
+
 // ─── Coming Soon placeholder for tabs 4–11 ────────────────────────────────────
 function PlaceholderTab({ num }: { num: number }) {
   return (
@@ -2273,8 +3174,8 @@ export default function AdminCommandCenter() {
       case 'improvelog': return <Tab5ImprovementLog />
       case 't6':      return <Tab6SummaryChecklist />
       case 't7':      return <Tab7ScriptsPositioning />
-      case 't8':      return <PlaceholderTab num={8} />
-      case 't9':      return <PlaceholderTab num={9} />
+      case 't8':      return <Tab8AIAgentOrganization />
+      case 't9':      return <Tab9IndustryAnalysis />
       case 't10':     return <PlaceholderTab num={10} />
       case 't11':     return <PlaceholderTab num={11} />
       default:        return <Tab1VisionTimeline />
@@ -2303,7 +3204,7 @@ export default function AdminCommandCenter() {
           <span style={{
             fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
             backgroundColor: '#ca8a04', color: '#fff', letterSpacing: '0.05em',
-          }}>B38</span>
+          }}>B39</span>
         </div>
         {/* Tab bar */}
         <div style={{ display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 1 }}>
