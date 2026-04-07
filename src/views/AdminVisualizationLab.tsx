@@ -543,14 +543,16 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
     }
     function doInit() {
       if (orbInitialized.current) return
-      if (!mount.clientWidth || !mount.clientHeight) return
       orbInitialized.current = true
-      const W = Math.max(mount.clientWidth, 100), H = Math.max(mount.clientHeight, 100)
+      const W = Math.max(mount.clientWidth || 800, 100), H = Math.max(mount.clientHeight || 600, 100)
       const scene = new THREE.Scene()
       const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100); camera.position.z = 3
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
       renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-      renderer.setClearColor(0x000000, 0); mount.appendChild(renderer.domElement)
+      renderer.setClearColor(0x000000, 0)
+      renderer.domElement.style.position = 'absolute'
+      renderer.domElement.style.zIndex = '1'
+      mount.appendChild(renderer.domElement)
 
       const PCOUNT = 2000
       const positions = new Float32Array(PCOUNT * 3), origPositions = new Float32Array(PCOUNT * 3)
@@ -640,7 +642,7 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
     return () => { if(io)io.disconnect(); if(animFrame)cancelAnimationFrame(animFrame); if(ro)ro.disconnect(); removeSatellites(); if(renderer){renderer.dispose(); if(mount&&mount.contains(renderer.domElement))mount.removeChild(renderer.domElement)} }
   }, [])
 
-  return <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '400px' }} />
+  return <div ref={mountRef} style={{ width: '100%', height: 'calc(100vh - 160px)', position: 'relative', overflow: 'hidden' }} />
 }
 
 // ─── Geometric Orb ────────────────────────────────────────────────────────────
@@ -657,11 +659,12 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
     let animFrame: number, renderer: THREE.WebGLRenderer, ro: ResizeObserver, io: IntersectionObserver
     function doInit() {
       if (orbInitialized.current) return
-      if (!mount.clientWidth || !mount.clientHeight) return
       orbInitialized.current = true
-      const W=Math.max(mount.clientWidth,100), H=Math.max(mount.clientHeight,100)
+      const W=Math.max(mount.clientWidth||800,100), H=Math.max(mount.clientHeight||600,100)
       const scene=new THREE.Scene(); const camera=new THREE.PerspectiveCamera(60,W/H,0.1,100); camera.position.z=3
-      renderer=new THREE.WebGLRenderer({antialias:true,alpha:true}); renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2)); renderer.setClearColor(0x000000,0); mount.appendChild(renderer.domElement)
+      renderer=new THREE.WebGLRenderer({antialias:true,alpha:true}); renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2)); renderer.setClearColor(0x000000,0)
+      renderer.domElement.style.position='absolute'; renderer.domElement.style.zIndex='1'
+      mount.appendChild(renderer.domElement)
       const icoGeo=new THREE.IcosahedronGeometry(1,2); const icoEdges=new THREE.EdgesGeometry(icoGeo)
       const icoMat=new THREE.LineBasicMaterial({color:0x00ff88,transparent:true,opacity:0.7}); const wireframe=new THREE.LineSegments(icoEdges,icoMat); scene.add(wireframe)
       const coreGeo2=new THREE.IcosahedronGeometry(0.45,1); const coreEdges=new THREE.EdgesGeometry(coreGeo2)
@@ -696,7 +699,7 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
     return ()=>{if(io)io.disconnect();if(animFrame)cancelAnimationFrame(animFrame);if(ro)ro.disconnect();if(renderer){renderer.dispose();if(mount&&mount.contains(renderer.domElement))mount.removeChild(renderer.domElement)}}
   }, [])
 
-  return <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '400px' }} />
+  return <div ref={mountRef} style={{ width: '100%', height: 'calc(100vh - 160px)', position: 'relative', overflow: 'hidden' }} />
 }
 
 // ─── Orb Lab ──────────────────────────────────────────────────────────────────
