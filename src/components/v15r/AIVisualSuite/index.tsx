@@ -40,6 +40,8 @@ export { default as MandelbrotDepth }    from './MandelbrotDepth'
 export { default as TopologyMorph }      from './TopologyMorph'
 export { useVisualEngine }               from './useVisualEngine'
 export type { VisualEngineProps }        from './useVisualEngine'
+export { useNEXUSAudio }                 from './useNEXUSAudio'
+export type { AudioBands }              from './useNEXUSAudio'
 export { VISUAL_INFO }                   from './VisualInfoPopup'
 export type { VisualInfo }               from './VisualInfoPopup'
 

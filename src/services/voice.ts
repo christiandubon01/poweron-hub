@@ -570,6 +570,16 @@ export class VoiceSubsystem {
     return this.status
   }
 
+  /** B49 — expose mic stream for live audio visualisation */
+  getMicStream(): MediaStream | null {
+    return this.mediaStream
+  }
+
+  /** B49 — expose current TTS audio element for live audio visualisation */
+  getCurrentAudio(): HTMLAudioElement | null {
+    return this.currentAudio
+  }
+
   /**
    * Get current session.
    */

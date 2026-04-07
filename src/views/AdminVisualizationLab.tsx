@@ -742,7 +742,13 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         </div>
       </div>
       <div style={{ flex:1, overflow:'auto', padding:'8px' }}>
-        <VisualSuitePanel />
+        <VisualSuitePanel nexusState={
+          orbState === 'IDLE'        ? 'idle'       :
+          orbState === 'LISTENING'   ? 'listening'  :
+          orbState === 'THINKING'    ? 'thinking'   :
+          orbState === 'SPEAKING'    ? 'speaking'   :
+          orbState === 'MULTI_AGENT' ? 'multiAgent' : 'idle'
+        } />
       </div>
     </div>
   )

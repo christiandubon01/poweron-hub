@@ -26,6 +26,7 @@ import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, on
 import { useAuth } from '@/hooks/useAuth'
 import { NexusDrawerPanel, type DrawerMessage } from '@/components/nexus/NexusDrawerPanel'
 import type { OrbState } from '@/components/nexus/NexusPresenceOrb'
+import { supabase } from '@/lib/supabase'
 
 // ── Voice preprocessing ────────────────────────────────────────────────────────
 
@@ -323,6 +324,12 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         // so voice queries share multi-turn context with text conversation
         voice.setConversationHistory(conversationHistoryRef.current)
         await voice.startRecording('normal')
+        // B49 — log voice session start (fire-and-forget)
+        supabase.from('hub_platform_events').insert({
+          event_type:  'nexus_session',
+          event_label: 'Voice session started',
+          metadata:    { timestamp: new Date().toISOString() },
+        }).then(() => {})
         break
       case 'recording':
         await voice.stopRecording()
@@ -364,14 +371,22 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         mode,
       })
 
+      const agentName = response.agent?.agentId ?? 'nexus'
       const nexusMsg = {
         id:        `text-nexus-${Date.now()}`,
         role:      'nexus',
         content:   response.agent?.content ?? 'No response',
         timestamp: Date.now(),
-        agentId:   response.agent?.agentId ?? 'nexus',
+        agentId:   agentName,
       }
       setMessages(prev => [...prev, nexusMsg])
+
+      // B49 — log agent call (fire-and-forget)
+      supabase.from('hub_platform_events').insert({
+        event_type:  'agent_call',
+        event_label: agentName,
+        metadata:    { agentName, sessionId: null, timestamp: new Date().toISOString() },
+      }).then(() => {})
 
       conversationHistoryRef.current = [
         ...conversationHistoryRef.current,
@@ -480,6 +495,8 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
         onSendText      = {handleSendText}
         isSending       = {isSending}
         contextMessages = {contextMessages}
+        micStream       = {getVoiceSubsystem().getMicStream()}
+        ttsElement      = {getVoiceSubsystem().getCurrentAudio()}
       />
 
       {/* Silence progress bar */}

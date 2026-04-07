@@ -4317,6 +4317,44 @@ function Tab13UnifiedCommand() {
   const recentLogs = [...(d?.logs || [])].sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 3)
   const last3 = HUB_BUILD_MILESTONES.slice(0, 3)
 
+  // B49 — Live hub event feed
+  const [deployCount, setDeployCount] = React.useState<number | null>(null)
+  const [recentEvents, setRecentEvents] = React.useState<Array<{ event_type: string; event_label: string | null; created_at: string }>>([])
+
+  React.useEffect(() => {
+    // Deploy count
+    supabase
+      .from('hub_platform_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_type', 'deploy')
+      .then(({ count }) => { if (count !== null) setDeployCount(count) })
+    // Recent events
+    supabase
+      .from('hub_platform_events')
+      .select('event_type, event_label, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5)
+      .then(({ data }) => { if (data) setRecentEvents(data) })
+  }, [])
+
+  function relativeTime(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.floor(hrs / 24)}d ago`
+  }
+
+  const EVENT_COLORS: Record<string, string> = {
+    nexus_session: '#00ff9f',
+    agent_call:    '#00e5ff',
+    deploy:        '#ffd700',
+    beta_onboard:  '#ff44aa',
+    feature_used:  '#aa44ff',
+  }
+
   const secHdr: React.CSSProperties = {
     fontSize: 10,
     fontWeight: 700,
@@ -4475,7 +4513,9 @@ function Tab13UnifiedCommand() {
 
           <div style={secHdr}>Build Velocity</div>
           <div style={cCard}>
-            <div style={{ fontSize: 12, color: '#d1d5db', marginBottom: 4 }}>6+ production deploys since March 2026</div>
+            <div style={{ fontSize: 12, color: '#d1d5db', marginBottom: 4 }}>
+              {deployCount !== null ? `${deployCount} production deploys` : '6+ production deploys'} since March 2026
+            </div>
             <div style={{ fontSize: 12, color: '#d1d5db' }}>18 files changed in B46 alone</div>
           </div>
 
@@ -4514,6 +4554,28 @@ function Tab13UnifiedCommand() {
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* B49 — Live platform event feed */}
+          <div style={secHdr}>Live Event Feed</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {recentEvents.length === 0 && (
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>No events yet</div>
+            )}
+            {recentEvents.map((ev, i) => {
+              const color = EVENT_COLORS[ev.event_type] ?? '#9ca3af'
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 8, color, flexShrink: 0 }}>●</span>
+                  <span style={{ fontSize: 11, color: '#d1d5db', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ev.event_label ?? ev.event_type}
+                  </span>
+                  <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>
+                    {relativeTime(ev.created_at)}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>

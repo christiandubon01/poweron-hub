@@ -31,6 +31,8 @@ import type { OrbState } from './NexusPresenceOrb'
 import type { VoiceSessionStatus } from '@/services/voice'
 // B46 — AI Visual Suite: QuantumFoam is the default NEXUS orb visual
 import { VisualRenderer, getVizMode } from '@/components/v15r/AIVisualSuite'
+// B49 — Live audio pipeline
+import { useNEXUSAudio } from '@/components/v15r/AIVisualSuite/useNEXUSAudio'
 
 // Map OrbState to VisualRenderer audio-reactive props
 function orbStateToAudio(state: OrbState): { bass: number; mid: number; high: number; mtz: number; hue: number } {
@@ -70,6 +72,9 @@ export interface NexusDrawerPanelProps {
   isSending:        boolean
   /** Last 3 messages from the previous session — shown faded at top for continuity */
   contextMessages?: DrawerMessage[]
+  /** B49 — Live audio streams for visual reactivity */
+  micStream?:   MediaStream | null
+  ttsElement?:  HTMLAudioElement | null
 }
 
 // ── Agent color map ────────────────────────────────────────────────────────────
@@ -240,7 +245,18 @@ export function NexusDrawerPanel({
   onSendText,
   isSending,
   contextMessages = [],
+  micStream,
+  ttsElement,
 }: NexusDrawerPanelProps) {
+  // B49 — Live audio bands (falls back to simulation when streams are null)
+  const { bass, mid, high } = useNEXUSAudio(micStream ?? null, ttsElement ?? null)
+  // Map orbState to mtzBoost for visual intensity
+  const _nexusMtzBoost: Record<string, number> = {
+    inactive: 0.0, listening: 0.1, recording: 0.25,
+    transcribing: 0.15, processing: 0.15, responding: 0.3, complete: 0.0, error: 0.0,
+  }
+  const _mtzBoost = _nexusMtzBoost[orbState] ?? 0.0
+  const _vizMtz = Math.min(1.0, _mtzBoost)
   const [textInput, setTextInput] = useState('')
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const textareaRef     = useRef<HTMLTextAreaElement>(null)
@@ -382,12 +398,12 @@ export function NexusDrawerPanel({
             </span>
           </div>
 
-          {/* Orb — fills the left half — B46: QuantumFoam is default (nexus_viz_mode=0) */}
+          {/* Orb — fills the left half — B49: live audio reactive */}
           <div
             className="w-full flex-1"
             style={{ maxHeight: '100%', minHeight: 0 }}
           >
-            <VisualRenderer mode={getVizMode()} {...orbStateToAudio(orbState)} style={{ width: '100%', height: '100%' }} />
+            <VisualRenderer mode={getVizMode()} bass={bass} mid={mid} high={high} mtz={_vizMtz} hue={160} style={{ width: '100%', height: '100%' }} />
           </div>
 
           {/* State label */}

@@ -10,6 +10,7 @@
  */
 
 import React, { useRef, useEffect, useCallback, useState } from 'react'
+import { useNEXUSAudio } from './useNEXUSAudio'
 
 import { B1_DRAWS }            from './modes/bucket1'
 import { B2_DRAWS }            from './modes/bucket2'
@@ -135,8 +136,28 @@ function InfoPopup({ desc, onClose }: InfoPopupProps) {
   )
 }
 
+// ─── Props ────────────────────────────────────────────────────────────────────
+interface VisualSuitePanelProps {
+  micStream?: MediaStream | null
+  ttsElement?: HTMLAudioElement | null
+  nexusState?: 'idle' | 'listening' | 'thinking' | 'speaking' | 'multiAgent'
+}
+
+// ─── NEXUS state → visual config ─────────────────────────────────────────────
+const NEXUS_STATE_CONFIG = {
+  idle:       { mtzBoost: 0.0,  intensityMult: 0.8 },
+  listening:  { mtzBoost: 0.1,  intensityMult: 1.2 },
+  thinking:   { mtzBoost: 0.15, intensityMult: 1.0 },
+  speaking:   { mtzBoost: 0.3,  intensityMult: 1.4 },
+  multiAgent: { mtzBoost: 0.5,  intensityMult: 1.6 },
+} as const
+
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function VisualSuitePanel() {
+export default function VisualSuitePanel({
+  micStream,
+  ttsElement,
+  nexusState,
+}: VisualSuitePanelProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const [activeMode, setActiveModeState] = useState<number>(() => lsGet(LS_MODE, 0))
@@ -148,6 +169,22 @@ export default function VisualSuitePanel() {
   const [autoOn,    setAutoOn]    = useState(false)
   const [showReel,  setShowReel]  = useState(false)
   const [showInfo,  setShowInfo]  = useState(false)
+
+  // ── Live audio bands from useNEXUSAudio ──────────────────────────────────
+  const { bass, mid, high, isLive } = useNEXUSAudio(
+    micStream ?? null,
+    ttsElement ?? null,
+  )
+
+  // Refs so rAF loop always reads latest values without stale closure issues
+  const bassRef       = useRef(bass)
+  const midRef2       = useRef(mid)
+  const highRef       = useRef(high)
+  const nexusStateRef = useRef(nexusState ?? 'idle')
+  bassRef.current       = bass
+  midRef2.current       = mid
+  highRef.current       = high
+  nexusStateRef.current = nexusState ?? 'idle'
 
   // Mutable refs for rAF loop (avoid stale closures)
   const modeRef      = useRef(activeMode)
@@ -196,15 +233,16 @@ export default function VisualSuitePanel() {
     const W    = canvas.width  / dpr
     const H    = canvas.height / dpr
 
-    // Simulated frequency values
+    // Audio-reactive frequency values (live or simulated via useNEXUSAudio)
     const spd  = (speedRef.current / 100) * 1.8 + 0.2   // 0.2 – 2.0
     const t    = ((ts - startTsRef.current) / 1000) * spd
     const int  = intensityRef.current / 100               // 0 – 1
-    const B    = Math.min(1, (0.3 + 0.6 * Math.abs(Math.sin(t * 1.1)) * Math.abs(Math.sin(t * 0.37))) * int + 0.15)
-    const M    = Math.min(1, (0.2 + 0.5 * Math.abs(Math.sin(t * 0.7 + 1.2)) * Math.abs(Math.sin(t * 0.53))) * int + 0.1)
-    const Hi   = hueRef.current
+    const stateConfig = NEXUS_STATE_CONFIG[nexusStateRef.current] ?? NEXUS_STATE_CONFIG['idle']
+    const effectiveMtz = Math.min(1.0, (mtzRef.current / 100) + stateConfig.mtzBoost)
+    const B  = Math.min(1, bassRef.current * stateConfig.intensityMult * int + 0.05)
+    const M  = Math.min(1, midRef2.current * stateConfig.intensityMult * int + 0.05)
+    const Hi = Math.min(1, highRef.current * stateConfig.intensityMult * int + 0.05)
     const bh   = Math.abs(Math.sin(t * 0.9)) * int
-    const mtzV = mtzRef.current / 100
 
     // AUTO advance
     if (autoRef.current) {
@@ -221,7 +259,7 @@ export default function VisualSuitePanel() {
     // Draw active mode
     const drawFn = ALL_DRAWS[modeRef.current] ?? ALL_DRAWS[0]
     try {
-      drawFn(ctx, W, H, t, B, M, Hi, bh, mtzV)
+      drawFn(ctx, W, H, t, B, M, Hi, bh, effectiveMtz)
     } catch (_e) {
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, W, H)
@@ -413,6 +451,10 @@ export default function VisualSuitePanel() {
             <span style={{ fontSize: 9, color: '#333', marginLeft: 2, flexShrink: 0 }}>
               #{activeDesc.id.toString().padStart(2, '0')}
             </span>
+            {isLive
+              ? <span style={{ fontSize: 8, color: '#00ff9f', flexShrink: 0, letterSpacing: '0.07em' }}>● LIVE AUDIO</span>
+              : <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.2)', flexShrink: 0, letterSpacing: '0.07em' }}>● SIMULATED</span>
+            }
           </div>
 
           {/* Action buttons */}
