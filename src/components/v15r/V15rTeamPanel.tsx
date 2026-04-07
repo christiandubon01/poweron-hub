@@ -33,6 +33,7 @@ import {
   type BackupLog,
   type BackupData,
 } from '@/services/backupDataService'
+import { calcPipeline } from '@/utils/pipelineCalc'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { useDemoMode } from '@/store/demoStore'
@@ -194,10 +195,8 @@ function EmployeeCostStructure({ backup }: { backup: BackupData }) {
     try {
       const fullBackup = getBackupData()
 
-      // Calculate pipeline total
-      const pipelineTotal = (fullBackup.projects || []).reduce((sum, p) => {
-        return sum + (num(p.contract) || 0)
-      }, 0)
+      // Calculate pipeline total — active + coming-up projects only (canonical formula)
+      const pipelineTotal = calcPipeline(fullBackup.projects || [])
 
       // Calculate monthly service pace
       const serviceLogs = fullBackup.serviceLogs || []

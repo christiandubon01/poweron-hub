@@ -602,8 +602,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     let totalQuoted = 0, totalMaterial = 0, totalMileage = 0
     svcLogs.forEach((l: any) => {
       totalQuoted += Number(l.quoted || 0)
-      totalMaterial += Number(l.materialCost || l.material || 0)
-      totalMileage += Number(l.mileage || 0) * mileRate
+      totalMaterial += Number(l.mat || 0)
+      totalMileage += Number(l.miles || 0) * mileRate
     })
     return totalQuoted - totalMaterial - totalMileage
   })()

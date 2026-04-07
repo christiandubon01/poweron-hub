@@ -32,6 +32,7 @@ import {
 } from '@/services/backupDataService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
+import { calcPipeline } from '@/utils/pipelineCalc'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 
@@ -273,7 +274,16 @@ export default function V15rMoneyPanel() {
   const svcOpTotal = serviceLogs.reduce((s, l) => s + num(l.opCost != null ? l.opCost : (num(l.hrs) * opCostRate)), 0)
   const svcDirectCosts = svcMatTotal + svcMilesTotal + svcOpTotal
   const svcProfit = serviceLogs.reduce((s, l) => s + num(l.profit != null ? l.profit : (num(l.quoted) - num(l.mat) - num(l.miles) * mileRate - num(l.hrs) * opCostRate)), 0)
-  const svcOutstanding = svcQuoted - svcCollected
+  const svcOutstanding = serviceLogs.reduce((s, l) => {
+    const quoted = num(l.quoted)
+    const collected = num(l.collected)
+    const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
+    const addIncome = adjustments
+      .filter((a: any) => a && a.type === 'income')
+      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
+    const totalBillable = quoted + addIncome
+    return s + Math.max(0, totalBillable - collected)
+  }, 0)
   const svcAvgTicket = svcCount ? svcQuoted / svcCount : 0
   const svcMargin = svcQuoted > 0 ? (svcProfit / svcQuoted) * 100 : 0
 
@@ -315,21 +325,21 @@ export default function V15rMoneyPanel() {
   const ytdAccum = weeklyData.length > 0 ? num(weeklyData[weeklyData.length - 1]?.accum) : 0
 
   // ── 8 HEADER KPIs (Per-Business Summary) ────────────────────────────────────
-  // 1. Total Pipeline = sum of all active project contracts + service unbilled
-  const totalPipeline = projectContract + Math.max(0, svcQuoted - svcCollected)
+  // 1. Total Pipeline = active + coming-up project contracts + remaining service balance
+  const totalPipeline = calcPipeline(projects) + Math.max(0, svcQuoted - svcCollected)
 
   // 2. Total Collected = sum of project paid + service collected
   const totalCollected = projectPaid + svcCollected
 
   // 3. Total Material Cost = sum of mat field across all logs + service logs
-  const projectMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projectId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0)
+  const projectMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0)
   const totalMatCost = projectMatCost + svcMatTotal
 
   // 4. Total Labor Cost = sum of hours × costRate across all logs
-  const totalLaborCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projectId === m.p.id).reduce((ls, l) => ls + (num(l.hrs) * opCostRate), 0), 0) + svcOpTotal
+  const totalLaborCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + (num(l.hrs) * opCostRate), 0), 0) + svcOpTotal
 
   // 5. Total Mileage Cost = sum of miles × mileRate across all logs + service logs
-  const totalMileageCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projectId === m.p.id).reduce((ls, l) => ls + (num(l.miles) * mileRate), 0), 0) + svcMilesTotal
+  const totalMileageCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + (num(l.miles) * mileRate), 0), 0) + svcMilesTotal
 
   // 6. Combined Total Cost = mat + labor + mileage
   const combinedTotalCost = totalMatCost + totalLaborCost + totalMileageCost
@@ -361,8 +371,8 @@ export default function V15rMoneyPanel() {
     const overdue = projectMoney
       .filter(m => m.unbilled > 1000)
       .sort((a, b) => {
-        const aDays = daysSince(a.p.lastCollectDate || '1970-01-01')
-        const bDays = daysSince(b.p.lastCollectDate || '1970-01-01')
+        const aDays = daysSince(a.p.lastCollectedAt || '1970-01-01')
+        const bDays = daysSince(b.p.lastCollectedAt || '1970-01-01')
         return bDays - aDays
       })
       .slice(0, 3)
@@ -372,7 +382,7 @@ export default function V15rMoneyPanel() {
       const topAR = fmtK(overdue[0].unbilled)
       insights.push({
         icon: 'ℹ️',
-        text: `Top follow-up: ${topName} (${topAR} AR, ${daysSince(overdue[0].p.lastCollectDate || '1970-01-01')} days).`,
+        text: `Top follow-up: ${topName} (${topAR} AR, ${daysSince(overdue[0].p.lastCollectedAt || '1970-01-01')} days).`,
         severity: 'info',
       })
     }
@@ -392,8 +402,7 @@ export default function V15rMoneyPanel() {
       })
     }
 
-    // Overall exposure
-    const totalExposure = projectMoney.reduce((s, m) => s + m.unbilled, 0)
+    // Overall exposure — uses outer totalExposure (projectAR + projectUnbilled + svcOutstanding)
     if (totalExposure > totalCollected) {
       insights.push({
         icon: 'ℹ️',
