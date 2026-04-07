@@ -38,6 +38,7 @@ import {
   Map,
   HardHat,
   FlaskConical,
+  Terminal,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -713,6 +714,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null },
     { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null },
     { label: 'Visualization Lab', icon: FlaskConical, view: 'viz-lab', badge: 'B33' },
+    { label: 'Command Center', icon: Terminal, view: 'admin-command-center', badge: 'B36' },
   ]
 
   // Toggle and close helpers

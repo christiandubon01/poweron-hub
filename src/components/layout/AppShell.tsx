@@ -93,6 +93,9 @@ const SettingsV3        = lazy(() => chunkRetry(() => import('@/views/Settings')
 // B33 — Admin Visualization Lab (lazy-loaded)
 const AdminVisualizationLab = lazy(() => chunkRetry(() => import('@/views/AdminVisualizationLab')))
 
+// B36 — Admin Command Center (lazy-loaded)
+const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminCommandCenter')))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
 const OnboardingModal = lazy(() => chunkRetry(() => import('@/components/onboarding/OnboardingModal')))
@@ -501,6 +504,10 @@ export function AppShell({ children }: AppShellProps) {
       // B33 — Admin Visualization Lab
       case 'viz-lab':
         return <Suspense fallback={<PanelLoading />}><AdminVisualizationLab /></Suspense>
+
+      // B36 — Admin Command Center
+      case 'admin-command-center':
+        return <Suspense fallback={<PanelLoading />}><AdminCommandCenter /></Suspense>
 
       default:                return <V15rHome />
     }
