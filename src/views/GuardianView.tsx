@@ -35,6 +35,12 @@ import {
 } from '../mock';
 import type { AIDecisionLog, DecisionLogFilters } from '../services/auditTrailService';
 import { getDecisionLog, exportToCSV } from '../services/auditTrailService';
+import {
+  getPassiveFeedbackEntries,
+  getAgentFeedbackRatios,
+  type AuditDecisionEntry,
+  type AgentFeedbackRatio,
+} from '../services/feedbackLoopService';
 
 // ─── Severity Badge ───────────────────────────────────────────────────────────
 
@@ -494,6 +500,141 @@ function SignedNDAsPanel() {
               )}
             </li>
           ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+// ─── B29 T1: Passive Feedback Panel ──────────────────────────────────────────
+
+function PassiveFeedbackPanel() {
+  const [entries, setEntries] = useState<AuditDecisionEntry[]>([]);
+
+  useEffect(() => {
+    setEntries(getPassiveFeedbackEntries());
+    // Refresh every 10s to pick up new dismissals within this session
+    const id = setInterval(() => setEntries(getPassiveFeedbackEntries()), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  function fmtDate(iso: string) {
+    return new Date(iso).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  const decisionLabel = (type: string) => {
+    if (type === 'dismissed_alert') return { label: 'Dismissed Alert', color: '#facc15', bg: '#78350f22' };
+    return { label: 'Ignored Rec.', color: '#60a5fa', bg: '#1e3a5f22' };
+  };
+
+  return (
+    <Panel
+      title="T1 — Passive Feedback"
+      icon={<AlertTriangle size={14} />}
+      headerRight={
+        <span className="text-xs text-gray-600">{entries.length} event{entries.length !== 1 ? 's' : ''} this session</span>
+      }
+    >
+      {entries.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 gap-2 text-gray-600 text-xs">
+          <AlertTriangle size={18} className="opacity-40" />
+          <p>No dismissals or ignored recommendations yet.</p>
+          <p className="text-gray-700">Events appear when alerts are dismissed or NEXUS is closed without action.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1e2128', backgroundColor: '#0f1018' }}>
+                {['Timestamp', 'Agent', 'Type', 'Preview'].map((col) => (
+                  <th key={col} className="text-left px-3 py-2 font-semibold uppercase tracking-wide text-gray-600" style={{ fontSize: 10 }}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => {
+                const { label, color, bg } = decisionLabel(e.decision_type);
+                const preview = e.alert_content ?? e.recommendation_preview ?? '—';
+                return (
+                  <tr key={e.id} className="border-b hover:bg-white/[0.02] transition-colors" style={{ borderColor: '#1a1c23' }}>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtDate(e.timestamp)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider" style={{ backgroundColor: '#1a1d27', color: '#9ca3af', border: '1px solid #2a3040' }}>
+                        {e.agent}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wider" style={{ backgroundColor: bg, color, border: `1px solid ${color}44` }}>
+                        {label}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-400 max-w-[260px] truncate" title={preview}>{preview}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ─── B29 T2: Micro Feedback Ratios Panel ─────────────────────────────────────
+
+function MicroFeedbackPanel() {
+  const [ratios, setRatios] = useState<AgentFeedbackRatio[]>([]);
+
+  useEffect(() => {
+    setRatios(getAgentFeedbackRatios());
+    const id = setInterval(() => setRatios(getAgentFeedbackRatios()), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <Panel
+      title="T2 — Thumbs Ratio (30 days)"
+      icon={<Brain size={14} />}
+      headerRight={
+        <span className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Future prompt tuning only</span>
+      }
+    >
+      {ratios.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 gap-2 text-gray-600 text-xs">
+          <Brain size={18} className="opacity-40" />
+          <p>No thumbs feedback yet.</p>
+          <p className="text-gray-700">Feedback appears after users rate NEXUS responses.</p>
+        </div>
+      ) : (
+        <ul className="p-3 flex flex-col gap-3">
+          {ratios.map((r) => {
+            const pct = Math.round(r.ratio * 100);
+            return (
+              <li key={r.agent} className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-gray-300 uppercase tracking-wider" style={{ fontSize: 11 }}>{r.agent}</span>
+                  <div className="flex items-center gap-3 text-gray-500">
+                    <span>👍 {r.up}</span>
+                    <span>👎 {r.down}</span>
+                    <span className="font-bold" style={{ color: pct >= 70 ? '#4ade80' : pct >= 40 ? '#facc15' : '#f87171' }}>
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+                {/* Bar */}
+                <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#1e2128' }}>
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: pct >= 70 ? '#4ade80' : pct >= 40 ? '#facc15' : '#f87171',
+                    }}
+                  />
+                </div>
+                <div className="text-[10px] text-gray-700">{r.total} response{r.total !== 1 ? 's' : ''} rated</div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </Panel>
@@ -1473,7 +1614,12 @@ export default function GuardianView() {
           </div>
         )}
         {activeTab === 'ai-decisions' && (
-          <div className="h-full min-h-0">
+          <div className="flex flex-col gap-4 h-full min-h-0">
+            {/* B29 T1 — Passive feedback: dismissed alerts + ignored recommendations */}
+            <PassiveFeedbackPanel />
+            {/* B29 T2 — Micro feedback: thumbs up/down ratio per agent */}
+            <MicroFeedbackPanel />
+            {/* Existing AI decision log */}
             <AIDecisionsPanel />
           </div>
         )}

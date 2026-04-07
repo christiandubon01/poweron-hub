@@ -22,6 +22,7 @@ import {
   type ProactiveAlert,
   type AlertSeverity,
 } from '../services/proactiveAlertService'
+import { logDismissedAlert } from '../services/feedbackLoopService'
 
 // ── Style maps ────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,11 @@ function AlertCard({
     if (dismissing) return
     setDismissing(true)
     dismissAlert(alert.id)
+    // T1 — passive feedback: log silent dismissal to audit_decisions
+    logDismissedAlert({
+      agent: 'NEXUS',
+      alert_content: alert.message,
+    })
     onDismiss(alert.id)
   }
 

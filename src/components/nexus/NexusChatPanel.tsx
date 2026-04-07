@@ -32,6 +32,7 @@ import { getBackupData, num, fmt } from '@/services/backupDataService'
 import { getAlertSummaryForBriefing, isFirstNexusOpenToday } from '@/services/proactiveAlertService'
 import { AgentActivityPanel } from './AgentActivityPanel'
 import { addToScoutQueue } from '@/services/scoutQueue'
+import { logMicroFeedback, logIgnoredRecommendation } from '@/services/feedbackLoopService'
 
 // ── SCOUT suppression helper ─────────────────────────────────────────────────
 // Returns true when the user explicitly asked SCOUT for something.
@@ -181,6 +182,9 @@ export function NexusChatPanel() {
     return localStorage.getItem('nexus_expanded') === 'true'
   })
 
+  // B29 — T2 Micro Feedback: tracks thumbs vote per message id
+  const [messageFeedback, setMessageFeedback] = useState<Record<string, 'up' | 'down'>>({})
+
   // B11 — Session Debrief state
   const [isDebriefOpen, setIsDebriefOpen]           = useState(false)
   const [debriefConclusions, setDebriefConclusions] = useState<ConclusionItem[]>([])
@@ -248,6 +252,30 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
   // Initialize ECHO memory on mount (ensures owner identity anchor is seeded)
   useEffect(() => {
     initEchoMemory()
+  }, [])
+
+  // B29 — T1 Passive Feedback: log ignored recommendation on unmount.
+  // If the last message is an unacted assistant message (no follow-up user msg,
+  // no thumbs vote given), it means the user closed chat without acting.
+  const messagesRef = useRef<ChatMessage[]>([])
+  const messageFeedbackRef = useRef<Record<string, 'up' | 'down'>>({})
+  useEffect(() => { messagesRef.current = messages }, [messages])
+  useEffect(() => { messageFeedbackRef.current = messageFeedback }, [messageFeedback])
+  useEffect(() => {
+    return () => {
+      const msgs = messagesRef.current
+      const feedback = messageFeedbackRef.current
+      if (msgs.length === 0) return
+      const last = msgs[msgs.length - 1]
+      if (last.role === 'assistant' && last.content && !feedback[last.id]) {
+        // User closed without acting on the last recommendation
+        logIgnoredRecommendation({
+          recommendation_preview: last.content,
+          org_id: undefined, // org_id not accessible in cleanup; omit
+        })
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // B11 — Session conclusion extraction: trigger once when the conversation
@@ -518,6 +546,18 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     setStreamingMsgId(null)
   }, [])
 
+  // B29 — T2 Micro Feedback: handle thumbs tap (one-shot, cannot change after)
+  const handleThumbsFeedback = useCallback((msg: ChatMessage, vote: 'up' | 'down') => {
+    if (messageFeedback[msg.id]) return // already voted
+    setMessageFeedback(prev => ({ ...prev, [msg.id]: vote }))
+    logMicroFeedback({
+      agent: (msg.agentId ?? 'nexus').toUpperCase(),
+      response_preview: msg.content,
+      feedback: vote,
+      org_id: profile?.org_id,
+    })
+  }, [messageFeedback, profile])
+
   // Trigger deep dive mode
   const triggerDeepDive = useCallback(() => {
     setMode('deepdive')
@@ -779,6 +819,43 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
                   agentId={msg.agentId}
                   impactLevel={msg.impactLevel}
                 />
+              )}
+              {/* B29 — T2 Micro Feedback: thumbs up/down below every AI response */}
+              {msg.role === 'assistant' && msg.content && streamingMsgId !== msg.id && (
+                <div className="flex items-center gap-1 mt-1 pl-10">
+                  {(['up', 'down'] as const).map((vote) => {
+                    const voted = messageFeedback[msg.id]
+                    const isSelected = voted === vote
+                    const isOther = voted && voted !== vote
+                    return (
+                      <button
+                        key={vote}
+                        onClick={() => handleThumbsFeedback(msg, vote)}
+                        disabled={!!voted}
+                        title={vote === 'up' ? 'Helpful' : 'Not helpful'}
+                        className="flex items-center justify-center rounded transition-colors"
+                        style={{
+                          width: 22,
+                          height: 22,
+                          fontSize: 13,
+                          cursor: voted ? 'default' : 'pointer',
+                          opacity: isOther ? 0.25 : 1,
+                          backgroundColor: isSelected
+                            ? vote === 'up' ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)'
+                            : 'transparent',
+                          color: isSelected
+                            ? vote === 'up' ? '#4ade80' : '#f87171'
+                            : '#4b5563',
+                          border: isSelected
+                            ? `1px solid ${vote === 'up' ? '#4ade8044' : '#f8717144'}`
+                            : '1px solid transparent',
+                        }}
+                      >
+                        {vote === 'up' ? '👍' : '👎'}
+                      </button>
+                    )
+                  })}
+                </div>
               )}
               {/* Show "Deep Dive" button below latest briefing response */}
               {isLastAssistant && isBriefingMsg && mode === 'briefing' && !isProcessing && (
