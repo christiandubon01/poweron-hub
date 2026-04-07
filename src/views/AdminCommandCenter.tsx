@@ -1,14 +1,17 @@
 // @ts-nocheck
 /**
- * AdminCommandCenter.tsx — B39 | Admin Command Center
+ * AdminCommandCenter.tsx — B40 | Admin Command Center
  *
  * Full-screen admin panel with 11 sub-tabs.
- * B36: Tabs 1–3 implemented. B37: Tabs 4–5 (Economics + Improvement Log). B38: Tabs 6–7 (Summary + Checklist, Scripts + Positioning). B39: Tabs 8–9 (AI Agent Organization + Industry Analysis).
+ * B36: Tabs 1–3. B37: Tabs 4–5. B38: Tabs 6–7. B39: Tabs 8–9. B40: Tabs 10–11 + NEXUS panel.
+ * Tab 10: Compliance Overview (checklist + AI insight).
+ * Tab 11: Pending Actions / Sessions Queue / NEXUS Voice Interview Mode.
+ * NEXUS: Collapsible right-side orb + chat panel with full Command Center context.
  *
  * Admin-only: gated in V15rLayout sidebar (email matches VITE_ADMIN_EMAIL).
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip,
@@ -19,20 +22,21 @@ import {
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData } from '@/services/backupDataService'
 import { supabase } from '@/lib/supabase'
+import { NexusPresenceOrb } from '@/components/nexus/NexusPresenceOrb'
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 const TABS = [
-  { id: 'vision',   label: '1 · Vision Timeline' },
-  { id: 'backend',  label: '2 · Backend Analysis' },
-  { id: 'beta',     label: '3 · Beta Metrics' },
-  { id: 'economics',  label: '4 · Economics' },
-  { id: 'improvelog', label: '5 · Improvement Log' },
-  { id: 't6',       label: '6 · Summary + Checklist' },
-  { id: 't7',       label: '7 · Scripts + Positioning' },
-  { id: 't8',       label: '8 · AI Agents' },
-  { id: 't9',       label: '9 · Industries' },
-  { id: 't10',      label: '10' },
-  { id: 't11',      label: '11' },
+  { id: 'vision',      label: '1 · Vision Timeline' },
+  { id: 'backend',     label: '2 · Backend Analysis' },
+  { id: 'beta',        label: '3 · Beta Metrics' },
+  { id: 'economics',   label: '4 · Economics' },
+  { id: 'improvelog',  label: '5 · Improvement Log' },
+  { id: 't6',          label: '6 · Summary + Checklist' },
+  { id: 't7',          label: '7 · Scripts + Positioning' },
+  { id: 't8',          label: '8 · AI Agents' },
+  { id: 't9',          label: '9 · Industries' },
+  { id: 't10',         label: '10 · Compliance' },
+  { id: 't11',         label: '11 · Actions + Queue' },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -3141,22 +3145,848 @@ function Tab9IndustryAnalysis() {
   )
 }
 
-// ─── Coming Soon placeholder for tabs 4–11 ────────────────────────────────────
-function PlaceholderTab({ num }: { num: number }) {
+// ─── TAB 10 — Compliance Overview ─────────────────────────────────────────────
+
+const STATUS_COLORS: Record<string, string> = {
+  'Pending':     '#f59e0b',
+  'In Progress': '#3b82f6',
+  'Filed':       '#8b5cf6',
+  'Active':      '#10b981',
+  'Partial':     '#f97316',
+  'Complete':    '#22c55e',
+}
+
+const DEFAULT_COMPLIANCE_ITEMS = [
+  { category: 'Legal',    title: 'Attorney review of NDA',                        status: 'Pending',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c1', sort_order: 1 },
+  { category: 'Legal',    title: 'Attorney review of ToS',                        status: 'Pending',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c2', sort_order: 2 },
+  { category: 'Legal',    title: 'Attorney review of Privacy Policy',             status: 'Pending',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c3', sort_order: 3 },
+  { category: 'Business', title: 'CDTFA Seller Permit',                           status: 'In Progress', due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c4', sort_order: 4 },
+  { category: 'Business', title: 'USPTO Trademark #99745330',                     status: 'Filed',       due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c5', sort_order: 5 },
+  { category: 'Business', title: 'Copyright #1-15135532761',                      status: 'Filed',       due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c6', sort_order: 6 },
+  { category: 'Business', title: 'C-10 License #1151468',                         status: 'Active',      due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c7', sort_order: 7 },
+  { category: 'Business', title: 'GL Insurance (NEXT Insurance)',                 status: 'Active',      due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c8', sort_order: 8 },
+  { category: 'Business', title: 'Contractor Bond',                               status: 'Active',      due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c9', sort_order: 9 },
+  { category: 'Tech',     title: 'RLS policies audited on all Supabase tables',   status: 'Partial',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c10', sort_order: 10 },
+  { category: 'Tech',     title: 'No API keys in frontend bundle',                status: 'Active',      due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c11', sort_order: 11 },
+  { category: 'Tech',     title: 'Breach testing completed',                      status: 'Pending',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c12', sort_order: 12 },
+  { category: 'Tech',     title: 'Pre-commit security hook active',               status: 'Active',      due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c13', sort_order: 13 },
+  { category: 'Beta',     title: 'Beta invite NDA flow tested end-to-end',        status: 'Partial',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c14', sort_order: 14 },
+  { category: 'Beta',     title: 'Attorney reviewed NDA before external use',     status: 'Pending',     due_date: null, notes: '', last_reviewed: null, checked: false, id: 'c15', sort_order: 15 },
+]
+
+function Tab10Compliance() {
+  const [items, setItems] = useState(DEFAULT_COMPLIANCE_ITEMS)
+  const [loadingDb, setLoadingDb] = useState(true)
+  const [insight, setInsight] = useState('')
+  const [insightLoading, setInsightLoading] = useState(false)
+  const [savingId, setSavingId] = useState<string | null>(null)
+
+  // Load from Supabase
+  useEffect(() => {
+    async function load() {
+      try {
+        const { data, error } = await supabase
+          .from('compliance_items')
+          .select('*')
+          .order('sort_order', { ascending: true })
+        if (!error && data && data.length > 0) {
+          setItems(data)
+        }
+      } catch {
+        // fall through to default items
+      } finally {
+        setLoadingDb(false)
+      }
+    }
+    load()
+  }, [])
+
+  // Toggle checked
+  async function toggleChecked(item: any) {
+    const newVal = !item.checked
+    const now = new Date().toISOString()
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, checked: newVal, checked_at: newVal ? now : null } : i))
+    setSavingId(item.id)
+    try {
+      if (item.id && !item.id.startsWith('c')) {
+        // Real UUID — update Supabase
+        await supabase
+          .from('compliance_items')
+          .update({ checked: newVal, checked_at: newVal ? now : null, updated_at: now })
+          .eq('id', item.id)
+      } else {
+        // Local default — upsert by title
+        await supabase
+          .from('compliance_items')
+          .upsert({ ...item, id: undefined, checked: newVal, checked_at: newVal ? now : null, updated_at: now }, { onConflict: 'title' })
+      }
+    } catch {
+      // silent fail — state already updated optimistically
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  // Load AI insight
+  async function loadInsight() {
+    setInsightLoading(true)
+    const pending = items.filter(i => i.status === 'Pending' || i.status === 'Partial')
+    const overdue = items.filter(i => i.due_date && new Date(i.due_date) < new Date())
+    const prompt = `
+You are a legal and business compliance advisor for Power On Solutions, LLC — a California electrical contractor.
+Current compliance checklist summary:
+- Total items: ${items.length}
+- Pending: ${items.filter(i => i.status === 'Pending').length}
+- In Progress: ${items.filter(i => i.status === 'In Progress').length}
+- Partial: ${items.filter(i => i.status === 'Partial').length}
+- Active/Filed/Complete: ${items.filter(i => ['Active', 'Filed', 'Complete'].includes(i.status)).length}
+- Overdue: ${overdue.length}
+
+Items needing attention:
+${pending.map(i => `- [${i.category}] ${i.title} (${i.status})`).join('\n')}
+
+Flag any immediate risks, suggest a priority order for the next 30 days, and note what the platform cannot beta-launch without. 3-4 sentences, direct and actionable.`
+    const text = await fetchInsight(
+      'You are a legal and business compliance advisor for a California electrical contractor SaaS platform.',
+      prompt
+    )
+    setInsight(text)
+    setInsightLoading(false)
+  }
+
+  useEffect(() => { loadInsight() }, [])
+
+  const categories = ['Legal', 'Business', 'Tech', 'Beta']
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Header card */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #22c55e44', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 4, height: 24, backgroundColor: '#22c55e', borderRadius: 2 }} />
+            <div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: '#dcfce7', margin: 0 }}>Compliance Overview</h3>
+              <p style={{ fontSize: 11, color: '#4ade80', margin: 0 }}>Legal, Business, Tech, Beta — track every requirement before launch</p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['Pending', 'Partial', 'In Progress', 'Filed', 'Active'].map(s => (
+              <div key={s} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, backgroundColor: `${STATUS_COLORS[s]}20`, color: STATUS_COLORS[s], fontWeight: 700 }}>
+                {items.filter(i => i.status === s).length} {s}
+              </div>
+            ))}
+          </div>
+        </div>
+        <InsightCard title="Compliance AI" accent="#22c55e" insight={insight} loading={insightLoading} onRegenerate={loadInsight} />
+      </div>
+
+      {/* Checklist grouped by category */}
+      {categories.map(cat => {
+        const catItems = items.filter(i => i.category === cat)
+        if (catItems.length === 0) return null
+        const catColor = cat === 'Legal' ? '#f59e0b' : cat === 'Business' ? '#3b82f6' : cat === 'Tech' ? '#8b5cf6' : '#10b981'
+        return (
+          <div key={cat} style={{ backgroundColor: '#0f172a', border: `1px solid ${catColor}33`, borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: catColor, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+              {cat}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {catItems.map(item => {
+                const sc = STATUS_COLORS[item.status] ?? '#6b7280'
+                const isSaving = savingId === item.id
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 12,
+                      padding: '10px 14px',
+                      borderRadius: 8,
+                      backgroundColor: item.checked ? '#0a1a0a' : '#111827',
+                      border: `1px solid ${item.checked ? '#22c55e33' : '#1f2937'}`,
+                      opacity: isSaving ? 0.7 : 1,
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {/* Checkbox */}
+                    <button
+                      onClick={() => toggleChecked(item)}
+                      disabled={isSaving}
+                      style={{
+                        width: 20, height: 20, borderRadius: 5, flexShrink: 0, marginTop: 1,
+                        border: `2px solid ${item.checked ? '#22c55e' : '#374151'}`,
+                        backgroundColor: item.checked ? '#22c55e' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', padding: 0, transition: 'all 0.15s',
+                      }}
+                    >
+                      {item.checked && <span style={{ color: '#fff', fontSize: 12, lineHeight: 1 }}>✓</span>}
+                    </button>
+
+                    {/* Title + notes */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: item.checked ? '#4b5563' : '#e2e8f0', textDecoration: item.checked ? 'line-through' : 'none' }}>
+                        {item.title}
+                      </div>
+                      {item.notes && (
+                        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3, lineHeight: 1.5 }}>{item.notes}</div>
+                      )}
+                      {item.last_reviewed && (
+                        <div style={{ fontSize: 10, color: '#4b5563', marginTop: 2 }}>
+                          Last reviewed: {new Date(item.last_reviewed).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Status chip */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5,
+                        backgroundColor: `${sc}20`, color: sc, whiteSpace: 'nowrap',
+                      }}>
+                        {item.status}
+                      </span>
+                      {item.due_date && (
+                        <span style={{
+                          fontSize: 10, color: new Date(item.due_date) < new Date() ? '#ef4444' : '#6b7280',
+                        }}>
+                          Due {new Date(item.due_date).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+
+    </div>
+  )
+}
+
+// ─── TAB 11 — Pending Actions + Sessions Queue ────────────────────────────────
+
+const SESSION_DEFAULTS = [
+  { session_id: 'B21', session_name: 'Core Layout + Navigation', description: 'V15r layout, sidebar nav, route structure', commit_hash: null, deployed_at: '2026-03-15', improvements_projected: 'Foundation established. Nav renders on all devices.' },
+  { session_id: 'B22', session_name: 'Backend Sync + State', description: 'Supabase sync, Zustand store, backup service', commit_hash: null, deployed_at: '2026-03-16', improvements_projected: 'State persists across sessions. Multi-device sync working.' },
+  { session_id: 'B23', session_name: 'Estimate Engine V2', description: 'Labor + material estimate builder with PDF export', commit_hash: null, deployed_at: '2026-03-17', improvements_projected: 'Estimate accuracy improved ~15%. PDF export live.' },
+  { session_id: 'B24', session_name: 'Service Log + Collections', description: 'Service call tracker, collections queue, aging', commit_hash: null, deployed_at: '2026-03-18', improvements_projected: 'Collections workflow live. Aging buckets visible.' },
+  { session_id: 'B25', session_name: 'GUARDIAN Agent', description: 'Proactive alert engine, rule evaluator, violation tracker', commit_hash: null, deployed_at: '2026-03-20', improvements_projected: 'Real-time risk alerts active. 12 rules live.' },
+  { session_id: 'B26', session_name: 'SPARK Live Call', description: 'Call script engine, stage progression, outcome capture', commit_hash: null, deployed_at: '2026-03-21', improvements_projected: 'Live call guidance operational. Win-rate tracking started.' },
+  { session_id: 'B27', session_name: 'Voice Hub + ECHO Memory', description: 'Voice journaling V2, ECHO context, transcription', commit_hash: null, deployed_at: '2026-03-22', improvements_projected: 'Voice notes saved to memory. NEXUS context window expanded.' },
+  { session_id: 'B28', session_name: 'Economics Dashboard', description: 'P&L model, overhead calculator, MRR projections', commit_hash: null, deployed_at: '2026-03-24', improvements_projected: 'Full economics model live. Cash runway visible at a glance.' },
+  { session_id: 'B29', session_name: 'Beta Ops + NDA Flow', description: 'Beta invite system, NDA signing, role gating', commit_hash: null, deployed_at: '2026-03-26', improvements_projected: 'Beta invite + NDA flow end-to-end. First external user onboarded.' },
+  { session_id: 'B30', session_name: 'Numbers Audit + Accuracy Pass', description: 'Full financial audit, formula corrections, data integrity', commit_hash: null, deployed_at: '2026-03-28', improvements_projected: 'All financial figures verified. Data integrity score: 94%.' },
+]
+
+function Tab11ActionsQueue({ activeTabId }: { activeTabId: string }) {
+  const [sessions, setSessions] = useState<any[]>([])
+  const [loadingSessions, setLoadingSessions] = useState(true)
+  const [scoreInsight, setScoreInsight] = useState('')
+  const [scoreLoading, setScoreLoading] = useState(false)
+
+  // Voice interview state
+  const [interviewActive, setInterviewActive] = useState(false)
+  const [interviewMessages, setInterviewMessages] = useState<Array<{ role: 'nexus' | 'user', text: string }>>([])
+  const [interviewInput, setInterviewInput] = useState('')
+  const [interviewLoading, setInterviewLoading] = useState(false)
+  const [interviewSummary, setInterviewSummary] = useState('')
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const chatEndRef = useRef<HTMLDivElement>(null)
+
+  // Load sessions from Supabase
+  useEffect(() => {
+    async function load() {
+      try {
+        const { data, error } = await supabase
+          .from('sessions_history')
+          .select('*')
+          .order('deployed_at', { ascending: false })
+          .limit(10)
+        if (!error && data && data.length > 0) {
+          setSessions(data.reverse())
+        } else {
+          setSessions(SESSION_DEFAULTS)
+        }
+      } catch {
+        setSessions(SESSION_DEFAULTS)
+      } finally {
+        setLoadingSessions(false)
+      }
+    }
+    load()
+  }, [])
+
+  // Load score projection insight
+  async function loadScoreInsight() {
+    setScoreLoading(true)
+    const sessionList = sessions.map(s => `${s.session_id}: ${s.session_name}`).join(', ')
+    const text = await fetchInsight(
+      'You are a platform evolution advisor for Power On Hub, a contractor OS SaaS.',
+      `Given sessions B21–B40 with the following names and purposes: ${sessionList}. Estimate the projected platform state improvement score from B20 baseline (score ~45/100) to the current B40 state. Break down by dimension: Stability, AI Logic, Numbers Accuracy, Security, Features, Visual Polish, Beta Ops, Revenue readiness. Give an overall score and 2-3 sentences on what changed most significantly. Be specific and cite session names.`
+    )
+    setScoreInsight(text)
+    setScoreLoading(false)
+  }
+
+  useEffect(() => {
+    if (sessions.length > 0) loadScoreInsight()
+  }, [sessions.length])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [interviewMessages])
+
+  // Start interview
+  function startInterview() {
+    setInterviewActive(true)
+    setInterviewMessages([{
+      role: 'nexus',
+      text: `You just reviewed Tab ${activeTabId?.replace('t', '') || ''}. Let's debrief. What did you notice in the data today?`,
+    }])
+    setInterviewSummary('')
+  }
+
+  // Send interview message
+  async function sendInterviewMessage() {
+    if (!interviewInput.trim() || interviewLoading) return
+    const userMsg = interviewInput.trim()
+    setInterviewInput('')
+    const newMessages = [...interviewMessages, { role: 'user' as const, text: userMsg }]
+    setInterviewMessages(newMessages)
+    setInterviewLoading(true)
+
+    // Build follow-up question
+    const history = newMessages.map(m => `${m.role === 'nexus' ? 'NEXUS' : 'Owner'}: ${m.text}`).join('\n')
+    const followUp = await fetchInsight(
+      'You are NEXUS, the AI advisor for Power On Solutions. You are conducting a structured debrief interview with the owner after they reviewed their platform dashboard. Ask one focused follow-up question based on their last answer. Be concise, direct, and curious. Do not give advice yet — only ask questions to understand their thinking.',
+      `Interview so far:\n${history}\n\nAsk one follow-up question.`
+    )
+    setInterviewMessages(prev => [...prev, { role: 'nexus', text: followUp }])
+    setInterviewLoading(false)
+  }
+
+  // End interview + generate summary
+  async function endInterview() {
+    setSummaryLoading(true)
+    const history = interviewMessages.map(m => `${m.role === 'nexus' ? 'NEXUS' : 'Owner'}: ${m.text}`).join('\n')
+    const summary = await fetchInsight(
+      'You are NEXUS. Generate a structured debrief summary from a review interview.',
+      `Interview transcript:\n${history}\n\nGenerate a structured summary with 3 sections: (1) Key Observations from the owner, (2) Decisions the owner indicated they are considering, (3) Recommended next actions. Be specific and reference what the owner said directly.`
+    )
+    setInterviewSummary(summary)
+    setSummaryLoading(false)
+
+    // Save to improvement_log
+    try {
+      await supabase.from('improvement_log').insert({
+        title: `Voice Interview Debrief — ${new Date().toLocaleDateString()}`,
+        category: 'Review',
+        priority: 'Med',
+        notes: summary,
+        source: 'voice_interview',
+        admin_added: true,
+      })
+    } catch {
+      // silent fail
+    }
+  }
+
+  // Save current B40 session to Supabase
+  async function saveCurrentSession() {
+    try {
+      await supabase.from('sessions_history').upsert({
+        session_id: 'B40',
+        session_name: 'Compliance + Actions + NEXUS Integration',
+        description: 'Tab 10 Compliance Overview, Tab 11 Sessions Queue, NEXUS panel added to Command Center',
+        deployed_at: new Date().toISOString(),
+        improvements_projected: 'Full compliance tracking live. Sessions queue tied to Supabase. NEXUS chat integrated into Command Center.',
+      }, { onConflict: 'session_id' })
+    } catch {
+      // silent
+    }
+  }
+
+  useEffect(() => { saveCurrentSession() }, [])
+
+  const DAILY_TASKS = [
+    { time: '10 min', label: 'Check NEXUS alerts', icon: '⚡' },
+    { time: '', label: 'Review any flagged items in GUARDIAN', icon: '🛡️' },
+    { time: '', label: 'Check Voice Hub for unreviewed captures', icon: '🎙️' },
+  ]
+  const WEEKLY_TASKS = [
+    { time: '30 min', label: 'Review Improvement Log', icon: '📋' },
+    { time: '', label: 'Export weekly feedback + update log from Voice Hub notes', icon: '📤' },
+    { time: '', label: 'Check beta user activity', icon: '👥' },
+    { time: '', label: 'Export milestone backup to vault', icon: '💾' },
+  ]
+  const MONTHLY_TASKS = [
+    { time: '2 hours', label: 'Full platform audit', icon: '🔍' },
+    { time: '', label: 'Economics review', icon: '💹' },
+    { time: '', label: 'Beta council call', icon: '📞' },
+    { time: '', label: 'Update Blueprint V3 document', icon: '📄' },
+    { time: '', label: 'Review compliance checklist', icon: '✅' },
+  ]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* SECTION A — Owner Schedule */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #3b82f644', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#3b82f6', borderRadius: 2 }} />
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#dbeafe', margin: 0 }}>Section A — Owner Operating Rhythm</h3>
+            <p style={{ fontSize: 11, color: '#60a5fa', margin: 0 }}>AI-structured routine based on current platform stage</p>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+          {[
+            { label: 'Daily', time: '10 min', color: '#22c55e', tasks: DAILY_TASKS },
+            { label: 'Weekly', time: '30 min', color: '#3b82f6', tasks: WEEKLY_TASKS },
+            { label: 'Monthly', time: '2 hours', color: '#a78bfa', tasks: MONTHLY_TASKS },
+          ].map(block => (
+            <div key={block.label} style={{ backgroundColor: '#111827', borderRadius: 10, padding: '14px 16px', border: `1px solid ${block.color}22` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: block.color }}>{block.label}</span>
+                <span style={{ fontSize: 10, color: '#4b5563', backgroundColor: '#0a0f1a', padding: '2px 8px', borderRadius: 4 }}>{block.time}</span>
+              </div>
+              {block.tasks.map((task, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>{task.icon}</span>
+                  <span style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.5 }}>{task.label}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* SECTION B — Sessions Queue */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #7c3aed44', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#7c3aed', borderRadius: 2 }} />
+          <div style={{ flex: 1 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#ede9fe', margin: 0 }}>Section B — Last 10 Sessions</h3>
+            <p style={{ fontSize: 11, color: '#a78bfa', margin: 0 }}>Build sessions B21–B40 — what shipped and what it improved</p>
+          </div>
+          {loadingSessions && <span style={{ fontSize: 11, color: '#4b5563' }}>Loading…</span>}
+        </div>
+
+        {/* Score insight */}
+        <InsightCard title="B20→B40 Score" accent="#7c3aed" insight={scoreInsight} loading={scoreLoading} onRegenerate={loadScoreInsight} />
+
+        {/* Timeline */}
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {sessions.map((s, i) => {
+            const isLatest = i === sessions.length - 1
+            return (
+              <div key={s.session_id ?? i} style={{
+                display: 'flex', gap: 14, alignItems: 'flex-start',
+                padding: '12px 14px', borderRadius: 10,
+                backgroundColor: isLatest ? '#1a0d2e' : '#111827',
+                border: isLatest ? '1px solid #7c3aed55' : '1px solid #1f2937',
+              }}>
+                {/* Marker */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: isLatest ? '#7c3aed' : '#1f2937',
+                    border: `2px solid ${isLatest ? '#a78bfa' : '#374151'}`,
+                    fontSize: 10, fontWeight: 800, color: isLatest ? '#fff' : '#6b7280',
+                  }}>
+                    {s.session_id}
+                  </div>
+                  {i < sessions.length - 1 && (
+                    <div style={{ width: 2, height: 16, backgroundColor: '#1f2937', borderRadius: 1 }} />
+                  )}
+                </div>
+                {/* Content */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: isLatest ? '#c4b5fd' : '#e2e8f0', marginBottom: 2 }}>
+                    {s.session_name}
+                  </div>
+                  {s.description && (
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4, lineHeight: 1.5 }}>{s.description}</div>
+                  )}
+                  {s.improvements_projected && (
+                    <div style={{ fontSize: 11, color: '#4ade80', lineHeight: 1.5 }}>↑ {s.improvements_projected}</div>
+                  )}
+                </div>
+                {/* Meta */}
+                <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                  {s.deployed_at && (
+                    <div style={{ fontSize: 10, color: '#4b5563', marginBottom: 3 }}>
+                      {new Date(s.deployed_at).toLocaleDateString()}
+                    </div>
+                  )}
+                  {s.commit_hash && (
+                    <div style={{ fontSize: 9, fontFamily: 'monospace', color: '#374151', backgroundColor: '#0a0f1a', padding: '2px 6px', borderRadius: 4 }}>
+                      {s.commit_hash.slice(0, 8)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* SECTION C — NEXUS Voice Interview Mode */}
+      <div style={{ backgroundColor: '#0f172a', border: '1px solid #06b6d444', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 4, height: 24, backgroundColor: '#06b6d4', borderRadius: 2 }} />
+          <div style={{ flex: 1 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#cffafe', margin: 0 }}>Section C — NEXUS Review Interview</h3>
+            <p style={{ fontSize: 11, color: '#22d3ee', margin: 0 }}>
+              After reviewing any tab, start a voice debrief. NEXUS asks questions, listens, and generates a structured summary saved to your Improvement Log.
+            </p>
+          </div>
+          {!interviewActive && (
+            <button
+              onClick={startInterview}
+              style={{
+                padding: '8px 16px', borderRadius: 8, border: '1px solid #06b6d4',
+                backgroundColor: '#06b6d420', color: '#22d3ee', fontSize: 12, fontWeight: 700,
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              ▶ Start Review Interview
+            </button>
+          )}
+        </div>
+
+        {interviewActive && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* Chat thread */}
+            <div style={{
+              backgroundColor: '#0a0f1a', borderRadius: 10, padding: 16,
+              maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10,
+            }}>
+              {interviewMessages.map((msg, i) => (
+                <div key={i} style={{
+                  display: 'flex', gap: 10,
+                  flexDirection: msg.role === 'nexus' ? 'row' : 'row-reverse',
+                }}>
+                  <div style={{
+                    width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+                    backgroundColor: msg.role === 'nexus' ? '#06b6d420' : '#1f2937',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 11, fontWeight: 700, color: msg.role === 'nexus' ? '#22d3ee' : '#9ca3af',
+                  }}>
+                    {msg.role === 'nexus' ? 'N' : 'Y'}
+                  </div>
+                  <div style={{
+                    maxWidth: '75%', padding: '8px 12px', borderRadius: msg.role === 'nexus' ? '4px 12px 12px 12px' : '12px 4px 12px 12px',
+                    backgroundColor: msg.role === 'nexus' ? '#0e1f2e' : '#1a2535',
+                    border: `1px solid ${msg.role === 'nexus' ? '#06b6d430' : '#374151'}`,
+                    fontSize: 13, color: msg.role === 'nexus' ? '#a5f3fc' : '#d1d5db', lineHeight: 1.55,
+                  }}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {interviewLoading && (
+                <div style={{ fontSize: 12, color: '#22d3ee', fontStyle: 'italic', paddingLeft: 36 }}>NEXUS is thinking…</div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input row */}
+            {!interviewSummary && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={interviewInput}
+                  onChange={e => setInterviewInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInterviewMessage() } }}
+                  placeholder="Type your answer… (Enter to send)"
+                  style={{
+                    flex: 1, padding: '9px 14px', borderRadius: 8,
+                    border: '1px solid #1e3a4a', backgroundColor: '#0a0f1a',
+                    color: '#e2e8f0', fontSize: 13, outline: 'none',
+                  }}
+                />
+                <button
+                  onClick={sendInterviewMessage}
+                  disabled={interviewLoading || !interviewInput.trim()}
+                  style={{
+                    padding: '9px 16px', borderRadius: 8, border: '1px solid #06b6d4',
+                    backgroundColor: '#06b6d420', color: '#22d3ee', fontSize: 12, fontWeight: 700,
+                    cursor: interviewLoading ? 'not-allowed' : 'pointer', opacity: interviewLoading ? 0.5 : 1,
+                  }}
+                >
+                  Send
+                </button>
+                <button
+                  onClick={endInterview}
+                  disabled={summaryLoading || interviewMessages.length < 3}
+                  style={{
+                    padding: '9px 16px', borderRadius: 8, border: '1px solid #374151',
+                    backgroundColor: 'transparent', color: '#6b7280', fontSize: 12, fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {summaryLoading ? 'Summarizing…' : 'End + Save'}
+                </button>
+              </div>
+            )}
+
+            {/* Summary */}
+            {interviewSummary && (
+              <div style={{ backgroundColor: '#0d1a0d', border: '1px solid #22c55e44', borderRadius: 10, padding: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                  ✓ Interview Summary — Saved to Improvement Log
+                </div>
+                <p style={{ fontSize: 13, color: '#d1d5db', lineHeight: 1.65, margin: 0, whiteSpace: 'pre-wrap' }}>{interviewSummary}</p>
+                <button
+                  onClick={() => { setInterviewActive(false); setInterviewMessages([]); setInterviewSummary('') }}
+                  style={{
+                    marginTop: 12, padding: '7px 14px', borderRadius: 7, border: '1px solid #374151',
+                    backgroundColor: 'transparent', color: '#6b7280', fontSize: 11, cursor: 'pointer',
+                  }}
+                >
+                  Start New Interview
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!interviewActive && (
+          <p style={{ fontSize: 12, color: '#374151', fontStyle: 'italic', margin: 0 }}>
+            Click "Start Review Interview" after reviewing any tab. NEXUS will guide you through a structured debrief and save your notes automatically.
+          </p>
+        )}
+      </div>
+
+    </div>
+  )
+}
+
+// ─── NEXUS Command Center Panel ───────────────────────────────────────────────
+
+const NEXUS_CONTEXT_BY_TAB: Record<string, string> = {
+  vision:     'The user is viewing the Vision Timeline tab, which shows the journey from the original HTML file to V3 deployment, platform radar scores, and beta milestone progress.',
+  backend:    'The user is viewing the Backend Analysis tab, which shows Supabase table health, API response times, RLS coverage, and storage metrics.',
+  beta:       'The user is viewing the Beta Metrics tab, which shows beta invitee list, NDA signing status, engagement metrics, and feedback collected from beta users.',
+  economics:  'The user is viewing the Economics tab, which shows the P&L model, overhead breakdown, MRR projections, and cash runway calculations.',
+  improvelog: 'The user is viewing the Improvement Log tab, which tracks bugs, feature requests, and platform improvements logged by the admin.',
+  t6:         'The user is viewing the Summary + Checklist tab, which shows a launch readiness summary and a weekly/monthly operational checklist.',
+  t7:         'The user is viewing the Scripts + Positioning tab, which contains sales scripts, elevator pitches, and competitive positioning for Power On Hub.',
+  t8:         'The user is viewing the AI Agents tab, which maps all active agents (NEXUS, GUARDIAN, SPARK, ECHO, etc.) and their current activation status.',
+  t9:         'The user is viewing the Industry Analysis tab, which evaluates the platform fit across 16 trade verticals and shows expansion roadmap opportunities.',
+  t10:        'The user is viewing the Compliance Overview tab, which tracks legal, business, tech, and beta compliance items including licenses, IP filings, and security requirements.',
+  t11:        'The user is viewing the Pending Actions + Sessions Queue tab, which shows the owner operating rhythm, last 10 build sessions (B21–B40), and the NEXUS voice interview debrief tool.',
+}
+
+function NexusCommandPanel({ activeTabId }: { activeTabId: string }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [orbExpanded, setOrbExpanded] = useState(true)
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'nexus', text: string }>>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const chatEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  // Greeting when first opened
+  useEffect(() => {
+    if (messages.length === 0) {
+      const ctx = NEXUS_CONTEXT_BY_TAB[activeTabId] ?? 'the Admin Command Center'
+      setMessages([{
+        role: 'nexus',
+        text: `I'm in context. ${ctx} What would you like to know?`,
+      }])
+    }
+  }, [])
+
+  // Update greeting if tab changes and chat is empty
+  useEffect(() => {
+    if (messages.length === 1 && messages[0].role === 'nexus') {
+      const ctx = NEXUS_CONTEXT_BY_TAB[activeTabId] ?? 'the Admin Command Center'
+      setMessages([{ role: 'nexus', text: `I'm in context. ${ctx} What would you like to know?` }])
+    }
+  }, [activeTabId])
+
+  async function send() {
+    if (!input.trim() || loading) return
+    const userMsg = input.trim()
+    setInput('')
+    const newMessages = [...messages, { role: 'user' as const, text: userMsg }]
+    setMessages(newMessages)
+    setLoading(true)
+
+    const tabContext = NEXUS_CONTEXT_BY_TAB[activeTabId] ?? 'the Admin Command Center'
+    const history = newMessages.slice(-8).map(m => `${m.role === 'nexus' ? 'NEXUS' : 'Owner'}: ${m.text}`).join('\n')
+    const response = await fetchInsight(
+      `You are NEXUS, the AI advisor embedded inside the Admin Command Center for Power On Solutions, LLC — a California electrical contractor SaaS platform. You have full read access to all visible data in the current tab. Context: ${tabContext}. Answer concisely and specifically. Reference actual data and metrics when relevant. If asked about compliance, economics, sessions, or beta status — use your knowledge of the platform's current state.`,
+      `Conversation so far:\n${history}\n\nRespond to the owner's last message.`
+    )
+
+    // Save to ECHO memory
+    try {
+      await supabase.from('improvement_log').insert({
+        title: `NEXUS Command Center — ${new Date().toLocaleDateString()}`,
+        category: 'AI Conversation',
+        priority: 'Low',
+        notes: `Tab: ${activeTabId}\nQ: ${userMsg}\nA: ${response}`,
+        source: 'auto',
+        admin_added: false,
+      })
+    } catch {
+      // silent
+    }
+
+    setMessages(prev => [...prev, { role: 'nexus', text: response }])
+    setLoading(false)
+  }
+
+  if (collapsed) {
+    return (
+      <div style={{ flexShrink: 0 }}>
+        <button
+          onClick={() => setCollapsed(false)}
+          style={{
+            width: 40, height: 40, borderRadius: '50%', border: '1px solid #1e3a2f',
+            backgroundColor: '#0a1a12', color: '#2EE89A', fontSize: 18, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 0 12px rgba(46,232,154,0.15)',
+          }}
+          title="Expand NEXUS"
+        >
+          ⬡
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div style={{
+      flexShrink: 0,
+      width: orbExpanded ? 640 : 420,
       display: 'flex',
       flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: 320,
-      gap: 12,
+      backgroundColor: '#0a0f1a',
+      borderLeft: '1px solid #1e2d3d',
+      height: '100%',
+      transition: 'width 0.2s',
     }}>
-      <div style={{ fontSize: 40, opacity: 0.3 }}>⚙</div>
-      <p style={{ fontSize: 15, fontWeight: 700, color: '#374151' }}>Tab {num} — Coming Soon</p>
-      <p style={{ fontSize: 13, color: '#4b5563', textAlign: 'center', maxWidth: 340 }}>
-        This panel is reserved for a future build session.
-      </p>
+      {/* NEXUS panel header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+        borderBottom: '1px solid #1e2d3d', flexShrink: 0, backgroundColor: '#0d1321',
+      }}>
+        <div style={{
+          width: 8, height: 8, borderRadius: '50%', backgroundColor: '#2EE89A',
+          boxShadow: '0 0 6px rgba(46,232,154,0.6)',
+        }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#4ade80', flex: 1 }}>NEXUS</span>
+        <button
+          onClick={() => setOrbExpanded(e => !e)}
+          style={{
+            fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid #1e3a2f',
+            backgroundColor: 'transparent', color: '#4b5563', cursor: 'pointer',
+          }}
+        >
+          {orbExpanded ? '◀ Hide Orb' : '▶ Show Orb'}
+        </button>
+        <button
+          onClick={() => setCollapsed(true)}
+          style={{
+            fontSize: 14, padding: '3px 8px', borderRadius: 5, border: '1px solid #1e2d3d',
+            backgroundColor: 'transparent', color: '#4b5563', cursor: 'pointer',
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Orb + Chat split */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {orbExpanded && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '12px 0', borderBottom: '1px solid #0e1a0e', flexShrink: 0,
+          }}>
+            <NexusPresenceOrb
+              state={loading ? 'processing' : 'inactive'}
+              size={200}
+            />
+          </div>
+        )}
+
+        {/* Chat thread */}
+        <div style={{
+          flex: 1, overflowY: 'auto', padding: '12px 14px',
+          display: 'flex', flexDirection: 'column', gap: 8,
+        }}>
+          {messages.map((msg, i) => (
+            <div key={i} style={{
+              display: 'flex', gap: 8,
+              flexDirection: msg.role === 'nexus' ? 'row' : 'row-reverse',
+            }}>
+              <div style={{
+                width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                backgroundColor: msg.role === 'nexus' ? '#0e1a12' : '#1f2937',
+                border: `1px solid ${msg.role === 'nexus' ? '#2EE89A44' : '#374151'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, fontWeight: 700, color: msg.role === 'nexus' ? '#2EE89A' : '#9ca3af',
+              }}>
+                {msg.role === 'nexus' ? 'N' : 'Y'}
+              </div>
+              <div style={{
+                maxWidth: '80%', padding: '8px 12px',
+                borderRadius: msg.role === 'nexus' ? '4px 10px 10px 10px' : '10px 4px 10px 10px',
+                backgroundColor: msg.role === 'nexus' ? '#0d1a12' : '#1a2535',
+                border: `1px solid ${msg.role === 'nexus' ? '#2EE89A22' : '#374151'}`,
+                fontSize: 12, color: msg.role === 'nexus' ? '#a7f3d0' : '#d1d5db', lineHeight: 1.6,
+              }}>
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div style={{ fontSize: 11, color: '#2EE89A', fontStyle: 'italic', paddingLeft: 32 }}>NEXUS thinking…</div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* Input */}
+        <div style={{
+          display: 'flex', gap: 8, padding: '10px 14px',
+          borderTop: '1px solid #1e2d3d', flexShrink: 0,
+        }}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+            placeholder="Ask NEXUS about this data…"
+            style={{
+              flex: 1, padding: '8px 12px', borderRadius: 7,
+              border: '1px solid #1e3a2f', backgroundColor: '#060d0a',
+              color: '#d1d5db', fontSize: 12, outline: 'none',
+            }}
+          />
+          <button
+            onClick={send}
+            disabled={loading || !input.trim()}
+            style={{
+              padding: '8px 14px', borderRadius: 7, border: '1px solid #2EE89A44',
+              backgroundColor: '#0e1a12', color: '#2EE89A', fontSize: 12, fontWeight: 700,
+              cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.5 : 1,
+            }}
+          >
+            ↑
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -3164,86 +3994,113 @@ function PlaceholderTab({ num }: { num: number }) {
 // ─── Root: AdminCommandCenter ─────────────────────────────────────────────────
 export default function AdminCommandCenter() {
   const [activeTab, setActiveTab] = useState('vision')
+  const [nexusOpen, setNexusOpen] = useState(false)
 
   function renderTab() {
     switch (activeTab) {
-      case 'vision':  return <Tab1VisionTimeline />
-      case 'backend': return <Tab2BackendAnalysis />
-      case 'beta':    return <Tab3BetaMetrics />
-      case 'economics':  return <Tab4Economics />
-      case 'improvelog': return <Tab5ImprovementLog />
-      case 't6':      return <Tab6SummaryChecklist />
-      case 't7':      return <Tab7ScriptsPositioning />
-      case 't8':      return <Tab8AIAgentOrganization />
-      case 't9':      return <Tab9IndustryAnalysis />
-      case 't10':     return <PlaceholderTab num={10} />
-      case 't11':     return <PlaceholderTab num={11} />
-      default:        return <Tab1VisionTimeline />
+      case 'vision':      return <Tab1VisionTimeline />
+      case 'backend':     return <Tab2BackendAnalysis />
+      case 'beta':        return <Tab3BetaMetrics />
+      case 'economics':   return <Tab4Economics />
+      case 'improvelog':  return <Tab5ImprovementLog />
+      case 't6':          return <Tab6SummaryChecklist />
+      case 't7':          return <Tab7ScriptsPositioning />
+      case 't8':          return <Tab8AIAgentOrganization />
+      case 't9':          return <Tab9IndustryAnalysis />
+      case 't10':         return <Tab10Compliance />
+      case 't11':         return <Tab11ActionsQueue activeTabId={activeTab} />
+      default:            return <Tab1VisionTimeline />
     }
   }
 
   return (
     <div style={{
       display: 'flex',
-      flexDirection: 'column',
+      flexDirection: 'row',
       height: '100%',
       minHeight: '100vh',
       backgroundColor: '#0a0f1a',
       color: '#e2e8f0',
     }}>
-      {/* Header */}
-      <div style={{
-        borderBottom: '1px solid #1e2d3d',
-        padding: '12px 24px 0',
-        backgroundColor: '#0d1321',
-        flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <span style={{ fontSize: 16 }}>⌘</span>
-          <h1 style={{ fontSize: 16, fontWeight: 800, color: '#e2e8f0', margin: 0 }}>Admin Command Center</h1>
-          <span style={{
-            fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-            backgroundColor: '#ca8a04', color: '#fff', letterSpacing: '0.05em',
-          }}>B39</span>
+      {/* Main area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/* Header */}
+        <div style={{
+          borderBottom: '1px solid #1e2d3d',
+          padding: '12px 24px 0',
+          backgroundColor: '#0d1321',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 16 }}>⌘</span>
+            <h1 style={{ fontSize: 16, fontWeight: 800, color: '#e2e8f0', margin: 0 }}>Admin Command Center</h1>
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+              backgroundColor: '#ca8a04', color: '#fff', letterSpacing: '0.05em',
+            }}>B40</span>
+            <div style={{ flex: 1 }} />
+            {/* NEXUS toggle button */}
+            <button
+              onClick={() => setNexusOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px',
+                borderRadius: 7, border: '1px solid #1e3a2f',
+                backgroundColor: nexusOpen ? '#0e1a12' : 'transparent',
+                color: nexusOpen ? '#2EE89A' : '#4b5563', fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}
+            >
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', backgroundColor: nexusOpen ? '#2EE89A' : '#374151',
+                boxShadow: nexusOpen ? '0 0 6px rgba(46,232,154,0.6)' : 'none',
+                display: 'inline-block',
+              }} />
+              NEXUS
+            </button>
+          </div>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 1 }}>
+            {TABS.map(tab => {
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    padding: '8px 14px',
+                    fontSize: 12,
+                    fontWeight: isActive ? 700 : 500,
+                    borderRadius: '6px 6px 0 0',
+                    border: 'none',
+                    borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
+                    backgroundColor: isActive ? '#1e2d3d' : 'transparent',
+                    color: isActive ? '#93c5fd' : '#6b7280',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {tab.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
-        {/* Tab bar */}
-        <div style={{ display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 1 }}>
-          {TABS.map(tab => {
-            const isActive = activeTab === tab.id
-            const isPlaceholder = tab.id.startsWith('t') && tab.id.length <= 3 && !['t4'].includes(tab.id) ? false : tab.id.startsWith('t') && parseInt(tab.id.slice(1)) >= 4
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  padding: '8px 14px',
-                  fontSize: 12,
-                  fontWeight: isActive ? 700 : 500,
-                  borderRadius: '6px 6px 0 0',
-                  border: 'none',
-                  borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
-                  backgroundColor: isActive ? '#1e2d3d' : 'transparent',
-                  color: isActive ? '#93c5fd' : isPlaceholder ? '#374151' : '#6b7280',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {tab.label}
-              </button>
-            )
-          })}
+
+        {/* Content area */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '24px',
+        }}>
+          {renderTab()}
         </div>
       </div>
 
-      {/* Content area */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '24px',
-      }}>
-        {renderTab()}
-      </div>
+      {/* NEXUS side panel */}
+      {nexusOpen && (
+        <NexusCommandPanel activeTabId={activeTab} />
+      )}
     </div>
   )
 }
