@@ -16,6 +16,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { getBackupData, health, getKPIs } from '../services/backupDataService'
 import { callClaude, extractText } from '../services/claudeProxy'
+import VisualSuitePanel from '../components/v15r/AIVisualSuite/VisualSuitePanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrbState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'MULTI_AGENT'
@@ -740,23 +741,8 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
           ))}
         </div>
       </div>
-      <div style={{ flex:1, display:'flex', overflow:'hidden', position:'relative' }}>
-        {fullscreen!=='right' && (
-          <div style={{ flex:fullscreen==='left'?1:'0 0 50%', position:'relative', overflow:'hidden', borderRight:fullscreen?'none':'1px solid rgba(255,255,255,0.06)' }}>
-            <BackgroundLayer mode={bgMode} />
-            <div style={{ position:'absolute', inset:0 }}><OrganicOrb orbState={orbState} healthAvg={healthAvg} /></div>
-            <div style={{ position:'absolute', top:10, left:14, zIndex:10, fontSize:10, fontWeight:700, letterSpacing:'0.1em', color:'#00ff88', textShadow:'0 0 8px #00ff88', textTransform:'uppercase' }}>Organic Orb</div>
-            <button onClick={() => setFullscreen(fullscreen==='left'?null:'left')} style={{ position:'absolute', top:8, right:8, zIndex:10, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.1)', color:'#9ca3af', borderRadius:5, padding:'3px 7px', fontSize:10, cursor:'pointer' }}>{fullscreen==='left'?'⊡':'⊞'}</button>
-          </div>
-        )}
-        {fullscreen!=='left' && (
-          <div style={{ flex:1, position:'relative', overflow:'hidden' }}>
-            <BackgroundLayer mode={bgMode} />
-            <div style={{ position:'absolute', inset:0 }}><GeometricOrb orbState={orbState} healthAvg={healthAvg} /></div>
-            <div style={{ position:'absolute', top:10, left:14, zIndex:10, fontSize:10, fontWeight:700, letterSpacing:'0.1em', color:'#00ff88', textShadow:'0 0 8px #00ff88', textTransform:'uppercase' }}>Geometric Orb</div>
-            <button onClick={() => setFullscreen(fullscreen==='right'?null:'right')} style={{ position:'absolute', top:8, right:8, zIndex:10, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.1)', color:'#9ca3af', borderRadius:5, padding:'3px 7px', fontSize:10, cursor:'pointer' }}>{fullscreen==='right'?'⊡':'⊞'}</button>
-          </div>
-        )}
+      <div style={{ flex:1, overflow:'auto', padding:'8px' }}>
+        <VisualSuitePanel />
       </div>
     </div>
   )
