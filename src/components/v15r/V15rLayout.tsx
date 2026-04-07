@@ -37,6 +37,7 @@ import {
   Lock,
   Map,
   HardHat,
+  FlaskConical,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -708,6 +709,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview' },
     { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null },
     { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null },
+    { label: 'Visualization Lab', icon: FlaskConical, view: 'viz-lab', badge: 'B33' },
   ]
 
   // Toggle and close helpers
