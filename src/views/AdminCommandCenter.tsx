@@ -23,6 +23,7 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData } from '@/services/backupDataService'
 import { supabase } from '@/lib/supabase'
 import { NexusPresenceOrb } from '@/components/nexus/NexusPresenceOrb'
+import { takeDailySnapshotIfNeeded, fetchRecentSnapshots } from '@/services/dailySnapshotService'
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 const TABS = [
@@ -304,6 +305,169 @@ function Tab1VisionTimeline() {
         <InsightCard title="P3" accent="#ca8a04" insight={p3Insight} loading={p3Loading} onRegenerate={loadP3} />
       </div>
 
+      {/* Perspective 4 — Daily Progress (Feature F6 B42) */}
+      <DailyProgressSection />
+
+    </div>
+  )
+}
+
+// ─── Daily Progress Section (F6) ─────────────────────────────────────────────
+function DailyProgressSection() {
+  const [snapshots, setSnapshots] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<any | null>(null)
+  const [deltaInsight, setDeltaInsight] = useState('')
+  const [deltaLoading, setDeltaLoading] = useState(false)
+
+  useEffect(() => {
+    // Trigger today's snapshot (no-op if already done today)
+    takeDailySnapshotIfNeeded().catch(() => {})
+    // Load last 30
+    fetchRecentSnapshots(30).then((rows) => {
+      setSnapshots(rows)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const today = snapshots[0] ?? null
+  const todayMetrics = today?.metrics_json ?? null
+
+  const handleDeltaInsight = useCallback(async () => {
+    if (!selected || !todayMetrics) return
+    setDeltaLoading(true)
+    const text = await fetchInsight(
+      'You are a platform health analyst for Power On Hub. Be specific about changes and what they mean.',
+      `Today's metrics: ${JSON.stringify(todayMetrics)}.\nSnapshot from ${selected.snapshot_date}: ${JSON.stringify(selected.metrics_json)}.\nAnalyze the delta between these two days. What changed, what's trending, and what should the owner focus on based on these numbers? 3-4 sentences.`
+    )
+    setDeltaInsight(text)
+    setDeltaLoading(false)
+  }, [selected, todayMetrics])
+
+  // Mini bar dimensions
+  const BAR_W = 20
+  const BAR_MAX_H = 48
+  const MAX_AGENTS = snapshots.reduce((mx, s) => Math.max(mx, s.metrics_json?.agentActivityCount ?? 0), 1)
+
+  return (
+    <div style={{ backgroundColor: '#0f172a', border: '1px solid #0e7490aa', borderRadius: 12, padding: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 4, height: 24, backgroundColor: '#0e7490', borderRadius: 2 }} />
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: '#a5f3fc', margin: 0 }}>Daily Progress</h3>
+          <p style={{ fontSize: 11, color: '#22d3ee', margin: 0 }}>Last 30 days — click a day to compare</p>
+        </div>
+        {loading && <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6b7280' }}>Loading…</span>}
+      </div>
+
+      {/* Mini timeline bars */}
+      {!loading && snapshots.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, overflowX: 'auto', paddingBottom: 8, marginBottom: 16 }}>
+          {[...snapshots].reverse().map((snap, i) => {
+            const h = Math.max(4, Math.round(((snap.metrics_json?.agentActivityCount ?? 0) / MAX_AGENTS) * BAR_MAX_H))
+            const isToday = snap.snapshot_date === snapshots[0]?.snapshot_date
+            const isSel = selected?.id === snap.id
+            return (
+              <button
+                key={snap.id}
+                title={snap.snapshot_date}
+                onClick={() => setSelected(isSel ? null : snap)}
+                style={{
+                  width: BAR_W,
+                  height: BAR_MAX_H + 18,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  gap: 2,
+                }}
+              >
+                <div style={{
+                  width: BAR_W - 4,
+                  height: h,
+                  borderRadius: 3,
+                  backgroundColor: isSel ? '#f59e0b' : isToday ? '#0e7490' : '#164e63',
+                  border: isSel ? '1px solid #f59e0b' : isToday ? '1px solid #22d3ee' : '1px solid #0e7490',
+                  transition: 'background-color 0.15s',
+                }} />
+                <span style={{ fontSize: 7, color: '#6b7280', transform: 'rotate(-45deg)', transformOrigin: 'right center', whiteSpace: 'nowrap' }}>
+                  {snap.snapshot_date.slice(5)}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {!loading && snapshots.length === 0 && (
+        <p style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>No snapshots yet — first snapshot will be taken automatically on next admin visit.</p>
+      )}
+
+      {/* Side-by-side comparison */}
+      {selected && todayMetrics && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          {/* Today */}
+          <div style={{ backgroundColor: '#082f49', border: '1px solid #0e749088', borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#22d3ee', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Today · {snapshots[0]?.snapshot_date ?? '—'}</div>
+            <MetricRow label="Agent Activity" value={todayMetrics.agentActivityCount ?? 0} />
+            <MetricRow label="Beta Users" value={todayMetrics.betaUserCount ?? 0} />
+            <MetricRow label="Improvement Log" value={todayMetrics.improvementLogCount ?? 0} />
+            <MetricRow label="Goal Paths" value={(todayMetrics.goalPathStates ?? []).filter((g: any) => g.active).length} suffix="active" />
+          </div>
+          {/* Selected day */}
+          <div style={{ backgroundColor: '#1c1008', border: '1px solid #f59e0b88', borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Selected · {selected.snapshot_date}</div>
+            <MetricRow label="Agent Activity" value={selected.metrics_json?.agentActivityCount ?? 0} compare={todayMetrics.agentActivityCount} />
+            <MetricRow label="Beta Users" value={selected.metrics_json?.betaUserCount ?? 0} compare={todayMetrics.betaUserCount} />
+            <MetricRow label="Improvement Log" value={selected.metrics_json?.improvementLogCount ?? 0} compare={todayMetrics.improvementLogCount} />
+            <MetricRow label="Goal Paths" value={(selected.metrics_json?.goalPathStates ?? []).filter((g: any) => g.active).length} compare={(todayMetrics.goalPathStates ?? []).filter((g: any) => g.active).length} suffix="active" />
+          </div>
+        </div>
+      )}
+
+      {/* AI Delta Insight */}
+      {selected && (
+        <div style={{ marginTop: 4 }}>
+          <button
+            onClick={handleDeltaInsight}
+            disabled={deltaLoading}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 8,
+              border: '1px solid #0e749088', backgroundColor: '#082f49',
+              color: '#22d3ee', cursor: deltaLoading ? 'not-allowed' : 'pointer',
+              opacity: deltaLoading ? 0.6 : 1,
+            }}
+          >
+            {deltaLoading ? '⚡ Analyzing delta…' : '⚡ AI Delta Analysis'}
+          </button>
+          {deltaInsight && (
+            <p style={{ fontSize: 12, lineHeight: 1.65, color: '#d1d5db', marginTop: 10, whiteSpace: 'pre-wrap' }}>
+              {deltaInsight}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MetricRow({ label, value, compare, suffix }: { label: string; value: number; compare?: number; suffix?: string }) {
+  const delta = compare !== undefined ? value - compare : null
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+      <span style={{ fontSize: 11, color: '#9ca3af' }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>
+        {value.toLocaleString()}{suffix ? ` ${suffix}` : ''}
+        {delta !== null && delta !== 0 && (
+          <span style={{ fontSize: 10, marginLeft: 4, color: delta > 0 ? '#4ade80' : '#f87171' }}>
+            {delta > 0 ? `+${delta}` : delta}
+          </span>
+        )}
+      </span>
     </div>
   )
 }
@@ -1876,6 +2040,105 @@ Format as plain text with these exact section labels.`
         )}
       </div>
 
+      {/* ── B42 Feature 5 — Values Profile ────────────────────────────────── */}
+      <ValuesProfilePanel />
+
+    </div>
+  )
+}
+
+// ─── B42 Feature 5 — Values Profile Panel ────────────────────────────────────
+const VALUES_STORAGE_KEY_CC = 'poweron_values_profile'
+
+function ValuesProfilePanel() {
+  const [profile, setProfile] = React.useState({
+    communityImpact:        'Medium' as 'Low' | 'Medium' | 'High',
+    relationshipOverTx:     true,
+    longTermTrust:          true,
+    physicalSustainability: 'Medium' as 'Low' | 'Medium' | 'High',
+    customValues:           [] as string[],
+  })
+  const [newCustomValue, setNewCustomValue] = React.useState('')
+  const [saved, setSaved] = React.useState(false)
+
+  React.useEffect(() => {
+    try { const stored = localStorage.getItem(VALUES_STORAGE_KEY_CC); if (stored) setProfile(JSON.parse(stored)) } catch {}
+  }, [])
+
+  const save = () => {
+    try { localStorage.setItem(VALUES_STORAGE_KEY_CC, JSON.stringify(profile)); setSaved(true); setTimeout(() => setSaved(false), 2200) } catch {}
+  }
+  const addCustom = () => {
+    if (!newCustomValue.trim() || profile.customValues.length >= 10) return
+    setProfile((p) => ({ ...p, customValues: [...p.customValues, newCustomValue.trim()] })); setNewCustomValue('')
+  }
+  const removeCustom = (i: number) => setProfile((p) => ({ ...p, customValues: p.customValues.filter((_, idx) => idx !== i) }))
+
+  const tglStyle = (on: boolean, color = '#7c3aed') => ({ width: 34, height: 18, borderRadius: 9, background: on ? color : 'rgba(255,255,255,0.12)', cursor: 'pointer', position: 'relative' as const, transition: 'background 0.2s', flexShrink: 0 })
+  const knobStyle = (on: boolean) => ({ position: 'absolute' as const, top: 3, left: on ? 18 : 3, width: 12, height: 12, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' })
+  const optBtn = (active: boolean, clr: string) => ({ flex: 1, padding: '5px 0', borderRadius: 5, fontSize: 10, fontWeight: 700, border: `1px solid ${active ? clr : 'rgba(255,255,255,0.1)'}`, background: active ? clr + '28' : 'transparent', color: active ? clr : '#6b7280', cursor: 'pointer' })
+
+  return (
+    <div style={{ backgroundColor: '#0f172a', border: '1px solid rgba(124,58,237,0.3)', borderRadius: 12, padding: 20, marginTop: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 4, height: 24, backgroundColor: '#7c3aed', borderRadius: 2 }} />
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#a78bfa', letterSpacing: '0.06em', textTransform: 'uppercase' }}>B42 · Feature 5</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#e2e8f0', marginTop: 1 }}>Values Profile</div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 1 }}>Read by Claude before all 3× Better step analyses. Conflicts flagged with ⚠️.</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>Community Impact Priority</div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['Low','Medium','High'] as const).map((opt) => <button key={opt} onClick={() => setProfile((p) => ({ ...p, communityImpact: opt }))} style={optBtn(profile.communityImpact === opt, '#7c3aed')}>{opt}</button>)}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>Physical &amp; Mental Sustainability</div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['Low','Medium','High'] as const).map((opt) => <button key={opt} onClick={() => setProfile((p) => ({ ...p, physicalSustainability: opt }))} style={optBtn(profile.physicalSustainability === opt, '#06b6d4')}>{opt}</button>)}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Relationship Over Transaction</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={tglStyle(profile.relationshipOverTx)} onClick={() => setProfile((p) => ({ ...p, relationshipOverTx: !p.relationshipOverTx }))}><div style={knobStyle(profile.relationshipOverTx)} /></div>
+            <span style={{ fontSize: 11, color: profile.relationshipOverTx ? '#a78bfa' : '#6b7280' }}>{profile.relationshipOverTx ? 'Yes — relationships first' : 'No — transactional OK'}</span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Long-term Trust Over Short-term Collection</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={tglStyle(profile.longTermTrust)} onClick={() => setProfile((p) => ({ ...p, longTermTrust: !p.longTermTrust }))}><div style={knobStyle(profile.longTermTrust)} /></div>
+            <span style={{ fontSize: 11, color: profile.longTermTrust ? '#a78bfa' : '#6b7280' }}>{profile.longTermTrust ? 'Yes — trust first' : 'No — collect first'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Custom Values ({profile.customValues.length}/10)</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {profile.customValues.map((v, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 12, background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.3)', color: '#a78bfa', fontSize: 11 }}>
+              {v}
+              <button onClick={() => removeCustom(i)} style={{ background: 'none', border: 'none', color: '#7c3aed', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: 13 }}>×</button>
+            </div>
+          ))}
+        </div>
+        {profile.customValues.length < 10 && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input value={newCustomValue} onChange={(e) => setNewCustomValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCustom()} placeholder="Add a custom value…" style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, color: '#e2e8f0', fontSize: 11, padding: '5px 8px' }} />
+            <button onClick={addCustom} style={{ padding: '5px 14px', borderRadius: 5, background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)', color: '#a78bfa', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Add</button>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button onClick={save} style={{ padding: '7px 18px', borderRadius: 6, background: saved ? '#00ff8820' : '#7c3aed', border: saved ? '1px solid #00ff8855' : 'none', color: saved ? '#00ff88' : '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em', transition: 'all 0.2s' }}>{saved ? '✓ Saved' : 'Save Values Profile'}</button>
+      </div>
     </div>
   )
 }
