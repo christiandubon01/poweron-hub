@@ -99,6 +99,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     if (saved !== null) return saved === 'true'
     return window.innerWidth >= 1024
   })
+  // B50: Desktop sidebar collapse (Windows/desktop only, viewport > 1024px)
+  const [desktopCollapsed, setDesktopCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('sidebar_collapsed') === 'true'
+  })
 
   // Collapsible section states — persisted per section to localStorage
   const [sectionWorkspace, setSectionWorkspace] = useState(() => {
@@ -650,9 +655,17 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // Responsive sidebar modes (declared above, near useState for windowWidth)
 
+  // B50: Desktop collapse support
+  const effectiveDesktopCollapsed = isDesktop && desktopCollapsed
+  const toggleDesktopCollapse = () => {
+    const next = !desktopCollapsed
+    setDesktopCollapsed(next)
+    localStorage.setItem('sidebar_collapsed', String(next))
+  }
+
   // Sidebar width
-  const sidebarWidth = isMobile ? 280 : isDesktop ? 224 : (sidebarOpen ? 224 : 64)
-  const showLabels = isDesktop || sidebarOpen
+  const sidebarWidth = isMobile ? 280 : isDesktop ? (effectiveDesktopCollapsed ? 48 : 224) : (sidebarOpen ? 224 : 64)
+  const showLabels = isDesktop ? !effectiveDesktopCollapsed : sidebarOpen
   const isOverlay = isMobile || (isTablet && sidebarOpen)
 
   // Workspace nav items
@@ -708,13 +721,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // Admin nav items — B14 owner-only gate
   const adminItems = [
+    { label: 'NEXUS Voice', icon: Mic, view: 'nexus-voice', badge: null, subtitle: 'AI assistant' },
     { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null },
     { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null },
-    { label: 'VISUAL SUITE', icon: FlaskConical, view: 'viz-lab', badge: 'B46' },
+    { label: 'VISUAL SUITE', icon: FlaskConical, view: 'visual-suite', badge: 'B48', subtitle: '43 modes · ambient display' },
     { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview' },
     { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null },
     { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null },
-    { label: 'Visualization Lab', icon: FlaskConical, view: 'viz-lab', badge: 'B33' },
+    { label: 'Visualization Lab', icon: FlaskConical, view: 'viz-lab', badge: 'B42', subtitle: 'ORB LAB · NEURAL MAP · admin' },
     { label: 'Command Center', icon: Terminal, view: 'admin-command-center', badge: 'B36' },
   ]
 
@@ -722,6 +736,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const toggleSidebar = () => setSidebarOpen(prev => !prev)
   const closeSidebar = () => { if (isMobile || isTablet) setSidebarOpen(false) }
   const handleNavClick = (view: string) => {
+    if (view === 'nexus-voice') {
+      // Dispatch custom event to open NEXUS drawer
+      window.dispatchEvent(new CustomEvent('poweron:open-nexus-drawer'))
+      if (isMobile) setSidebarOpen(false)
+      return
+    }
     onNav(view)
     if (isMobile) setSidebarOpen(false)
   }
@@ -759,7 +779,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             : ''
         }`}
         style={{
-          width: isMobile ? 280 : (isTablet ? (sidebarOpen ? 224 : 64) : 224),
+          width: sidebarWidth,
+          transition: 'width 200ms ease',
           backgroundColor: 'var(--bg-primary)',
           borderRight: '1px solid var(--border-primary)',
         }}
@@ -1159,6 +1180,25 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
         </div>
 
+        {/* ── B50: Desktop Collapse Toggle — only on viewport > 1024px ─── */}
+        {isDesktop && (
+          <div className="px-2 py-2 flex-shrink-0">
+            <button
+              onClick={toggleDesktopCollapse}
+              title={effectiveDesktopCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2 min-h-[36px] text-xs transition-colors rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800`}
+              style={{ fontSize: 11 }}
+            >
+              {effectiveDesktopCollapsed ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
+              )}
+              {showLabels && <span>Collapse</span>}
+            </button>
+          </div>
+        )}
+
         {/* ── Logout Button — pinned to sidebar bottom ────────────────── */}
         <div className="border-t border-gray-700 px-2 py-3 flex-shrink-0">
           <button
@@ -1212,9 +1252,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       </aside>
 
       {/* MAIN LAYOUT */}
-      <div className="flex flex-col flex-1 transition-all duration-300" style={{ marginLeft: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224) }}>
+      <div className="flex flex-col flex-1 transition-all duration-300" style={{ marginLeft: isMobile ? 0 : sidebarWidth }}>
         {/* TOP BAR - TWO ROWS */}
-        <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : (isTablet ? (sidebarOpen ? 0 : 64) : 224), backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
+        <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
             {/* LEFT: Hamburger + KPI Pills */}
@@ -1534,9 +1574,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           )}
         </header>
 
-        {/* CONTENT AREA */}
-        <main className="flex-1 overflow-auto" style={{ backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem' }}>
-          {children}
+        {/* CONTENT AREA — B50: responsive overflow with min-width */}
+        <main className="flex-1" style={{ backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'auto', overflowY: 'auto', minWidth: 320, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {children}
+          </div>
         </main>
 
         {/* Toast Notification */}

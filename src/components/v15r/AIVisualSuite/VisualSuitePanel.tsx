@@ -169,6 +169,8 @@ export default function VisualSuitePanel({
   const [autoOn,    setAutoOn]    = useState(false)
   const [showReel,  setShowReel]  = useState(false)
   const [showInfo,  setShowInfo]  = useState(false)
+  // B50: Bucket dropdown state
+  const [openDropdown, setOpenDropdown] = useState<'B1' | 'B2' | 'B3' | null>(null)
 
   // ── Live audio bands from useNEXUSAudio ──────────────────────────────────
   const { bass, mid, high, isLive } = useNEXUSAudio(
@@ -212,10 +214,10 @@ export default function VisualSuitePanel({
     lsSet(LS_MODE, m)
     autoTimerRef.current = performance.now()
   }
-  const setMtz = (v: number) => { setMtzState(v);   lsSet(LS_MTZ,   v) }
-  const setHue = (v: number) => { setHueState(v);   lsSet(LS_HUE,   v) }
-  const setSpeed = (v: number) => { setSpeedState(v); lsSet(LS_SPEED, v) }
-  const setInt = (v: number) => { setIntState(v);   lsSet(LS_INT,   v) }
+  const setMtz = (v: number) => { mtzRef.current = v; setMtzState(v);   lsSet(LS_MTZ,   v) }
+  const setHue = (v: number) => { hueRef.current = v; setHueState(v);   lsSet(LS_HUE,   v) }
+  const setSpeed = (v: number) => { speedRef.current = v; setSpeedState(v); lsSet(LS_SPEED, v) }
+  const setInt = (v: number) => { intensityRef.current = v; setIntState(v);   lsSet(LS_INT,   v) }
 
   // ── rAF loop ─────────────────────────────────────────────────────────────
   const loop = useCallback((ts: number) => {
@@ -344,6 +346,8 @@ export default function VisualSuitePanel({
   return (
     <div style={{
       width:           '100%',
+      height:          '100%',
+      flex:            1,
       backgroundColor: '#000',
       borderRadius:    10,
       overflow:        'hidden',
@@ -353,51 +357,90 @@ export default function VisualSuitePanel({
       userSelect:      'none',
     }}>
 
-      {/* ── Mode button rows ── */}
-      <div style={{ padding: '8px 8px 4px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {[b1Modes, b2Modes, b3Modes].map((group, gi) => {
-          const bKey = (['B1', 'B2', 'B3'] as const)[gi]
-          const bc   = bucketColor(bKey)
+      {/* ── Mode bucket dropdowns (B50) ── */}
+      <div style={{ padding: '8px 8px 4px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+        onClick={(e) => { if (e.target === e.currentTarget) setOpenDropdown(null) }}>
+        {([['B1', b1Modes], ['B2', b2Modes], ['B3', b3Modes]] as const).map(([bKey, group]) => {
+          const bc = bucketColor(bKey)
+          const activeModeInBucket = group.find(md => md.id === activeMode)
+          const isOpen = openDropdown === bKey
           return (
-            <div key={bKey} style={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
-              <span style={{ fontSize: 8, color: bc, fontWeight: 700, letterSpacing: '0.1em', minWidth: 20, textAlign: 'right', marginRight: 2 }}>
-                {bKey}
-              </span>
-              {group.map(md => {
-                const isActive = md.id === activeMode
-                return (
-                  <button
-                    key={md.id}
-                    onClick={() => setMode(md.id)}
-                    title={md.name}
-                    style={{
-                      fontSize:        8,
-                      fontFamily:      'Courier New, monospace',
-                      letterSpacing:   '0.05em',
-                      padding:         '3px 6px',
-                      border:          `1px solid ${isActive ? bc : '#2a2a2a'}`,
-                      borderRadius:    4,
-                      backgroundColor: isActive ? bc + '22' : 'transparent',
-                      color:           isActive ? bc : '#555',
-                      cursor:          'pointer',
-                      whiteSpace:      'nowrap',
-                      transition:      'all 0.12s',
-                    }}
-                  >
-                    {md.name}
-                  </button>
-                )
-              })}
+            <div key={bKey} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setOpenDropdown(isOpen ? null : bKey)}
+                style={{
+                  display:         'flex', alignItems: 'center', gap: 6,
+                  padding:         '4px 10px',
+                  border:          `1px solid ${activeModeInBucket ? bc : '#333'}`,
+                  borderRadius:    5,
+                  backgroundColor: activeModeInBucket ? bc + '18' : 'rgba(255,255,255,0.04)',
+                  color:           activeModeInBucket ? bc : '#666',
+                  fontSize:        9, fontFamily: 'Courier New, monospace',
+                  fontWeight:      700, letterSpacing: '0.08em',
+                  cursor:          'pointer', whiteSpace: 'nowrap',
+                  transition:      'all 0.12s',
+                }}
+              >
+                <span style={{ color: bc }}>{bKey}</span>
+                {activeModeInBucket && <span style={{ color: '#aaa', fontWeight: 400 }}>{activeModeInBucket.name}</span>}
+                {!activeModeInBucket && <span style={{ color: '#444' }}>— select —</span>}
+                <span style={{ fontSize: 8, color: '#555', marginLeft: 2 }}>▼</span>
+              </button>
+              {isOpen && (
+                <div
+                  style={{
+                    position: 'absolute', top: '100%', left: 0, zIndex: 300,
+                    marginTop: 4, minWidth: 180, maxHeight: 300, overflowY: 'auto',
+                    backgroundColor: 'rgba(4,6,18,0.98)',
+                    border: `1px solid ${bc}44`, borderRadius: 7,
+                    boxShadow: `0 8px 32px rgba(0,0,0,0.8), 0 0 12px ${bc}18`,
+                    backdropFilter: 'blur(12px)',
+                  }}
+                >
+                  {group.map(md => {
+                    const isActive = md.id === activeMode
+                    return (
+                      <button
+                        key={md.id}
+                        onClick={() => { setMode(md.id); setOpenDropdown(null) }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          width: '100%', padding: '6px 12px',
+                          border: 'none', cursor: 'pointer',
+                          backgroundColor: isActive ? bc + '22' : 'transparent',
+                          color: isActive ? bc : '#9ca3af',
+                          fontSize: 10, fontFamily: 'Courier New, monospace',
+                          letterSpacing: '0.04em', textAlign: 'left',
+                          transition: 'background 0.1s',
+                        }}
+                        onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.06)' }}
+                        onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}
+                      >
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: isActive ? bc : '#333', flexShrink: 0, display: 'inline-block' }} />
+                        <span style={{ fontSize: 8, color: '#555', minWidth: 22 }}>#{md.id.toString().padStart(2,'0')}</span>
+                        <span style={{ flex: 1 }}>{md.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )
         })}
+        {/* Close dropdowns on outside click */}
+        {openDropdown && (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 299 }}
+            onClick={() => setOpenDropdown(null)}
+          />
+        )}
       </div>
 
-      {/* ── Canvas ── */}
-      <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9' }}>
+      {/* ── Canvas — B50: flex:1 to fill available height ── */}
+      <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 200 }}>
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', height: '100%', display: 'block' }}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
         />
 
         {/* Car Reel overlay */}

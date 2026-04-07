@@ -93,6 +93,9 @@ const SettingsV3        = lazy(() => chunkRetry(() => import('@/views/Settings')
 // B33 — Admin Visualization Lab (lazy-loaded)
 const AdminVisualizationLab = lazy(() => chunkRetry(() => import('@/views/AdminVisualizationLab')))
 
+// B50 — Visual Suite Standalone (fullscreen 43-mode display)
+const VisualSuiteStandalone = lazy(() => chunkRetry(() => import('@/views/VisualSuiteStandalone')))
+
 // B36 — Admin Command Center (lazy-loaded)
 const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminCommandCenter')))
 
@@ -501,9 +504,13 @@ export function AppShell({ children }: AppShellProps) {
           </Suspense>
         )
 
-      // B33 — Admin Visualization Lab
+      // B33 — Admin Visualization Lab (ORB LAB + NEURAL MAP tabs — admin view)
       case 'viz-lab':
         return <Suspense fallback={<PanelLoading />}><AdminVisualizationLab /></Suspense>
+
+      // B50 — Visual Suite Standalone (fullscreen 43-mode ambient display)
+      case 'visual-suite':
+        return <Suspense fallback={<PanelLoading />}><VisualSuiteStandalone /></Suspense>
 
       // B36 — Admin Command Center
       case 'admin-command-center':

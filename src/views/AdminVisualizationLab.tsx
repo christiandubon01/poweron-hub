@@ -709,13 +709,49 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
   const [bgMode, setBgMode] = useState<BgMode>('deepspace')
   const [fullscreen, setFullscreen] = useState<'left' | 'right' | null>(null)
   const [departure, setDeparture] = useState<DepartureMode>('silent')
+  // B50: Mic state
+  const [micActive, setMicActive] = useState(false)
+  const [micStream, setMicStream] = useState<MediaStream | null>(null)
+  const micStreamRef = useRef<MediaStream | null>(null)
+
   const BG_OPTIONS = [{ label: '🌌 Deep Space', value: 'deepspace' as BgMode },{ label: '💻 Data Stream', value: 'datastream' as BgMode },{ label: '⬡ Grid', value: 'grid' as BgMode },{ label: '⬛ Solid Dark', value: 'soliddark' as BgMode }]
   const healthLabel = healthAvg>70?'HEALTHY':healthAvg>40?'WARNING':'CRITICAL'
   const healthClr = healthAvg>70?'#00ff88':healthAvg>40?'#ffcc00':'#ff6600'
 
+  const handleMicToggle = async () => {
+    if (micActive) {
+      if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null }
+      setMicStream(null); setMicActive(false); setOrbState('IDLE')
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        micStreamRef.current = stream; setMicStream(stream); setMicActive(true); setOrbState('LISTENING')
+      } catch (e) { console.warn('[OrbLab] Mic access denied', e) }
+    }
+  }
+
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
       <div style={{ display:'flex', alignItems:'center', gap:16, padding:'10px 20px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexWrap:'wrap', backgroundColor:'rgba(0,0,0,0.3)' }}>
+        {/* B50: Mic button */}
+        <button
+          onClick={handleMicToggle}
+          title={micActive ? 'Stop mic — MIC LIVE' : 'Activate mic — MIC OFF'}
+          style={{
+            display:'flex', alignItems:'center', gap:5,
+            padding:'4px 12px', borderRadius:6, fontSize:10, fontWeight:800,
+            letterSpacing:'0.07em', border:'none', cursor:'pointer',
+            backgroundColor: micActive ? 'rgba(0,255,100,0.15)' : 'rgba(255,255,255,0.06)',
+            color: micActive ? '#00ff88' : '#9ca3af',
+            boxShadow: micActive ? '0 0 10px rgba(0,255,136,0.35)' : 'none',
+            transition: 'all 0.2s',
+            animation: micActive ? 'orbMicPulse 1.5s ease-in-out infinite' : 'none',
+          }}
+        >
+          <span style={{ fontSize: 14 }}>🎙</span>
+          {micActive ? 'LIVE' : 'MIC OFF'}
+        </button>
+        <div style={{ width:1, height:16, background:'rgba(255,255,255,0.08)' }} />
         <div style={{ display:'flex', gap:6, alignItems:'center' }}>
           <span style={{ fontSize:10, color:'#9ca3af', letterSpacing:'0.08em', textTransform:'uppercase', marginRight:4 }}>State</span>
           {ORB_STATES.map((s) => (
@@ -741,14 +777,19 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
           ))}
         </div>
       </div>
-      <div style={{ flex:1, overflow:'auto', padding:'8px' }}>
-        <VisualSuitePanel nexusState={
-          orbState === 'IDLE'        ? 'idle'       :
-          orbState === 'LISTENING'   ? 'listening'  :
-          orbState === 'THINKING'    ? 'thinking'   :
-          orbState === 'SPEAKING'    ? 'speaking'   :
-          orbState === 'MULTI_AGENT' ? 'multiAgent' : 'idle'
-        } />
+      <style>{`@keyframes orbMicPulse { 0%,100%{box-shadow:0 0 10px rgba(0,255,136,0.35)} 50%{box-shadow:0 0 20px rgba(0,255,136,0.7)} }`}</style>
+      <div style={{ flex:1, overflow:'hidden', padding:'8px', display:'flex', flexDirection:'column' }}>
+        <VisualSuitePanel
+          micStream={micStream}
+          nexusState={
+            micActive ? 'listening' :
+            orbState === 'IDLE'        ? 'idle'       :
+            orbState === 'LISTENING'   ? 'listening'  :
+            orbState === 'THINKING'    ? 'thinking'   :
+            orbState === 'SPEAKING'    ? 'speaking'   :
+            orbState === 'MULTI_AGENT' ? 'multiAgent' : 'idle'
+          }
+        />
       </div>
     </div>
   )
@@ -1284,7 +1325,15 @@ function NeuralMap() {
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
-    const W = Math.max(mount.clientWidth || 600, 100)
+
+    let _animFrame: number
+    let _renderer: THREE.WebGLRenderer | null = null
+    let _ro: ResizeObserver | null = null
+    let _io: IntersectionObserver | null = null
+    let _cleanup: (() => void) | null = null
+
+    function doInit() {
+    const W = Math.max(mount.clientWidth || 800, 100)
     const H = Math.max(mount.clientHeight || 600, 100)
 
     const scene    = new THREE.Scene()
@@ -1292,9 +1341,14 @@ function NeuralMap() {
     camera.position.z = 10
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    _renderer = renderer
     renderer.setSize(W, H)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setClearColor(0x020408, 1)
+    renderer.domElement.style.position = 'absolute'
+    renderer.domElement.style.zIndex = '1'
+    renderer.domElement.style.top = '0'
+    renderer.domElement.style.left = '0'
     mount.appendChild(renderer.domElement)
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.25); scene.add(ambientLight)
@@ -1761,8 +1815,9 @@ function NeuralMap() {
       camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h)
     })
     ro.observe(mount)
+    _ro = ro
 
-    return () => {
+    _cleanup = () => {
       cancelAnimationFrame(animFrame)
       ro.disconnect()
       document.removeEventListener('visibilitychange', handleVisibility)
@@ -1784,6 +1839,11 @@ function NeuralMap() {
       if (labelContainer?.parentNode) labelContainer.parentNode.removeChild(labelContainer)
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
     }
+    } // end doInit
+
+    requestAnimationFrame(() => doInit())
+
+    return () => { if (_cleanup) _cleanup(); else { if (_ro) _ro.disconnect() } }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trigger rebuild when tab/toggles change
@@ -1851,7 +1911,7 @@ function NeuralMap() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas wrapper */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0 }} />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }} />
 
           {/* Goal Paths Drawer — Feature 4 */}
           <GoalPathsDrawer open={goalPathsOpen} onClose={() => setGoalPathsOpen(false)} onProfilesChange={handleProfilesChange} />

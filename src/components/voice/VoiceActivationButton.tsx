@@ -133,6 +133,13 @@ export function VoiceActivationButton({ className }: VoiceActivationButtonProps)
     })
   }, [])
 
+  // Listen for sidebar NEXUS Voice click
+  useEffect(() => {
+    const handler = () => { setDrawerOpen(true); setDrawerExpanded(true); try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {} }
+    window.addEventListener('poweron:open-nexus-drawer', handler)
+    return () => window.removeEventListener('poweron:open-nexus-drawer', handler)
+  }, [])
+
   // iOS AudioContext unlock
   useEffect(() => {
     if (audioUnlocked) return
