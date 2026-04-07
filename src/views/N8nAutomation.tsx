@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Workflow,
   Mail,
@@ -14,7 +14,14 @@ import {
   ToggleRight,
   Activity,
 } from 'lucide-react';
-import { initN8nAutomationAgent } from '../agents/n8nAutomation';
+import {
+  initN8nAutomationAgent,
+  getWorkflowRuns,
+  getLastRunForWorkflow,
+  getLastResultForWorkflow,
+} from '../agents/n8nAutomation';
+import { getRecentActivity } from '../services/activityLog';
+import type { ActivityEntry } from '../services/activityLog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,196 +46,58 @@ interface ActivityEvent {
   description: string;
 }
 
-// ─── Mock Data ────────────────────────────────────────────────────────────────
+// ─── Workflow Definitions (static metadata) ───────────────────────────────────
+// lastRun + status are derived from real agentBus/activityLog data at runtime.
 
-const INITIAL_WORKFLOWS: AutomationWorkflow[] = [
+const WORKFLOW_DEFS: Omit<AutomationWorkflow, 'lastRun' | 'status'>[] = [
   {
     id: 'lead-intake',
     name: 'Lead Intake',
-    description: 'Captures inbound email and text leads and pushes them into SPARK for follow-up.',
-    status: 'active',
-    lastRun: '2026-04-05T07:42:00Z',
+    description:
+      'Captures inbound email and text leads and pushes them into SPARK for scoring and follow-up.',
     nextRun: 'Continuous',
     icon: <Mail size={18} />,
   },
   {
     id: 'invoice-followup',
     name: 'Invoice Follow-Up',
-    description: 'Sends automatic AR reminder messages for outstanding invoices on a 3/7/14-day cadence.',
-    status: 'active',
-    lastRun: '2026-04-05T06:00:00Z',
-    nextRun: '2026-04-06T06:00:00Z',
+    description:
+      'Sends automatic AR reminder messages for outstanding invoices older than 14 days via LEDGER.',
+    nextRun: new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    ).toISOString(),
     icon: <FileText size={18} />,
   },
   {
     id: 'daily-briefing',
     name: 'Daily Briefing',
-    description: 'Delivers a morning summary of open jobs, today\'s tasks, and unread leads via text.',
-    status: 'active',
-    lastRun: '2026-04-05T05:30:00Z',
-    nextRun: '2026-04-06T05:30:00Z',
+    description:
+      'Delivers a morning summary of open jobs and unread leads via PULSE + NEXUS on first session of day.',
+    nextRun: (() => {
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      t.setHours(5, 30, 0, 0);
+      return t.toISOString();
+    })(),
     icon: <Sun size={18} />,
   },
   {
     id: 'receipt-processing',
     name: 'Receipt Processing',
-    description: 'Parses emailed receipts and automatically updates the corresponding MTO job cost entry.',
-    status: 'paused',
-    lastRun: '2026-04-03T14:17:00Z',
+    description:
+      'Parses uploaded receipts via VAULT and automatically creates expense entries in LEDGER.',
     nextRun: null,
     icon: <Receipt size={18} />,
   },
   {
     id: 'review-monitoring',
     name: 'Review Monitoring',
-    description: 'Monitors Google Business reviews and triggers alerts for new negative or positive reviews.',
-    status: 'error',
-    lastRun: '2026-04-04T22:00:00Z',
-    nextRun: '2026-04-05T22:00:00Z',
+    description:
+      'Monitors Google Business reviews via SPARK and flags negative ones for immediate attention.',
+    nextRun: new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    ).toISOString(),
     icon: <Star size={18} />,
-  },
-];
-
-const MOCK_ACTIVITY: ActivityEvent[] = [
-  {
-    id: 'evt-20',
-    timestamp: '2026-04-05T07:42:11Z',
-    automationName: 'Lead Intake',
-    result: 'success',
-    description: 'New lead captured from email — forwarded to SPARK queue.',
-  },
-  {
-    id: 'evt-19',
-    timestamp: '2026-04-05T07:11:03Z',
-    automationName: 'Invoice Follow-Up',
-    result: 'success',
-    description: 'Reminder sent to Riverside Commercial — Invoice #1047 (7-day).',
-  },
-  {
-    id: 'evt-18',
-    timestamp: '2026-04-05T06:59:44Z',
-    automationName: 'Lead Intake',
-    result: 'success',
-    description: 'SMS lead captured — pushed to SPARK as "New Contact".',
-  },
-  {
-    id: 'evt-17',
-    timestamp: '2026-04-05T06:01:02Z',
-    automationName: 'Invoice Follow-Up',
-    result: 'success',
-    description: 'Daily AR sweep complete — 3 reminders queued.',
-  },
-  {
-    id: 'evt-16',
-    timestamp: '2026-04-05T05:30:00Z',
-    automationName: 'Daily Briefing',
-    result: 'success',
-    description: 'Morning briefing delivered — 4 open jobs, 2 unread leads.',
-  },
-  {
-    id: 'evt-15',
-    timestamp: '2026-04-04T22:01:09Z',
-    automationName: 'Review Monitoring',
-    result: 'failure',
-    description: 'Google Business API auth token expired — re-authentication required.',
-  },
-  {
-    id: 'evt-14',
-    timestamp: '2026-04-04T19:38:22Z',
-    automationName: 'Lead Intake',
-    result: 'success',
-    description: 'New lead captured from email — forwarded to SPARK queue.',
-  },
-  {
-    id: 'evt-13',
-    timestamp: '2026-04-04T17:14:55Z',
-    automationName: 'Invoice Follow-Up',
-    result: 'success',
-    description: 'Reminder sent to Oakwood Remodel — Invoice #1039 (14-day).',
-  },
-  {
-    id: 'evt-12',
-    timestamp: '2026-04-04T16:07:31Z',
-    automationName: 'Lead Intake',
-    result: 'success',
-    description: 'SMS lead captured — duplicate detected, merged with existing contact.',
-  },
-  {
-    id: 'evt-11',
-    timestamp: '2026-04-04T14:17:43Z',
-    automationName: 'Receipt Processing',
-    result: 'success',
-    description: 'Receipt from Home Depot parsed — $342.18 logged to Job #204.',
-  },
-  {
-    id: 'evt-10',
-    timestamp: '2026-04-04T12:55:10Z',
-    automationName: 'Invoice Follow-Up',
-    result: 'success',
-    description: 'Reminder sent to Metro Contractors — Invoice #1041 (3-day).',
-  },
-  {
-    id: 'evt-09',
-    timestamp: '2026-04-04T09:30:00Z',
-    automationName: 'Daily Briefing',
-    result: 'success',
-    description: 'Morning briefing delivered — 5 open jobs, 1 unread lead.',
-  },
-  {
-    id: 'evt-08',
-    timestamp: '2026-04-03T22:01:00Z',
-    automationName: 'Review Monitoring',
-    result: 'success',
-    description: '2 new 5-star reviews detected on Google Business.',
-  },
-  {
-    id: 'evt-07',
-    timestamp: '2026-04-03T18:44:12Z',
-    automationName: 'Lead Intake',
-    result: 'failure',
-    description: 'Email parse error — unrecognized sender format. Flagged for manual review.',
-  },
-  {
-    id: 'evt-06',
-    timestamp: '2026-04-03T15:22:00Z',
-    automationName: 'Receipt Processing',
-    result: 'success',
-    description: 'Receipt from Graybar parsed — $1,205.40 logged to Job #198.',
-  },
-  {
-    id: 'evt-05',
-    timestamp: '2026-04-03T14:17:22Z',
-    automationName: 'Receipt Processing',
-    result: 'success',
-    description: 'Receipt from Rexel parsed — $87.60 logged to Job #201.',
-  },
-  {
-    id: 'evt-04',
-    timestamp: '2026-04-03T11:03:44Z',
-    automationName: 'Invoice Follow-Up',
-    result: 'success',
-    description: 'Reminder sent to Sunrise Properties — Invoice #1033 (7-day).',
-  },
-  {
-    id: 'evt-03',
-    timestamp: '2026-04-03T09:30:00Z',
-    automationName: 'Daily Briefing',
-    result: 'success',
-    description: 'Morning briefing delivered — 4 open jobs, 0 unread leads.',
-  },
-  {
-    id: 'evt-02',
-    timestamp: '2026-04-02T22:01:00Z',
-    automationName: 'Review Monitoring',
-    result: 'success',
-    description: '1 new 4-star review detected — no alert triggered.',
-  },
-  {
-    id: 'evt-01',
-    timestamp: '2026-04-02T16:55:19Z',
-    automationName: 'Lead Intake',
-    result: 'success',
-    description: 'New lead captured from email — forwarded to SPARK queue.',
   },
 ];
 
@@ -249,6 +118,43 @@ function formatNextRun(next: string | null): string {
   if (!next) return '—';
   if (next === 'Continuous') return 'Continuous';
   return formatTimestamp(next);
+}
+
+/** Map activityLog agent_name to a workflow id for grouping. */
+function actionTypeToWorkflowId(actionType: string): string {
+  const map: Record<string, string> = {
+    lead_intake: 'lead-intake',
+    invoice_followup: 'invoice-followup',
+    daily_briefing: 'daily-briefing',
+    receipt_processing: 'receipt-processing',
+    review_monitoring: 'review-monitoring',
+  };
+  return map[actionType] ?? actionType;
+}
+
+/** Map workflow id to a human-readable display name. */
+function workflowIdToName(id: string): string {
+  const map: Record<string, string> = {
+    'lead-intake': 'Lead Intake',
+    'invoice-followup': 'Invoice Follow-Up',
+    'daily-briefing': 'Daily Briefing',
+    'receipt-processing': 'Receipt Processing',
+    'review-monitoring': 'Review Monitoring',
+  };
+  return map[id] ?? id;
+}
+
+/** Convert activityLog entries to ActivityEvent shape for the UI. */
+function entriesToEvents(entries: ActivityEntry[]): ActivityEvent[] {
+  return entries
+    .filter((e) => e.agent_name === 'n8n')
+    .map((e) => ({
+      id: e.id,
+      timestamp: e.created_at,
+      automationName: workflowIdToName(actionTypeToWorkflowId(e.action_type)),
+      result: 'success' as EventResult, // activityLog only records successful writes
+      description: e.summary,
+    }));
 }
 
 // ─── Status Dot ───────────────────────────────────────────────────────────────
@@ -436,29 +342,128 @@ function StatCard({
   );
 }
 
+// ─── Build workflows from real agent state ────────────────────────────────────
+
+function buildWorkflows(
+  pausedIds: Set<string>
+): AutomationWorkflow[] {
+  return WORKFLOW_DEFS.map((def) => {
+    const lastRun = getLastRunForWorkflow(def.id);
+    const lastResult = getLastResultForWorkflow(def.id);
+
+    let status: AutomationStatus = 'active';
+    if (pausedIds.has(def.id)) {
+      status = 'paused';
+    } else if (lastResult === 'failure') {
+      status = 'error';
+    }
+
+    return {
+      ...def,
+      lastRun,
+      status,
+    };
+  });
+}
+
+// ─── Build activity events from workflowRuns + activityLog ───────────────────
+
+function buildActivityFromRuns(): ActivityEvent[] {
+  const runs = getWorkflowRuns();
+  return runs.slice(0, 20).map((run, i) => ({
+    id: `run-${i}-${run.workflowId}`,
+    timestamp: run.timestamp,
+    automationName: workflowIdToName(run.workflowId),
+    result: run.result,
+    description: run.description,
+  }));
+}
+
 // ─── Main N8nAutomation View ──────────────────────────────────────────────────
 
 export default function N8nAutomation() {
-  const [workflows, setWorkflows] = useState<AutomationWorkflow[]>(INITIAL_WORKFLOWS);
+  // Track which workflows the user has manually paused
+  const [pausedIds, setPausedIds] = useState<Set<string>>(new Set());
+  // Derived workflow list — refreshed when agentBus events arrive
+  const [workflows, setWorkflows] = useState<AutomationWorkflow[]>(() =>
+    buildWorkflows(new Set())
+  );
+  // Real activity log — populated from activityLog + workflowRun registry
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
-  // Initialize agent stub on mount
-  useEffect(() => {
-    initN8nAutomationAgent();
+  // ── Refresh helpers ──────────────────────────────────────────────────────
+
+  const refreshWorkflows = useCallback((paused: Set<string>) => {
+    setWorkflows(buildWorkflows(paused));
   }, []);
 
+  const refreshActivity = useCallback(async () => {
+    try {
+      // Prefer activityLog (persisted to Supabase); fall back to in-memory runs
+      const entries = await getRecentActivity(20);
+      const fromLog = entriesToEvents(entries);
+      if (fromLog.length > 0) {
+        setActivityEvents(fromLog);
+      } else {
+        // No Supabase entries yet — use in-memory workflow run history
+        setActivityEvents(buildActivityFromRuns());
+      }
+    } catch {
+      setActivityEvents(buildActivityFromRuns());
+    }
+  }, []);
+
+  // ── Mount: init agent + load real data ──────────────────────────────────
+
+  useEffect(() => {
+    // Initialize the agent (wires Supabase realtime + polling)
+    // orgId/userId are not available in the view scope — the agent defers
+    // polling until they are provided (e.g. from NEXUS auth context).
+    // Workflow triggers can also be called externally with full auth context.
+    const cleanup = initN8nAutomationAgent();
+
+    // Initial data load from real event log
+    refreshWorkflows(pausedIds);
+    void refreshActivity();
+
+    // Poll every 30 s to pick up runs triggered by polling or realtime
+    const pollTimer = setInterval(() => {
+      refreshWorkflows(pausedIds);
+      void refreshActivity();
+    }, 30_000);
+
+    return () => {
+      clearInterval(pollTimer);
+      if (typeof cleanup === 'function') cleanup();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Re-derive workflows when pause state changes ─────────────────────────
+
+  useEffect(() => {
+    refreshWorkflows(pausedIds);
+  }, [pausedIds, refreshWorkflows]);
+
+  // ── Toggle handler ───────────────────────────────────────────────────────
+
   function handleToggle(id: string) {
-    setWorkflows((prev) =>
-      prev.map((wf) => {
-        if (wf.id !== id) return wf;
-        // Toggle between active and paused (error stays until resolved)
-        if (wf.status === 'active') return { ...wf, status: 'paused' as AutomationStatus };
-        if (wf.status === 'paused') return { ...wf, status: 'active' as AutomationStatus };
-        return wf; // error — toggle disabled
-      })
-    );
+    setPausedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        // Cannot toggle error workflows — they need resolution
+        const wf = workflows.find((w) => w.id === id);
+        if (wf?.status === 'error') return prev;
+        next.add(id);
+      }
+      return next;
+    });
   }
 
-  // Derived stats
+  // ── Derived stats ────────────────────────────────────────────────────────
+
   const total = workflows.length;
   const active = workflows.filter((w) => w.status === 'active').length;
   const paused = workflows.filter((w) => w.status === 'paused').length;
@@ -476,12 +481,12 @@ export default function N8nAutomation() {
             className="text-xs font-medium px-2 py-0.5 rounded-full border"
             style={{ color: '#4ade80', borderColor: '#16a34a33', backgroundColor: '#052e1688' }}
           >
-            V3-18 · Management UI
+            B27 · Agent Wired
           </span>
         </div>
         <p className="text-sm text-gray-500">
-          Monitor and control your n8n automation workflows. Toggles pause/resume — real webhook
-          connections are configured in n8n directly.
+          Monitor and control your n8n automation workflows. Status and last-run times reflect real
+          agent activity from SPARK, LEDGER, VAULT, PULSE, and NEXUS.
         </p>
       </div>
 
@@ -516,16 +521,24 @@ export default function N8nAutomation() {
             className="text-xs font-medium px-1.5 py-0.5 rounded-full border"
             style={{ color: '#4ade80', borderColor: '#16a34a33', backgroundColor: '#052e1688' }}
           >
-            Last 20 events
+            {activityEvents.length > 0
+              ? `Last ${activityEvents.length} events — live`
+              : 'Waiting for events'}
           </span>
         </div>
         <div
           className="rounded-xl border overflow-hidden"
           style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
         >
-          {MOCK_ACTIVITY.map((event) => (
-            <ActivityRow key={event.id} event={event} />
-          ))}
+          {activityEvents.length > 0 ? (
+            activityEvents.map((event) => (
+              <ActivityRow key={event.id} event={event} />
+            ))
+          ) : (
+            <div className="px-4 py-8 text-center text-xs text-gray-600">
+              No automation events yet — workflows will log here as they run.
+            </div>
+          )}
         </div>
       </div>
 
@@ -533,7 +546,8 @@ export default function N8nAutomation() {
       <div className="flex items-center gap-2 pb-2">
         <AlertCircle size={12} className="text-gray-700 flex-shrink-0" />
         <p className="text-xs text-gray-700">
-          Activity log uses mock data. Wire to n8n execution history API during integration.
+          Activity sourced from activityLog (Supabase) with in-memory fallback. Workflow statuses
+          reflect real agent runs via SPARK, LEDGER, VAULT, PULSE, and NEXUS.
         </p>
       </div>
     </div>
