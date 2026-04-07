@@ -93,6 +93,55 @@ export type VoiceEventCallback = (event: {
   data?: unknown
 }) => void
 
+// ── B23 — Voice Input Noise Filter ──────────────────────────────────────────
+// Applied after Whisper transcription and before sending to Claude.
+// Strips common filler words and sub-3-char punctuation-only tokens.
+
+export interface NoiseFilterResult {
+  cleaned: string
+  original: string
+  removedCount: number
+}
+
+const FILLER_WORDS = new Set([
+  'um', 'uh', 'like', 'you know', 'hmm', 'ah', 'er',
+  'uh huh', 'mm', 'mhm', 'hm',
+])
+
+export function applyVoiceNoiseFilter(rawTranscript: string): NoiseFilterResult {
+  const original = rawTranscript
+  let text = rawTranscript
+
+  // Strip multi-word filler phrases first (order: longest first)
+  const multiWordFillers = [...FILLER_WORDS].filter(f => f.includes(' ')).sort((a, b) => b.length - a.length)
+  for (const phrase of multiWordFillers) {
+    // Match as whole phrase, case-insensitive, with optional surrounding punctuation/spaces
+    const re = new RegExp(`(?:^|\\s),?${phrase.replace(/\s+/g, '\\s+')}[,.]?(?=\\s|$)`, 'gi')
+    text = text.replace(re, ' ')
+  }
+
+  // Tokenize, filter single-word fillers and sub-3-char punctuation-only tokens
+  const tokens = text.split(/\s+/)
+  let removedCount = 0
+  const kept = tokens.filter(token => {
+    if (!token) return false
+    const lower = token.toLowerCase().replace(/[^a-z]/g, '')
+    // Strip filler words
+    if (FILLER_WORDS.has(lower)) { removedCount++; return false }
+    // Strip tokens that are <3 chars AND consist only of punctuation
+    if (token.length < 3 && /^[^a-zA-Z0-9]+$/.test(token)) { removedCount++; return false }
+    return true
+  })
+
+  // Reconstruct and clean up spacing/punctuation
+  const cleaned = kept.join(' ')
+    .replace(/\s+([,.!?;:])/g, '$1')  // remove space before punctuation
+    .replace(/\s{2,}/g, ' ')           // collapse multiple spaces
+    .trim()
+
+  return { cleaned, original, removedCount }
+}
+
 // ── Debug Log (on-screen diagnostics when ?debug=1) ─────────────────────────
 // Module-level log array consumed by VoiceActivationButton debug overlay.
 
@@ -641,11 +690,27 @@ export class VoiceSubsystem {
         this.currentSession.language = whisperResult.language
       }
 
-      console.log('[Voice] Emitting transcript_ready — text:', whisperResult.text.substring(0, 80))
-      this.emit('transcript_ready', { text: whisperResult.text, confidence })
+      // B23 — Apply noise filter to transcript before routing to Claude
+      const noiseResult = applyVoiceNoiseFilter(whisperResult.text)
+      const filteredText = noiseResult.cleaned || whisperResult.text
+      if (noiseResult.removedCount > 0) {
+        debugPush(`[NoiseFilter] Cleaned ${noiseResult.removedCount} filler word(s) — "${filteredText.substring(0, 60)}"`)
+      }
+      if (this.currentSession) {
+        // Store both raw and cleaned transcript
+        this.currentSession.transcriptRaw = whisperResult.text
+      }
 
-      // Step 3-5: Route, execute, respond
-      await this.executeVoicePipeline(whisperResult.text)
+      console.log('[Voice] Emitting transcript_ready — text:', filteredText.substring(0, 80))
+      this.emit('transcript_ready', {
+        text: filteredText,
+        confidence,
+        original: noiseResult.original,
+        removedCount: noiseResult.removedCount,
+      })
+
+      // Step 3-5: Route, execute, respond (using noise-filtered transcript)
+      await this.executeVoicePipeline(filteredText)
     } catch (err) {
       // FIX: always pass error as string so QuickCaptureButton can display it
       const errMsg = err instanceof Error ? err.message : String(err)

@@ -7,6 +7,22 @@ import { clsx } from 'clsx'
 import type { ImpactLevel } from '@/agents/nexus/classifier'
 import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 
+// ── Strip internal routing commentary from agent response content ────────────
+// Removes phrases like "Routing to BLUEPRINT:", "I'll forward this to SPARK:", etc.
+// that occasionally appear at the start of AI responses before the real answer.
+function stripRoutingCommentary(content: string): string {
+  return content
+    // "Routing to AGENT:" / "Routing this to AGENT:"
+    .replace(/^Routing\s+(?:this\s+)?(?:query\s+)?to\s+[A-Z]+[:\s—–-]+/i, '')
+    // "Forwarding to AGENT:" / "Sending to AGENT:"
+    .replace(/^(?:Forwarding|Sending|Handing(?:\s+off)?|Escalating|Passing)\s+(?:this\s+)?(?:query\s+)?to\s+[A-Z]+[:\s—–-]+/i, '')
+    // "I'll route this to AGENT:" / "I'm routing to AGENT:"
+    .replace(/^I(?:'ll|'m| will| am)\s+(?:route|forward|send|hand|pass)(?:ing)?\s+(?:this\s+)?(?:query\s+)?(?:to|over\s+to)\s+[A-Z]+[:\s—–-]+/i, '')
+    // "→ AGENT:" arrow-style prefix
+    .replace(/^[→>]\s*[A-Z]+[:\s—–-]+/, '')
+    .trim()
+}
+
 // ── Agent colors (matches tailwind.config.ts agent tokens) ──────────────────
 
 const AGENT_COLORS: Record<string, { text: string; bg: string; border: string }> = {
@@ -60,6 +76,8 @@ export function MessageBubble({
   const impact       = impactLevel ? IMPACT_STYLES[impactLevel] : null
   const time         = new Date(timestamp)
   const timeStr      = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  // Strip any internal routing commentary before rendering assistant content
+  const cleanContent = !isUser ? stripRoutingCommentary(content) : content
 
   return (
     <div
@@ -103,7 +121,7 @@ export function MessageBubble({
                 agentColor.text
               )}
             >
-              via {displayName}
+              {displayName}
             </span>
 
             {impact && impact.label !== 'LOW' && (
@@ -129,7 +147,7 @@ export function MessageBubble({
           ) : (
             <div
               className="text-sm text-text-2 leading-relaxed nexus-markdown"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(cleanContent) }}
             />
           )
         )}
@@ -162,7 +180,7 @@ export function AgentBadge({ agentId }: { agentId: string }) {
         color.bg, color.border, color.text
       )}
     >
-      via {name}
+      {name}
     </span>
   )
 }

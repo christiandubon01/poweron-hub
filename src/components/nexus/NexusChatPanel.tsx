@@ -12,7 +12,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw, Volume2, VolumeX, ChevronLeft } from 'lucide-react'
+import { Send, Zap, AlertTriangle, Shield, X, Check, ChevronDown, ChevronRight, RotateCcw, Volume2, VolumeX, ChevronLeft, Maximize2, Minimize2 } from 'lucide-react'
 import { NexusPresenceOrb } from './NexusPresenceOrb'
 import { clsx } from 'clsx'
 import { processMessage, detectMode, getLastContextSyncTime, type NexusResponse, type ConversationMessage, type ClassifiedIntent, type NexusMode } from '@/agents/nexus'
@@ -174,6 +174,11 @@ export function NexusChatPanel() {
     if (stored !== null) return stored === 'true'
     // Default: collapsed on mobile
     return typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  })
+
+  // B23 — Fullscreen expand (persist to localStorage nexus_expanded)
+  const [isExpanded, setIsExpanded] = useState<boolean>(() => {
+    return localStorage.getItem('nexus_expanded') === 'true'
   })
 
   // B11 — Session Debrief state
@@ -482,6 +487,20 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     })
   }, [])
 
+  // B23 — Fullscreen expand toggle: persist to localStorage, auto-collapse orb when expanding
+  const toggleExpand = useCallback(() => {
+    setIsExpanded(prev => {
+      const next = !prev
+      localStorage.setItem('nexus_expanded', String(next))
+      // Auto-collapse orb when entering fullscreen
+      if (next) {
+        setOrbCollapsed(true)
+        localStorage.setItem('nexus_orb_collapsed', 'true')
+      }
+      return next
+    })
+  }, [])
+
   // FIX 2 — Stream response text character by character for perceived streaming UX
   const streamResponseText = useCallback(async (msgId: string, fullText: string) => {
     setStreamingMsgId(msgId)
@@ -518,7 +537,12 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full bg-bg overflow-hidden">
+    <div className={clsx(
+      'flex bg-bg overflow-hidden',
+      isExpanded
+        ? 'fixed inset-0 z-[9999] h-screen w-screen'
+        : 'h-full'
+    )}>
 
       {/* FIX 5 — Orb panel: collapsible left side */}
       {!orbCollapsed && (
@@ -594,6 +618,14 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
               New Analysis
             </button>
           )}
+          {/* B23 — Fullscreen expand / collapse button */}
+          <button
+            onClick={toggleExpand}
+            className="w-8 h-8 rounded-lg bg-bg-3 text-text-3 hover:text-text-1 hover:bg-bg-4 flex items-center justify-center transition-colors"
+            title={isExpanded ? 'Collapse to panel' : 'Expand to fullscreen'}
+          >
+            {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-subtle border border-green-border">
             <span className="w-1.5 h-1.5 bg-green rounded-full animate-pulse" />
             <span className="text-[10px] font-mono font-bold text-green">ONLINE</span>

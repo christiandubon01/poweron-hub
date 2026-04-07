@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getRecentJournal, getWeeklyJournalEntries, saveJournalEntry, type JournalEntry } from '@/services/voiceJournalService'
+import { applyVoiceNoiseFilter, type NoiseFilterResult } from '@/services/voice'
 
 // Lazy-load underlying components (same pattern used in AppShell)
 function chunkRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -106,6 +107,9 @@ function QuickCaptureTab() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [captureError, setCaptureError] = useState<string | null>(null)
+  // B23 — Noise filter state
+  const [noiseFilter, setNoiseFilter] = useState<NoiseFilterResult | null>(null)
+  const [showOriginal, setShowOriginal] = useState(false)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -135,6 +139,8 @@ function QuickCaptureTab() {
       setEditedTranscript('')
       setSaved(false)
       setCaptureError(null)
+      setNoiseFilter(null)
+      setShowOriginal(false)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         chunksRef.current = []
@@ -152,9 +158,15 @@ function QuickCaptureTab() {
             // POST audio to /.netlify/functions/whisper — no voice.ts, no agentBus, no NEXUS
             const text = await transcribeAudioBlob(audioBlob)
             if (text) {
-              setTranscript(text)
-              setEditedTranscript(text)
+              // B23 — Apply noise filter before displaying transcript
+              const filterResult = applyVoiceNoiseFilter(text)
+              setNoiseFilter(filterResult.removedCount > 0 ? filterResult : null)
+              setShowOriginal(false)
+              const displayText = filterResult.removedCount > 0 ? filterResult.cleaned : text
+              setTranscript(displayText)
+              setEditedTranscript(displayText)
             } else {
+              setNoiseFilter(null)
               setTranscript('(No speech detected — type your note below)')
               setEditedTranscript('')
             }
@@ -247,7 +259,30 @@ function QuickCaptureTab() {
       {/* Transcription preview */}
       {transcript && !saved && (
         <div className="w-full max-w-lg space-y-3">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Transcription Preview</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Transcription Preview</p>
+            {/* B23 — Noise filter badge + toggle */}
+            {noiseFilter && noiseFilter.removedCount > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-900/30 border border-emerald-700/40 px-2 py-0.5 rounded">
+                  Cleaned {noiseFilter.removedCount} word{noiseFilter.removedCount !== 1 ? 's' : ''}
+                </span>
+                <button
+                  onClick={() => {
+                    setShowOriginal(prev => {
+                      const next = !prev
+                      // Swap textarea content to original or cleaned
+                      setEditedTranscript(next ? noiseFilter.original : noiseFilter.cleaned)
+                      return next
+                    })
+                  }}
+                  className="text-[10px] text-gray-400 hover:text-gray-200 underline transition-colors"
+                >
+                  {showOriginal ? 'Show cleaned' : 'Show original'}
+                </button>
+              </div>
+            )}
+          </div>
           <textarea
             value={editedTranscript}
             onChange={(e) => setEditedTranscript(e.target.value)}
@@ -265,7 +300,7 @@ function QuickCaptureTab() {
               {saving ? 'Saving…' : 'Save'}
             </button>
             <button
-              onClick={() => { setTranscript(null); setEditedTranscript('') }}
+              onClick={() => { setTranscript(null); setEditedTranscript(''); setNoiseFilter(null); setShowOriginal(false) }}
               className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors"
             >
               Discard
