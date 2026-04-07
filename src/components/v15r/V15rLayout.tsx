@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   LayoutDashboard,
   FolderKanban,
@@ -41,6 +41,7 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
 import { useDemoStore } from '@/store/demoStore'
+import templates from '@/config/templates/index'
 import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
 import { initEventBus } from '@/services/agentEventBus'
@@ -131,6 +132,61 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const authUser = useAuthStore(s => s.user)
   const adminEmail = import.meta.env.VITE_ADMIN_EMAIL as string | undefined
   const isAdmin = !!(authUser?.email && adminEmail && authUser.email === adminEmail)
+
+  // ── B26 | Template Preview Gating ────────────────────────────────────────
+  // When poweron_preview_industry is set in sessionStorage, only sidebar panels
+  // present in the template's visiblePanels array are rendered. ADMIN section
+  // is hidden entirely regardless of email match.
+  const TEMPLATE_PANEL_TO_VIEWS: Record<string, string[]> = {
+    'home':                  ['home'],
+    'projects':              ['projects'],
+    'leads':                 ['leads'],
+    'templates':             ['templates'],
+    'pricing-intelligence':  ['pricing-intelligence', 'pricing-intel'],
+    'estimate':              ['estimate'],
+    'field-logs':            ['field-log'],
+    'graph-dashboard':       ['graph-dashboard'],
+    'money':                 ['money'],
+    'collections':           ['money'],
+    'price-book':            ['price-book'],
+    'settings':              ['settings'],
+    'blueprints':            ['blueprint-ai'],
+    'blueprint-ai':          ['blueprint-ai'],
+    'nexus':                 ['nexus'],
+    'team':                  ['team'],
+    'crew-portal':           ['crew-portal', 'crew-portal-v3'],
+    'guardian':              ['guardian'],
+    'compliance':            ['compliance'],
+    'voice-hub':             ['voice-hub'],
+    'activity':              ['activity'],
+    'agent-mode-selector':   ['agent-mode-selector'],
+    'material-intelligence': ['material-intelligence'],
+    'vault-estimate':        ['vault-estimate'],
+    'demo-mode':             ['demo-mode'],
+    'service-calls':         ['money'],
+  }
+
+  const { previewAllowedViews, isPreviewMode } = useMemo(() => {
+    try {
+      const previewIndustry = sessionStorage.getItem('poweron_preview_industry')
+      if (!previewIndustry) return { previewAllowedViews: null, isPreviewMode: false }
+      const tmpl = templates[previewIndustry]
+      if (!tmpl || !Array.isArray(tmpl.visiblePanels)) return { previewAllowedViews: null, isPreviewMode: false }
+      const allowed = new Set<string>()
+      for (const panelId of tmpl.visiblePanels) {
+        const views = TEMPLATE_PANEL_TO_VIEWS[panelId] || [panelId]
+        views.forEach(v => allowed.add(v))
+      }
+      return { previewAllowedViews: allowed, isPreviewMode: true }
+    } catch {
+      return { previewAllowedViews: null, isPreviewMode: false }
+    }
+  }, [])
+
+  function filterByTemplate<T extends { view: string }>(items: T[]): T[] {
+    if (!previewAllowedViews) return items
+    return items.filter(item => previewAllowedViews.has(item.view))
+  }
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
@@ -730,7 +786,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionWorkspace && (
               <nav className="space-y-1">
-                {workspaceItems.map((item) => {
+                {filterByTemplate(workspaceItems).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -821,7 +877,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionBusiness && (
               <nav className="space-y-1">
-                {businessItems.map((item) => {
+                {filterByTemplate(businessItems).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -870,7 +926,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionOperations && (
               <nav className="space-y-1">
-                {operationsItems.map((item) => {
+                {filterByTemplate(operationsItems).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -919,7 +975,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionTeam && (
               <nav className="space-y-1">
-                {teamItems.map((item) => {
+                {filterByTemplate(teamItems).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -968,7 +1024,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ) : null}
             {sectionIntelligence && (
               <nav className="space-y-1">
-                {intelligenceItems.map((item) => {
+                {filterByTemplate(intelligenceItems).map((item) => {
                   const Icon = item.icon
                   const isActive = activeView === item.view
                   return (
@@ -992,7 +1048,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           </div>
 
           {/* ADMIN Section — B14 | visible only to owner email match */}
-          {isAdmin && (
+          {isAdmin && !isPreviewMode && (
             <div className="pt-6 border-t border-yellow-800/40">
               {showLabels ? (
                 <button

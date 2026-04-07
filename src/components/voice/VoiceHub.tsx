@@ -2,6 +2,7 @@
 /**
  * VoiceHub.tsx — B18 | Voice Hub tab distinction
  * B20 | Quick Capture rework — focused capture-only interface
+ * B26 | Offline Capture IndexedDB — saves blobs to IDB regardless of connection
  *
  * Three distinctly different tabs:
  *   Quick Capture — Focused capture: mic button, transcription preview, category, recent 5
@@ -13,6 +14,12 @@ import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getRecentJournal, getWeeklyJournalEntries, saveJournalEntry, type JournalEntry } from '@/services/voiceJournalService'
 import { applyVoiceNoiseFilter, type NoiseFilterResult } from '@/services/voice'
+import {
+  saveOfflineCapture,
+  updateCaptureTranscript,
+  getPendingCount,
+  syncPendingCaptures,
+} from '@/services/offlineCaptureService'
 
 // Lazy-load underlying components (same pattern used in AppShell)
 function chunkRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -59,7 +66,8 @@ interface CaptureEntry {
   timestamp: string
   durationSecs: number
   category: CaptureCategory
-  transcript: string
+  /** null when captured offline and not yet synced to Whisper */
+  transcript: string | null
   synced: boolean
 }
 
@@ -96,7 +104,7 @@ async function transcribeAudioBlob(blob: Blob): Promise<string> {
   return (data.text || '').trim()
 }
 
-function QuickCaptureTab() {
+function QuickCaptureTab({ onPendingCountChange }: { onPendingCountChange?: (n: number) => void } = {}) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [transcript, setTranscript] = useState<string | null>(null)
@@ -110,11 +118,77 @@ function QuickCaptureTab() {
   // B23 — Noise filter state
   const [noiseFilter, setNoiseFilter] = useState<NoiseFilterResult | null>(null)
   const [showOriginal, setShowOriginal] = useState(false)
+  // B26 — Offline capture: track pending unsynced count
+  const [pendingCount, setPendingCount] = useState(0)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startTimeRef = useRef<number>(0)
+  // B26 — ID of the current IDB record so we can update it after Whisper returns
+  const currentCaptureIdRef = useRef<string | null>(null)
+
+  // ── B26 | Load pending count + start background sync ─────────────────────
+  useEffect(() => {
+    // Refresh pending count and notify parent
+    function refreshPending() {
+      getPendingCount()
+        .then(n => {
+          setPendingCount(n)
+          onPendingCountChange?.(n)
+        })
+        .catch(() => {})
+    }
+
+    refreshPending()
+
+    // On-load sync pass
+    syncPendingCaptures((id, transcript) => {
+      // Update the in-memory recent list when a background sync succeeds
+      setRecent(prev => {
+        const updated = prev.map(e =>
+          e.id === id ? { ...e, transcript, synced: true } : e,
+        )
+        saveCaptureHistory(updated)
+        return updated
+      })
+      refreshPending()
+    }).catch(() => {})
+
+    // Repeat every 2 minutes
+    const syncInterval = setInterval(() => {
+      syncPendingCaptures((id, transcript) => {
+        setRecent(prev => {
+          const updated = prev.map(e =>
+            e.id === id ? { ...e, transcript, synced: true } : e,
+          )
+          saveCaptureHistory(updated)
+          return updated
+        })
+        refreshPending()
+      }).catch(() => {})
+    }, 2 * 60 * 1000)
+
+    // Also sync when the browser comes back online
+    const handleOnline = () => {
+      syncPendingCaptures((id, transcript) => {
+        setRecent(prev => {
+          const updated = prev.map(e =>
+            e.id === id ? { ...e, transcript, synced: true } : e,
+          )
+          saveCaptureHistory(updated)
+          return updated
+        })
+        refreshPending()
+      }).catch(() => {})
+    }
+    window.addEventListener('online', handleOnline)
+
+    return () => {
+      clearInterval(syncInterval)
+      window.removeEventListener('online', handleOnline)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function startTimer() {
     setRecorderDuration(0)
@@ -153,6 +227,47 @@ function QuickCaptureTab() {
           const mimeType = mr.mimeType || 'audio/webm'
           const audioBlob = new Blob(chunksRef.current, { type: mimeType })
           chunksRef.current = []
+
+          // ── B26 | Step 1: Persist blob to IndexedDB immediately ──────────
+          const captureId = `cap-${Date.now()}`
+          currentCaptureIdRef.current = captureId
+          const captureTimestamp = new Date().toISOString()
+          const durationSecs = Math.floor((Date.now() - startTimeRef.current) / 1000)
+          try {
+            await saveOfflineCapture({
+              id: captureId,
+              timestamp: captureTimestamp,
+              audioBlob,
+              transcript: null,
+              category,
+              synced: false,
+              createdAt: captureTimestamp,
+            })
+            // Refresh pending badge (count goes up by 1)
+            getPendingCount().then(n => { setPendingCount(n); onPendingCountChange?.(n) }).catch(() => {})
+          } catch (idbErr) {
+            console.warn('[QuickCapture] IndexedDB save failed (continuing):', idbErr)
+          }
+
+          // ── B26 | Step 2: Try Whisper — skip when offline ────────────────
+          const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+          if (!isOnline) {
+            // Offline path — save a placeholder entry in the recent list
+            const offlineEntry: CaptureEntry = {
+              id: captureId,
+              timestamp: captureTimestamp,
+              durationSecs,
+              category,
+              transcript: null,
+              synced: false,
+            }
+            const updated = [offlineEntry, ...recent]
+            setRecent(updated)
+            saveCaptureHistory(updated)
+            setCaptureError('Offline — capture saved locally and will sync when connection returns.')
+            return
+          }
+
           setIsTranscribing(true)
           try {
             // POST audio to /.netlify/functions/whisper — no voice.ts, no agentBus, no NEXUS
@@ -165,6 +280,11 @@ function QuickCaptureTab() {
               const displayText = filterResult.removedCount > 0 ? filterResult.cleaned : text
               setTranscript(displayText)
               setEditedTranscript(displayText)
+              // B26 | Update IDB record — mark synced now that we have a transcript
+              updateCaptureTranscript(captureId, displayText)
+                .then(() => getPendingCount())
+                .then(n => { setPendingCount(n); onPendingCountChange?.(n) })
+                .catch(() => {})
             } else {
               setNoiseFilter(null)
               setTranscript('(No speech detected — type your note below)')
@@ -175,6 +295,7 @@ function QuickCaptureTab() {
             setCaptureError('Transcription failed — type your note manually.')
             setTranscript('')
             setEditedTranscript('')
+            // IDB record stays synced=false — background sync will retry
           } finally {
             setIsTranscribing(false)
           }
@@ -195,17 +316,26 @@ function QuickCaptureTab() {
     const text = editedTranscript.trim() || transcript || ''
     if (!text || text.startsWith('(')) return
     setSaving(true)
+    // Re-use the IDB capture ID if available so IDB and localStorage stay in sync
+    const captureId = currentCaptureIdRef.current || `cap-${Date.now()}`
+    currentCaptureIdRef.current = null
     const entry: CaptureEntry = {
-      id: `cap-${Date.now()}`,
+      id: captureId,
       timestamp: new Date().toISOString(),
       durationSecs: recorderDuration,
       category,
       transcript: text,
       synced: true,
     }
-    const updated = [entry, ...recent]
+    // Replace any existing entry with the same ID (handles case where IDB already saved it)
+    const updated = [entry, ...recent.filter(e => e.id !== captureId)]
     setRecent(updated)
     saveCaptureHistory(updated)
+    // Ensure IDB record is updated to synced=true (no-op if already done post-Whisper)
+    updateCaptureTranscript(captureId, text)
+      .then(() => getPendingCount())
+      .then(n => { setPendingCount(n); onPendingCountChange?.(n) })
+      .catch(() => {})
     // Attempt to persist via voiceJournalService (best effort)
     try {
       saveJournalEntry({ transcript: text, contextTag: category })
@@ -347,14 +477,34 @@ function QuickCaptureTab() {
                 style={{ borderColor: '#1e2128', backgroundColor: '#0a0b10' }}
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-200 truncate">{entry.transcript.slice(0, 120)}</p>
+                  {/* B26 — Show placeholder text for unsynced captures */}
+                  {entry.transcript && !entry.transcript.startsWith('(') ? (
+                    <p className="text-sm text-gray-200 truncate">{entry.transcript.slice(0, 120)}</p>
+                  ) : (
+                    <p className="text-sm text-gray-500 italic">
+                      {entry.synced === false ? 'Pending transcription…' : '(No speech detected)'}
+                    </p>
+                  )}
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-xs text-gray-600">{new Date(entry.timestamp).toLocaleString()}</span>
                     <span className="text-xs text-gray-600">·</span>
                     <span className="text-xs text-gray-600">{fmtDuration(entry.durationSecs)}</span>
-                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${CATEGORY_COLORS[entry.category] || CATEGORY_COLORS.general}`}>
-                      {entry.category}
-                    </span>
+                    {/* B26 — Clock icon for unsynced; category badge for synced */}
+                    {entry.synced === false ? (
+                      <span
+                        className="text-xs font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-1 bg-gray-800 border border-gray-700 text-yellow-400"
+                        title="Pending sync to cloud"
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        pending
+                      </span>
+                    ) : (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${CATEGORY_COLORS[entry.category] || CATEGORY_COLORS.general}`}>
+                        {entry.category}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -560,6 +710,8 @@ ${corpus}`
 
 export default function VoiceHub() {
   const [activeTab, setActiveTab] = useState<VoiceHubTab>('quick-capture')
+  // B26 — Track unsynced count for the Quick Capture tab badge
+  const [pendingCount, setPendingCount] = useState(0)
 
   return (
     <div className="flex flex-col h-full" style={{ color: 'var(--text-primary)' }}>
@@ -572,7 +724,7 @@ export default function VoiceHub() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium transition-colors rounded-t-md focus:outline-none ${
+            className={`relative px-4 py-2 text-sm font-medium transition-colors rounded-t-md focus:outline-none ${
               activeTab === tab.id
                 ? 'border-b-2 border-emerald-500 text-emerald-400'
                 : 'text-gray-400 hover:text-gray-200'
@@ -580,6 +732,15 @@ export default function VoiceHub() {
             style={{ marginBottom: activeTab === tab.id ? '-1px' : undefined }}
           >
             {tab.label}
+            {/* B26 — Pending count badge on Quick Capture tab */}
+            {tab.id === 'quick-capture' && pendingCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-bold rounded-full bg-yellow-500 text-yellow-950 px-1"
+                title={`${pendingCount} capture${pendingCount !== 1 ? 's' : ''} pending sync`}
+              >
+                {pendingCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -588,7 +749,7 @@ export default function VoiceHub() {
       <div className="flex-1 overflow-auto">
         {/* Quick Capture — focused capture-only interface */}
         {activeTab === 'quick-capture' && (
-          <QuickCaptureTab />
+          <QuickCaptureTab onPendingCountChange={setPendingCount} />
         )}
 
         {/* Insights — AI analysis of patterns across all voice entries */}
