@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * AdminVisualizationLab.tsx — B33 | Admin Visualization Lab
+ * AdminVisualizationLab.tsx — B34 | Admin Visualization Lab (Orb Fix + Neural Map Polish)
  *
  * Two main tabs:
  *   ORB LAB   — Organic Orb (Three.js particles) + Geometric Orb (wireframe icosahedron)
@@ -24,8 +24,9 @@ type DepartureMode = 'silent' | 'label' | 'tone'
 // ─── Constants ────────────────────────────────────────────────────────────────
 const ORB_STATES: OrbState[] = ['IDLE', 'LISTENING', 'THINKING', 'SPEAKING', 'MULTI_AGENT']
 
-const TIER_COLORS_HEX = ['#ca8a04', '#2563eb', '#16a34a', '#7c3aed', '#6b7280']
-const TIER_COLORS_INT = [0xca8a04, 0x2563eb, 0x16a34a, 0x7c3aed, 0x6b7280]
+// B34: updated tier colors per spec
+const TIER_COLORS_HEX = ['#FFD24A', '#3A8EFF', '#2EE89A', '#AA6EFF', '#60607A']
+const TIER_COLORS_INT = [0xFFD24A, 0x3A8EFF, 0x2EE89A, 0xAA6EFF, 0x60607A]
 
 const AGENT_LIST = [
   { id: 'VAULT',     label: 'VAULT',     tier: 1, desc: 'Estimating & contract intelligence' },
@@ -160,307 +161,318 @@ function OrganicOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: nu
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
-    const W = Math.max(mount.clientWidth || 400, 100)
-    const H = Math.max(mount.clientHeight || 400, 100)
 
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100)
-    camera.position.z = 3
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setSize(W, H)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x000000, 0)
-    mount.appendChild(renderer.domElement)
-
-    // ── Particles ─────────────────────────────────────────────────────────────
-    const PCOUNT = 2000
-    const positions = new Float32Array(PCOUNT * 3)
-    const origPositions = new Float32Array(PCOUNT * 3)
-    const drifts = new Float32Array(PCOUNT * 3)
-
-    for (let i = 0; i < PCOUNT; i++) {
-      const phi = Math.acos(2 * Math.random() - 1)
-      const theta = 2 * Math.PI * Math.random()
-      const r = 0.82 + Math.random() * 0.18
-      const x = r * Math.sin(phi) * Math.cos(theta)
-      const y = r * Math.sin(phi) * Math.sin(theta)
-      const z = r * Math.cos(phi)
-      positions[i * 3] = origPositions[i * 3] = x
-      positions[i * 3 + 1] = origPositions[i * 3 + 1] = y
-      positions[i * 3 + 2] = origPositions[i * 3 + 2] = z
-      drifts[i * 3] = (Math.random() - 0.5) * 0.0015
-      drifts[i * 3 + 1] = (Math.random() - 0.5) * 0.0015
-      drifts[i * 3 + 2] = (Math.random() - 0.5) * 0.0015
-    }
-
-    const pGeo = new THREE.BufferGeometry()
-    pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    const pMat = new THREE.PointsMaterial({ color: 0x00ff88, size: 0.014, transparent: true, opacity: 0.85, sizeAttenuation: true })
-    const particles = new THREE.Points(pGeo, pMat)
-    scene.add(particles)
-
-    // ── Core glow sphere ──────────────────────────────────────────────────────
-    const coreGeo = new THREE.SphereGeometry(0.15, 16, 16)
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.3 })
-    const core = new THREE.Mesh(coreGeo, coreMat)
-    scene.add(core)
-
-    // ── Branch lines ──────────────────────────────────────────────────────────
-    const branchGroup = new THREE.Group()
-    scene.add(branchGroup)
-
-    function buildBranches(count: number, color: number, opacity: number) {
-      while (branchGroup.children.length) {
-        const child = branchGroup.children[0]
-        child.geometry?.dispose()
-        child.material?.dispose()
-        branchGroup.remove(child)
-      }
-      const maxDist = 0.38
-      let added = 0
-      for (let i = 0; i < PCOUNT && added < count; i += 3) {
-        for (let j = i + 3; j < PCOUNT && added < count; j += 3) {
-          const dx = origPositions[i * 3] - origPositions[j * 3]
-          const dy = origPositions[i * 3 + 1] - origPositions[j * 3 + 1]
-          const dz = origPositions[i * 3 + 2] - origPositions[j * 3 + 2]
-          if (dx * dx + dy * dy + dz * dz < maxDist * maxDist) {
-            const geo = new THREE.BufferGeometry()
-            const pts = new Float32Array([
-              origPositions[i * 3], origPositions[i * 3 + 1], origPositions[i * 3 + 2],
-              origPositions[j * 3], origPositions[j * 3 + 1], origPositions[j * 3 + 2],
-            ])
-            geo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
-            const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity })
-            branchGroup.add(new THREE.Line(geo, mat))
-            added++
-          }
-        }
-      }
-    }
-
-    // ── Satellite orbs for MULTI_AGENT ────────────────────────────────────────
+    // B34 Fix 1: Hoist for cleanup access after deferred init
+    let animFrame: number
+    let renderer: THREE.WebGLRenderer
+    let ro: ResizeObserver
+    // Hoist satellite arrays so removeSatellites() is accessible from cleanup
     const satellites: THREE.Mesh[] = []
-    const satAngles = TIER_COLORS_INT.map((_, i) => (i / 5) * Math.PI * 2)
     const satLabelDivs: HTMLDivElement[] = []
 
-    function buildSatellites(departure: DepartureMode) {
-      removeSatellites()
-      TIER_COLORS_INT.forEach((color, i) => {
-        const geo = new THREE.SphereGeometry(0.055, 12, 12)
-        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
-        const mesh = new THREE.Mesh(geo, mat)
-        scene.add(mesh)
-        satellites.push(mesh)
-
-        if (departure === 'label') {
-          const div = document.createElement('div')
-          div.style.cssText = `
-            position:absolute;font-size:9px;color:${TIER_COLORS_HEX[i]};
-            font-weight:700;letter-spacing:0.05em;pointer-events:none;
-            text-shadow:0 0 6px ${TIER_COLORS_HEX[i]};
-            white-space:nowrap;font-family:monospace;
-          `
-          div.textContent = `T${i + 1}`
-          mount.appendChild(div)
-          satLabelDivs.push(div)
-        }
-      })
-    }
-
     function removeSatellites() {
-      satellites.forEach((s) => { s.geometry.dispose(); s.material.dispose(); scene.remove(s) })
+      satellites.forEach((s) => {
+        s.geometry.dispose()
+        ;(s.material as THREE.Material).dispose()
+      })
       satellites.length = 0
       satLabelDivs.forEach((d) => { if (d.parentNode) d.parentNode.removeChild(d) })
       satLabelDivs.length = 0
     }
 
-    // ── Speaking ring waves ───────────────────────────────────────────────────
-    const ringGroup = new THREE.Group()
-    scene.add(ringGroup)
+    // B34 Fix 1: Defer init 100ms to ensure DOM has layout before reading clientWidth/clientHeight
+    const initTimer = setTimeout(() => {
+      console.log('orb init started')
+      const W = Math.max(mount.clientWidth || 400, 100)
+      const H = Math.max(mount.clientHeight || 400, 100)
 
-    function updateRings(pulse: number) {
-      while (ringGroup.children.length > 3) {
-        const child = ringGroup.children[0]
-        child.geometry?.dispose()
-        child.material?.dispose()
-        ringGroup.remove(child)
-      }
-    }
+      const scene = new THREE.Scene()
+      const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100)
+      camera.position.z = 3
 
-    // ── State tracking ────────────────────────────────────────────────────────
-    let lastState: OrbState = 'IDLE'
-    let lastHealth = 75
-    let lastDeparture: DepartureMode = 'silent'
-    let time = 0
-    let rotY = 0
-    let animFrame: number
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      // B34 Fix 1: setSize after renderer creation with actual container dimensions
+      renderer.setSize(mount.clientWidth || W, mount.clientHeight || H)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      renderer.setClearColor(0x000000, 0)
+      mount.appendChild(renderer.domElement)
+      console.log('orb canvas attached')
 
-    buildBranches(160, 0x00ff88, 0.28)
+      // ── Particles ─────────────────────────────────────────────────────────────
+      const PCOUNT = 2000
+      const positions = new Float32Array(PCOUNT * 3)
+      const origPositions = new Float32Array(PCOUNT * 3)
+      const drifts = new Float32Array(PCOUNT * 3)
 
-    function animate() {
-      animFrame = requestAnimationFrame(animate)
-      time += 0.016
-      const pulse = Math.sin(time * 2) * 0.5 + 0.5
-      const state = stateRef.current
-      const avg = healthRef.current
-      const clr = healthColorInt(avg)
-
-      // Rebuild branches on health change
-      if (Math.abs(avg - lastHealth) > 5) {
-        lastHealth = avg
-        const count = avg > 70 ? 180 : avg > 40 ? 100 : 50
-        const opacity = avg > 70 ? 0.3 : avg > 40 ? 0.18 : 0.1
-        buildBranches(count, clr, opacity)
-      }
-
-      // State change
-      if (state !== lastState) {
-        if (state === 'MULTI_AGENT') buildSatellites(lastDeparture)
-        else removeSatellites()
-        lastState = state
+      for (let i = 0; i < PCOUNT; i++) {
+        const phi = Math.acos(2 * Math.random() - 1)
+        const theta = 2 * Math.PI * Math.random()
+        const r = 0.82 + Math.random() * 0.18
+        const x = r * Math.sin(phi) * Math.cos(theta)
+        const y = r * Math.sin(phi) * Math.sin(theta)
+        const z = r * Math.cos(phi)
+        positions[i * 3] = origPositions[i * 3] = x
+        positions[i * 3 + 1] = origPositions[i * 3 + 1] = y
+        positions[i * 3 + 2] = origPositions[i * 3 + 2] = z
+        drifts[i * 3] = (Math.random() - 0.5) * 0.0015
+        drifts[i * 3 + 1] = (Math.random() - 0.5) * 0.0015
+        drifts[i * 3 + 2] = (Math.random() - 0.5) * 0.0015
       }
 
-      // Per-state animation
-      switch (state) {
-        case 'IDLE':
-          rotY += 0.003
-          pMat.color.setHex(clr)
-          coreMat.color.setHex(clr)
-          coreMat.opacity = 0.2 + pulse * 0.15
-          pMat.size = 0.013 + pulse * 0.003
-          break
+      const pGeo = new THREE.BufferGeometry()
+      pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      const pMat = new THREE.PointsMaterial({ color: 0x00ff88, size: 0.014, transparent: true, opacity: 0.85, sizeAttenuation: true })
+      const particles = new THREE.Points(pGeo, pMat)
+      scene.add(particles)
 
-        case 'LISTENING':
-          rotY += 0.001
-          pMat.color.setHex(0x0088ff)
-          coreMat.color.setHex(0x0088ff)
-          coreMat.opacity = 0.35 + pulse * 0.2
-          // Flow inward
+      // ── Core glow sphere ──────────────────────────────────────────────────────
+      const coreGeo = new THREE.SphereGeometry(0.15, 16, 16)
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.3 })
+      const core = new THREE.Mesh(coreGeo, coreMat)
+      scene.add(core)
+
+      // ── Branch lines ──────────────────────────────────────────────────────────
+      const branchGroup = new THREE.Group()
+      scene.add(branchGroup)
+
+      function buildBranches(count: number, color: number, opacity: number) {
+        while (branchGroup.children.length) {
+          const child = branchGroup.children[0] as THREE.Line
+          child.geometry?.dispose()
+          ;(child.material as THREE.Material)?.dispose()
+          branchGroup.remove(child)
+        }
+        const maxDist = 0.38
+        let added = 0
+        for (let i = 0; i < PCOUNT && added < count; i += 3) {
+          for (let j = i + 3; j < PCOUNT && added < count; j += 3) {
+            const dx = origPositions[i * 3] - origPositions[j * 3]
+            const dy = origPositions[i * 3 + 1] - origPositions[j * 3 + 1]
+            const dz = origPositions[i * 3 + 2] - origPositions[j * 3 + 2]
+            if (dx * dx + dy * dy + dz * dz < maxDist * maxDist) {
+              const geo = new THREE.BufferGeometry()
+              const pts = new Float32Array([
+                origPositions[i * 3], origPositions[i * 3 + 1], origPositions[i * 3 + 2],
+                origPositions[j * 3], origPositions[j * 3 + 1], origPositions[j * 3 + 2],
+              ])
+              geo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
+              const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+              branchGroup.add(new THREE.Line(geo, mat))
+              added++
+            }
+          }
+        }
+      }
+
+      // ── Satellite orbs for MULTI_AGENT ────────────────────────────────────────
+      const satAngles = TIER_COLORS_INT.map((_, i) => (i / 5) * Math.PI * 2)
+
+      function buildSatellites(departure: DepartureMode) {
+        removeSatellites()
+        TIER_COLORS_INT.forEach((color, i) => {
+          const geo = new THREE.SphereGeometry(0.055, 12, 12)
+          const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+          const mesh = new THREE.Mesh(geo, mat)
+          scene.add(mesh)
+          satellites.push(mesh)
+
+          if (departure === 'label') {
+            const div = document.createElement('div')
+            div.style.cssText = `
+              position:absolute;font-size:9px;color:${TIER_COLORS_HEX[i]};
+              font-weight:700;letter-spacing:0.05em;pointer-events:none;
+              text-shadow:0 0 6px ${TIER_COLORS_HEX[i]};
+              white-space:nowrap;font-family:monospace;
+            `
+            div.textContent = `T${i + 1}`
+            mount.appendChild(div)
+            satLabelDivs.push(div)
+          }
+        })
+      }
+
+      // ── Speaking ring waves ───────────────────────────────────────────────────
+      const ringGroup = new THREE.Group()
+      scene.add(ringGroup)
+
+      // ── State tracking ────────────────────────────────────────────────────────
+      let lastState: OrbState = 'IDLE'
+      let lastHealth = 75
+      let lastDeparture: DepartureMode = 'silent'
+      let time = 0
+      let rotY = 0
+
+      buildBranches(160, 0x00ff88, 0.28)
+
+      function animate() {
+        animFrame = requestAnimationFrame(animate)
+        time += 0.016
+        const pulse = Math.sin(time * 2) * 0.5 + 0.5
+        const state = stateRef.current
+        const avg = healthRef.current
+        const clr = healthColorInt(avg)
+
+        // Rebuild branches on health change
+        if (Math.abs(avg - lastHealth) > 5) {
+          lastHealth = avg
+          const count = avg > 70 ? 180 : avg > 40 ? 100 : 50
+          const opacity = avg > 70 ? 0.3 : avg > 40 ? 0.18 : 0.1
+          buildBranches(count, clr, opacity)
+        }
+
+        // State change
+        if (state !== lastState) {
+          if (state === 'MULTI_AGENT') buildSatellites(lastDeparture)
+          else removeSatellites()
+          lastState = state
+        }
+
+        // Per-state animation
+        switch (state) {
+          case 'IDLE':
+            rotY += 0.003
+            pMat.color.setHex(clr)
+            coreMat.color.setHex(clr)
+            coreMat.opacity = 0.2 + pulse * 0.15
+            pMat.size = 0.013 + pulse * 0.003
+            break
+
+          case 'LISTENING':
+            rotY += 0.001
+            pMat.color.setHex(0x0088ff)
+            coreMat.color.setHex(0x0088ff)
+            coreMat.opacity = 0.35 + pulse * 0.2
+            // Flow inward
+            for (let i = 0; i < PCOUNT; i++) {
+              positions[i * 3] *= 0.9998
+              positions[i * 3 + 1] *= 0.9998
+              positions[i * 3 + 2] *= 0.9998
+              const len = Math.sqrt(
+                positions[i * 3] ** 2 + positions[i * 3 + 1] ** 2 + positions[i * 3 + 2] ** 2
+              )
+              if (len < 0.4) {
+                const phi = Math.acos(2 * Math.random() - 1)
+                const theta = 2 * Math.PI * Math.random()
+                positions[i * 3] = 0.95 * Math.sin(phi) * Math.cos(theta)
+                positions[i * 3 + 1] = 0.95 * Math.sin(phi) * Math.sin(theta)
+                positions[i * 3 + 2] = 0.95 * Math.cos(phi)
+              }
+            }
+            pGeo.attributes.position.needsUpdate = true
+            break
+
+          case 'THINKING':
+            rotY += 0.012
+            pMat.color.setHex(0xffaa00)
+            coreMat.color.setHex(0xffaa00)
+            coreMat.opacity = 0.5 + pulse * 0.3
+            pMat.size = 0.011
+            break
+
+          case 'SPEAKING': {
+            rotY += 0.005
+            pMat.color.setHex(0x00ffcc)
+            coreMat.color.setHex(0x00ffcc)
+            coreMat.opacity = 0.4 + Math.sin(time * 8) * 0.2
+            pMat.size = 0.014 + Math.sin(time * 8) * 0.007
+            // Concentric rings
+            if (ringGroup.children.length < 4) {
+              const rGeo = new THREE.TorusGeometry(0.1 + ringGroup.children.length * 0.3, 0.005, 6, 32)
+              const rMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.5 })
+              ringGroup.add(new THREE.Mesh(rGeo, rMat))
+            }
+            ringGroup.children.forEach((child, idx) => {
+              const torus = child as THREE.Mesh
+              const s = 1 + ((time * 0.5 + idx * 0.25) % 1) * 3
+              torus.scale.setScalar(s)
+              ;(torus.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.5 - s * 0.15)
+            })
+            break
+          }
+
+          case 'MULTI_AGENT':
+            rotY += 0.004
+            pMat.color.setHex(clr)
+            coreMat.color.setHex(clr)
+            coreMat.opacity = 0.3 + pulse * 0.1
+            // Animate satellites
+            satellites.forEach((sat, i) => {
+              satAngles[i] += 0.018 * (1 + i * 0.15)
+              const orbitR = 1.35 + i * 0.09
+              sat.position.x = Math.cos(satAngles[i]) * orbitR
+              sat.position.y = Math.sin(satAngles[i] * 0.6) * 0.55
+              sat.position.z = Math.sin(satAngles[i]) * orbitR
+              const scale = 0.7 + pulse * 0.5
+              sat.scale.setScalar(scale)
+              ;(sat.material as THREE.MeshBasicMaterial).opacity = 0.7 + pulse * 0.25
+
+              // Update label position
+              const label = satLabelDivs[i]
+              if (label) {
+                const projected = sat.position.clone().project(camera)
+                label.style.left = ((projected.x + 1) / 2 * (mount.clientWidth || 400) + 14) + 'px'
+                label.style.top = ((-projected.y + 1) / 2 * (mount.clientHeight || 400)) + 'px'
+              }
+            })
+            break
+        }
+
+        // Drift particles (non-LISTENING states restore toward original)
+        if (state !== 'LISTENING') {
           for (let i = 0; i < PCOUNT; i++) {
-            positions[i * 3] *= 0.9998
-            positions[i * 3 + 1] *= 0.9998
-            positions[i * 3 + 2] *= 0.9998
-            const len = Math.sqrt(
-              positions[i * 3] ** 2 + positions[i * 3 + 1] ** 2 + positions[i * 3 + 2] ** 2
-            )
-            if (len < 0.4) {
-              const phi = Math.acos(2 * Math.random() - 1)
-              const theta = 2 * Math.PI * Math.random()
-              positions[i * 3] = 0.95 * Math.sin(phi) * Math.cos(theta)
-              positions[i * 3 + 1] = 0.95 * Math.sin(phi) * Math.sin(theta)
-              positions[i * 3 + 2] = 0.95 * Math.cos(phi)
+            positions[i * 3] += drifts[i * 3]
+            positions[i * 3 + 1] += drifts[i * 3 + 1]
+            positions[i * 3 + 2] += drifts[i * 3 + 2]
+            const dx = origPositions[i * 3] - positions[i * 3]
+            const dy = origPositions[i * 3 + 1] - positions[i * 3 + 1]
+            const dz = origPositions[i * 3 + 2] - positions[i * 3 + 2]
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+            if (dist > 0.12) {
+              drifts[i * 3] += dx * 0.00008
+              drifts[i * 3 + 1] += dy * 0.00008
+              drifts[i * 3 + 2] += dz * 0.00008
             }
           }
           pGeo.attributes.position.needsUpdate = true
-          break
-
-        case 'THINKING':
-          rotY += 0.012
-          pMat.color.setHex(0xffaa00)
-          coreMat.color.setHex(0xffaa00)
-          coreMat.opacity = 0.5 + pulse * 0.3
-          pMat.size = 0.011
-          break
-
-        case 'SPEAKING': {
-          rotY += 0.005
-          pMat.color.setHex(0x00ffcc)
-          coreMat.color.setHex(0x00ffcc)
-          coreMat.opacity = 0.4 + Math.sin(time * 8) * 0.2
-          pMat.size = 0.014 + Math.sin(time * 8) * 0.007
-          // Concentric rings
-          if (ringGroup.children.length < 4) {
-            const rGeo = new THREE.TorusGeometry(0.1 + ringGroup.children.length * 0.3, 0.005, 6, 32)
-            const rMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.5 })
-            ringGroup.add(new THREE.Mesh(rGeo, rMat))
-          }
-          ringGroup.children.forEach((child, idx) => {
-            const torus = child as THREE.Mesh
-            const s = 1 + ((time * 0.5 + idx * 0.25) % 1) * 3
-            torus.scale.setScalar(s)
-            ;(torus.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.5 - s * 0.15)
-          })
-          break
         }
 
-        case 'MULTI_AGENT':
-          rotY += 0.004
-          pMat.color.setHex(clr)
-          coreMat.color.setHex(clr)
-          coreMat.opacity = 0.3 + pulse * 0.1
-          // Animate satellites
-          satellites.forEach((sat, i) => {
-            satAngles[i] += 0.018 * (1 + i * 0.15)
-            const orbitR = 1.35 + i * 0.09
-            sat.position.x = Math.cos(satAngles[i]) * orbitR
-            sat.position.y = Math.sin(satAngles[i] * 0.6) * 0.55
-            sat.position.z = Math.sin(satAngles[i]) * orbitR
-            const scale = 0.7 + pulse * 0.5
-            sat.scale.setScalar(scale)
-            ;(sat.material as THREE.MeshBasicMaterial).opacity = 0.7 + pulse * 0.25
+        particles.rotation.y = rotY
+        particles.rotation.x = Math.sin(time * 0.4) * 0.08
+        branchGroup.rotation.y = rotY
+        branchGroup.rotation.x = Math.sin(time * 0.4) * 0.08
 
-            // Update label position
-            const label = satLabelDivs[i]
-            if (label) {
-              const projected = sat.position.clone().project(camera)
-              label.style.left = ((projected.x + 1) / 2 * (mount.clientWidth || 400) + 14) + 'px'
-              label.style.top = ((-projected.y + 1) / 2 * (mount.clientHeight || 400)) + 'px'
-            }
-          })
-          break
+        renderer.render(scene, camera)
       }
 
-      // Drift particles (non-LISTENING states restore toward original)
-      if (state !== 'LISTENING') {
-        for (let i = 0; i < PCOUNT; i++) {
-          positions[i * 3] += drifts[i * 3]
-          positions[i * 3 + 1] += drifts[i * 3 + 1]
-          positions[i * 3 + 2] += drifts[i * 3 + 2]
-          const dx = origPositions[i * 3] - positions[i * 3]
-          const dy = origPositions[i * 3 + 1] - positions[i * 3 + 1]
-          const dz = origPositions[i * 3 + 2] - positions[i * 3 + 2]
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
-          if (dist > 0.12) {
-            drifts[i * 3] += dx * 0.00008
-            drifts[i * 3 + 1] += dy * 0.00008
-            drifts[i * 3 + 2] += dz * 0.00008
-          }
-        }
-        pGeo.attributes.position.needsUpdate = true
-      }
+      animate()
 
-      particles.rotation.y = rotY
-      particles.rotation.x = Math.sin(time * 0.4) * 0.08
-      branchGroup.rotation.y = rotY
-      branchGroup.rotation.x = Math.sin(time * 0.4) * 0.08
-
-      renderer.render(scene, camera)
-    }
-
-    animate()
-
-    // Resize observer
-    const ro = new ResizeObserver(() => {
-      if (!mount) return
-      const w = mount.clientWidth
-      const h = mount.clientHeight
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-      renderer.setSize(w, h)
-    })
-    ro.observe(mount)
+      // B34 Fix 1: ResizeObserver calls renderer.setSize on dimension changes
+      ro = new ResizeObserver(() => {
+        if (!mount) return
+        const w = mount.clientWidth
+        const h = mount.clientHeight
+        if (w === 0 || h === 0) return
+        camera.aspect = w / h
+        camera.updateProjectionMatrix()
+        renderer.setSize(w, h)
+      })
+      ro.observe(mount)
+    }, 100) // 100ms defer ensures DOM has layout
 
     return () => {
-      cancelAnimationFrame(animFrame)
-      ro.disconnect()
+      clearTimeout(initTimer)
+      if (animFrame) cancelAnimationFrame(animFrame)
+      if (ro) ro.disconnect()
       removeSatellites()
-      renderer.dispose()
-      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+      if (renderer) {
+        renderer.dispose()
+        if (mount && mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+      }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+  // B34 Fix 1: explicit minHeight so container has dimensions at mount time
+  return <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '400px' }} />
 }
 
 // ─── Geometric Orb (Three.js icosahedron wireframe) ───────────────────────────
@@ -475,156 +487,172 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
-    const W = Math.max(mount.clientWidth || 400, 100)
-    const H = Math.max(mount.clientHeight || 400, 100)
 
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100)
-    camera.position.z = 3
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setSize(W, H)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x000000, 0)
-    mount.appendChild(renderer.domElement)
-
-    // Base icosahedron - detail 2 for subdivision
-    const icoGeo = new THREE.IcosahedronGeometry(1, 2)
-    const icoEdges = new THREE.EdgesGeometry(icoGeo)
-    const icoMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.7 })
-    const wireframe = new THREE.LineSegments(icoEdges, icoMat)
-    scene.add(wireframe)
-
-    // Inner core
-    const coreGeo = new THREE.IcosahedronGeometry(0.45, 1)
-    const coreEdges = new THREE.EdgesGeometry(coreGeo)
-    const coreMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.4 })
-    const innerWire = new THREE.LineSegments(coreEdges, coreMat)
-    scene.add(innerWire)
-
-    // Face pulse meshes for SPEAKING state
-    const faceMeshes: THREE.Mesh[] = []
-    const faceMat = new THREE.MeshBasicMaterial({
-      color: 0x00ffcc, transparent: true, opacity: 0.0, side: THREE.FrontSide,
-    })
-    const solidGeo = new THREE.IcosahedronGeometry(1, 2)
-    const solidMesh = new THREE.Mesh(solidGeo, faceMat)
-    scene.add(solidMesh)
-
-    // Edge highlight lines
-    const outerGeo = new THREE.IcosahedronGeometry(1.05, 0)
-    const outerEdges = new THREE.EdgesGeometry(outerGeo)
-    const outerMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.2 })
-    const outerWire = new THREE.LineSegments(outerEdges, outerMat)
-    scene.add(outerWire)
-
-    let time = 0
+    // B34 Fix 1: Hoist for cleanup access after deferred init
     let animFrame: number
+    let renderer: THREE.WebGLRenderer
+    let ro: ResizeObserver
 
-    function animate() {
-      animFrame = requestAnimationFrame(animate)
-      time += 0.016
-      const pulse = Math.sin(time * 2) * 0.5 + 0.5
-      const state = stateRef.current
-      const avg = healthRef.current
-      const clr = healthColorInt(avg)
+    // B34 Fix 1: Defer init 100ms to ensure DOM has layout
+    const initTimer = setTimeout(() => {
+      console.log('orb init started')
+      const W = Math.max(mount.clientWidth || 400, 100)
+      const H = Math.max(mount.clientHeight || 400, 100)
 
-      icoMat.color.setHex(clr)
-      coreMat.color.setHex(clr)
+      const scene = new THREE.Scene()
+      const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100)
+      camera.position.z = 3
 
-      // Edge thickness by health
-      outerMat.opacity = avg > 70 ? 0.3 + pulse * 0.1 : avg > 40 ? 0.15 + pulse * 0.08 : 0.05
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      // B34 Fix 1: setSize after renderer creation with actual container dimensions
+      renderer.setSize(mount.clientWidth || W, mount.clientHeight || H)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      renderer.setClearColor(0x000000, 0)
+      mount.appendChild(renderer.domElement)
+      console.log('orb canvas attached')
 
-      switch (state) {
-        case 'IDLE':
-          wireframe.rotation.y += 0.005
-          wireframe.rotation.x += 0.002
-          innerWire.rotation.y -= 0.004
-          innerWire.rotation.x -= 0.002
-          icoMat.opacity = 0.6 + pulse * 0.15
-          faceMat.opacity = 0
-          wireframe.scale.setScalar(1)
-          break
+      // Base icosahedron - detail 2 for subdivision
+      const icoGeo = new THREE.IcosahedronGeometry(1, 2)
+      const icoEdges = new THREE.EdgesGeometry(icoGeo)
+      const icoMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.7 })
+      const wireframe = new THREE.LineSegments(icoEdges, icoMat)
+      scene.add(wireframe)
 
-        case 'LISTENING':
-          wireframe.rotation.y += 0.001
-          // Faces orient toward camera (scale Y slightly)
-          wireframe.scale.y = 0.85 + pulse * 0.1
-          wireframe.scale.x = 1 + pulse * 0.05
-          icoMat.opacity = 0.5
-          faceMat.opacity = 0.06 + pulse * 0.04
-          faceMat.color.setHex(0x0088ff)
-          icoMat.color.setHex(0x0088ff)
-          coreMat.color.setHex(0x0088ff)
-          break
+      // Inner core
+      const coreGeo = new THREE.IcosahedronGeometry(0.45, 1)
+      const coreEdges = new THREE.EdgesGeometry(coreGeo)
+      const coreMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.4 })
+      const innerWire = new THREE.LineSegments(coreEdges, coreMat)
+      scene.add(innerWire)
 
-        case 'THINKING':
-          wireframe.rotation.y += 0.018
-          wireframe.rotation.z += 0.009
-          innerWire.rotation.y -= 0.015
-          icoMat.opacity = 0.8 + pulse * 0.2
-          faceMat.opacity = 0.12 + pulse * 0.08
-          faceMat.color.setHex(0xffaa00)
-          icoMat.color.setHex(0xffaa00)
-          coreMat.color.setHex(0xffaa00)
-          break
+      // Face pulse meshes for SPEAKING state
+      const faceMat = new THREE.MeshBasicMaterial({
+        color: 0x00ffcc, transparent: true, opacity: 0.0, side: THREE.FrontSide,
+      })
+      const solidGeo = new THREE.IcosahedronGeometry(1, 2)
+      const solidMesh = new THREE.Mesh(solidGeo, faceMat)
+      scene.add(solidMesh)
 
-        case 'SPEAKING': {
-          wireframe.rotation.y += 0.006
-          const wave = Math.sin(time * 8)
-          const pulseFaces = (wave * 0.5 + 0.5)
-          // Faces pulse outward
-          const scl = 1 + wave * 0.08
-          wireframe.scale.setScalar(scl)
-          solidMesh.scale.setScalar(scl * 0.98)
-          faceMat.opacity = 0.08 + pulseFaces * 0.12
-          faceMat.color.setHex(0x00ffcc)
-          icoMat.color.setHex(0x00ffcc)
-          coreMat.color.setHex(0x00ffcc)
-          icoMat.opacity = 0.7 + pulseFaces * 0.2
-          break
+      // Edge highlight lines
+      const outerGeo = new THREE.IcosahedronGeometry(1.05, 0)
+      const outerEdges = new THREE.EdgesGeometry(outerGeo)
+      const outerMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.2 })
+      const outerWire = new THREE.LineSegments(outerEdges, outerMat)
+      scene.add(outerWire)
+
+      let time = 0
+
+      function animate() {
+        animFrame = requestAnimationFrame(animate)
+        time += 0.016
+        const pulse = Math.sin(time * 2) * 0.5 + 0.5
+        const state = stateRef.current
+        const avg = healthRef.current
+        const clr = healthColorInt(avg)
+
+        icoMat.color.setHex(clr)
+        coreMat.color.setHex(clr)
+
+        // Edge thickness by health
+        outerMat.opacity = avg > 70 ? 0.3 + pulse * 0.1 : avg > 40 ? 0.15 + pulse * 0.08 : 0.05
+
+        switch (state) {
+          case 'IDLE':
+            wireframe.rotation.y += 0.005
+            wireframe.rotation.x += 0.002
+            innerWire.rotation.y -= 0.004
+            innerWire.rotation.x -= 0.002
+            icoMat.opacity = 0.6 + pulse * 0.15
+            faceMat.opacity = 0
+            wireframe.scale.setScalar(1)
+            break
+
+          case 'LISTENING':
+            wireframe.rotation.y += 0.001
+            // Faces orient toward camera (scale Y slightly)
+            wireframe.scale.y = 0.85 + pulse * 0.1
+            wireframe.scale.x = 1 + pulse * 0.05
+            icoMat.opacity = 0.5
+            faceMat.opacity = 0.06 + pulse * 0.04
+            faceMat.color.setHex(0x0088ff)
+            icoMat.color.setHex(0x0088ff)
+            coreMat.color.setHex(0x0088ff)
+            break
+
+          case 'THINKING':
+            wireframe.rotation.y += 0.018
+            wireframe.rotation.z += 0.009
+            innerWire.rotation.y -= 0.015
+            icoMat.opacity = 0.8 + pulse * 0.2
+            faceMat.opacity = 0.12 + pulse * 0.08
+            faceMat.color.setHex(0xffaa00)
+            icoMat.color.setHex(0xffaa00)
+            coreMat.color.setHex(0xffaa00)
+            break
+
+          case 'SPEAKING': {
+            wireframe.rotation.y += 0.006
+            const wave = Math.sin(time * 8)
+            const pulseFaces = (wave * 0.5 + 0.5)
+            // Faces pulse outward
+            const scl = 1 + wave * 0.08
+            wireframe.scale.setScalar(scl)
+            solidMesh.scale.setScalar(scl * 0.98)
+            faceMat.opacity = 0.08 + pulseFaces * 0.12
+            faceMat.color.setHex(0x00ffcc)
+            icoMat.color.setHex(0x00ffcc)
+            coreMat.color.setHex(0x00ffcc)
+            icoMat.opacity = 0.7 + pulseFaces * 0.2
+            break
+          }
+
+          case 'MULTI_AGENT':
+            wireframe.rotation.y += 0.005
+            wireframe.rotation.z = Math.sin(time * 0.5) * 0.3
+            icoMat.color.setHex(clr)
+            icoMat.opacity = 0.65 + pulse * 0.15
+            faceMat.opacity = 0.05 + pulse * 0.07
+            faceMat.color.setHex(clr)
+            break
         }
 
-        case 'MULTI_AGENT':
-          wireframe.rotation.y += 0.005
-          wireframe.rotation.z = Math.sin(time * 0.5) * 0.3
-          icoMat.color.setHex(clr)
-          icoMat.opacity = 0.65 + pulse * 0.15
-          faceMat.opacity = 0.05 + pulse * 0.07
-          faceMat.color.setHex(clr)
-          break
+        outerWire.rotation.copy(wireframe.rotation)
+        outerWire.scale.copy(wireframe.scale)
+        innerWire.rotation.y = -wireframe.rotation.y * 0.8
+        innerWire.rotation.x = wireframe.rotation.x * 0.6
+        solidMesh.rotation.copy(wireframe.rotation)
+
+        renderer.render(scene, camera)
       }
 
-      outerWire.rotation.copy(wireframe.rotation)
-      outerWire.scale.copy(wireframe.scale)
-      innerWire.rotation.y = -wireframe.rotation.y * 0.8
-      innerWire.rotation.x = wireframe.rotation.x * 0.6
-      solidMesh.rotation.copy(wireframe.rotation)
+      animate()
 
-      renderer.render(scene, camera)
-    }
-
-    animate()
-
-    const ro = new ResizeObserver(() => {
-      if (!mount) return
-      const w = mount.clientWidth
-      const h = mount.clientHeight
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-      renderer.setSize(w, h)
-    })
-    ro.observe(mount)
+      // B34 Fix 1: ResizeObserver calls renderer.setSize on dimension changes
+      ro = new ResizeObserver(() => {
+        if (!mount) return
+        const w = mount.clientWidth
+        const h = mount.clientHeight
+        if (w === 0 || h === 0) return
+        camera.aspect = w / h
+        camera.updateProjectionMatrix()
+        renderer.setSize(w, h)
+      })
+      ro.observe(mount)
+    }, 100) // 100ms defer ensures DOM has layout
 
     return () => {
-      cancelAnimationFrame(animFrame)
-      ro.disconnect()
-      renderer.dispose()
-      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+      clearTimeout(initTimer)
+      if (animFrame) cancelAnimationFrame(animFrame)
+      if (ro) ro.disconnect()
+      if (renderer) {
+        renderer.dispose()
+        if (mount && mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+      }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+  // B34 Fix 1: explicit minHeight so container has dimensions at mount time
+  return <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '400px' }} />
 }
 
 // ─── Orb Lab ──────────────────────────────────────────────────────────────────
@@ -796,10 +824,11 @@ interface NNode {
   x: number; y: number; z: number
   vx: number; vy: number; vz: number
   fx: number; fy: number; fz: number
-  mesh?: THREE.Mesh
+  mesh?: THREE.Mesh | THREE.Group
+  meta?: Record<string, any>
   pinned?: boolean
 }
-interface NEdge { a: number; b: number; line?: THREE.Line }
+interface NEdge { a: number; b: number; line?: THREE.Line | THREE.Mesh }
 
 function NeuralMap() {
   const mountRef = useRef<HTMLDivElement>(null)
@@ -836,6 +865,7 @@ function NeuralMap() {
           id: 'proj_' + p.id, label: p.name || 'Project', type: 'project',
           color: clr, size: sz, x: rand(4), y: rand(4), z: rand(4),
           vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+          meta: { healthScore: Math.round(sc), contract: p.contract || 0 },
         })
       })
     }
@@ -849,6 +879,7 @@ function NeuralMap() {
           color: tierClr, size: 0.09 + Math.random() * 0.05,
           x: rand(5), y: rand(5), z: rand(5),
           vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+          meta: { tier: ag.tier, desc: ag.desc },
         })
       })
       // Delegation edges between agents
@@ -888,6 +919,7 @@ function NeuralMap() {
           color: clr, size: 0.04 + Math.random() * 0.04,
           x: rand(6), y: rand(6), z: rand(6),
           vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+          meta: { feedback: mock.feedback },
         })
       }
     }
@@ -906,10 +938,17 @@ function NeuralMap() {
       const dataStart = nodes.length
       metrics.forEach((m, i) => {
         const sz = 0.1 + Math.min(0.25, Math.abs(m.value) / 2000000)
+        const absVal = Math.abs(m.value)
+        const valStr = absVal >= 1000000
+          ? `$${(absVal / 1000000).toFixed(1)}M`
+          : absVal >= 1000
+          ? `$${(absVal / 1000).toFixed(0)}k`
+          : `$${absVal.toFixed(0)}`
         nodes.push({
           id: 'data_' + i, label: m.label, type: 'data',
           color: m.color, size: sz, x: rand(3), y: rand(3), z: rand(3),
           vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+          meta: { valueStr: valStr, metricType: m.label.toLowerCase() },
         })
       })
       // Connect data nodes to projects
@@ -941,37 +980,116 @@ function NeuralMap() {
     renderer.setClearColor(0x020408, 1)
     mount.appendChild(renderer.domElement)
 
+    // B34 Fix 2: Add lights for MeshStandardMaterial emissive to work properly
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.25)
+    scene.add(ambientLight)
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.5)
+    dirLight.position.set(5, 8, 5)
+    scene.add(dirLight)
+
     // Node groups
     const nodeGroup = new THREE.Group()
     const edgeGroup = new THREE.Group()
     scene.add(nodeGroup)
     scene.add(edgeGroup)
 
-    // Geometry factories by type
-    const geoCache = {
-      sphere: new THREE.SphereGeometry(1, 10, 10),
-      octahedron: new THREE.OctahedronGeometry(1),
-      tetrahedron: new THREE.TetrahedronGeometry(1),
-      box: new THREE.BoxGeometry(1.4, 1.4, 1.4),
-    }
-    function typeGeo(type: NNode['type']) {
-      switch (type) {
-        case 'project': return geoCache.sphere
-        case 'agent': return geoCache.octahedron
-        case 'decision': return geoCache.tetrahedron
-        case 'data': return geoCache.box
-      }
-    }
+    // B34 Fix 3: Shared hit sphere geometry/material (invisible) for raycasting
+    const hitGeo = new THREE.SphereGeometry(1, 5, 5)
+    const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.0, depthWrite: false })
+    let hitSpheres: THREE.Mesh[] = []
 
     let currentNodes: NNode[] = []
     let currentEdges: NEdge[] = []
     let simulationActive = true
+    let edgesAsTubes = false // B34: upgrade edges to tubes after simulation settles
+
+    // B34 Fix 2: Create premium node mesh based on type
+    function createNodeMesh(n: NNode): THREE.Mesh | THREE.Group {
+      if (n.type === 'project') {
+        // Inner glowing energy sphere
+        const innerGeo = new THREE.SphereGeometry(0.75, 16, 16)
+        const innerMat = new THREE.MeshStandardMaterial({
+          color: 0x111111,
+          emissive: n.color,
+          emissiveIntensity: 0.7,
+          transparent: false,
+        })
+        const innerMesh = new THREE.Mesh(innerGeo, innerMat)
+
+        // Outer transparent shell
+        const outerGeo = new THREE.SphereGeometry(1.0, 16, 16)
+        const outerMat = new THREE.MeshBasicMaterial({
+          color: n.color,
+          transparent: true,
+          opacity: 0.12,
+          side: THREE.FrontSide,
+        })
+        const outerMesh = new THREE.Mesh(outerGeo, outerMat)
+        outerMesh.add(innerMesh)
+        return outerMesh
+
+      } else if (n.type === 'agent') {
+        // B34 Fix 2: Crystalline gem — IcosahedronGeometry detail=1 flat shading
+        const geo = new THREE.IcosahedronGeometry(1, 1)
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x0a0a0a,
+          emissive: n.color,
+          emissiveIntensity: 0.5,
+          flatShading: true,
+        })
+        const mesh = new THREE.Mesh(geo, mat)
+
+        // Ring around T1 NEXUS node only
+        if (n.id === 'ag_NEXUS') {
+          const ringGeo = new THREE.TorusGeometry(1.9, 0.06, 6, 40)
+          const ringMat = new THREE.MeshBasicMaterial({
+            color: TIER_COLORS_INT[0],
+            transparent: true,
+            opacity: 0.8,
+          })
+          const ring = new THREE.Mesh(ringGeo, ringMat)
+          ring.rotation.x = Math.PI / 3
+          mesh.add(ring)
+        }
+        return mesh
+
+      } else if (n.type === 'decision') {
+        // B34 Fix 2: Diamond — OctahedronGeometry rotated 45deg
+        const geo = new THREE.OctahedronGeometry(1)
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x0a0a0a,
+          emissive: n.color,
+          emissiveIntensity: 0.5,
+          flatShading: false,
+        })
+        const mesh = new THREE.Mesh(geo, mat)
+        mesh.rotation.z = Math.PI / 4
+        return mesh
+
+      } else {
+        // data — B34 Fix 2: Hexagonal prism CylinderGeometry 6 segments
+        const geo = new THREE.CylinderGeometry(1, 1, 1.3, 6)
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x0a0a0a,
+          emissive: n.color,
+          emissiveIntensity: 0.45,
+          flatShading: false,
+        })
+        return new THREE.Mesh(geo, mat)
+      }
+    }
 
     // Build scene from node/edge data
     function rebuildScene() {
-      // Clear old objects
+      // Clear old hitSpheres from scene
+      hitSpheres.forEach((s) => scene.remove(s))
+      hitSpheres = []
+
+      // Clear old nodes/edges
       while (nodeGroup.children.length) nodeGroup.remove(nodeGroup.children[0])
       while (edgeGroup.children.length) edgeGroup.remove(edgeGroup.children[0])
+
+      edgesAsTubes = false
 
       const { nodes, edges } = buildGraphData(activeTabRef.current, togglesRef.current)
       // Cluster if > 200 nodes
@@ -979,25 +1097,31 @@ function NeuralMap() {
       currentNodes = capped
       currentEdges = edges.filter((e) => e.a < capped.length && e.b < capped.length)
 
-      // Create meshes
+      // B34 Fix 2: Create premium meshes per node
       currentNodes.forEach((n) => {
-        const geo = typeGeo(n.type)
-        const mat = new THREE.MeshBasicMaterial({ color: n.color, wireframe: n.type !== 'project' })
-        const mesh = new THREE.Mesh(geo, mat)
+        const mesh = createNodeMesh(n)
         mesh.scale.setScalar(n.size)
         mesh.position.set(n.x, n.y, n.z)
         nodeGroup.add(mesh)
         n.mesh = mesh
+
+        // B34 Fix 3: Create invisible hit sphere (1.5x visual size) for raycasting
+        const hs = new THREE.Mesh(hitGeo, hitMat)
+        hs.scale.setScalar(n.size * 1.5)
+        hs.position.set(n.x, n.y, n.z)
+        scene.add(hs)
+        hitSpheres.push(hs)
       })
 
-      // Create edge lines
+      // B34 Fix 2: Create initial edge lines (fast update during simulation)
       currentEdges.forEach((e) => {
         const a = currentNodes[e.a], b = currentNodes[e.b]
         if (!a || !b) return
         const geo = new THREE.BufferGeometry()
         const pts = new Float32Array([a.x, a.y, a.z, b.x, b.y, b.z])
         geo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
-        const mat = new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.4 })
+        // Glowing blue-teal edge color
+        const mat = new THREE.LineBasicMaterial({ color: 0x1a4060, transparent: true, opacity: 0.5 })
         const line = new THREE.Line(geo, mat)
         edgeGroup.add(line)
         e.line = line
@@ -1009,6 +1133,33 @@ function NeuralMap() {
 
     rebuildScene()
     rebuildRef.current = rebuildScene
+
+    // B34 Fix 2: Upgrade edges from Lines to TubeGeometry after simulation settles
+    function upgradeEdgesToTubes() {
+      edgesAsTubes = true
+      currentEdges.forEach((e) => {
+        const a = currentNodes[e.a], b = currentNodes[e.b]
+        if (!a || !b || !e.line) return
+        edgeGroup.remove(e.line as THREE.Object3D)
+        ;(e.line as any).geometry?.dispose()
+        ;(e.line as any).material?.dispose()
+
+        const path = new THREE.LineCurve3(
+          new THREE.Vector3(a.x, a.y, a.z),
+          new THREE.Vector3(b.x, b.y, b.z)
+        )
+        // B34 Fix 2: TubeGeometry with emissive material, opacity 0.4
+        const tubeGeo = new THREE.TubeGeometry(path, 2, 0.018, 5, false)
+        const tubeMat = new THREE.MeshBasicMaterial({
+          color: 0x1e5080,
+          transparent: true,
+          opacity: 0.4,
+        })
+        const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat)
+        edgeGroup.add(tubeMesh)
+        e.line = tubeMesh
+      })
+    }
 
     // Force simulation step
     function simulateStep() {
@@ -1056,53 +1207,97 @@ function NeuralMap() {
         n.vy = (n.vy + n.fy) * damping
         n.vz = (n.vz + n.fz) * damping
         n.x += n.vx; n.y += n.vy; n.z += n.vz
-        if (n.mesh) n.mesh.position.set(n.x, n.y, n.z)
+        if (n.mesh) (n.mesh as THREE.Object3D).position.set(n.x, n.y, n.z)
         totalKE += n.vx ** 2 + n.vy ** 2 + n.vz ** 2
       }
 
-      // Update edge geometry
-      currentEdges.forEach((e) => {
-        const a = currentNodes[e.a], b = currentNodes[e.b]
-        if (!a || !b || !e.line) return
-        const pos = e.line.geometry.attributes.position
-        pos.setXYZ(0, a.x, a.y, a.z)
-        pos.setXYZ(1, b.x, b.y, b.z)
-        pos.needsUpdate = true
+      // Update hitSphere positions to follow nodes
+      hitSpheres.forEach((hs, i) => {
+        const n = currentNodes[i]
+        if (n) hs.position.set(n.x, n.y, n.z)
       })
 
-      // Pause simulation when kinetic energy settles
-      if (totalKE < 0.001 * currentNodes.length) simulationActive = false
+      // Update edge lines (fast BufferGeometry update during simulation)
+      if (!edgesAsTubes) {
+        currentEdges.forEach((e) => {
+          const a = currentNodes[e.a], b = currentNodes[e.b]
+          if (!a || !b || !e.line) return
+          const pos = (e.line as THREE.Line).geometry.attributes.position
+          if (!pos) return
+          pos.setXYZ(0, a.x, a.y, a.z)
+          pos.setXYZ(1, b.x, b.y, b.z)
+          pos.needsUpdate = true
+        })
+      }
+
+      // B34 Fix 2: When simulation settles, upgrade edges to TubeGeometry
+      if (totalKE < 0.001 * currentNodes.length) {
+        simulationActive = false
+        if (!edgesAsTubes) upgradeEdgesToTubes()
+      }
     }
 
     // Camera orbit
-    let camAngle = 0
     let pulseTick = 0
     let animFrame: number
 
     // Mouse drag for camera orbit
     let isDragging = false
+    let dragMoved = false
     let lastMX = 0, lastMY = 0
     let camPhi = Math.PI / 6, camTheta = 0, camR = 10
+
+    // B34 Fix 3: Smooth camera target for click-centering
+    let targetCamR = 10
+    const camLookAt = new THREE.Vector3(0, 0, 0)
+    const targetLookAt = new THREE.Vector3(0, 0, 0)
+
+    // B34 Fix 3: Hovered node tracking for smooth hover scale
+    let hoveredNode: NNode | null = null
 
     // Raycaster for node hover
     const raycaster = new THREE.Raycaster()
     const mouse = new THREE.Vector2()
-    let hoveredNode: NNode | null = null
     let tooltipDiv: HTMLDivElement | null = null
 
     function createTooltip() {
       tooltipDiv = document.createElement('div')
       tooltipDiv.style.cssText = `
-        position:absolute;background:rgba(0,0,0,0.85);border:1px solid rgba(255,255,255,0.15);
-        color:#e2e8f0;font-size:11px;padding:5px 9px;border-radius:6px;
+        position:absolute;background:rgba(4,8,18,0.92);border:1px solid rgba(0,255,136,0.2);
+        color:#e2e8f0;font-size:11px;padding:7px 11px;border-radius:7px;
         pointer-events:none;white-space:nowrap;z-index:100;display:none;font-family:monospace;
+        box-shadow:0 0 12px rgba(0,255,136,0.12);
       `
       mount.appendChild(tooltipDiv)
     }
     createTooltip()
 
+    // B34 Fix 3: Format tooltip content with name, type, and key metric
+    function updateTooltip(n: NNode, mx: number, my: number, rect: DOMRect) {
+      if (!tooltipDiv) return
+      const typeLabel = n.type.charAt(0).toUpperCase() + n.type.slice(1)
+      let metric = ''
+      if (n.type === 'project') metric = `Health: <span style="color:#00ff88">${n.meta?.healthScore ?? '?'}%</span>`
+      if (n.type === 'agent') metric = `T${n.meta?.tier ?? '?'} · <span style="color:#9ca3af">${n.meta?.desc ?? ''}</span>`
+      if (n.type === 'decision') {
+        const fb = n.meta?.feedback
+        metric = fb > 0 ? '<span style="color:#00cc55">👍 Approved</span>' : fb < 0 ? '<span style="color:#ff4444">👎 Issue</span>' : '<span style="color:#555577">• Pending</span>'
+      }
+      if (n.type === 'data') metric = `<span style="color:#06b6d4">${n.meta?.valueStr ?? ''}</span>`
+
+      tooltipDiv.innerHTML = `
+        <div style="font-weight:800;color:#fff;margin-bottom:2px;letter-spacing:0.04em">${n.label}</div>
+        <div style="color:#4b5563;font-size:9px;text-transform:uppercase;letter-spacing:0.08em">${typeLabel}</div>
+        ${metric ? `<div style="font-size:10px;margin-top:3px">${metric}</div>` : ''}
+      `
+      tooltipDiv.style.display = 'block'
+      tooltipDiv.style.left = (mx - rect.left + 15) + 'px'
+      tooltipDiv.style.top = (my - rect.top - 5) + 'px'
+    }
+
     function onMouseDown(e: MouseEvent) {
       isDragging = true
+      dragMoved = false
       lastMX = e.clientX
       lastMY = e.clientY
     }
@@ -1111,26 +1306,23 @@ function NeuralMap() {
       if (isDragging) {
         const dx = e.clientX - lastMX
         const dy = e.clientY - lastMY
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true
         camTheta -= dx * 0.008
         camPhi = Math.max(0.2, Math.min(Math.PI - 0.2, camPhi - dy * 0.008))
         lastMX = e.clientX
         lastMY = e.clientY
       }
-      // Hover detection
+      // B34 Fix 3: Hover detection using hitSpheres (1.5x size)
       const rect = mount.getBoundingClientRect()
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
       mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(mouse, camera)
-      const meshes = currentNodes.map((n) => n.mesh).filter(Boolean)
-      const hits = raycaster.intersectObjects(meshes as THREE.Object3D[])
+      const hits = raycaster.intersectObjects(hitSpheres)
       if (hits.length > 0) {
-        const hitMesh = hits[0].object
-        hoveredNode = currentNodes.find((n) => n.mesh === hitMesh) || null
+        const hitIdx = hitSpheres.indexOf(hits[0].object as THREE.Mesh)
+        hoveredNode = hitIdx >= 0 ? (currentNodes[hitIdx] || null) : null
         if (tooltipDiv && hoveredNode) {
-          tooltipDiv.textContent = hoveredNode.label
-          tooltipDiv.style.display = 'block'
-          tooltipDiv.style.left = (e.clientX - rect.left + 12) + 'px'
-          tooltipDiv.style.top = (e.clientY - rect.top - 4) + 'px'
+          updateTooltip(hoveredNode, e.clientX, e.clientY, rect)
         }
       } else {
         hoveredNode = null
@@ -1138,13 +1330,50 @@ function NeuralMap() {
       }
     }
     function onWheel(e: WheelEvent) {
-      camR = Math.max(3, Math.min(20, camR + e.deltaY * 0.01))
+      targetCamR = Math.max(3, Math.min(20, targetCamR + e.deltaY * 0.01))
+    }
+
+    // B34 Fix 3: Click to center camera on hovered node (500ms smooth)
+    function onClick(e: MouseEvent) {
+      if (dragMoved) return
+      const rect = mount.getBoundingClientRect()
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(mouse, camera)
+      const hits = raycaster.intersectObjects(hitSpheres)
+      if (hits.length > 0) {
+        const hitIdx = hitSpheres.indexOf(hits[0].object as THREE.Mesh)
+        const n = currentNodes[hitIdx]
+        if (n) targetLookAt.set(n.x, n.y, n.z)
+      }
+    }
+
+    // B34 Fix 3: Double click to zoom in close
+    function onDblClick(e: MouseEvent) {
+      const rect = mount.getBoundingClientRect()
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(mouse, camera)
+      const hits = raycaster.intersectObjects(hitSpheres)
+      if (hits.length > 0) {
+        const hitIdx = hitSpheres.indexOf(hits[0].object as THREE.Mesh)
+        const n = currentNodes[hitIdx]
+        if (n) {
+          targetLookAt.set(n.x, n.y, n.z)
+          targetCamR = 4
+        }
+      } else {
+        targetLookAt.set(0, 0, 0)
+        targetCamR = 10
+      }
     }
 
     renderer.domElement.addEventListener('mousedown', onMouseDown)
     renderer.domElement.addEventListener('mouseup', onMouseUp)
     renderer.domElement.addEventListener('mousemove', onMouseMove)
     renderer.domElement.addEventListener('wheel', onWheel, { passive: true })
+    renderer.domElement.addEventListener('click', onClick)
+    renderer.domElement.addEventListener('dblclick', onDblClick)
 
     // Pause simulation when tab not visible
     const handleVisibility = () => { if (!document.hidden) simulationActive = true }
@@ -1154,30 +1383,69 @@ function NeuralMap() {
       animFrame = requestAnimationFrame(animate)
       pulseTick += 0.016
 
+      // B34 Fix 3: Smooth camera R and lookAt interpolation
+      camR += (targetCamR - camR) * 0.05
+      camLookAt.lerp(targetLookAt, 0.05)
+
       // Camera position from spherical coords
       if (!isDragging) camTheta += 0.002
       camera.position.x = camR * Math.sin(camPhi) * Math.sin(camTheta)
       camera.position.y = camR * Math.cos(camPhi)
       camera.position.z = camR * Math.sin(camPhi) * Math.cos(camTheta)
-      camera.lookAt(0, 0, 0)
+      camera.lookAt(camLookAt)
 
       // Simulate
       if (simulationActive) simulateStep()
 
-      // Pulse agent nodes
+      // B34 Fix 2 + Fix 3: Premium node animations with smooth hover scale
       const pPulse = Math.sin(pulseTick * 3) * 0.5 + 0.5
+      const now = Date.now()
+
       currentNodes.forEach((n) => {
-        if (n.type === 'agent' && n.mesh) {
-          const sc = n.size * (0.85 + pPulse * 0.3)
-          n.mesh.scale.setScalar(sc)
-          n.mesh.rotation.y += 0.01
-        }
-        if (n.type === 'decision' && n.mesh) {
-          n.mesh.rotation.x += 0.005
-        }
-        if (n.type === 'data' && n.mesh) {
-          n.mesh.rotation.y += 0.008
-          n.mesh.rotation.z += 0.004
+        if (!n.mesh) return
+        const obj = n.mesh as THREE.Object3D
+
+        // B34 Fix 3: Smooth hover scale — lerp to 1.2x when hovered, back to 1.0x when not
+        const isHovered = hoveredNode === n
+        const targetScale = isHovered ? n.size * 1.2 : n.size
+        const currentScale = obj.scale.x
+        const newScale = currentScale + (targetScale - currentScale) * 0.15 // ~200ms lerp
+        obj.scale.setScalar(newScale)
+
+        if (n.type === 'agent') {
+          obj.rotation.y += 0.01
+          // B34 Fix 2: Pulse emissive intensity on agents
+          const mat = (obj as THREE.Mesh).material as THREE.MeshStandardMaterial
+          if (mat?.emissiveIntensity !== undefined) {
+            mat.emissiveIntensity = 0.4 + pPulse * 0.4
+          }
+          // Orbit NEXUS ring
+          if (n.id === 'ag_NEXUS' && (obj as THREE.Mesh).children.length > 0) {
+            const ring = (obj as THREE.Mesh).children[0]
+            ring.rotation.z += 0.012
+            ring.rotation.y += 0.007
+          }
+
+        } else if (n.type === 'project') {
+          // B34 Fix 2: Pulse inner sphere emissive intensity
+          const outerMesh = obj as THREE.Mesh
+          if (outerMesh.children.length > 0) {
+            const innerMesh = outerMesh.children[0] as THREE.Mesh
+            const mat = innerMesh.material as THREE.MeshStandardMaterial
+            if (mat?.emissiveIntensity !== undefined) {
+              mat.emissiveIntensity = 0.5 + pPulse * 0.4
+            }
+          }
+
+        } else if (n.type === 'decision') {
+          // B34 Fix 2: Slow rotation animation for diamond shape
+          obj.rotation.y += 0.005
+          obj.rotation.x += 0.003
+
+        } else if (n.type === 'data') {
+          // B34 Fix 2: Hex prism rotation
+          obj.rotation.y += 0.008
+          obj.rotation.z += 0.004
         }
       })
 
@@ -1203,7 +1471,25 @@ function NeuralMap() {
       renderer.domElement.removeEventListener('mouseup', onMouseUp)
       renderer.domElement.removeEventListener('mousemove', onMouseMove)
       renderer.domElement.removeEventListener('wheel', onWheel)
-      Object.values(geoCache).forEach((g) => g.dispose())
+      renderer.domElement.removeEventListener('click', onClick)
+      renderer.domElement.removeEventListener('dblclick', onDblClick)
+      // Dispose node meshes
+      nodeGroup.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry?.dispose()
+          if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose())
+          else obj.material?.dispose()
+        }
+      })
+      // Dispose edge geometry
+      edgeGroup.traverse((obj) => {
+        if ((obj as any).geometry) (obj as any).geometry.dispose()
+        if ((obj as any).material) (obj as any).material.dispose()
+      })
+      // Dispose hit spheres
+      hitSpheres.forEach((s) => scene.remove(s))
+      hitGeo.dispose()
+      hitMat.dispose()
       renderer.dispose()
       if (tooltipDiv?.parentNode) tooltipDiv.parentNode.removeChild(tooltipDiv)
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
@@ -1346,7 +1632,7 @@ export default function AdminVisualizationLab() {
           </span>
         </div>
 
-        <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B33 · Admin Only</span>
+        <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B34 · Admin Only</span>
 
         {/* Main tabs */}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>

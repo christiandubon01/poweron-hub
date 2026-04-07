@@ -437,8 +437,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         { method: 'HEAD', signal: controller.signal, cache: 'no-store' }
       )
       clearTimeout(timeoutId)
+      // 401 is expected (no anon key on REST root) — still means Supabase is reachable
       return res.status < 600 // any valid HTTP response = Supabase reachable
-    } catch {
+    } catch (e) {
+      // B34 Fix 4: Fail silently with console.warn instead of propagating (Supabase HEAD → 401)
+      console.warn('[connectivity] Supabase HEAD check failed silently:', e)
       return false
     }
   }
