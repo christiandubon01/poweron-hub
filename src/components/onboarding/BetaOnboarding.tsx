@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * BetaOnboarding — 5-step new-org setup flow.
+ * BetaOnboarding — 6-step new-org setup flow.
  *
  * Fires ONCE after NDA is signed, before main app loads.
  * Checks orgs.onboarding_complete — never shows again after completion.
@@ -9,25 +9,45 @@
  *   1. Welcome          — headline + Get Started CTA
  *   2. Industry         — 6 industry cards, single-select, required
  *   3. Business Basics  — business name, your name, license #, city/state
- *   4. Name Your AI     — custom AI name (default: NEXUS)
- *   5. Done             — confirmation screen, Open Dashboard CTA
+ *   4. Voice Selection  — pick NEXUS voice from 10 options (skippable, default: Oxley)
+ *   5. Name Your AI     — custom AI name (default: NEXUS)
+ *   6. Done             — confirmation screen, Open Dashboard CTA
  *
  * On complete:
  *   - Writes orgs.onboarding_complete = true
  *   - Writes orgs.industry, orgs.business_name, orgs.owner_name,
- *     orgs.license_number, orgs.city_state, orgs.ai_name
+ *     orgs.license_number, orgs.city_state, orgs.ai_name, orgs.nexus_voice_id
  *   - Sets ai_name in NEXUS system prompt via window event
  *   - Loads industry template seed via window event
  */
 
-import { useState } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import {
   Zap, Wrench, Building2, Stethoscope, Package, HardHat,
   ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Bot,
+  Play, Square, Loader2, Volume2, Check,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { getTemplate } from '@/config/templates/index'
+
+// ── NEXUS Voices (10 curated) ─────────────────────────────────────────────────
+
+const NEXUS_VOICES_ONBOARD = [
+  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',      descriptor: 'Calm focused professional',  gender: 'Male'   },
+  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Clear direct field-ready',    gender: 'Male'   },
+  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',     descriptor: 'Confident authoritative',     gender: 'Male'   },
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel',     descriptor: 'Calm professional',           gender: 'Female' },
+  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi',       descriptor: 'Strong confident',            gender: 'Female' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella',      descriptor: 'Warm friendly',               gender: 'Female' },
+  { id: 'ThT5KcBeYPX3keUQqHPh', name: 'Nia',        descriptor: 'Upbeat energetic',            gender: 'Female' },
+  { id: 'yoZ06aMxZnX8TkCVKLEy', name: 'Sam',        descriptor: 'Raspy authoritative',         gender: 'Male'   },
+  { id: 'CYw35i4Wn5qWUFPfRwi7', name: 'Dave',       descriptor: 'Casual conversational',       gender: 'Male'   },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni',     descriptor: 'Well-rounded',                gender: 'Male'   },
+]
+
+const NEXUS_VOICE_DEFAULT_ID = 'gOkFV1JMCt0G0n9xmBwV' // Oxley
+const SAMPLE_PHRASE = 'Hello, I am your NEXUS assistant.'
 
 // ── Industry definitions ──────────────────────────────────────────────────────
 
@@ -93,7 +113,7 @@ const INDUSTRIES: Industry[] = [
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 6
 
 function StepDots({ current }: { current: number }) {
   return (
@@ -169,8 +189,69 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
   const [licenseNumber, setLicenseNumber] = useState('')
   const [cityState, setCityState]       = useState('')
 
-  // Step 4
+  // Step 4 — Voice selection
+  const [nexusVoiceId, setNexusVoiceId] = useState(NEXUS_VOICE_DEFAULT_ID)
+  const [voicePlayingId, setVoicePlayingId] = useState<string | null>(null)
+  const [voiceLoadingId, setVoiceLoadingId] = useState<string | null>(null)
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null)
+
+  // Step 5
   const [aiName, setAiName]           = useState('NEXUS')
+
+  // ── Voice helpers ───────────────────────────────────────────────────────────
+
+  const stopVoiceAudio = useCallback(() => {
+    if (voiceAudioRef.current) { voiceAudioRef.current.pause(); voiceAudioRef.current = null }
+    if (window.speechSynthesis) window.speechSynthesis.cancel()
+    setVoicePlayingId(null)
+    setVoiceLoadingId(null)
+  }, [])
+
+  const handleVoiceSelect = useCallback((id: string) => {
+    setNexusVoiceId(id)
+  }, [])
+
+  const handleVoicePlay = useCallback(async (voice: typeof NEXUS_VOICES_ONBOARD[0]) => {
+    if (voicePlayingId === voice.id) { stopVoiceAudio(); return }
+    stopVoiceAudio()
+    setVoiceLoadingId(voice.id)
+
+    try {
+      const res = await fetch('/.netlify/functions/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voiceId: voice.id, text: SAMPLE_PHRASE }),
+      })
+      if (res.ok) {
+        const { audio } = await res.json()
+        const binary = atob(audio)
+        const bytes  = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const blob   = new Blob([bytes], { type: 'audio/mpeg' })
+        const url    = URL.createObjectURL(blob)
+        const audioEl = document.createElement('audio') as HTMLAudioElement
+        audioEl.playsInline = true
+        audioEl.src = url
+        audioEl.oncanplaythrough = () => { setVoiceLoadingId(null); setVoicePlayingId(voice.id); audioEl.play().catch(() => { URL.revokeObjectURL(url); fallback() }) }
+        audioEl.onended = () => { setVoicePlayingId(null); URL.revokeObjectURL(url) }
+        audioEl.onerror = () => { setVoiceLoadingId(null); URL.revokeObjectURL(url); fallback() }
+        audioEl.load()
+        voiceAudioRef.current = audioEl
+        return
+      }
+    } catch { /* fall through */ }
+
+    fallback()
+
+    function fallback() {
+      if (!window.speechSynthesis) { setVoiceLoadingId(null); return }
+      const utt = new SpeechSynthesisUtterance(SAMPLE_PHRASE)
+      utt.onstart = () => { setVoiceLoadingId(null); setVoicePlayingId(voice.id) }
+      utt.onend   = () => setVoicePlayingId(null)
+      utt.onerror = () => { setVoicePlayingId(null); setVoiceLoadingId(null) }
+      window.speechSynthesis.speak(utt)
+    }
+  }, [voicePlayingId, stopVoiceAudio])
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
@@ -209,6 +290,7 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
           license_number: licenseNumber.trim() || null,
           city_state: cityState.trim() || null,
           ai_name: resolvedAiName,
+          nexus_voice_id: nexusVoiceId || NEXUS_VOICE_DEFAULT_ID,
         })
         .eq('id', orgId)
 
@@ -216,6 +298,12 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
         console.error('[BetaOnboarding] Supabase update error:', error)
         // Don't block the user — fall through and complete
       }
+
+      // Persist selected voice to localStorage so voice.ts picks it up immediately
+      try {
+        localStorage.setItem('poweron_nexus_voice', nexusVoiceId || NEXUS_VOICE_DEFAULT_ID)
+        localStorage.setItem('nexus_voice_id', nexusVoiceId || NEXUS_VOICE_DEFAULT_ID)
+      } catch { /* ignore */ }
 
       // Broadcast ai_name so NEXUS prompt engine can pick it up
       window.dispatchEvent(
@@ -364,8 +452,60 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
           </div>
         )
 
-      // ── Step 4: Name Your AI ──────────────────────────────────────────────
+      // ── Step 4: Voice Selection ───────────────────────────────────────────
       case 3:
+        return (
+          <div className="space-y-4">
+            <div className="text-center">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 mx-auto flex items-center justify-center mb-3">
+                <Volume2 className="text-emerald-400" size={26} />
+              </div>
+              <h2 className="text-xl font-bold text-white">Choose your NEXUS voice</h2>
+              <p className="text-gray-500 text-sm mt-1">Pick the voice your AI assistant will use. You can change this later.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-0.5">
+              {NEXUS_VOICES_ONBOARD.map(voice => {
+                const isSelected = nexusVoiceId === voice.id
+                const isPlaying  = voicePlayingId === voice.id
+                const isLoading  = voiceLoadingId === voice.id
+                const isFemale   = voice.gender === 'Female'
+                return (
+                  <div
+                    key={voice.id}
+                    className={`flex flex-col gap-2 p-3 rounded-xl border transition-all cursor-pointer ${isSelected ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-gray-700/60 bg-gray-800/30 hover:border-gray-600'}`}
+                    onClick={() => handleVoiceSelect(voice.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isSelected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
+                        {voice.name[0]}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-semibold truncate ${isSelected ? 'text-emerald-300' : 'text-gray-200'}`}>{voice.name}</div>
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${isFemale ? 'bg-pink-500/20 text-pink-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                          {voice.gender}
+                        </span>
+                      </div>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />}
+                    </div>
+                    <div className="text-xs text-gray-500 leading-tight">{voice.descriptor}</div>
+                    <button
+                      onClick={e => { e.stopPropagation(); handleVoicePlay(voice) }}
+                      disabled={isLoading}
+                      className={`flex items-center justify-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors w-full ${isLoading ? 'bg-gray-700 text-gray-500 cursor-wait' : isPlaying ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                    >
+                      {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                      <span>{isLoading ? 'Loading…' : isPlaying ? 'Stop' : 'Play Sample'}</span>
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-center text-xs text-gray-600">Default is Oxley if you skip this step.</p>
+          </div>
+        )
+
+      // ── Step 5: Name Your AI ──────────────────────────────────────────────
+      case 4:
         return (
           <div className="space-y-5 text-center">
             <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 mx-auto flex items-center justify-center">
@@ -391,8 +531,8 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
           </div>
         )
 
-      // ── Step 5: Done ──────────────────────────────────────────────────────
-      case 4: {
+      // ── Step 6: Done ──────────────────────────────────────────────────────
+      case 5: {
         const displayAiName = aiName.trim() || 'NEXUS'
         const displayIndustry = industry?.label ?? 'your'
         return (

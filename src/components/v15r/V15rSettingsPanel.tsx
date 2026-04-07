@@ -64,11 +64,18 @@ function SettingCard({ title, children }: { title: string; children: React.React
   )
 }
 
-// ── NEXUS Voice selector (3 curated voices) ───────────────────────────────────
+// ── NEXUS Voice selector (10 curated voices) ─────────────────────────────────
 const NEXUS_VOICES = [
-  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',      descriptor: 'Calm focused professional' },
-  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Clear direct field-ready'    },
-  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',     descriptor: 'Confident authoritative sharp' },
+  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',      descriptor: 'Calm focused professional',  gender: 'Male'   },
+  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Clear direct field-ready',    gender: 'Male'   },
+  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',     descriptor: 'Confident authoritative',     gender: 'Male'   },
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel',     descriptor: 'Calm professional',           gender: 'Female' },
+  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi',       descriptor: 'Strong confident',            gender: 'Female' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella',      descriptor: 'Warm friendly',               gender: 'Female' },
+  { id: 'ThT5KcBeYPX3keUQqHPh', name: 'Nia',        descriptor: 'Upbeat energetic',            gender: 'Female' },
+  { id: 'yoZ06aMxZnX8TkCVKLEy', name: 'Sam',        descriptor: 'Raspy authoritative',         gender: 'Male'   },
+  { id: 'CYw35i4Wn5qWUFPfRwi7', name: 'Dave',       descriptor: 'Casual conversational',       gender: 'Male'   },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni',     descriptor: 'Well-rounded',                gender: 'Male'   },
 ]
 const NEXUS_VOICE_KEY = 'poweron_nexus_voice'
 const NEXUS_VOICE_DEFAULT = 'gOkFV1JMCt0G0n9xmBwV' // Oxley
@@ -112,32 +119,33 @@ function NexusVoiceSelector() {
     stopAudio()
     setLoadingId(voice.id)
 
-    const sampleText = `This is ${voice.name}. I'm your NEXUS voice assistant for Power On Solutions.`
+    const sampleText = 'Hello, I am your NEXUS assistant.'
 
-    // Try ElevenLabs TTS via VITE_ELEVENLABS_API_KEY (same path voice.ts uses)
+    // Call speak Netlify function proxy
     try {
-      const apiKey = (import.meta as any).env?.VITE_ELEVENLABS_API_KEY || (import.meta as any).env?.VITE_ELEVEN_LABS_API_KEY
-      if (apiKey) {
-        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice.id}`, {
-          method: 'POST',
-          headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
-          body: JSON.stringify({ text: sampleText, model_id: 'eleven_turbo_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: 1.0 } }),
-        })
-        if (res.ok) {
-          const blob = await res.blob()
-          const url = URL.createObjectURL(blob)
-          const audio = document.createElement('audio') as HTMLAudioElement
-          audio.playsInline = true
-          audio.src = url
-          audio.oncanplaythrough = () => { setLoadingId(null); setPlayingId(voice.id); audio.play().catch(() => { URL.revokeObjectURL(url); fallbackSpeak() }) }
-          audio.onended = () => { setPlayingId(null); URL.revokeObjectURL(url) }
-          audio.onerror  = () => { setLoadingId(null); URL.revokeObjectURL(url); fallbackSpeak() }
-          audio.load()
-          audioRef.current = audio
-          return
-        }
+      const res = await fetch('/.netlify/functions/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voiceId: voice.id, text: sampleText }),
+      })
+      if (res.ok) {
+        const { audio } = await res.json()
+        const binary = atob(audio)
+        const bytes  = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const blob = new Blob([bytes], { type: 'audio/mpeg' })
+        const url  = URL.createObjectURL(blob)
+        const audioEl = document.createElement('audio') as HTMLAudioElement
+        audioEl.playsInline = true
+        audioEl.src = url
+        audioEl.oncanplaythrough = () => { setLoadingId(null); setPlayingId(voice.id); audioEl.play().catch(() => { URL.revokeObjectURL(url); fallbackSpeak() }) }
+        audioEl.onended = () => { setPlayingId(null); URL.revokeObjectURL(url) }
+        audioEl.onerror = () => { setLoadingId(null); URL.revokeObjectURL(url); fallbackSpeak() }
+        audioEl.load()
+        audioRef.current = audioEl
+        return
       }
-    } catch { /* fall through */ }
+    } catch { /* fall through to browser TTS */ }
 
     fallbackSpeak()
 
@@ -168,35 +176,42 @@ function NexusVoiceSelector() {
         <Volume2 className="w-4 h-4 text-emerald-400" />
         <p className="text-sm text-gray-400">Choose the voice NEXUS uses for all spoken responses</p>
       </div>
-      <div className="grid grid-cols-1 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         {NEXUS_VOICES.map(voice => {
           const isSelected = selectedId === voice.id
           const isPlaying  = playingId  === voice.id
           const isLoading  = loadingId  === voice.id
+          const isFemale   = voice.gender === 'Female'
           return (
             <div
               key={voice.id}
-              className={`flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer ${isSelected ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-gray-700/60 bg-gray-800/30 hover:border-gray-600'}`}
+              className={`flex flex-col gap-2 p-3 rounded-xl border transition-all cursor-pointer ${isSelected ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-gray-700/60 bg-gray-800/30 hover:border-gray-600'}`}
               onClick={() => handleSelect(voice.id)}
             >
-              <div className="flex items-center gap-3">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isSelected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
+              <div className="flex items-center gap-2">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isSelected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
                   {voice.name[0]}
                 </div>
-                <div>
-                  <div className={`text-sm font-semibold ${isSelected ? 'text-emerald-300' : 'text-gray-200'}`}>{voice.name}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{voice.descriptor}</div>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-semibold truncate ${isSelected ? 'text-emerald-300' : 'text-gray-200'}`}>{voice.name}</div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${isFemale ? 'bg-pink-500/20 text-pink-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                      {voice.gender}
+                    </span>
+                  </div>
                 </div>
+                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />}
               </div>
-              <div className="flex items-center gap-2">
-                {isSelected && <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />}
+              <div className="text-xs text-gray-500 leading-tight">{voice.descriptor}</div>
+              <div className="flex items-center justify-between">
                 <button
                   onClick={e => { e.stopPropagation(); handlePlaySample(voice) }}
                   disabled={isLoading}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${isLoading ? 'bg-gray-700 text-gray-500 cursor-wait' : isPlaying ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors ${isLoading ? 'bg-gray-700 text-gray-500 cursor-wait' : isPlaying ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
                   title={isPlaying ? 'Stop' : 'Play sample'}
                 >
-                  {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3 ml-0.5" />}
+                  {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                  <span>{isLoading ? 'Loading…' : isPlaying ? 'Stop' : 'Play Sample'}</span>
                 </button>
               </div>
             </div>
