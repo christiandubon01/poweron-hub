@@ -7,6 +7,7 @@
  */
 
 import { getModeConfig, setActiveMode, getActiveMode, type NexusAgentMode } from '@/services/nexusMode'
+import { isAdminNexusActive, getAdminContextMode, type AdminContextMode } from '@/services/nexusAdminContext'
 
 export const NEXUS_SYSTEM_PROMPT = `You are NEXUS, the AI chief-of-staff for Power On Solutions, an electrical contracting company run by Christian Dubon in the Coachella Valley. You have direct access to all business data: projects, invoices, field logs, leads, scheduling, and financials.
 
@@ -187,8 +188,77 @@ SCOUT IDEA ANALYSIS:
 // ── Dynamic System Prompt Builder ─────────────────────────────────────────────
 
 /**
+ * Builds the expanded system prompt for NEXUS Admin — Full Oversight mode.
+ * Injected only when the admin user has selected the purple mic option.
+ * Context scope is determined by the active AdminContextMode toggle.
+ */
+function buildAdminOversightPrompt(contextMode: AdminContextMode): string {
+  const sections: string[] = []
+
+  const electrical = `### Power On Solutions — Electrical Pipeline
+You have full access to the electrical contracting operations:
+- Active projects, pipeline value, project phases, RFIs, change orders, and coordination items
+- Accounts receivable, outstanding invoices, cash flow position, and collection queue
+- Field logs, crew hours, material costs, and job cost actuals vs estimates
+- Lead pipeline from initial contact through project conversion (NEW → WON/LOST)
+- GC relationship database: bid history, win rates, fit scores, payment behavior
+- Service call tracker: active calls, open estimates, unbilled service revenue`
+
+  const software = `### PowerOn Hub — Software Pipeline
+You have full visibility into the PowerOn Hub software product metrics:
+- Beta user activity: active sessions, agent call volume, feature usage breakdown
+- NEXUS voice session stats: session count, average session length, top query types
+- Feature adoption rates across all 10 panels and 8 agent routes
+- Projected revenue from the software platform, subscription tier modeling
+- Agent performance: which agents are most queried, response quality signals
+- Infrastructure metrics: Supabase query volume, Netlify function invocations, ElevenLabs usage`
+
+  const rmo = `### RMO — Deal Status & Projections
+You have full visibility into the RMO (Recurring Monthly Obligation) deal pipeline:
+- MTZ Solar RMO negotiation status: current terms, open action items, next steps
+- Projected RMO revenue on close: monthly recurring amount, contract duration, start date
+- RMO pipeline beyond MTZ: other prospective recurring service agreements
+- Margin analysis on RMO vs project work: labor coverage, material exposure, net margin
+- RMO risk factors: exclusivity terms, scope creep, termination clauses`
+
+  const personal = `### Personal Tools — Cross-Portfolio Data
+You have access to all personal financial and goal-tracking tools:
+- Debt Killer: current debt balance by account, payoff projections, monthly payment cadence
+- Solar projections: system performance, offset percentage, estimated annual savings
+- Wins log: recent business wins, milestone captures, momentum tracking
+- Personal income targets: salary target vs actual draws, gap to goal
+- Combined net worth trajectory across all revenue streams (electrical + software + RMO)`
+
+  if (contextMode === 'combined') {
+    sections.push(electrical, software, rmo, personal)
+  } else if (contextMode === 'electrical') {
+    sections.push(electrical)
+  } else if (contextMode === 'software') {
+    sections.push(software)
+  } else if (contextMode === 'rmo') {
+    sections.push(rmo)
+  }
+
+  return `## NEXUS ADMIN — FULL OVERSIGHT MODE
+Context scope: ${contextMode.toUpperCase()}
+
+You are operating in admin oversight mode. You have expanded visibility beyond the standard electrical business context. In this mode, Christian is reviewing his full portfolio as owner-operator across all business units — not just the electrical contractor ops.
+
+${sections.join('\n\n')}
+
+When answering in admin mode:
+- Synthesize across all active context sources — surface cross-portfolio insights, not just per-silo answers
+- Flag interdependencies: e.g., "Closing the MTZ RMO this month would offset the AR gap on Surgery Center"
+- Use concrete numbers from all sources together — not siloed responses
+- If a source has no data yet (e.g., software metrics are early-stage), say exactly what's available and what's projected`
+}
+
+/**
  * Builds the complete NEXUS system prompt by appending the active mode's
  * systemPromptAddition to the base NEXUS_SYSTEM_PROMPT.
+ *
+ * If NEXUS Admin oversight mode is active (admin user selected the purple mic),
+ * the expanded multi-source business context is also appended.
  *
  * Called by router.ts instead of using the static NEXUS_SYSTEM_PROMPT directly.
  * Falls back to the base prompt if mode service is unavailable.
@@ -196,7 +266,14 @@ SCOUT IDEA ANALYSIS:
 export function buildSystemPrompt(): string {
   try {
     const config = getModeConfig()
-    return `${NEXUS_SYSTEM_PROMPT}\n\n## Active Response Mode\n${config.systemPromptAddition}`
+    let prompt = `${NEXUS_SYSTEM_PROMPT}\n\n## Active Response Mode\n${config.systemPromptAddition}`
+
+    // B65 — Admin Full Oversight: inject expanded multi-source context when active
+    if (isAdminNexusActive()) {
+      prompt += `\n\n${buildAdminOversightPrompt(getAdminContextMode())}`
+    }
+
+    return prompt
   } catch {
     return NEXUS_SYSTEM_PROMPT
   }

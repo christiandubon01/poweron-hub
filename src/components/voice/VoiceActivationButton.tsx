@@ -21,13 +21,16 @@
  *  - Stored in sessionStorage so state survives panel navigation
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, onOrbStateChange, isOrbLabMode, type VoiceSessionStatus } from '@/services/voice'
 import { useAuth } from '@/hooks/useAuth'
 import { NexusDrawerPanel, type DrawerMessage } from '@/components/nexus/NexusDrawerPanel'
 import type { OrbState } from '@/components/nexus/NexusPresenceOrb'
 import { supabase } from '@/lib/supabase'
 import { useNexusStore, type NexusSessionRow } from '@/store/nexusStore'
+// B65 — Admin dual-mic panel
+import { NexusAdminSelector } from '@/components/nexus/NexusAdminSelector'
+import { setAdminNexusActive, setAdminContextMode, type AdminContextMode } from '@/services/nexusAdminContext'
 
 // ── Voice preprocessing ────────────────────────────────────────────────────────
 
@@ -68,6 +71,13 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   const [initialized, setInitialized]     = useState(false)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
   const [orbState, setOrbState]           = useState<OrbState>('inactive')
+
+  // B65 — Admin dual-mic panel state
+  const isAdmin = !!user?.email && user.email === (import.meta.env.VITE_ADMIN_EMAIL as string)
+  const [showAdminSelector, setShowAdminSelector] = useState(false)
+  const [adminContextMode, setAdminContextModeState] = useState<AdminContextMode>('combined')
+  // Track whether admin opened in full-oversight mode (for drawer header label)
+  const [adminOversightActive, setAdminOversightActive] = useState(false)
 
   // Drawer state
   const [drawerOpen, setDrawerOpen]         = useState(false)
@@ -300,11 +310,21 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   }, [])
 
   // Listen for sidebar NEXUS Voice click
+  // B65: for admin, sidebar click also shows the selector panel
   useEffect(() => {
-    const handler = () => { setDrawerOpen(true); setDrawerExpanded(true); try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {} }
+    const handler = () => {
+      if (isAdmin) {
+        setShowAdminSelector(true)
+        return
+      }
+      setDrawerOpen(true)
+      setDrawerExpanded(true)
+      try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {}
+    }
     window.addEventListener('poweron:open-nexus-drawer', handler)
     return () => window.removeEventListener('poweron:open-nexus-drawer', handler)
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin])
 
   // iOS AudioContext unlock
   useEffect(() => {
@@ -595,12 +615,44 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
 
   // ── NEXUS permanent entry point button ────────────────────────────────────
   // Always visible when the full NEXUS drawer is not already expanded.
-  // Clicking opens the NEXUS voice conversation directly — no bucket selection.
+  // For non-admin: opens the NEXUS voice conversation directly.
+  // For admin (B65): shows the dual-mic selector panel first.
   const handleOpenNexus = () => {
+    if (isAdmin) {
+      setShowAdminSelector(true)
+      return
+    }
+    // Non-admin: standard electrical context (unchanged)
+    setAdminNexusActive(false)
+    setAdminOversightActive(false)
     setDrawerOpen(true)
     setDrawerExpanded(true)
     try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {}
   }
+
+  // B65 — Admin selector: handle mode selection
+  const handleAdminSelect = useCallback((mode: 'electrical' | 'admin', contextMode: AdminContextMode) => {
+    setShowAdminSelector(false)
+    if (mode === 'admin') {
+      // Full-oversight: activate admin context in the NEXUS system prompt
+      setAdminNexusActive(true, contextMode)
+      setAdminContextModeState(contextMode)
+      setAdminOversightActive(true)
+    } else {
+      // Standard electrical: clear admin context
+      setAdminNexusActive(false)
+      setAdminOversightActive(false)
+    }
+    setDrawerOpen(true)
+    setDrawerExpanded(true)
+    try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {}
+  }, [])
+
+  // B65 — Admin context toggle (while drawer is open)
+  const handleAdminContextChange = useCallback((mode: AdminContextMode) => {
+    setAdminContextModeState(mode)
+    setAdminContextMode(mode)  // updates module singleton → picked up on next NEXUS call
+  }, [])
 
   return (
     <>
@@ -609,7 +661,7 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
       {!(isVisible && drawerExpanded) && !hideFloatingOrb && (
         <button
           onClick={handleOpenNexus}
-          title="Talk to NEXUS"
+          title={isAdmin ? 'NEXUS — Select mode' : 'Talk to NEXUS'}
           style={{
             position: 'fixed',
             bottom: '96px',
@@ -618,9 +670,16 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
             width: '56px',
             height: '56px',
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-            border: '1.5px solid rgba(34,197,94,0.6)',
-            boxShadow: '0 4px 20px rgba(34,197,94,0.35)',
+            // B65: admin button uses purple gradient when oversight mode was last active
+            background: (isAdmin && adminOversightActive)
+              ? 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)'
+              : 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+            border: (isAdmin && adminOversightActive)
+              ? '1.5px solid rgba(168,85,247,0.6)'
+              : '1.5px solid rgba(34,197,94,0.6)',
+            boxShadow: (isAdmin && adminOversightActive)
+              ? '0 4px 20px rgba(168,85,247,0.35)'
+              : '0 4px 20px rgba(34,197,94,0.35)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -629,8 +688,20 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
             cursor: 'pointer',
             transition: 'transform 0.15s ease, box-shadow 0.15s ease',
           }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.07)'; (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 6px 28px rgba(34,197,94,0.5)' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 20px rgba(34,197,94,0.35)' }}
+          onMouseEnter={e => {
+            const btn = e.currentTarget as HTMLButtonElement
+            btn.style.transform = 'scale(1.07)'
+            btn.style.boxShadow = (isAdmin && adminOversightActive)
+              ? '0 6px 28px rgba(168,85,247,0.5)'
+              : '0 6px 28px rgba(34,197,94,0.5)'
+          }}
+          onMouseLeave={e => {
+            const btn = e.currentTarget as HTMLButtonElement
+            btn.style.transform = 'scale(1)'
+            btn.style.boxShadow = (isAdmin && adminOversightActive)
+              ? '0 4px 20px rgba(168,85,247,0.35)'
+              : '0 4px 20px rgba(34,197,94,0.35)'
+          }}
           aria-label="Open NEXUS voice conversation"
         >
           {/* N icon in a circle */}
@@ -661,6 +732,16 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
             NEXUS
           </span>
         </button>
+      )}
+
+      {/* B65 — Admin selector panel: shown when admin taps the NEXUS button */}
+      {showAdminSelector && (
+        <NexusAdminSelector
+          onSelect={handleAdminSelect}
+          onClose={() => setShowAdminSelector(false)}
+          currentContextMode={adminContextMode}
+          onContextModeChange={handleAdminContextChange}
+        />
       )}
 
       <NexusDrawerPanel
