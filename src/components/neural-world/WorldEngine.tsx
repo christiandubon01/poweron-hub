@@ -212,7 +212,7 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
 
   // Atmosphere + camera mode state
   const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>(AtmosphereMode.SCIFI_V1)
-  const [cameraMode, setCameraMode] = useState<CameraMode>(CameraMode.FIRST_PERSON)
+  const [cameraMode, setCameraMode] = useState<CameraMode>(CameraMode.ORBIT)
   // NW14: ref for animation-loop access (avoids stale closure)
   const atmosphereModeRef = useRef<AtmosphereMode>(AtmosphereMode.SCIFI_V1)
 
@@ -262,7 +262,7 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
         window.dispatchEvent(new CustomEvent('nw:mode-init', {
           detail: {
             atmosphereMode: settings.atmosphere_mode ?? AtmosphereMode.SCIFI_V1,
-            cameraMode: settings.camera_mode ?? CameraMode.FIRST_PERSON,
+            cameraMode: settings.camera_mode ?? CameraMode.ORBIT,
           },
         }))
       } catch (err) {

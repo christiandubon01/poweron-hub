@@ -254,9 +254,9 @@ export default function NeuralWorldView() {
   // NW7: Unified layer state
   const [layerStates, setLayerStates] = useState<LayerStates>(DEFAULT_LAYER_STATES)
 
-  // NW7: HUD atmosphere + camera mode
+  // NW7: HUD atmosphere + camera mode — NW16: ORBIT is new default
   const [atmosphereMode, setAtmosphereMode] = useState<HUDAtmosphereMode>(HUDAtmosphereMode.SCIFI_V1)
-  const [cameraMode, setCameraMode] = useState<HUDCameraMode>(HUDCameraMode.FIRST_PERSON)
+  const [cameraMode, setCameraMode] = useState<HUDCameraMode>(HUDCameraMode.ORBIT)
 
   // NW6: scenario + compare mode state
   const [scenarioActive, setScenarioActive] = useState(false)

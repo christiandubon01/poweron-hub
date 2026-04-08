@@ -28,6 +28,8 @@ import React, {
 } from 'react'
 import { supabase } from '@/lib/supabase'
 import { subscribeWorldData, type NWWorldData, type NWProject } from './DataBridge'
+import { SettingsPanel } from './SettingsPanel'
+import { MinimapRenderer } from './MinimapRenderer'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -42,6 +44,7 @@ export enum AtmosphereMode {
 }
 
 export enum CameraMode {
+  ORBIT        = 'ORBIT',
   FIRST_PERSON = 'FIRST_PERSON',
   THIRD_PERSON = 'THIRD_PERSON',
   CINEMATIC    = 'CINEMATIC',
@@ -546,11 +549,14 @@ export default function CommandHUD({
         )}
       </div>
 
-      {/* ── TOP-RIGHT: ATMOSPHERE SWITCHER + FPS ─────────────────────────── */}
+      {/* ── TOP-RIGHT: MINIMAP (NW16) ───────────────────────────────────────── */}
+      <MinimapRenderer />
+
+      {/* ── TOP-RIGHT: ATMOSPHERE SWITCHER + FPS (below minimap) ─────────── */}
       <div
         style={{
           position: 'absolute',
-          top: 12,
+          top: 174,
           right: 12,
           zIndex: 25,
           display: 'flex',
@@ -754,6 +760,7 @@ export default function CommandHUD({
           backdropFilter: 'blur(6px)',
         }}>
           {([
+            [CameraMode.ORBIT,        'ORBIT'],
             [CameraMode.FIRST_PERSON, '1P'],
             [CameraMode.THIRD_PERSON, '3P'],
             [CameraMode.CINEMATIC,    'CIN'],
@@ -767,7 +774,7 @@ export default function CommandHUD({
                   window.dispatchEvent(new CustomEvent('nw:request-camera-mode', { detail: { mode } }))
                 }}
                 style={{
-                  padding: '4px 14px',
+                  padding: '4px 12px',
                   fontSize: 11,
                   fontWeight: isActive ? 700 : 400,
                   letterSpacing: 0.8,
@@ -795,13 +802,24 @@ export default function CommandHUD({
           pointerEvents: 'none',
           whiteSpace: 'nowrap',
         }}>
-          {cameraMode === CameraMode.FIRST_PERSON
-            ? 'AD strafe · WS up/down · click to lock · Shift x2 · C x0.3'
+          {cameraMode === CameraMode.ORBIT
+            ? 'Drag to orbit · scroll zoom · right-drag pan'
+            : cameraMode === CameraMode.FIRST_PERSON
+            ? 'WASD move · Space/Q up/down · click lock · Shift sprint · scroll speed'
             : cameraMode === CameraMode.THIRD_PERSON
-            ? 'WASD move · Space/Z up/down · drag to orbit · Shift x2 · C x0.3'
-            : 'Auto-pilot · scroll to zoom'}
+            ? 'WASD move · Space/Q up/down · 1/2/3 distance · scroll distance'
+            : 'Auto-pilot cinematic'}
         </div>
       </div>
+
+      {/* ── NW16: SETTINGS PANEL (gear icon, bottom-right) ────────────────── */}
+      <SettingsPanel
+        cameraMode={cameraMode}
+        onCameraModeChange={mode => {
+          onCameraModeChange(mode)
+          window.dispatchEvent(new CustomEvent('nw:request-camera-mode', { detail: { mode } }))
+        }}
+      />
 
       {/* ── MOBILE DUAL JOYSTICKS ────────────────────────────────────────── */}
       {isTouchDevice && (

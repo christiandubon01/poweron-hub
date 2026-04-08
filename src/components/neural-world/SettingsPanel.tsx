@@ -1,0 +1,328 @@
+/**
+ * SettingsPanel.tsx — NW16: Collapsible settings panel (gear icon) in the HUD.
+ *
+ * Settings persisted to localStorage via NWSettings.
+ * Changes dispatched via 'nw:settings-change' CustomEvent so CameraController
+ * picks them up without a prop chain.
+ *
+ * Panel contents:
+ *   - Movement sensitivity slider (0.1 – 3.0, default 1.0)
+ *   - Mouse / look sensitivity slider (0.1 – 3.0, default 1.0)
+ *   - Invert mouse Y toggle (default off)
+ *   - Travel speed range slider (0.5 – 10.0, default 2.0)
+ *   - Current speed display (read-only)
+ *   - Camera mode selector
+ *   - Third person distance selector
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import {
+  NWCameraSettings,
+  loadNWCameraSettings,
+  saveNWCameraSettings,
+} from './NWSettings'
+import { CameraMode } from './CameraController'
+
+interface SettingsPanelProps {
+  cameraMode: CameraMode
+  onCameraModeChange: (mode: CameraMode) => void
+}
+
+const PANEL_W = 230
+
+export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelProps) {
+  const [open, setOpen]       = useState(false)
+  const [settings, setSettings] = useState<NWCameraSettings>(() => loadNWCameraSettings())
+  const [liveSpeed, setLiveSpeed] = useState(settings.travelSpeed)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Track live travel speed from CameraController scroll events
+  useEffect(() => {
+    function onTravelSpeed(e: Event) {
+      const ev = e as CustomEvent<{ speed: number }>
+      if (ev.detail?.speed !== undefined) {
+        setLiveSpeed(ev.detail.speed)
+        setSettings(prev => ({ ...prev, travelSpeed: ev.detail.speed }))
+      }
+    }
+    function onTpDist(e: Event) {
+      const ev = e as CustomEvent<{ key: 'CLOSE' | 'MEDIUM' | 'FAR' }>
+      if (ev.detail?.key) {
+        setSettings(prev => ({ ...prev, tpDistance: ev.detail.key }))
+      }
+    }
+    window.addEventListener('nw:travel-speed', onTravelSpeed)
+    window.addEventListener('nw:tp-distance', onTpDist)
+    return () => {
+      window.removeEventListener('nw:travel-speed', onTravelSpeed)
+      window.removeEventListener('nw:tp-distance', onTpDist)
+    }
+  }, [])
+
+  const applyChange = useCallback((patch: Partial<NWCameraSettings>) => {
+    setSettings(prev => {
+      const next = { ...prev, ...patch }
+      // Debounced save
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(() => saveNWCameraSettings(next), 400)
+      // Broadcast to CameraController
+      window.dispatchEvent(new CustomEvent('nw:settings-change', { detail: patch }))
+      return next
+    })
+    if (patch.travelSpeed !== undefined) setLiveSpeed(patch.travelSpeed)
+  }, [])
+
+  const s = settings
+
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 60,
+      right: 14,
+      zIndex: 28,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-end',
+      gap: 4,
+    }}>
+      {/* Gear toggle button */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Camera Settings"
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 6,
+          border: `1px solid ${open ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.15)'}`,
+          background: open ? 'rgba(0,229,204,0.15)' : 'rgba(0,0,0,0.6)',
+          color: open ? '#00e5cc' : 'rgba(255,255,255,0.55)',
+          fontSize: 17,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backdropFilter: 'blur(6px)',
+          transition: 'all 0.15s',
+          lineHeight: 1,
+        }}
+      >
+        ⚙
+      </button>
+
+      {/* Settings panel */}
+      {open && (
+        <div style={{
+          background: 'rgba(5,5,15,0.92)',
+          border: '1px solid rgba(0,229,204,0.25)',
+          borderRadius: 8,
+          padding: '12px 14px',
+          width: PANEL_W,
+          backdropFilter: 'blur(10px)',
+          fontFamily: 'monospace',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+        }}>
+          {/* Header */}
+          <div style={{
+            color: '#00e5cc',
+            fontSize: 9,
+            letterSpacing: 2,
+            marginBottom: 2,
+            fontWeight: 700,
+          }}>
+            ◈ CAMERA SETTINGS
+          </div>
+
+          {/* Movement Sensitivity */}
+          <SliderRow
+            label="MOVE SENSITIVITY"
+            value={s.moveSensitivity}
+            min={0.1} max={3.0} step={0.05}
+            display={s.moveSensitivity.toFixed(2)}
+            onChange={v => applyChange({ moveSensitivity: v })}
+          />
+
+          {/* Mouse Sensitivity */}
+          <SliderRow
+            label="LOOK SENSITIVITY"
+            value={s.lookSensitivity}
+            min={0.1} max={3.0} step={0.05}
+            display={s.lookSensitivity.toFixed(2)}
+            onChange={v => applyChange({ lookSensitivity: v })}
+          />
+
+          {/* Invert Y */}
+          <ToggleRow
+            label="INVERT MOUSE Y"
+            value={s.invertY}
+            onChange={v => applyChange({ invertY: v })}
+          />
+
+          {/* Travel Speed */}
+          <SliderRow
+            label="TRAVEL SPEED"
+            value={s.travelSpeed}
+            min={0.5} max={10.0} step={0.5}
+            display={`${s.travelSpeed.toFixed(1)} u/s`}
+            onChange={v => applyChange({ travelSpeed: v })}
+          />
+
+          {/* Current Speed (read-only) */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>
+              CURRENT SPEED
+            </span>
+            <span style={{ color: '#00e5cc', fontSize: 10, letterSpacing: 1 }}>
+              {liveSpeed.toFixed(1)} u/s
+            </span>
+          </div>
+
+          <Divider />
+
+          {/* Camera Mode */}
+          <div>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1, marginBottom: 5 }}>
+              CAMERA MODE
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {([CameraMode.ORBIT, CameraMode.FIRST_PERSON, CameraMode.THIRD_PERSON] as const).map(m => {
+                const labels: Record<string, string> = {
+                  ORBIT: 'ORBIT', FIRST_PERSON: '1P', THIRD_PERSON: '3P',
+                }
+                const active = cameraMode === m
+                return (
+                  <button key={m} onClick={() => onCameraModeChange(m)} style={{
+                    flex: 1,
+                    padding: '4px 0',
+                    fontSize: 9,
+                    letterSpacing: 1,
+                    borderRadius: 4,
+                    border: `1px solid ${active ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.15)'}`,
+                    background: active ? 'rgba(0,229,204,0.2)' : 'transparent',
+                    color: active ? '#00e5cc' : 'rgba(255,255,255,0.45)',
+                    cursor: 'pointer',
+                    transition: 'all 0.12s',
+                  }}>
+                    {labels[m]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* 3P Distance */}
+          <div>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1, marginBottom: 5 }}>
+              3P DISTANCE
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(['CLOSE', 'MEDIUM', 'FAR'] as const).map(d => {
+                const labels = { CLOSE: 'CLOSE (10)', MEDIUM: 'MED (25)', FAR: 'FAR (100)' }
+                const active = s.tpDistance === d
+                return (
+                  <button key={d} onClick={() => applyChange({ tpDistance: d })} style={{
+                    flex: 1,
+                    padding: '4px 0',
+                    fontSize: 8,
+                    letterSpacing: 0.8,
+                    borderRadius: 4,
+                    border: `1px solid ${active ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.15)'}`,
+                    background: active ? 'rgba(0,229,204,0.2)' : 'transparent',
+                    color: active ? '#00e5cc' : 'rgba(255,255,255,0.45)',
+                    cursor: 'pointer',
+                    transition: 'all 0.12s',
+                  }}>
+                    {labels[d]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Hint */}
+          <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 8, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>
+            1P: Scroll = speed · Shift = sprint<br/>
+            3P: Scroll = distance · 1/2/3 = preset
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function SliderRow({
+  label, value, min, max, step, display, onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  display: string
+  onChange: (v: number) => void
+}) {
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>{label}</span>
+        <span style={{ color: '#00e5cc', fontSize: 9, letterSpacing: 1 }}>{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={e => onChange(parseFloat(e.target.value))}
+        style={{ width: '100%', accentColor: '#00e5cc', cursor: 'pointer' }}
+      />
+    </div>
+  )
+}
+
+function ToggleRow({
+  label, value, onChange,
+}: {
+  label: string
+  value: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>{label}</span>
+      <button
+        onClick={() => onChange(!value)}
+        style={{
+          width: 38,
+          height: 18,
+          borderRadius: 9,
+          border: 'none',
+          background: value ? '#00e5cc' : 'rgba(255,255,255,0.15)',
+          position: 'relative',
+          cursor: 'pointer',
+          transition: 'background 0.2s',
+        }}
+      >
+        <div style={{
+          position: 'absolute',
+          top: 2,
+          left: value ? 20 : 2,
+          width: 14,
+          height: 14,
+          borderRadius: '50%',
+          background: value ? '#050508' : 'rgba(255,255,255,0.5)',
+          transition: 'left 0.2s',
+        }} />
+      </button>
+    </div>
+  )
+}
+
+function Divider() {
+  return (
+    <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '2px 0' }} />
+  )
+}
