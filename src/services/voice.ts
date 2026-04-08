@@ -689,11 +689,11 @@ export class VoiceSubsystem {
         this.currentSession.noiseLevel = analysis.estimatedNoiseDb
       }
 
-      // Guard: too short to transcribe
-      if (analysis.durationSeconds < 0.5) {
+      // Guard: too short to transcribe (B60: raised floor to 1.5s to prevent Whisper hallucination)
+      if (analysis.durationSeconds < 1.5) {
         console.log('[Voice] Recording too short:', analysis.durationSeconds.toFixed(2), 's — skipping Whisper')
         this.setStatus('inactive')
-        this.emit('error', { error: 'Too short — speak for at least half a second, then pause.' })
+        this.emit('error', { error: 'Tap and hold to speak.' })
         return
       }
 

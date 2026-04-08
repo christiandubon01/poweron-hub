@@ -142,6 +142,10 @@ interface VisualSuitePanelProps {
   micStream?: MediaStream | null
   ttsElement?: HTMLAudioElement | null
   nexusState?: 'idle' | 'listening' | 'thinking' | 'speaking' | 'multiAgent'
+  // B62: ORB LAB inline controls — NEXUS voice pipeline mic
+  onMicToggle?: () => void | Promise<void>
+  micActive?: boolean
+  nexusStatusText?: string | null
 }
 
 // ─── NEXUS state → visual config ─────────────────────────────────────────────
@@ -158,6 +162,9 @@ export default function VisualSuitePanel({
   micStream,
   ttsElement,
   nexusState,
+  onMicToggle,
+  micActive,
+  nexusStatusText,
 }: VisualSuitePanelProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 

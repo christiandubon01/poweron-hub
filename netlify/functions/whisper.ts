@@ -73,9 +73,11 @@ exports.handler = async (event: any, _context: any) => {
       { name: 'model', value: 'whisper-1' },
       { name: 'response_format', value: 'text' },
     ]
-    if (language) fieldParts.push({ name: 'language', value: language })
+    // B60 FIX 3: Always lock to English regardless of client value
+    fieldParts.push({ name: 'language', value: 'en' })
     if (temperature !== undefined) fieldParts.push({ name: 'temperature', value: String(temperature) })
-    if (prompt) fieldParts.push({ name: 'prompt', value: prompt })
+    // B60 FIX 4: Always send domain hint so Whisper has context; client prompt takes precedence if richer
+    fieldParts.push({ name: 'prompt', value: prompt || 'PowerOn electrical contractor business operations' })
 
     // Assemble all parts into a single Buffer
     const buffers: Buffer[] = []

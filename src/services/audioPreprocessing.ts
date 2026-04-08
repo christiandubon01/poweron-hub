@@ -29,7 +29,7 @@ export interface AudioAnalysis {
 const WHISPER_SAMPLE_RATE = 16000
 const HIGH_PASS_CUTOFF_HZ = 80   // Remove low-frequency rumble
 const NOISE_GATE_FLOOR = 0.01    // Minimum amplitude to keep
-const VAD_ENERGY_THRESHOLD = 0.02 // RMS threshold for voice detection
+const VAD_ENERGY_THRESHOLD = 0.015 // RMS threshold for voice detection
 
 // ── Implementation ───────────────────────────────────────────────────────────
 

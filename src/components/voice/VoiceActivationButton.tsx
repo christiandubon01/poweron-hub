@@ -107,7 +107,7 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   const [silenceProgress, setSilenceProgress] = useState(0)
 
   const SILENCE_THRESHOLD   = 0.01
-  const SILENCE_DURATION_MS = 2000
+  const SILENCE_DURATION_MS = 4000  // B60: 40 frames × 100ms = 4s (was 2s/20 frames)
 
   const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=1')
   const [debugTick, setDebugTick]           = useState(0)

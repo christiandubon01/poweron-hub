@@ -20,6 +20,8 @@ import VisualSuitePanel from '../components/v15r/AIVisualSuite/VisualSuitePanel'
 // B53: NEXUS voice pipeline for OrbLab mic
 // B56: + onTTSAudioChange (orb reacts to TTS) + setOrbLabMode (suppress drawer) + isOrbLabMode
 import { getVoiceSubsystem, unlockAudioContext, onOrbStateChange, onTTSAudioChange, setOrbLabMode, type VoiceSessionStatus } from '../services/voice'
+// B62: orbLabActive zustand flag — hides floating NEXUS mic while ORB LAB is mounted
+import { useUIStore } from '../store/uiStore'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrbState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'MULTI_AGENT'
@@ -709,9 +711,7 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
 // ─── Orb Lab ──────────────────────────────────────────────────────────────────
 function OrbLab({ healthAvg }: { healthAvg: number }) {
   const [orbState, setOrbState] = useState<OrbState>('IDLE')
-  const [bgMode, setBgMode] = useState<BgMode>('deepspace')
-  const [fullscreen, setFullscreen] = useState<'left' | 'right' | null>(null)
-  const [departure, setDeparture] = useState<DepartureMode>('silent')
+  const setOrbLabActive = useUIStore((s) => s.setOrbLabActive)
   // B50: Mic state
   const [micActive, setMicActive] = useState(false)
   const [micStream, setMicStream] = useState<MediaStream | null>(null)
@@ -722,9 +722,11 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
   // B56 FIX 2: status text replaces full chat panel in ORB LAB
   const [nexusStatusText, setNexusStatusText] = useState<string | null>(null)
 
-  const BG_OPTIONS = [{ label: '🌌 Deep Space', value: 'deepspace' as BgMode },{ label: '💻 Data Stream', value: 'datastream' as BgMode },{ label: '⬡ Grid', value: 'grid' as BgMode },{ label: '⬛ Solid Dark', value: 'soliddark' as BgMode }]
-  const healthLabel = healthAvg>70?'HEALTHY':healthAvg>40?'WARNING':'CRITICAL'
-  const healthClr = healthAvg>70?'#00ff88':healthAvg>40?'#ffcc00':'#ff6600'
+  // B62: Set orbLabActive flag on mount so floating NEXUS mic is hidden
+  useEffect(() => {
+    setOrbLabActive(true)
+    return () => setOrbLabActive(false)
+  }, [setOrbLabActive])
 
   // B53+B56: Subscribe to NEXUS voice status so micStream + nexusState stay in sync.
   // B56 FIX 3: ttsElement is now set via onTTSAudioChange (fires after audio is created),
@@ -794,79 +796,23 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
     }
   }
 
+  // B62: Full-screen layout — canvas + 72px bar = 100% height, zero scrolling
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:16, padding:'10px 20px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexWrap:'wrap', backgroundColor:'rgba(0,0,0,0.3)' }}>
-        {/* B50: Mic button */}
-        <button
-          onClick={handleMicToggle}
-          title={micActive ? 'Stop mic — MIC LIVE' : 'Activate mic — MIC OFF'}
-          style={{
-            display:'flex', alignItems:'center', gap:5,
-            padding:'4px 12px', borderRadius:6, fontSize:10, fontWeight:800,
-            letterSpacing:'0.07em', border:'none', cursor:'pointer',
-            backgroundColor: micActive ? 'rgba(0,255,100,0.15)' : 'rgba(255,255,255,0.06)',
-            color: micActive ? '#00ff88' : '#9ca3af',
-            boxShadow: micActive ? '0 0 10px rgba(0,255,136,0.35)' : 'none',
-            transition: 'all 0.2s',
-            animation: micActive ? 'orbMicPulse 1.5s ease-in-out infinite' : 'none',
-          }}
-        >
-          <span style={{ fontSize: 14 }}>🎙</span>
-          {micActive ? 'LIVE' : 'MIC OFF'}
-        </button>
-        <div style={{ width:1, height:16, background:'rgba(255,255,255,0.08)' }} />
-        <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-          <span style={{ fontSize:10, color:'#9ca3af', letterSpacing:'0.08em', textTransform:'uppercase', marginRight:4 }}>State</span>
-          {ORB_STATES.map((s) => (
-            <button key={s} onClick={() => setOrbState(s)} style={{ padding:'4px 10px', borderRadius:6, fontSize:10, fontWeight:700, letterSpacing:'0.05em', border:'none', cursor:'pointer', backgroundColor:orbState===s?'#00ff88':'rgba(255,255,255,0.06)', color:orbState===s?'#000':'#9ca3af', transition:'all 0.2s' }}>{s.replace('_','-')}</button>
-          ))}
-        </div>
-        {orbState==='MULTI_AGENT' && (
-          <div style={{ display:'flex', gap:4, alignItems:'center' }}>
-            <span style={{ fontSize:10, color:'#9ca3af', letterSpacing:'0.08em', textTransform:'uppercase', marginRight:4 }}>Departure</span>
-            {(['silent','label','tone'] as DepartureMode[]).map((d) => (
-              <button key={d} onClick={() => setDeparture(d)} style={{ padding:'4px 8px', borderRadius:5, fontSize:10, fontWeight:600, border:'none', cursor:'pointer', backgroundColor:departure===d?'#7c3aed':'rgba(255,255,255,0.06)', color:departure===d?'#fff':'#9ca3af' }}>{d}</button>
-            ))}
-          </div>
-        )}
-        <div style={{ display:'flex', alignItems:'center', gap:6, marginLeft:'auto' }}>
-          {/* B56 FIX 2: NEXUS status text — replaces chat panel in ORB LAB pure-visual mode */}
-          {nexusStatusText && (
-            <span style={{
-              fontSize:9, fontWeight:800, letterSpacing:'0.12em', textTransform:'uppercase',
-              color: nexusStatusText.includes('SPEAKING') ? '#7c3aed' : '#3A8EFF',
-              padding:'2px 8px', borderRadius:4,
-              backgroundColor: nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.12)' : 'rgba(58,142,255,0.12)',
-              border: `1px solid ${nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.3)' : 'rgba(58,142,255,0.3)'}`,
-              animation:'orbMicPulse 1.2s ease-in-out infinite',
-            }}>{nexusStatusText}</span>
-          )}
-          <div style={{ width:8, height:8, borderRadius:'50%', backgroundColor:healthClr, boxShadow:`0 0 6px ${healthClr}` }} />
-          <span style={{ fontSize:10, color:healthClr, fontWeight:700, letterSpacing:'0.08em' }}>{healthLabel} ({Math.round(healthAvg)})</span>
-        </div>
-        <div style={{ display:'flex', gap:4, alignItems:'center' }}>
-          <span style={{ fontSize:10, color:'#9ca3af', letterSpacing:'0.08em', textTransform:'uppercase', marginRight:4 }}>Bg</span>
-          {BG_OPTIONS.map((opt) => (
-            <button key={opt.value} onClick={() => setBgMode(opt.value)} title={opt.label} style={{ padding:'4px 8px', borderRadius:5, fontSize:10, border:'none', cursor:'pointer', backgroundColor:bgMode===opt.value?'rgba(0,255,136,0.15)':'rgba(255,255,255,0.04)', color:bgMode===opt.value?'#00ff88':'#6b7280', fontWeight:bgMode===opt.value?700:400 }}>{opt.label.split(' ')[0]}</button>
-          ))}
-        </div>
-      </div>
-      <style>{`@keyframes orbMicPulse { 0%,100%{box-shadow:0 0 10px rgba(0,255,136,0.35)} 50%{box-shadow:0 0 20px rgba(0,255,136,0.7)} }`}</style>
-      {/* B58: flex column so VisualSuitePanel controls bar is always visible */}
-      <div style={{ height:'calc(100vh - 106px)', width:'100%', display:'flex', flexDirection:'column', overflow:'hidden' }}>
-        <VisualSuitePanel
-          micStream={micStream}
-          ttsElement={ttsElement}
-          nexusState={
-            voiceStatus === 'recording'    ? 'listening'  :
-            voiceStatus === 'transcribing' ? 'thinking'   :
-            voiceStatus === 'processing'   ? 'thinking'   :
-            voiceStatus === 'responding'   ? 'speaking'   :
-            micActive                      ? 'listening'  : 'idle'
-          }
-        />
-      </div>
+      <VisualSuitePanel
+        micStream={micStream}
+        ttsElement={ttsElement}
+        nexusState={
+          voiceStatus === 'recording'    ? 'listening'  :
+          voiceStatus === 'transcribing' ? 'thinking'   :
+          voiceStatus === 'processing'   ? 'thinking'   :
+          voiceStatus === 'responding'   ? 'speaking'   :
+          micActive                      ? 'listening'  : 'idle'
+        }
+        onMicToggle={handleMicToggle}
+        micActive={micActive}
+        nexusStatusText={nexusStatusText}
+      />
     </div>
   )
 }
