@@ -41,6 +41,7 @@ import {
   Terminal,
   Trophy,
   Pin,
+  Building2,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -137,6 +138,27 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     if (typeof window === 'undefined') return true
     const saved = localStorage.getItem('nav_section_admin')
     return saved !== null ? saved === 'true' : true
+  })
+  // B64 — Admin sub-bucket collapse states (4 buckets)
+  const [sectionAdminCmd, setSectionAdminCmd] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const saved = localStorage.getItem('nav_section_admin_cmd')
+    return saved !== null ? saved === 'true' : true // default open
+  })
+  const [sectionAdminPersonal, setSectionAdminPersonal] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const saved = localStorage.getItem('nav_section_admin_personal')
+    return saved !== null ? saved === 'true' : false // default collapsed
+  })
+  const [sectionAdminViz, setSectionAdminViz] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const saved = localStorage.getItem('nav_section_admin_viz')
+    return saved !== null ? saved === 'true' : false // default collapsed
+  })
+  const [sectionAdminBiz, setSectionAdminBiz] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const saved = localStorage.getItem('nav_section_admin_biz')
+    return saved !== null ? saved === 'true' : false // default collapsed
   })
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const signOut = useAuthStore(s => s.signOut)
@@ -733,19 +755,33 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Material Intelligence', icon: Brain, view: 'material-intelligence' },
   ]
 
-  // Admin nav items — B14 owner-only gate
-  const adminItems = [
-    { label: 'NEXUS Voice', icon: Mic, view: 'nexus-voice', badge: null, subtitle: 'AI assistant' },
-    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null },
-    { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null },
-    { label: 'VISUAL SUITE', icon: FlaskConical, view: 'visual-suite', badge: 'B48', subtitle: '43 modes · ambient display' },
-    { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview' },
-    { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null },
-    { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null },
-    { label: 'Visualization Lab', icon: FlaskConical, view: 'viz-lab', badge: 'B42', subtitle: 'ORB LAB · NEURAL MAP · admin' },
-    { label: 'Command Center', icon: Terminal, view: 'admin-command-center', badge: 'B36' },
-    { label: 'Wins Log', icon: Trophy, view: 'wins-log', badge: 'B51', subtitle: '🏆 log your wins' },
-    { label: 'Pinned Insights', icon: Pin, view: 'pinned-insights', badge: 'B52', subtitle: '📌 saved NEXUS insights' },
+  // B64 — Admin nav items reorganized into 4 collapsible buckets
+  // BUCKET 1 — COMMAND (default open, purple border)
+  const adminBucket1 = [
+    { label: 'NEXUS ADMIN', icon: Mic, view: 'nexus-voice', badge: 'ADMIN ONLY', subtitle: null, purple: true },
+    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null, subtitle: null },
+    { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null, subtitle: null },
+  ]
+  // BUCKET 2 — PERSONAL TOOLS (default collapsed, gold border)
+  const adminBucket2 = [
+    { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null, subtitle: null },
+    { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null, subtitle: null },
+    { label: 'Wins Log', icon: Trophy, view: 'wins-log', badge: 'B51', subtitle: null },
+    { label: 'Pinned Insights', icon: Pin, view: 'pinned-insights', badge: 'B52', subtitle: null },
+  ]
+  // BUCKET 3 — VISUALIZATION (default collapsed, teal border)
+  const adminBucket3 = [
+    { label: 'ORB LAB', icon: FlaskConical, view: 'viz-lab', badge: 'B42', subtitle: null },
+    { label: 'Visual Suite', icon: Layers, view: 'visual-suite', badge: 'B48', subtitle: null },
+    { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview', subtitle: null },
+    // Neural Map — Electrical: sidebar link to Command Center (neural_map tab)
+    { label: 'Neural Map — Electrical', icon: Map, view: 'admin-command-center', badge: null, subtitle: 'Command Center' },
+    // Neural Map — Combined: sidebar link to Viz Lab (Combined tab, placeholder B67)
+    { label: 'Neural Map — Combined', icon: Brain, view: 'viz-lab', badge: 'B67', subtitle: 'Viz Lab · Combined' },
+  ]
+  // BUCKET 4 — BUSINESS OVERVIEW (default collapsed, green border)
+  const adminBucket4 = [
+    { label: 'Business Overview', icon: Building2, view: 'business-overview', badge: 'B68', subtitle: 'placeholder' },
   ]
 
   // Toggle and close helpers
@@ -1141,73 +1177,148 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           </div>
 
           {/* ADMIN Section — B14 + B32 | visible only to owner (email match + role gate) */}
+          {/* B64 — reorganized into 4 collapsible buckets */}
           {isAdmin && !isPreviewMode && b32Role === 'owner' && (
-            <div className="pt-6 border-t border-yellow-800/40">
-              {showLabels ? (
-                <button
-                  onClick={() => {
-                    const next = !sectionAdmin
-                    setSectionAdmin(next)
-                    localStorage.setItem('nav_section_admin', String(next))
-                  }}
-                  className="w-full flex items-center justify-between px-4 py-2 min-h-[36px] group"
-                  style={{ touchAction: 'manipulation' }}
+            <div className="pt-4 border-t border-yellow-800/40">
+
+              {/* Helper: renders one admin bucket with colored border accent */}
+              {[
+                {
+                  key: 'cmd',
+                  label: 'COMMAND',
+                  border: '#a855f7',
+                  open: sectionAdminCmd,
+                  toggle: () => { const n = !sectionAdminCmd; setSectionAdminCmd(n); localStorage.setItem('nav_section_admin_cmd', String(n)) },
+                  items: adminBucket1,
+                  activeBg: 'rgba(168,85,247,0.15)',
+                  activeBorder: '#a855f7',
+                  activeText: '#d8b4fe',
+                  idleText: '#c084fc',
+                  idleHover: '#e9d5ff',
+                  badgeBg: '#7c3aed',
+                },
+                {
+                  key: 'personal',
+                  label: 'PERSONAL TOOLS',
+                  border: '#ca8a04',
+                  open: sectionAdminPersonal,
+                  toggle: () => { const n = !sectionAdminPersonal; setSectionAdminPersonal(n); localStorage.setItem('nav_section_admin_personal', String(n)) },
+                  items: adminBucket2,
+                  activeBg: 'rgba(202,138,4,0.15)',
+                  activeBorder: '#ca8a04',
+                  activeText: '#fde68a',
+                  idleText: '#d97706',
+                  idleHover: '#fef08a',
+                  badgeBg: '#ca8a04',
+                },
+                {
+                  key: 'viz',
+                  label: 'VISUALIZATION',
+                  border: '#0d9488',
+                  open: sectionAdminViz,
+                  toggle: () => { const n = !sectionAdminViz; setSectionAdminViz(n); localStorage.setItem('nav_section_admin_viz', String(n)) },
+                  items: adminBucket3,
+                  activeBg: 'rgba(13,148,136,0.15)',
+                  activeBorder: '#0d9488',
+                  activeText: '#99f6e4',
+                  idleText: '#2dd4bf',
+                  idleHover: '#ccfbf1',
+                  badgeBg: '#0f766e',
+                },
+                {
+                  key: 'biz',
+                  label: 'BUSINESS OVERVIEW',
+                  border: '#16a34a',
+                  open: sectionAdminBiz,
+                  toggle: () => { const n = !sectionAdminBiz; setSectionAdminBiz(n); localStorage.setItem('nav_section_admin_biz', String(n)) },
+                  items: adminBucket4,
+                  activeBg: 'rgba(22,163,74,0.15)',
+                  activeBorder: '#16a34a',
+                  activeText: '#bbf7d0',
+                  idleText: '#4ade80',
+                  idleHover: '#dcfce7',
+                  badgeBg: '#15803d',
+                },
+              ].map((bucket) => (
+                <div
+                  key={bucket.key}
+                  className="mb-1"
+                  style={{ borderLeft: showLabels ? `3px solid ${bucket.border}` : 'none' }}
                 >
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#ca8a04' }}>Admin</span>
-                  <ChevronDown
-                    size={14}
-                    style={{
-                      color: '#ca8a04',
-                      transition: 'transform 0.2s',
-                      transform: sectionAdmin ? 'rotate(0deg)' : 'rotate(-90deg)',
-                      flexShrink: 0,
-                    }}
-                  />
-                </button>
-              ) : null}
-              {sectionAdmin && (
-                <nav className="space-y-1">
-                  {adminItems.map((item) => {
-                    const Icon = item.icon
-                    const isActive = activeView === item.view
-                    return (
-                      <button
-                        key={item.view}
-                        onClick={() => handleNavClick(item.view)}
-                        title={!showLabels ? item.label : undefined}
-                        className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-3 min-h-[44px] text-sm transition-colors ${
-                          isActive
-                            ? 'bg-yellow-500/15 border-l-2 border-yellow-500 text-yellow-300'
-                            : 'text-yellow-600 hover:text-yellow-400 border-l-2 border-transparent hover:border-yellow-700'
-                        }`}
-                      >
-                        <Icon size={18} />
-                        {showLabels && (
-                          <span className="flex items-center gap-2 flex-1">
-                            {item.label}
-                            {item.badge && (
+                  {showLabels && (
+                    <button
+                      onClick={bucket.toggle}
+                      className="w-full flex items-center justify-between px-3 py-1.5 min-h-[32px] group"
+                      style={{ touchAction: 'manipulation' }}
+                    >
+                      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: bucket.border }}>{bucket.label}</span>
+                      <ChevronDown
+                        size={12}
+                        style={{
+                          color: bucket.border,
+                          transition: 'transform 0.2s',
+                          transform: bucket.open ? 'rotate(0deg)' : 'rotate(-90deg)',
+                          flexShrink: 0,
+                        }}
+                      />
+                    </button>
+                  )}
+                  {bucket.open && (
+                    <nav className="space-y-0.5 pb-1">
+                      {bucket.items.map((item) => {
+                        const Icon = item.icon
+                        const isActive = activeView === item.view
+                        const isPurpleNexus = item.purple === true
+                        return (
+                          <button
+                            key={`${bucket.key}-${item.view}-${item.label}`}
+                            onClick={() => handleNavClick(item.view)}
+                            title={!showLabels ? item.label : undefined}
+                            className={`w-full flex items-center ${showLabels ? 'gap-3 px-4' : 'justify-center px-2'} py-2.5 min-h-[40px] text-sm transition-colors`}
+                            style={{
+                              borderLeft: showLabels ? 'none' : undefined,
+                              backgroundColor: isActive ? bucket.activeBg : undefined,
+                              borderBottom: isActive ? `1px solid ${bucket.activeBorder}20` : undefined,
+                            }}
+                          >
+                            <Icon
+                              size={16}
+                              style={{ color: isActive ? bucket.activeText : isPurpleNexus ? '#a855f7' : bucket.idleText, flexShrink: 0 }}
+                            />
+                            {showLabels && (
                               <span
-                                style={{
-                                  fontSize: 9,
-                                  fontWeight: 700,
-                                  letterSpacing: '0.05em',
-                                  padding: '1px 5px',
-                                  borderRadius: 4,
-                                  backgroundColor: '#ca8a04',
-                                  color: '#fff',
-                                  textTransform: 'uppercase',
-                                }}
+                                className="flex items-center gap-2 flex-1 truncate"
+                                style={{ color: isActive ? bucket.activeText : isPurpleNexus ? '#c084fc' : bucket.idleText, fontSize: 12 }}
                               >
-                                {item.badge}
+                                {item.label}
+                                {item.badge && (
+                                  <span
+                                    style={{
+                                      fontSize: 8,
+                                      fontWeight: 800,
+                                      letterSpacing: '0.05em',
+                                      padding: '1px 4px',
+                                      borderRadius: 3,
+                                      backgroundColor: isPurpleNexus ? '#7c3aed' : bucket.badgeBg,
+                                      color: '#fff',
+                                      textTransform: 'uppercase',
+                                      whiteSpace: 'nowrap',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {item.badge}
+                                  </span>
+                                )}
                               </span>
                             )}
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </nav>
-              )}
+                          </button>
+                        )
+                      })}
+                    </nav>
+                  )}
+                </div>
+              ))}
+
             </div>
           )}
 

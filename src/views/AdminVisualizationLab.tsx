@@ -26,7 +26,7 @@ import { useUIStore } from '../store/uiStore'
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrbState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'MULTI_AGENT'
 type BgMode = 'deepspace' | 'datastream' | 'grid' | 'soliddark'
-type MainTab = 'ORB_LAB' | 'NEURAL_MAP'
+type MainTab = 'ORB_LAB' | 'NEURAL_MAP' | 'COMBINED'
 type NeuralTab = 'Projects' | 'Agents' | 'Decisions' | 'Data' | 'All'
 type DepartureMode = 'silent' | 'label' | 'tone'
 type SpeedMode = 'normal' | 'slow' | 'paused'
@@ -2261,7 +2261,7 @@ export default function AdminVisualizationLab() {
         </div>
         <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B42 · Admin Only</span>
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-          {(['ORB_LAB', 'NEURAL_MAP'] as MainTab[]).map((t) => (
+          {(['ORB_LAB', 'NEURAL_MAP', 'COMBINED'] as MainTab[]).map((t) => (
             <button key={t} onClick={() => setActiveTab(t)} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', border: 'none', cursor: 'pointer', backgroundColor: activeTab===t?'#00ff88':'rgba(255,255,255,0.06)', color: activeTab===t?'#000':'#9ca3af', transition: 'all 0.2s', boxShadow: activeTab===t?'0 0 16px rgba(0,255,136,0.3)':'none' }}>{t.replace('_', ' ')}</button>
           ))}
         </div>
@@ -2274,6 +2274,17 @@ export default function AdminVisualizationLab() {
         </div>
         <div style={{ display: activeTab==='NEURAL_MAP'?'flex':'none', flex: 1, overflow: 'hidden' }}>
           <NeuralMap />
+        </div>
+        {/* B64 — COMBINED tab placeholder (full build in B67) */}
+        <div style={{ display: activeTab==='COMBINED'?'flex':'none', flex: 1, overflow: 'hidden', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, color: '#9ca3af' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, backgroundColor: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 10, padding: '10px 20px' }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#8b5cf6', boxShadow: '0 0 8px #8b5cf6' }} />
+            <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#8b5cf6' }}>Neural Map — Combined</span>
+          </div>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 8 }}>🧬 Placeholder — Full build coming in B67</p>
+          <p style={{ fontSize: 11, color: '#374151', maxWidth: 360, textAlign: 'center', lineHeight: 1.6 }}>
+            This tab will combine Electrical and multi-domain neural maps into a unified view.
+          </p>
         </div>
       </div>
     </div>
