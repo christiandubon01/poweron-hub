@@ -23,6 +23,7 @@ import { VelocityLayer } from '@/components/neural-world/layers/VelocityLayer'
 import { RiskSurfaceLayer } from '@/components/neural-world/layers/RiskSurfaceLayer'
 import { ForecastLayer } from '@/components/neural-world/layers/ForecastLayer'
 import { CommandLayer } from '@/components/neural-world/layers/CommandLayer'
+import { ContinentLayer } from '@/components/neural-world/layers/ContinentLayer'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
@@ -60,6 +61,7 @@ function WorldLayers({ layerStates }: { layerStates: LayerStates }) {
       <SignalLayer          visible={!!layerStates['signal']} />
       <ForecastLayer        visible={!!layerStates['forecast']} />
       <CommandLayer         visible={!!layerStates['command']} />
+      <ContinentLayer />
     </>
   )
 }

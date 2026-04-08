@@ -181,7 +181,11 @@ export function disposeDataBridge(): void {
 /**
  * Derives a deterministic (x, z) position on the ground plane from a project ID.
  * Uses a simple string hash so the same ID always maps to the same location.
- * Spreads mountains across a 160×160 area centered at origin.
+ *
+ * NW8: Projects (Power On Solutions LLC) placed on WEST continent only.
+ * West continent spans x=-200 to x=-20. Mountains placed in x=-185 to -35
+ * (15-unit margin from river edge, 15-unit margin from west border).
+ * Z range: -180 to 180 (within 400-unit depth, 20-unit margins).
  */
 export function seededPosition(projectId: string): { x: number; z: number } {
   let h1 = 0xdeadbeef
@@ -195,9 +199,10 @@ export function seededPosition(projectId: string): { x: number; z: number } {
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
   const n1 = (h1 >>> 0) / 0xffffffff  // 0–1
   const n2 = (h2 >>> 0) / 0xffffffff  // 0–1
-  // Map to -80..80 range, keeping a 20-unit border from grid edges
-  const x = (n1 - 0.5) * 160
-  const z = (n2 - 0.5) * 160
+  // NW8: West continent — x from -35 to -185 (span 150, centered at -110)
+  const x = -35 - n1 * 150
+  // Z: full continent depth with margins — -180 to 180 (span 360)
+  const z = (n2 - 0.5) * 360
   return { x, z }
 }
 

@@ -7,8 +7,17 @@
  * - Animation loop → dispatches 'nw:frame' event each tick
  * - Day/night cycle (8-minute full cycle)
  * - Star field (500 particles, visible only at night)
- * - Ground plane 200×200 subdivided 100×100 + GridHelper
+ * - Ground plane 400×400 — three continent zones + GridHelper
  * - Provides WorldContext to children
+ *
+ * NW8: Two continents (400×400 world)
+ * - West continent x=-200 to -20: Power On Solutions LLC (desert rock #2a1a0a)
+ * - Central channel x=-20 to 20: master cash flow river (#050a14)
+ * - East continent x=20 to 200: PowerOn Hub software (dark crystal #0a0a1a)
+ * - Dual sun system: Sun1 amber-orange #ff8040 (west/Solutions),
+ *                    Sun2 cold blue-white #80c0ff (east/Hub)
+ * - Both sun intensities driven by nw:revenue-health events
+ * - Founders valley x=-20..20 y=0 lit by both suns
  */
 
 import React, {
@@ -159,9 +168,17 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
   const ambientLightRef = useRef<THREE.AmbientLight | null>(null)
   const ambientLight2Ref = useRef<THREE.AmbientLight | null>(null)
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null)
+  // NW8: dual sun lights
+  const sun1Ref = useRef<THREE.DirectionalLight | null>(null)   // amber-orange, west/Solutions
+  const sun2Ref = useRef<THREE.DirectionalLight | null>(null)   // blue-white, east/Hub
+  const sun1HealthRef = useRef<number>(0.75)   // revenue health 0–1
+  const sun2HealthRef = useRef<number>(0.75)
 
   // Ground
   const groundMeshRef = useRef<THREE.Mesh | null>(null)
+  // NW8: additional continent ground meshes
+  const centralGroundRef = useRef<THREE.Mesh | null>(null)
+  const eastGroundRef = useRef<THREE.Mesh | null>(null)
 
   // Stars
   const starsRef = useRef<THREE.Points | null>(null)
@@ -361,32 +378,65 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     scene.add(ambient2)
     ambientLight2Ref.current = ambient2
 
-    // Directional light (sun/moon)
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0)
-    dirLight.position.set(50, 80, 30)
-    dirLight.castShadow = true
-    dirLight.shadow.mapSize.width = 2048
-    dirLight.shadow.mapSize.height = 2048
-    dirLight.shadow.camera.near = 1
-    dirLight.shadow.camera.far = 500
-    dirLight.shadow.camera.left = -120
-    dirLight.shadow.camera.right = 120
-    dirLight.shadow.camera.top = 120
-    dirLight.shadow.camera.bottom = -120
-    scene.add(dirLight)
-    dirLightRef.current = dirLight
+    // ── NW8: Dual sun system ──────────────────────────────────────────────────
+    // Sun1: amber-orange #ff8040 — Power On Solutions LLC (west continent)
+    // Primary shadow caster; rises from west side
+    const sun1 = new THREE.DirectionalLight(0xff8040, 1.5)
+    sun1.position.set(-80, 80, 30)
+    sun1.castShadow = true
+    sun1.shadow.mapSize.width = 2048
+    sun1.shadow.mapSize.height = 2048
+    sun1.shadow.camera.near = 1
+    sun1.shadow.camera.far = 600
+    sun1.shadow.camera.left = -220
+    sun1.shadow.camera.right = 220
+    sun1.shadow.camera.top = 220
+    sun1.shadow.camera.bottom = -220
+    scene.add(sun1)
+    sun1Ref.current = sun1
+    dirLightRef.current = sun1  // keep dirLightRef pointing to primary for AtmosphereManager
 
-    // Ground plane: 200×200 subdivided 100×100
-    const groundGeo = new THREE.PlaneGeometry(200, 200, 100, 100)
-    const groundMat = new THREE.MeshLambertMaterial({ color: 0x0a0a14 })
-    const ground = new THREE.Mesh(groundGeo, groundMat)
-    ground.rotation.x = -Math.PI / 2
-    ground.receiveShadow = true
-    scene.add(ground)
-    groundMeshRef.current = ground
+    // Sun2: cold blue-white #80c0ff — PowerOn Hub software (east continent)
+    // No shadow (performance); rises from east side, opposite phase
+    const sun2 = new THREE.DirectionalLight(0x80c0ff, 1.0)
+    sun2.position.set(80, 80, 30)
+    sun2.castShadow = false
+    scene.add(sun2)
+    sun2Ref.current = sun2
 
-    // Grid helper — subtle dark overlay
-    const grid = new THREE.GridHelper(200, 40, 0x112222, 0x0a1818)
+    // ── NW8: Three continent ground planes (world 400×400) ────────────────────
+    // West continent: x=-200 to -20 (width 180), desert rock #2a1a0a
+    const westGeo = new THREE.PlaneGeometry(180, 400, 90, 200)
+    const westMat = new THREE.MeshLambertMaterial({ color: 0x2a1a0a })
+    const westGround = new THREE.Mesh(westGeo, westMat)
+    westGround.rotation.x = -Math.PI / 2
+    westGround.position.set(-110, 0, 0)
+    westGround.receiveShadow = true
+    scene.add(westGround)
+    groundMeshRef.current = westGround  // AtmosphereManager targets this
+
+    // Central channel: x=-20 to 20 (width 40), deep dark water #050a14
+    const centralGeo = new THREE.PlaneGeometry(40, 400, 20, 200)
+    const centralMat = new THREE.MeshLambertMaterial({ color: 0x050a14 })
+    const centralGround = new THREE.Mesh(centralGeo, centralMat)
+    centralGround.rotation.x = -Math.PI / 2
+    centralGround.position.set(0, -0.02, 0)
+    centralGround.receiveShadow = true
+    scene.add(centralGround)
+    centralGroundRef.current = centralGround
+
+    // East continent: x=20 to 200 (width 180), dark crystal #0a0a1a
+    const eastGeo = new THREE.PlaneGeometry(180, 400, 90, 200)
+    const eastMat = new THREE.MeshLambertMaterial({ color: 0x0a0a1a })
+    const eastGround = new THREE.Mesh(eastGeo, eastMat)
+    eastGround.rotation.x = -Math.PI / 2
+    eastGround.position.set(110, 0, 0)
+    eastGround.receiveShadow = true
+    scene.add(eastGround)
+    eastGroundRef.current = eastGround
+
+    // Grid helper — subtle dark overlay, expanded to 400×400
+    const grid = new THREE.GridHelper(400, 80, 0x112222, 0x0a1818)
     grid.position.y = 0.01
     scene.add(grid)
 
@@ -503,14 +553,31 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
       starsRef.current.visible = starMat.opacity > 0.01
     }
 
-    // Directional light arc (sun position) — always updated
-    if (dirLightRef.current) {
-      const sunAngle = t * Math.PI * 2
-      dirLightRef.current.position.set(
-        Math.cos(sunAngle) * 80,
-        Math.sin(sunAngle) * 80,
+    // ── NW8: Dual sun arc animation ───────────────────────────────────────────
+    // Sun1 (amber, west/Solutions): orbits biased toward west (-x)
+    if (sun1Ref.current) {
+      const angle1 = t * Math.PI * 2
+      const health1 = sun1HealthRef.current   // 0–1
+      const baseIntensity1 = 0.4 + health1 * 1.4   // 0.4–1.8
+      sun1Ref.current.position.set(
+        -60 + Math.cos(angle1) * 80,
+        Math.abs(Math.sin(angle1)) * 80 + 5,
         30
       )
+      // Only illuminate when above horizon
+      sun1Ref.current.intensity = Math.sin(angle1) > 0 ? baseIntensity1 : 0.05
+    }
+    // Sun2 (blue-white, east/Hub): orbits biased toward east (+x), half-phase offset
+    if (sun2Ref.current) {
+      const angle2 = (t + 0.5) * Math.PI * 2
+      const health2 = sun2HealthRef.current   // 0–1
+      const baseIntensity2 = 0.3 + health2 * 1.0   // 0.3–1.3
+      sun2Ref.current.position.set(
+        60 + Math.cos(angle2) * 80,
+        Math.abs(Math.sin(angle2)) * 80 + 5,
+        30
+      )
+      sun2Ref.current.intensity = Math.sin(angle2) > 0 ? baseIntensity2 : 0.05
     }
 
     // ── Shooting star — night phase only (t 0.75–1.0 or wrap 0–0.02) ────────
@@ -567,6 +634,21 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
       }
     }
   }
+
+  // ── NW8: Revenue health listener — drives dual sun intensities ───────────
+  useEffect(() => {
+    function onRevenueHealth(e: Event) {
+      const ev = e as CustomEvent<{ solutionsHealth?: number; hubHealth?: number }>
+      if (typeof ev.detail?.solutionsHealth === 'number') {
+        sun1HealthRef.current = Math.max(0, Math.min(1, ev.detail.solutionsHealth))
+      }
+      if (typeof ev.detail?.hubHealth === 'number') {
+        sun2HealthRef.current = Math.max(0, Math.min(1, ev.detail.hubHealth))
+      }
+    }
+    window.addEventListener('nw:revenue-health', onRevenueHealth)
+    return () => window.removeEventListener('nw:revenue-health', onRevenueHealth)
+  }, [])
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   useEffect(() => {
