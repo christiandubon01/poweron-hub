@@ -426,6 +426,7 @@ export default function VisualSuitePanel({
       </div>
 
       {/* ── B62: Single-row bottom bar — 72px, zero scrolling ── */}
+      {/* B71: overflow changed to visible so bucket dropdowns (position:absolute, bottom:100%) are not clipped */}
       <div style={{
         height:          72,
         flexShrink:      0,
@@ -435,7 +436,7 @@ export default function VisualSuitePanel({
         padding:         '0 10px',
         backgroundColor: '#060810',
         borderTop:       '1px solid rgba(255,255,255,0.07)',
-        overflow:        'hidden',
+        overflow:        'visible',
       }}>
 
         {/* Mode bucket dropdowns — B50 style, opens upward */}
