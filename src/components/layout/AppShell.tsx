@@ -97,6 +97,9 @@ const AdminVisualizationLab = lazy(() => chunkRetry(() => import('@/views/AdminV
 // B64 — Business Overview placeholder (lazy-loaded)
 const BusinessOverview = lazy(() => chunkRetry(() => import('@/views/BusinessOverview')))
 
+// B68 — Business Overview split view (full build)
+const BusinessOverviewView = lazy(() => chunkRetry(() => import('@/views/BusinessOverviewView')))
+
 // B50 — Visual Suite Standalone (fullscreen 43-mode display)
 const VisualSuiteStandalone = lazy(() => chunkRetry(() => import('@/views/VisualSuiteStandalone')))
 
@@ -526,9 +529,9 @@ export function AppShell({ children }: AppShellProps) {
       case 'admin-command-center':
         return <Suspense fallback={<PanelLoading />}><AdminCommandCenter /></Suspense>
 
-      // B64 — Business Overview placeholder (B68 will build this out)
+      // B68 — Business Overview split view (full build)
       case 'business-overview':
-        return <Suspense fallback={<PanelLoading />}><BusinessOverview /></Suspense>
+        return <Suspense fallback={<PanelLoading />}><BusinessOverviewView /></Suspense>
 
       default:                return <V15rHome />
     }
