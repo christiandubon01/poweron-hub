@@ -8,14 +8,33 @@
  * NW1 scope: World engine foundation only — no data connection.
  * NW2 scope: TerrainGenerator (mountains from Supabase project data).
  * NW3 scope: CriticalPathLayer (flowing particle rivers — payment pipelines).
+ * NW4 scope: AgentLayer (11 agents as distinct 3D entities with behavior).
  */
 
 import React, { useState } from 'react'
 import { WorldEngine } from '@/components/neural-world/WorldEngine'
 import { CriticalPathLayer } from '@/components/neural-world/layers/CriticalPathLayer'
+import { AgentLayer } from '@/components/neural-world/layers/AgentLayer'
+
+function hudButtonStyle(active: boolean, r: number, g: number, b: number): React.CSSProperties {
+  return {
+    background: active ? `rgba(${r},${g},${b},0.18)` : 'rgba(255,255,255,0.04)',
+    border: `1px solid ${active ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.12)'}`,
+    color: active ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.35)',
+    padding: '5px 11px',
+    borderRadius: 3,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    cursor: 'pointer',
+    fontFamily: 'monospace',
+    transition: 'all 0.15s ease',
+    whiteSpace: 'nowrap' as const,
+  }
+}
 
 export default function NeuralWorldView() {
   const [riversVisible, setRiversVisible] = useState(true)
+  const [agentsVisible, setAgentsVisible] = useState(true)
 
   return (
     <div
@@ -29,9 +48,10 @@ export default function NeuralWorldView() {
     >
       <WorldEngine>
         <CriticalPathLayer visible={riversVisible} />
+        <AgentLayer visible={agentsVisible} />
       </WorldEngine>
 
-      {/* HUD layer controls — NW3 rivers toggle */}
+      {/* HUD layer controls */}
       <div
         style={{
           position: 'absolute',
@@ -46,23 +66,15 @@ export default function NeuralWorldView() {
       >
         <button
           onClick={() => setRiversVisible(v => !v)}
-          style={{
-            background: riversVisible
-              ? 'rgba(64, 192, 160, 0.18)'
-              : 'rgba(255, 255, 255, 0.04)',
-            border: `1px solid ${riversVisible ? '#40c0a0' : 'rgba(255,255,255,0.12)'}`,
-            color: riversVisible ? '#40c0a0' : 'rgba(255,255,255,0.35)',
-            padding: '5px 11px',
-            borderRadius: 3,
-            fontSize: 10,
-            letterSpacing: 1.2,
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-            transition: 'all 0.15s ease',
-            whiteSpace: 'nowrap',
-          }}
+          style={hudButtonStyle(riversVisible, 64, 192, 160)}
         >
           ◈ RIVERS {riversVisible ? 'ON' : 'OFF'}
+        </button>
+        <button
+          onClick={() => setAgentsVisible(v => !v)}
+          style={hudButtonStyle(agentsVisible, 192, 160, 32)}
+        >
+          ◈ AGENTS {agentsVisible ? 'ON' : 'OFF'}
         </button>
       </div>
     </div>
