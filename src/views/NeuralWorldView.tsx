@@ -25,6 +25,7 @@ import { ForecastLayer } from '@/components/neural-world/layers/ForecastLayer'
 import { CommandLayer } from '@/components/neural-world/layers/CommandLayer'
 import { ContinentLayer } from '@/components/neural-world/layers/ContinentLayer'
 import { WestContinentLayer } from '@/components/neural-world/layers/WestContinentLayer'
+import { EastContinentLayer } from '@/components/neural-world/layers/EastContinentLayer'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
@@ -64,6 +65,7 @@ function WorldLayers({ layerStates }: { layerStates: LayerStates }) {
       <CommandLayer         visible={!!layerStates['command']} />
       <ContinentLayer />
       <WestContinentLayer />
+      <EastContinentLayer />
     </>
   )
 }
