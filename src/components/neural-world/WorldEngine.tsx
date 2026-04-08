@@ -22,6 +22,8 @@ import { WorldContext } from './WorldContext'
 import { AtmosphereManager, AtmosphereMode } from './AtmosphereManager'
 import { CameraController, CameraMode } from './CameraController'
 import { CollisionSystem } from './CollisionSystem'
+import { TerrainGenerator } from './TerrainGenerator'
+import { supabase } from '@/lib/supabase'
 
 // ── Day/Night cycle config ────────────────────────────────────────────────────
 
@@ -155,6 +157,95 @@ export function WorldEngine({ children }: WorldEngineProps) {
   // Atmosphere + camera mode state
   const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>(AtmosphereMode.SCIFI_V1)
   const [cameraMode, setCameraMode] = useState<CameraMode>(CameraMode.FIRST_PERSON)
+
+  // ── NW2: neural_world_settings save/restore ────────────────────────────────
+  const nwSettingsOrgIdRef = useRef<string | null>(null)
+  const nwSettingsSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Load settings from Supabase on mount
+  useEffect(() => {
+    async function loadNWSettings() {
+      try {
+        const { data: { user } } = await (supabase as any).auth.getUser()
+        if (!user) return
+
+        // Resolve org_id via profiles
+        const { data: profile } = await (supabase as any)
+          .from('profiles')
+          .select('org_id')
+          .eq('id', user.id)
+          .maybeSingle()
+
+        const orgId: string | null = profile?.org_id ?? null
+        if (!orgId) return
+        nwSettingsOrgIdRef.current = orgId
+
+        const { data: settings } = await (supabase as any)
+          .from('neural_world_settings')
+          .select('atmosphere_mode, camera_mode, last_position')
+          .eq('org_id', orgId)
+          .maybeSingle()
+
+        if (!settings) return
+
+        if (settings.atmosphere_mode && Object.values(AtmosphereMode).includes(settings.atmosphere_mode)) {
+          setAtmosphereMode(settings.atmosphere_mode as AtmosphereMode)
+        }
+        if (settings.camera_mode && Object.values(CameraMode).includes(settings.camera_mode)) {
+          setCameraMode(settings.camera_mode as CameraMode)
+        }
+        if (settings.last_position && typeof settings.last_position === 'object') {
+          const pos = settings.last_position as { x?: number; y?: number; z?: number }
+          if (typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number') {
+            playerPosition.current.set(pos.x, pos.y, pos.z)
+          }
+        }
+      } catch (err) {
+        console.warn('[WorldEngine] loadNWSettings error (non-blocking):', err)
+      }
+    }
+    loadNWSettings()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Debounced save to neural_world_settings
+  const saveNWSettings = useCallback((
+    atmoMode: AtmosphereMode,
+    camMode: CameraMode,
+  ) => {
+    if (nwSettingsSaveTimeoutRef.current) clearTimeout(nwSettingsSaveTimeoutRef.current)
+    nwSettingsSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const orgId = nwSettingsOrgIdRef.current
+        if (!orgId) return
+        const pos = playerPosition.current
+        await (supabase as any)
+          .from('neural_world_settings')
+          .upsert(
+            {
+              org_id: orgId,
+              atmosphere_mode: atmoMode,
+              camera_mode: camMode,
+              last_position: { x: pos.x, y: pos.y, z: pos.z },
+            },
+            { onConflict: 'org_id' }
+          )
+      } catch (err) {
+        console.warn('[WorldEngine] saveNWSettings error (non-blocking):', err)
+      }
+    }, 1000)
+  }, [playerPosition])
+
+  // Wrap atmosphere/camera mode change handlers to also persist
+  const handleAtmosphereModeChange = useCallback((mode: AtmosphereMode) => {
+    setAtmosphereMode(mode)
+    saveNWSettings(mode, cameraMode)
+  }, [cameraMode, saveNWSettings])
+
+  const handleCameraModeChange = useCallback((mode: CameraMode) => {
+    setCameraMode(mode)
+    saveNWSettings(atmosphereMode, mode)
+  }, [atmosphereMode, saveNWSettings])
 
   // Context value — memoized to avoid recreating each render
   // We'll store in a ref and only re-create when scene/camera/renderer init
@@ -408,7 +499,7 @@ export function WorldEngine({ children }: WorldEngineProps) {
         <WorldContext.Provider value={contextValue}>
           <AtmosphereManager
             activeMode={atmosphereMode}
-            onModeChange={setAtmosphereMode}
+            onModeChange={handleAtmosphereModeChange}
             ambientLightRef={ambientLightRef}
             dirLightRef={dirLightRef}
             groundMeshRef={groundMeshRef}
@@ -416,9 +507,10 @@ export function WorldEngine({ children }: WorldEngineProps) {
           />
           <CameraController
             mode={cameraMode}
-            onModeChange={setCameraMode}
+            onModeChange={handleCameraModeChange}
           />
           <CollisionSystem playerPosition={playerPosition} />
+          <TerrainGenerator />
           {children}
         </WorldContext.Provider>
       )}
