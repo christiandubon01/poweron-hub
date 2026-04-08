@@ -17,6 +17,8 @@ import { callClaude, extractText } from './claudeProxy'
 import { processMessage } from '@/agents/nexus'
 import { supabase } from '@/lib/supabase'
 import { addTranscriptEntry } from '@/components/voice/VoiceTranscriptPanel'
+// B59 — rolling 3-turn conversation buffer for NEXUS voice continuity
+import * as conversationBuffer from './voice/conversationBuffer'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -751,6 +753,9 @@ export class VoiceSubsystem {
         removedCount: noiseResult.removedCount,
       })
 
+      // B59 — record user turn in rolling buffer before routing
+      conversationBuffer.addUserTurn(filteredText)
+
       // Step 3-5: Route, execute, respond (using noise-filtered transcript)
       await this.executeVoicePipeline(filteredText)
     } catch (err) {
@@ -777,11 +782,13 @@ export class VoiceSubsystem {
     // Step 3: Route through NEXUS processMessage — classifies AND gets Claude response in one call
     this.setStatus('processing')
     try {
+      // B59 — pass prior turns only (current user turn already appended to buffer above)
+      const priorTurns = conversationBuffer.getHistory().slice(0, -1)
       const nexusResult = await processMessage({
         message: transcript,
         orgId: this.orgId,
         userId: this.userId,
-        conversationHistory: this.conversationHistory,
+        conversationHistory: priorTurns,
         isVoiceCommand: true,
       })
 
@@ -805,6 +812,9 @@ export class VoiceSubsystem {
         { role: 'assistant', content: fullDisplayText || responseText, timestamp: Date.now() + 1 },
       ].slice(-20)
 
+      // B59 — record assistant turn in rolling buffer
+      conversationBuffer.addAssistantTurn(fullDisplayText || responseText)
+
       console.log('[Voice] NEXUS response received via', nexusResult?.intent?.targetAgent, '— voice:', responseText?.substring(0, 100))
     } catch (routeErr) {
       console.warn('[Voice] NEXUS processMessage failed, falling back to direct Claude:', routeErr)
@@ -827,12 +837,20 @@ COMMUNICATION RULES — follow these exactly:
 - Sound human — use contractions, vary sentence length, don't read like a report
 
 Your response will be spoken aloud via TTS — keep it conversational and under 3 sentences unless he asks for analysis.`
+        // B59 — include prior conversation turns in fallback path
+        const fallbackPriorTurns = conversationBuffer.getHistory().slice(0, -1)
+        const fallbackMessages = [
+          ...fallbackPriorTurns.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+          { role: 'user' as const, content: transcript },
+        ]
         const claudeResult = await callClaude({
           system: NEXUS_SYSTEM,
-          messages: [{ role: 'user', content: transcript }],
+          messages: fallbackMessages,
           max_tokens: 512,
         })
         responseText = extractText(claudeResult)
+        // B59 — record assistant turn in buffer for fallback path too
+        if (responseText) conversationBuffer.addAssistantTurn(responseText)
         console.log('[Voice] Claude direct fallback response:', responseText?.substring(0, 100))
       } catch (claudeErr) {
         console.error('[Voice] Claude fallback also failed:', claudeErr)
