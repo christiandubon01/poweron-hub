@@ -24,7 +24,9 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2, VolumeX, Pin, Check } from 'lucide-react'
+import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2, VolumeX, Pin, Check, LayoutList } from 'lucide-react'
+import { SessionManagerSidebar } from './SessionManagerSidebar'
+import type { NexusSessionRow } from '@/store/nexusStore'
 import { supabase } from '@/lib/supabase'
 import { clsx } from 'clsx'
 import { NexusThreeOrb } from './NexusThreeOrb'
@@ -76,6 +78,10 @@ export interface NexusDrawerPanelProps {
   /** B49 — Live audio streams for visual reactivity */
   micStream?:   MediaStream | null
   ttsElement?:  HTMLAudioElement | null
+  /** B61a — Session switch: called when user picks a session from the sidebar */
+  onSessionSwitch?: (sessionId: string, loadedMessages: DrawerMessage[]) => void
+  /** B61a — New session created: called when user taps "+ New Session" */
+  onNewSession?: (session: NexusSessionRow) => void
 }
 
 // ── Agent color map ────────────────────────────────────────────────────────────
@@ -294,7 +300,11 @@ export function NexusDrawerPanel({
   contextMessages = [],
   micStream,
   ttsElement,
+  onSessionSwitch,
+  onNewSession,
 }: NexusDrawerPanelProps) {
+  // B61a — Session sidebar toggle
+  const [showSessionSidebar, setShowSessionSidebar] = useState(false)
   // B49 — Live audio bands (falls back to simulation when streams are null)
   const { bass, mid, high } = useNEXUSAudio(micStream ?? null, ttsElement ?? null)
   // Map orbState to mtzBoost for visual intensity
@@ -470,7 +480,29 @@ export function NexusDrawerPanel({
           </div>
         </div>
 
-        {/* ── RIGHT: Chat panel ────────────────────────────────────────────── */}
+        {/* ── RIGHT: Chat panel (with optional session sidebar) ─────────── */}
+        <div className="flex flex-row flex-1 min-w-0">
+
+          {/* B61a — Session Manager Sidebar (collapsible) */}
+          {showSessionSidebar && (
+            <SessionManagerSidebar
+              onSelectSession={(sessionId, msgs) => {
+                const drawerMsgs: DrawerMessage[] = msgs.map((m, i) => ({
+                  id:        `loaded-${sessionId}-${i}`,
+                  role:      m.role === 'user' ? 'user' : 'nexus',
+                  content:   m.content,
+                  timestamp: m.timestamp,
+                  agentId:   m.agentId,
+                }))
+                onSessionSwitch?.(sessionId, drawerMsgs)
+              }}
+              onNewSession={(session) => {
+                onNewSession?.(session)
+              }}
+              onClose={() => setShowSessionSidebar(false)}
+            />
+          )}
+
         <div className="flex flex-col flex-1 min-w-0">
 
           {/* Header */}
@@ -478,10 +510,26 @@ export function NexusDrawerPanel({
             className="flex-shrink-0 flex items-center justify-between px-4 py-3"
             style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
           >
-            <div>
-              <div className="text-sm font-bold text-white">Voice Session</div>
-              <div className="text-[10px] text-gray-500 font-mono">
-                {messages.length} message{messages.length !== 1 ? 's' : ''}
+            <div className="flex items-center gap-2">
+              {/* B61a — Sessions sidebar toggle */}
+              <button
+                onClick={() => setShowSessionSidebar(prev => !prev)}
+                title={showSessionSidebar ? 'Hide sessions' : 'Show sessions'}
+                className={clsx(
+                  'flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-mono font-semibold transition-colors',
+                  showSessionSidebar
+                    ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
+                    : 'bg-white/5 border border-white/10 text-gray-400 hover:text-gray-200 hover:bg-white/10'
+                )}
+              >
+                <LayoutList size={11} />
+                Sessions
+              </button>
+              <div>
+                <div className="text-sm font-bold text-white">Voice Session</div>
+                <div className="text-[10px] text-gray-500 font-mono">
+                  {messages.length} message{messages.length !== 1 ? 's' : ''}
+                </div>
               </div>
             </div>
 
@@ -708,6 +756,9 @@ export function NexusDrawerPanel({
             }
           `}</style>
         </div>
+        {/* end inner chat flex column */}
+        </div>
+        {/* end right flex row (sidebar + chat) */}
       </div>
     </>
   )

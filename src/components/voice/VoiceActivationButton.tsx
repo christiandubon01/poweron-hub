@@ -27,6 +27,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { NexusDrawerPanel, type DrawerMessage } from '@/components/nexus/NexusDrawerPanel'
 import type { OrbState } from '@/components/nexus/NexusPresenceOrb'
 import { supabase } from '@/lib/supabase'
+import { useNexusStore, type NexusSessionRow } from '@/store/nexusStore'
 
 // ── Voice preprocessing ────────────────────────────────────────────────────────
 
@@ -82,6 +83,9 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   const lastTranscriptRef           = useRef('')
   const lastCleanedTranscriptRef    = useRef('')
 
+  // B61a — Session store
+  const { activeSessionId, setActiveSessionId, bumpSession, prependSession, setSessionList } = useNexusStore()
+
   // FIX 4 — Session continuity: key for sessionStorage persistence
   const DRAWER_SESSION_KEY = 'nexus_drawer_messages_v1'
 
@@ -96,6 +100,118 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
     } catch {}
     return []
   })
+
+  // B61a — Session initialization: on mount, fetch or create the active session
+  useEffect(() => {
+    const userId = user?.id
+    const orgId  = profile?.org_id
+    if (!userId) return
+
+    async function initSession() {
+      try {
+        // Fetch the most recent session for this user
+        const { data, error } = await supabase
+          .from('nexus_sessions')
+          .select('*')
+          .eq('user_id', userId)
+          .order('last_active', { ascending: false })
+          .limit(50)
+
+        if (error) throw error
+
+        if (data && data.length > 0) {
+          // Set most recent session as active
+          setActiveSessionId(data[0].id)
+          setSessionList(data)
+        } else {
+          // No sessions exist — auto-create first one
+          const { data: newSession, error: createErr } = await supabase
+            .from('nexus_sessions')
+            .insert({
+              user_id:    userId,
+              org_id:     orgId ?? null,
+              topic_name: 'New Session',
+              agent:      'nexus',
+            })
+            .select()
+            .single()
+
+          if (createErr) throw createErr
+          if (newSession) {
+            setActiveSessionId(newSession.id)
+            setSessionList([newSession])
+          }
+        }
+      } catch (err) {
+        console.error('[VoiceButton] Session init failed:', err)
+      }
+    }
+
+    initSession()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, profile?.org_id])
+
+  // B61a — Helper: persist a user+assistant message pair to nexus_messages and bump session
+  const persistMessagePair = useCallback(async (
+    userContent: string,
+    assistantContent: string,
+    agentId: string,
+  ) => {
+    const sessionId = useNexusStore.getState().activeSessionId
+    const userId    = user?.id
+    if (!sessionId || !userId) return
+
+    try {
+      // Insert user + assistant messages
+      await supabase.from('nexus_messages').insert([
+        { session_id: sessionId, user_id: userId, role: 'user',      content: userContent,      agent: 'user'   },
+        { session_id: sessionId, user_id: userId, role: 'assistant', content: assistantContent, agent: agentId  },
+      ])
+
+      // Update session last_active + message_count
+      const now = new Date().toISOString()
+      const { data: updated } = await supabase
+        .from('nexus_sessions')
+        .update({ last_active: now })
+        .eq('id', sessionId)
+        .select('message_count')
+        .single()
+
+      // Increment count locally (optimistic)
+      const newCount = (updated?.message_count ?? 0) + 2
+      await supabase
+        .from('nexus_sessions')
+        .update({ message_count: newCount })
+        .eq('id', sessionId)
+
+      bumpSession(sessionId, now, newCount)
+    } catch (err) {
+      console.error('[VoiceButton] Failed to persist messages:', err)
+    }
+  }, [user?.id, bumpSession])
+
+  // B61a — Session switch: clear state, load messages from selected session
+  const handleSessionSwitch = useCallback((sessionId: string, loadedMessages: DrawerMessage[]) => {
+    setActiveSessionId(sessionId)
+    // Clear conversation buffer
+    conversationHistoryRef.current = []
+    // Set UI messages to the loaded session messages
+    setMessages(loadedMessages)
+    // Rebuild conversation history from loaded messages for context
+    const history = loadedMessages.map((m) => ({
+      role:      m.role === 'nexus' ? 'assistant' : 'user',
+      content:   m.content,
+      timestamp: m.timestamp,
+    }))
+    conversationHistoryRef.current = history.slice(-6)
+  }, [setActiveSessionId])
+
+  // B61a — New session: clear state
+  const handleNewSession = useCallback((session: NexusSessionRow) => {
+    setActiveSessionId(session.id)
+    conversationHistoryRef.current = []
+    setMessages([])
+  }, [setActiveSessionId])
 
   // Silence detection refs
   const silenceTimerRef    = useRef(null)
@@ -217,6 +333,9 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
             { role: 'user',      content: cleaned,           timestamp: ts },
             { role: 'assistant', content: nexusMsg.content,  timestamp: ts + 1 },
           ].slice(-20)
+
+          // B61a — Persist voice exchange to nexus_messages
+          persistMessagePair(cleaned, nexusMsg.content, nexusMsg.agentId ?? 'nexus')
 
           lastTranscriptRef.current        = ''
           lastCleanedTranscriptRef.current = ''
@@ -393,11 +512,14 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
       }
       setMessages(prev => [...prev, nexusMsg])
 
+      // B61a — Persist text exchange to nexus_messages
+      persistMessagePair(text, nexusMsg.content, agentName)
+
       // B49 — log agent call (fire-and-forget)
       supabase.from('hub_platform_events').insert({
         event_type:  'agent_call',
         event_label: agentName,
-        metadata:    { agentName, sessionId: null, timestamp: new Date().toISOString() },
+        metadata:    { agentName, sessionId: useNexusStore.getState().activeSessionId ?? null, timestamp: new Date().toISOString() },
       }).then(() => {})
 
       conversationHistoryRef.current = [
@@ -509,6 +631,8 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
         contextMessages = {contextMessages}
         micStream       = {getVoiceSubsystem().getMicStream()}
         ttsElement      = {getVoiceSubsystem().getCurrentAudio()}
+        onSessionSwitch = {handleSessionSwitch}
+        onNewSession    = {handleNewSession}
       />
 
       {/* Silence progress bar */}
