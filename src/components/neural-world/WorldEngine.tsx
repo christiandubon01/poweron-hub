@@ -18,6 +18,13 @@
  *                    Sun2 cold blue-white #80c0ff (east/Hub)
  * - Both sun intensities driven by nw:revenue-health events
  * - Founders valley x=-20..20 y=0 lit by both suns
+ *
+ * NW12: Founders Valley + Dual Sun Polish
+ * - Founders valley golden shimmer ground (blends both sun colors)
+ * - Valley glow point light: amber-blue blend driven by both suns
+ * - Dual sun polish: Sun1 rises at x=-300 (dawn), Sun2 at x=300 (later)
+ * - Synchronized dusk: both suns set simultaneously at cycle t=0.75
+ * - Throttled nw:player-position + nw:cycle-state events for HUD
  */
 
 import React, {
@@ -179,6 +186,11 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
   // NW8: additional continent ground meshes
   const centralGroundRef = useRef<THREE.Mesh | null>(null)
   const eastGroundRef = useRef<THREE.Mesh | null>(null)
+  // NW12: valley golden shimmer material + glow
+  const valleyMatRef = useRef<THREE.MeshLambertMaterial | null>(null)
+  const valleyGlowRef = useRef<THREE.PointLight | null>(null)
+  // NW12: throttled position dispatch
+  const lastPosDispatchTimeRef = useRef<number>(0)
 
   // Stars
   const starsRef = useRef<THREE.Points | null>(null)
@@ -378,33 +390,33 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     scene.add(ambient2)
     ambientLight2Ref.current = ambient2
 
-    // ── NW8: Dual sun system ──────────────────────────────────────────────────
-    // Sun1: amber-orange #ff8040 — Power On Solutions LLC (west continent)
-    // Primary shadow caster; rises from west side
-    const sun1 = new THREE.DirectionalLight(0xff8040, 1.5)
-    sun1.position.set(-80, 80, 30)
+    // ── NW12: Dual sun system (polished arcs, synchronized dusk) ─────────────
+    // Sun1: amber-orange #ff8040 — Power On Solutions LLC (west/Solutions)
+    // Rises first at x=-300 (dawn), arcs overhead, sets at x=+300 at dusk (t=0.75)
+    const sun1 = new THREE.DirectionalLight(0xff8040, 0)
+    sun1.position.set(-300, 5, 0)
     sun1.castShadow = true
     sun1.shadow.mapSize.width = 2048
     sun1.shadow.mapSize.height = 2048
     sun1.shadow.camera.near = 1
-    sun1.shadow.camera.far = 600
-    sun1.shadow.camera.left = -220
-    sun1.shadow.camera.right = 220
-    sun1.shadow.camera.top = 220
-    sun1.shadow.camera.bottom = -220
+    sun1.shadow.camera.far = 700
+    sun1.shadow.camera.left = -250
+    sun1.shadow.camera.right = 250
+    sun1.shadow.camera.top = 250
+    sun1.shadow.camera.bottom = -250
     scene.add(sun1)
     sun1Ref.current = sun1
     dirLightRef.current = sun1  // keep dirLightRef pointing to primary for AtmosphereManager
 
-    // Sun2: cold blue-white #80c0ff — PowerOn Hub software (east continent)
-    // No shadow (performance); rises from east side, opposite phase
-    const sun2 = new THREE.DirectionalLight(0x80c0ff, 1.0)
-    sun2.position.set(80, 80, 30)
+    // Sun2: cold blue-white #80c0ff — PowerOn Hub software (east/Hub)
+    // Rises later at x=+300 (t=0.12), arcs overhead, ALSO sets at t=0.75 simultaneously
+    const sun2 = new THREE.DirectionalLight(0x80c0ff, 0)
+    sun2.position.set(300, 5, 0)
     sun2.castShadow = false
     scene.add(sun2)
     sun2Ref.current = sun2
 
-    // ── NW8: Three continent ground planes (world 400×400) ────────────────────
+    // ── NW12 + NW8: Three continent ground planes (world 400×400) ────────────
     // West continent: x=-200 to -20 (width 180), desert rock #2a1a0a
     const westGeo = new THREE.PlaneGeometry(180, 400, 90, 200)
     const westMat = new THREE.MeshLambertMaterial({ color: 0x2a1a0a })
@@ -415,15 +427,28 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     scene.add(westGround)
     groundMeshRef.current = westGround  // AtmosphereManager targets this
 
-    // Central channel: x=-20 to 20 (width 40), deep dark water #050a14
+    // Founders Valley: x=-20 to 20 — NW12 golden shimmer material, blends both sun colors
+    // Slightly elevated above the surrounding water channel for visual distinction
     const centralGeo = new THREE.PlaneGeometry(40, 400, 20, 200)
-    const centralMat = new THREE.MeshLambertMaterial({ color: 0x050a14 })
-    const centralGround = new THREE.Mesh(centralGeo, centralMat)
+    const valleyMat = new THREE.MeshLambertMaterial({
+      color: 0x1a1208,          // dark golden earth tone — base under shimmer
+      emissive: new THREE.Color(0xc8a028),  // warm gold emissive
+      emissiveIntensity: 0.04,
+    })
+    valleyMatRef.current = valleyMat
+    const centralGround = new THREE.Mesh(centralGeo, valleyMat)
     centralGround.rotation.x = -Math.PI / 2
-    centralGround.position.set(0, -0.02, 0)
+    centralGround.position.set(0, 0.01, 0)   // slightly above water level
     centralGround.receiveShadow = true
     scene.add(centralGround)
     centralGroundRef.current = centralGround
+
+    // Valley ambient glow — amber-blue blend point light hovering above valley floor
+    // Color and intensity shift with sun dominance in NW12 update loop
+    const valleyGlow = new THREE.PointLight(0xe0a060, 0.5, 65)
+    valleyGlow.position.set(0, 2.0, 0)
+    scene.add(valleyGlow)
+    valleyGlowRef.current = valleyGlow
 
     // East continent: x=20 to 200 (width 180), dark crystal #0a0a1a
     const eastGeo = new THREE.PlaneGeometry(180, 400, 90, 200)
@@ -553,31 +578,119 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
       starsRef.current.visible = starMat.opacity > 0.01
     }
 
-    // ── NW8: Dual sun arc animation ───────────────────────────────────────────
-    // Sun1 (amber, west/Solutions): orbits biased toward west (-x)
+    // ── NW12: Polished dual sun arcs — synchronized dusk ─────────────────────
+    // DAY PHASE: t=0 to t=0.75 (dawn through dusk), NIGHT: t=0.75 to 1.0
+    //
+    // Sun1 (Solutions/amber): rises at x=-300 y=0 z=0 (dawn, t=0)
+    //   → arcs west-to-east, peaks overhead ~t=0.375
+    //   → sets at x=+300 at t=0.75 (dusk)
+    //   Dawn amber light illuminates west continent first.
+    //
+    // Sun2 (Hub/blue): rises at x=+300 y=0 z=0 (t=SUN2_RISE=0.12)
+    //   → arcs east-to-west, peaks overhead ~t=0.44
+    //   → ALSO sets at t=0.75 simultaneously with Sun1 — most beautiful moment
+    //   Cold blue light hits east continent after Solutions dawn.
+    //
+    // Simultaneous dusk: both suns approach horizon together at t=0.75.
+
+    const SUN2_RISE = 0.12   // Sun2 rises 12% into cycle (~58s after dawn)
+    const DAY_END   = 0.75   // Both suns set here
+
+    let sun1IntensityNow = 0
+    let sun2IntensityNow = 0
+
+    // Sun1: Power On Solutions — amber, rises first
     if (sun1Ref.current) {
-      const angle1 = t * Math.PI * 2
-      const health1 = sun1HealthRef.current   // 0–1
-      const baseIntensity1 = 0.4 + health1 * 1.4   // 0.4–1.8
-      sun1Ref.current.position.set(
-        -60 + Math.cos(angle1) * 80,
-        Math.abs(Math.sin(angle1)) * 80 + 5,
-        30
-      )
-      // Only illuminate when above horizon
-      sun1Ref.current.intensity = Math.sin(angle1) > 0 ? baseIntensity1 : 0.05
+      const health1 = sun1HealthRef.current
+      const baseIntensity1 = 0.5 + health1 * 1.3   // 0.5–1.8
+
+      if (t <= DAY_END) {
+        const norm1 = t / DAY_END                    // 0 at dawn → 1 at dusk
+        const angle1 = norm1 * Math.PI               // 0 → π
+        const sinH1 = Math.sin(angle1)               // height factor: 0→1→0
+
+        sun1Ref.current.position.set(
+          -300 * Math.cos(angle1),                   // x: -300 at dawn → 0 → +300 at dusk
+          Math.max(2, sinH1 * 220),                  // y: rises to 220 at noon
+          0
+        )
+        // Soft dawn/dusk ramp: multiply by clamped sinH1 for natural fade at horizon
+        sun1IntensityNow = baseIntensity1 * Math.min(1, sinH1 * 5)
+        sun1Ref.current.intensity = sun1IntensityNow
+      } else {
+        // Night: parked below horizon
+        sun1Ref.current.intensity = 0
+        sun1Ref.current.position.set(-300, -20, 0)
+      }
     }
-    // Sun2 (blue-white, east/Hub): orbits biased toward east (+x), half-phase offset
+
+    // Sun2: PowerOn Hub — blue-white, rises later from east
     if (sun2Ref.current) {
-      const angle2 = (t + 0.5) * Math.PI * 2
-      const health2 = sun2HealthRef.current   // 0–1
-      const baseIntensity2 = 0.3 + health2 * 1.0   // 0.3–1.3
-      sun2Ref.current.position.set(
-        60 + Math.cos(angle2) * 80,
-        Math.abs(Math.sin(angle2)) * 80 + 5,
-        30
-      )
-      sun2Ref.current.intensity = Math.sin(angle2) > 0 ? baseIntensity2 : 0.05
+      const health2 = sun2HealthRef.current
+      const baseIntensity2 = 0.38 + health2 * 0.92  // 0.38–1.3
+
+      if (t >= SUN2_RISE && t <= DAY_END) {
+        const norm2 = (t - SUN2_RISE) / (DAY_END - SUN2_RISE)  // 0 at rise → 1 at dusk
+        const angle2 = norm2 * Math.PI
+        const sinH2 = Math.sin(angle2)
+
+        sun2Ref.current.position.set(
+          300 * Math.cos(angle2),                    // x: +300 at rise → 0 → -300 at set
+          Math.max(2, sinH2 * 180),
+          0
+        )
+        sun2IntensityNow = baseIntensity2 * Math.min(1, sinH2 * 5)
+        sun2Ref.current.intensity = sun2IntensityNow
+      } else {
+        // Before rise or after dusk
+        sun2Ref.current.intensity = 0
+        sun2Ref.current.position.set(300, -20, 0)
+      }
+    }
+
+    // NW12: Founders Valley golden shimmer — blends both sun intensities
+    if (valleyMatRef.current) {
+      const shimmer = 0.025 + Math.sin(cycleTimeRef.current * 1.1) * 0.012
+                    + Math.sin(cycleTimeRef.current * 3.4 + 0.8) * 0.007
+      const sunContrib = (sun1IntensityNow + sun2IntensityNow) * 0.016
+      valleyMatRef.current.emissiveIntensity = shimmer + sunContrib
+    }
+
+    // NW12: Valley glow point light — color shifts with sun dominance
+    if (valleyGlowRef.current) {
+      const totalInt = sun1IntensityNow + sun2IntensityNow
+      valleyGlowRef.current.intensity = 0.15 + totalInt * 0.25
+      if (totalInt > 0.01) {
+        const ambW = sun1IntensityNow / totalInt   // 0=all-blue, 1=all-amber
+        const blueW = 1 - ambW
+        valleyGlowRef.current.color.setRGB(
+          0.55 * ambW + 0.42 * blueW,   // r
+          0.55 * ambW + 0.58 * blueW,   // g
+          0.22 * ambW + 0.95 * blueW    // b
+        )
+      }
+    }
+
+    // NW12: Dispatch player position + cycle state (throttled ~10 Hz) ──────
+    const nowMs = Date.now()
+    if (nowMs - lastPosDispatchTimeRef.current > 100) {
+      lastPosDispatchTimeRef.current = nowMs
+      const px = playerPosition.current.x
+      const py = playerPosition.current.y
+      const pz = playerPosition.current.z
+      const inValley = px >= -20 && px <= 20
+      window.dispatchEvent(new CustomEvent('nw:player-position', {
+        detail: { x: px, y: py, z: pz, inValley }
+      }))
+      window.dispatchEvent(new CustomEvent('nw:cycle-state', {
+        detail: {
+          cycleT: t,
+          sun1Intensity: sun1IntensityNow,
+          sun2Intensity: sun2IntensityNow,
+          sun1Health: sun1HealthRef.current,
+          sun2Health: sun2HealthRef.current,
+        }
+      }))
     }
 
     // ── Shooting star — night phase only (t 0.75–1.0 or wrap 0–0.02) ────────
@@ -656,6 +769,13 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     return () => {
       if (cleanup) cleanup()
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+      // NW12: Clean up valley glow
+      if (valleyGlowRef.current && sceneRef.current) {
+        sceneRef.current.remove(valleyGlowRef.current)
+        valleyGlowRef.current = null
+      }
+      valleyMatRef.current = null
+
       // Clean up shooting star if still active
       if (shootingStarRef.current && sceneRef.current) {
         sceneRef.current.remove(shootingStarRef.current)

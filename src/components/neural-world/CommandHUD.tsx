@@ -137,6 +137,25 @@ export default function CommandHUD({
   const shadowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const worldDataRef   = useRef<NWWorldData | null>(null)
 
+  // NW12: Sun dominance meter state
+  const [sunDominance, setSunDominance] = useState({
+    solutionsHealth: 0.75,
+    hubHealth: 0.75,
+    sun1Intensity: 0,
+    sun2Intensity: 0,
+  })
+
+  // NW12: Player position / founders valley state
+  const [inValley, setInValley] = useState(false)
+  const playerPosRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 2, z: 10 })
+  const [valleyStillShadow, setValleyStillShadow] = useState(false)
+  const lastMoveTimeRef = useRef<number>(Date.now())
+  const lastPosSnapRef  = useRef<{ x: number; z: number }>({ x: 0, z: 10 })
+
+  // NW12: V3 Complete badge
+  const [showV3Badge, setShowV3Badge] = useState(false)
+  const v3BadgeDismissedRef = useRef(false)
+
   // Mobile joystick display state
   const isTouchDevice = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0
   const [leftJoy, setLeftJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
@@ -247,6 +266,77 @@ export default function CommandHUD({
       worldDataRef.current = data
     })
     return unsub
+  }, [])
+
+  // ── NW12: Subscribe to nw:revenue-health for sun dominance meter ───────────
+  useEffect(() => {
+    function onRevHealth(e: Event) {
+      const ev = e as CustomEvent<{ solutionsHealth?: number; hubHealth?: number }>
+      setSunDominance(prev => ({
+        ...prev,
+        solutionsHealth: ev.detail?.solutionsHealth ?? prev.solutionsHealth,
+        hubHealth:       ev.detail?.hubHealth       ?? prev.hubHealth,
+      }))
+    }
+    window.addEventListener('nw:revenue-health', onRevHealth)
+    return () => window.removeEventListener('nw:revenue-health', onRevHealth)
+  }, [])
+
+  // ── NW12: Subscribe to nw:cycle-state for live sun intensities ─────────────
+  useEffect(() => {
+    function onCycleState(e: Event) {
+      const ev = e as CustomEvent<{
+        cycleT: number
+        sun1Intensity: number
+        sun2Intensity: number
+        sun1Health: number
+        sun2Health: number
+      }>
+      if (!ev.detail) return
+      setSunDominance(prev => ({
+        ...prev,
+        sun1Intensity: ev.detail.sun1Intensity,
+        sun2Intensity: ev.detail.sun2Intensity,
+        solutionsHealth: ev.detail.sun1Health,
+        hubHealth:       ev.detail.sun2Health,
+      }))
+    }
+    window.addEventListener('nw:cycle-state', onCycleState)
+    return () => window.removeEventListener('nw:cycle-state', onCycleState)
+  }, [])
+
+  // ── NW12: Subscribe to nw:player-position — valley detection ───────────────
+  useEffect(() => {
+    function onPlayerPos(e: Event) {
+      const ev = e as CustomEvent<{ x: number; y: number; z: number; inValley: boolean }>
+      if (!ev.detail) return
+
+      const newInValley = ev.detail.inValley
+      setInValley(newInValley)
+      playerPosRef.current = { x: ev.detail.x, y: ev.detail.y, z: ev.detail.z }
+
+      // Detect if player is standing still in valley (position delta < 0.5 for 2s)
+      const dx = Math.abs(ev.detail.x - lastPosSnapRef.current.x)
+      const dz = Math.abs(ev.detail.z - lastPosSnapRef.current.z)
+      if (dx > 0.5 || dz > 0.5) {
+        lastMoveTimeRef.current = Date.now()
+        lastPosSnapRef.current  = { x: ev.detail.x, z: ev.detail.z }
+        setValleyStillShadow(false)
+      } else if (newInValley && Date.now() - lastMoveTimeRef.current > 2000) {
+        setValleyStillShadow(true)
+      } else if (!newInValley) {
+        setValleyStillShadow(false)
+      }
+
+      // NW12: V3 Complete badge — fire once when player first enters valley
+      if (newInValley && !v3BadgeDismissedRef.current) {
+        v3BadgeDismissedRef.current = true
+        setShowV3Badge(true)
+        setTimeout(() => setShowV3Badge(false), 5500)
+      }
+    }
+    window.addEventListener('nw:player-position', onPlayerPos)
+    return () => window.removeEventListener('nw:player-position', onPlayerPos)
   }, [])
 
   // ── Data shadow: mouse move over canvas ────────────────────────────────────
@@ -846,6 +936,297 @@ export default function CommandHUD({
         </div>
       )}
 
+      {/* ── NW12: SUN DOMINANCE METER ─────────────────────────────────────── */}
+      {(() => {
+        const total = sunDominance.sun1Intensity + sunDominance.sun2Intensity
+        const solPct = total > 0.01
+          ? sunDominance.sun1Intensity / total
+          : sunDominance.solutionsHealth / (sunDominance.solutionsHealth + sunDominance.hubHealth)
+        const hubPct = 1 - solPct
+        const balanced = Math.abs(solPct - 0.5) < 0.08
+        const barColor = balanced
+          ? '#ffd700'
+          : solPct > 0.5 ? '#ff8040' : '#80c0ff'
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 90,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 25,
+              pointerEvents: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <div style={{
+              fontSize: 8,
+              fontFamily: 'monospace',
+              letterSpacing: 2,
+              color: 'rgba(255,255,255,0.35)',
+              textTransform: 'uppercase',
+            }}>
+              Business Dominance
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}>
+              {/* Solutions label */}
+              <span style={{
+                fontSize: 8,
+                fontFamily: 'monospace',
+                letterSpacing: 1,
+                color: '#ff8040',
+                opacity: solPct >= hubPct ? 1 : 0.45,
+              }}>
+                SOL
+              </span>
+              {/* Dominance bar track */}
+              <div style={{
+                width: 120,
+                height: 6,
+                background: 'rgba(255,255,255,0.08)',
+                borderRadius: 3,
+                border: `1px solid rgba(255,255,255,0.12)`,
+                position: 'relative',
+                overflow: 'hidden',
+              }}>
+                {/* Solutions fill (left side) */}
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${solPct * 100}%`,
+                  background: 'linear-gradient(to right, #ff8040, #ffaa60)',
+                  transition: 'width 0.4s ease',
+                  borderRadius: 3,
+                }} />
+                {/* Hub fill (right side) */}
+                <div style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${hubPct * 100}%`,
+                  background: 'linear-gradient(to left, #80c0ff, #60a0ee)',
+                  transition: 'width 0.4s ease',
+                  borderRadius: 3,
+                }} />
+                {/* Center glow when balanced */}
+                {balanced && (
+                  <div style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: 0,
+                    bottom: 0,
+                    width: 4,
+                    transform: 'translateX(-50%)',
+                    background: '#ffd700',
+                    boxShadow: '0 0 8px #ffd700, 0 0 16px #ffd70088',
+                    borderRadius: 2,
+                    animation: 'nw-gold-pulse 1.2s ease infinite',
+                  }} />
+                )}
+              </div>
+              {/* Hub label */}
+              <span style={{
+                fontSize: 8,
+                fontFamily: 'monospace',
+                letterSpacing: 1,
+                color: '#80c0ff',
+                opacity: hubPct >= solPct ? 1 : 0.45,
+              }}>
+                HUB
+              </span>
+            </div>
+            {balanced && (
+              <div style={{
+                fontSize: 7,
+                fontFamily: 'monospace',
+                letterSpacing: 2,
+                color: '#ffd700',
+                textShadow: '0 0 6px #ffd70088',
+                animation: 'nw-blink 1.4s ease infinite',
+              }}>
+                ✦ BALANCED ✦
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
+      {/* ── NW12: VALLEY COMBINED DATA SHADOW (standing still in valley) ─── */}
+      {valleyStillShadow && worldDataRef.current && (() => {
+        const data = worldDataRef.current!
+        const solProjects = data.projects.filter((_p, i) => i % 2 === 0).slice(0, 3)
+        const hubProjects = data.projects.filter((_p, i) => i % 2 !== 0).slice(0, 3)
+        const totalValue = data.projects.reduce((s, p) => s + p.contract_value, 0)
+        const avgHealth  = data.projects.length > 0
+          ? Math.round(data.projects.reduce((s, p) => s + (p.health_score ?? 80), 0) / data.projects.length)
+          : 80
+        return (
+          <div style={{
+            position: 'fixed',
+            bottom: 140,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 40,
+            pointerEvents: 'none',
+            background: 'rgba(0,0,0,0.88)',
+            border: '1px solid rgba(200,160,40,0.5)',
+            borderRadius: 8,
+            padding: '10px 16px',
+            backdropFilter: 'blur(10px)',
+            minWidth: 300,
+            boxShadow: '0 0 20px rgba(200,160,40,0.15)',
+            animation: 'nw-shadow-in 0.2s ease',
+          }}>
+            <div style={{
+              fontSize: 9,
+              fontFamily: 'monospace',
+              letterSpacing: 2,
+              color: '#c8a028',
+              fontWeight: 700,
+              marginBottom: 8,
+              textAlign: 'center',
+            }}>
+              ◈ FOUNDERS VALLEY — COMBINED METRICS
+            </div>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 8 }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#ff8040', fontWeight: 700 }}>
+                  ${(totalValue / 2).toLocaleString()}
+                </div>
+                <div style={{ fontSize: 8, color: 'rgba(255,128,64,0.6)', fontFamily: 'monospace', letterSpacing: 1 }}>SOLUTIONS</div>
+              </div>
+              <div style={{ width: 1, background: 'rgba(200,160,40,0.3)' }} />
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#80c0ff', fontWeight: 700 }}>
+                  ${(totalValue / 2).toLocaleString()}
+                </div>
+                <div style={{ fontSize: 8, color: 'rgba(128,192,255,0.6)', fontFamily: 'monospace', letterSpacing: 1 }}>HUB</div>
+              </div>
+              <div style={{ width: 1, background: 'rgba(200,160,40,0.3)' }} />
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#ffd700', fontWeight: 700 }}>
+                  {avgHealth}%
+                </div>
+                <div style={{ fontSize: 8, color: 'rgba(255,215,0,0.6)', fontFamily: 'monospace', letterSpacing: 1 }}>HEALTH</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 20, fontSize: 8, fontFamily: 'monospace' }}>
+              <div>
+                <div style={{ color: 'rgba(255,128,64,0.5)', letterSpacing: 1, marginBottom: 3 }}>SOLUTIONS</div>
+                {solProjects.map(p => (
+                  <div key={p.id} style={{ color: 'rgba(255,128,64,0.9)', marginBottom: 2 }}>
+                    · {p.name.slice(0, 18)}
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div style={{ color: 'rgba(128,192,255,0.5)', letterSpacing: 1, marginBottom: 3 }}>HUB</div>
+                {hubProjects.map(p => (
+                  <div key={p.id} style={{ color: 'rgba(128,192,255,0.9)', marginBottom: 2 }}>
+                    · {p.name.slice(0, 18)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── NW12: V3 COMPLETE BADGE ────────────────────────────────────────── */}
+      {showV3Badge && (() => {
+        const data = worldDataRef.current
+        const totalValue = data ? data.projects.reduce((s, p) => s + p.contract_value, 0) : 0
+        const projectCount = data ? data.projects.length : 0
+        return (
+          <div style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 60,
+            pointerEvents: 'none',
+            textAlign: 'center',
+            animation: 'nw-v3-badge-in 0.5s ease forwards',
+          }}>
+            <div style={{
+              background: 'rgba(0,0,0,0.92)',
+              border: '2px solid rgba(200,160,40,0.8)',
+              borderRadius: 12,
+              padding: '28px 48px',
+              backdropFilter: 'blur(16px)',
+              boxShadow: '0 0 60px rgba(200,160,40,0.3), 0 0 120px rgba(200,160,40,0.1)',
+            }}>
+              <div style={{
+                fontSize: 9,
+                fontFamily: 'monospace',
+                letterSpacing: 4,
+                color: 'rgba(200,160,40,0.6)',
+                marginBottom: 10,
+              }}>
+                FOUNDERS VALLEY
+              </div>
+              <div style={{
+                fontSize: 28,
+                fontFamily: 'monospace',
+                fontWeight: 900,
+                letterSpacing: 6,
+                color: '#ffd700',
+                textShadow: '0 0 20px #ffd700, 0 0 40px #ffd70066',
+                marginBottom: 8,
+              }}>
+                V3 COMPLETE
+              </div>
+              <div style={{
+                width: 180,
+                height: 1,
+                background: 'linear-gradient(to right, transparent, #c8a028, transparent)',
+                margin: '0 auto 14px',
+              }} />
+              {totalValue > 0 && (
+                <div style={{ display: 'flex', gap: 24, justifyContent: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontFamily: 'monospace', color: '#ff8040', fontWeight: 700 }}>
+                      ${totalValue.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace', letterSpacing: 1 }}>
+                      COMBINED VALUE
+                    </div>
+                  </div>
+                  <div style={{ width: 1, background: 'rgba(200,160,40,0.3)' }} />
+                  <div>
+                    <div style={{ fontSize: 14, fontFamily: 'monospace', color: '#80c0ff', fontWeight: 700 }}>
+                      {projectCount}
+                    </div>
+                    <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace', letterSpacing: 1 }}>
+                      ACTIVE PROJECTS
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div style={{
+                marginTop: 12,
+                fontSize: 8,
+                fontFamily: 'monospace',
+                letterSpacing: 2,
+                color: 'rgba(200,160,40,0.5)',
+              }}>
+                POWER ON SOLUTIONS LLC + POWERON HUB
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* ── Canvas hover capture for data shadow ──────────────────────────── */}
       <div
         style={{
@@ -866,6 +1247,17 @@ export default function CommandHUD({
         @keyframes nw-shadow-in {
           from { opacity: 0; transform: translateY(-4px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes nw-gold-pulse {
+          0%, 100% { opacity: 1; box-shadow: 0 0 8px #ffd700, 0 0 16px #ffd70088; }
+          50%       { opacity: 0.6; box-shadow: 0 0 4px #ffd700, 0 0 8px #ffd70044; }
+        }
+        @keyframes nw-v3-badge-in {
+          0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+          15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+          25%  { transform: translate(-50%, -50%) scale(1.0); }
+          80%  { opacity: 1; transform: translate(-50%, -50%) scale(1.0); }
+          100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
         }
       `}</style>
     </>
