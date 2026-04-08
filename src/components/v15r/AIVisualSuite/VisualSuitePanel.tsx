@@ -385,6 +385,11 @@ export default function VisualSuitePanel({
     </div>
   )
 
+  // B62: Determine effective mic state — prefer NEXUS pipeline (onMicToggle) over local mic
+  const isNexusMic = !!onMicToggle
+  const effectiveMicActive = isNexusMic ? (micActive ?? false) : isLive
+  const effectiveMicToggle = isNexusMic ? onMicToggle : toggleMic
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{
@@ -395,92 +400,12 @@ export default function VisualSuitePanel({
       flex:            1,
       minHeight:       0,
       backgroundColor: '#000',
-      borderRadius:    10,
       overflow:        'hidden',
       fontFamily:      'Courier New, monospace',
       userSelect:      'none',
     }}>
 
-      {/* ── Mode bucket dropdowns (B50) — absolute overlay at top ── */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, padding: '8px 8px 4px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
-        onClick={(e) => { if (e.target === e.currentTarget) setOpenDropdown(null) }}>
-        {([['B1', b1Modes], ['B2', b2Modes], ['B3', b3Modes]] as const).map(([bKey, group]) => {
-          const bc = bucketColor(bKey)
-          const activeModeInBucket = group.find(md => md.id === activeMode)
-          const isOpen = openDropdown === bKey
-          return (
-            <div key={bKey} style={{ position: 'relative' }}>
-              <button
-                onClick={() => setOpenDropdown(isOpen ? null : bKey)}
-                style={{
-                  display:         'flex', alignItems: 'center', gap: 6,
-                  padding:         '4px 10px',
-                  border:          `1px solid ${activeModeInBucket ? bc : '#333'}`,
-                  borderRadius:    5,
-                  backgroundColor: activeModeInBucket ? bc + '18' : 'rgba(255,255,255,0.04)',
-                  color:           activeModeInBucket ? bc : '#666',
-                  fontSize:        9, fontFamily: 'Courier New, monospace',
-                  fontWeight:      700, letterSpacing: '0.08em',
-                  cursor:          'pointer', whiteSpace: 'nowrap',
-                  transition:      'all 0.12s',
-                }}
-              >
-                <span style={{ color: bc }}>{bKey}</span>
-                {activeModeInBucket && <span style={{ color: '#aaa', fontWeight: 400 }}>{activeModeInBucket.name}</span>}
-                {!activeModeInBucket && <span style={{ color: '#444' }}>— select —</span>}
-                <span style={{ fontSize: 8, color: '#555', marginLeft: 2 }}>▼</span>
-              </button>
-              {isOpen && (
-                <div
-                  style={{
-                    position: 'absolute', top: '100%', left: 0, zIndex: 300,
-                    marginTop: 4, minWidth: 180, maxHeight: 300, overflowY: 'auto',
-                    backgroundColor: 'rgba(4,6,18,0.98)',
-                    border: `1px solid ${bc}44`, borderRadius: 7,
-                    boxShadow: `0 8px 32px rgba(0,0,0,0.8), 0 0 12px ${bc}18`,
-                    backdropFilter: 'blur(12px)',
-                  }}
-                >
-                  {group.map(md => {
-                    const isActive = md.id === activeMode
-                    return (
-                      <button
-                        key={md.id}
-                        onClick={() => { setMode(md.id); setOpenDropdown(null) }}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8,
-                          width: '100%', padding: '6px 12px',
-                          border: 'none', cursor: 'pointer',
-                          backgroundColor: isActive ? bc + '22' : 'transparent',
-                          color: isActive ? bc : '#9ca3af',
-                          fontSize: 10, fontFamily: 'Courier New, monospace',
-                          letterSpacing: '0.04em', textAlign: 'left',
-                          transition: 'background 0.1s',
-                        }}
-                        onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.06)' }}
-                        onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}
-                      >
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: isActive ? bc : '#333', flexShrink: 0, display: 'inline-block' }} />
-                        <span style={{ fontSize: 8, color: '#555', minWidth: 22 }}>#{md.id.toString().padStart(2,'0')}</span>
-                        <span style={{ flex: 1 }}>{md.name}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        })}
-        {/* Close dropdowns on outside click */}
-        {openDropdown && (
-          <div
-            style={{ position: 'fixed', inset: 0, zIndex: 299 }}
-            onClick={() => setOpenDropdown(null)}
-          />
-        )}
-      </div>
-
-      {/* ── Canvas — B58: flex:1 fills remaining height above controls bar ── */}
+      {/* ── Canvas — fills all space above 72px bottom bar ── */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <canvas
           ref={canvasRef}
@@ -498,157 +423,196 @@ export default function VisualSuitePanel({
         )}
       </div>
 
-      {/* ── Bottom controls — B58: flex-shrink:0, always visible ── */}
-      <div style={{ height: 80, flexShrink: 0, padding: '6px 10px 6px', display: 'flex', flexDirection: 'column', gap: 5, backgroundColor: '#060810', justifyContent: 'space-between' }}>
+      {/* ── B62: Single-row bottom bar — 72px, zero scrolling ── */}
+      <div style={{
+        height:          72,
+        flexShrink:      0,
+        display:         'flex',
+        alignItems:      'center',
+        gap:             8,
+        padding:         '0 10px',
+        backgroundColor: '#060810',
+        borderTop:       '1px solid rgba(255,255,255,0.07)',
+        overflow:        'hidden',
+      }}>
 
-        {/* Mode label + mic + action buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* B52: MIC button — leftmost, always visible */}
-          <button
-            onClick={toggleMic}
-            title={isLive ? 'MIC LIVE — click to stop' : micError ?? 'Click to activate mic'}
-            style={{
-              width:           48,
-              height:          36,
-              borderRadius:    8,
-              border:          `1.5px solid ${isLive ? '#00ff88' : micError ? '#ff4444' : '#333'}`,
-              backgroundColor: isLive ? '#00ff8822' : micError ? '#ff444411' : 'transparent',
-              color:           isLive ? '#00ff88' : micError ? '#ff4444' : '#555',
-              cursor:          'pointer',
-              display:         'flex',
-              flexDirection:   'column',
-              alignItems:      'center',
-              justifyContent:  'center',
-              gap:             2,
-              flexShrink:      0,
-              position:        'relative',
-              overflow:        'hidden',
-            }}
-          >
-            {isLive ? <Mic size={14} /> : <MicOff size={14} />}
-            <span style={{ fontSize: 7, fontFamily: 'Courier New, monospace', letterSpacing: '0.08em', fontWeight: 800 }}>
-              {isLive ? 'LIVE' : 'MIC'}
-            </span>
-            {/* Pulse ring when live */}
-            {isLive && (
-              <span style={{
-                position: 'absolute', inset: 0, borderRadius: 8,
-                border: '1.5px solid #00ff88',
-                animation: 'ping 1.4s cubic-bezier(0,0,0.2,1) infinite',
-                opacity: 0.4,
-              }} />
-            )}
-          </button>
-
-          {/* Mode badge */}
-          <div style={{
-            display:         'flex',
-            alignItems:      'center',
-            gap:             6,
-            flex:            1,
-            minWidth:        0,
-          }}>
-            <span style={{
-              fontSize:        9,
-              fontWeight:      800,
-              color:           bucketColor(activeDesc.bucket),
-              backgroundColor: bucketColor(activeDesc.bucket) + '18',
-              border:          `1px solid ${bucketColor(activeDesc.bucket)}44`,
-              padding:         '2px 7px',
-              borderRadius:    4,
-              letterSpacing:   '0.1em',
-              flexShrink:      0,
-            }}>
-              {activeDesc.bucket}
-            </span>
-            <span style={{
-              fontSize:     11,
-              fontWeight:   700,
-              color:        activeDesc.color,
-              letterSpacing:'0.06em',
-              overflow:     'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace:   'nowrap',
-            }}>
-              {activeDesc.name}
-            </span>
-            <span style={{ fontSize: 9, color: '#333', marginLeft: 2, flexShrink: 0 }}>
-              #{activeDesc.id.toString().padStart(2, '0')}
-            </span>
-            {isLive
-              ? <span style={{ fontSize: 8, color: '#00ff9f', flexShrink: 0, letterSpacing: '0.07em' }}>● LIVE AUDIO</span>
-              : <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.2)', flexShrink: 0, letterSpacing: '0.07em' }}>● SIMULATED</span>
-            }
-          </div>
-
-          {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-            {/* AUTO */}
-            <button
-              onClick={() => {
-                setAutoOn(p => !p)
-                autoTimerRef.current = performance.now()
-              }}
-              style={{
-                fontSize:        9,
-                fontFamily:      'Courier New, monospace',
-                letterSpacing:   '0.08em',
-                padding:         '4px 9px',
-                border:          `1px solid ${autoOn ? '#00ff88' : '#333'}`,
-                borderRadius:    4,
-                backgroundColor: autoOn ? '#00ff8822' : 'transparent',
-                color:           autoOn ? '#00ff88' : '#555',
-                cursor:          'pointer',
-              }}
-            >
-              {autoOn ? '⏸ AUTO' : '▶ AUTO'}
-            </button>
-
-            {/* CAR REEL */}
-            <button
-              onClick={() => setShowReel(p => !p)}
-              style={{
-                fontSize:        9,
-                fontFamily:      'Courier New, monospace',
-                letterSpacing:   '0.08em',
-                padding:         '4px 9px',
-                border:          `1px solid ${showReel ? '#ffaa44' : '#333'}`,
-                borderRadius:    4,
-                backgroundColor: showReel ? '#ffaa4422' : 'transparent',
-                color:           showReel ? '#ffaa44' : '#555',
-                cursor:          'pointer',
-              }}
-            >
-              🚗 REEL
-            </button>
-
-            {/* INFO */}
-            <button
-              onClick={() => setShowInfo(p => !p)}
-              style={{
-                fontSize:        9,
-                fontFamily:      'Courier New, monospace',
-                letterSpacing:   '0.08em',
-                padding:         '4px 9px',
-                border:          `1px solid ${showInfo ? activeDesc.color : '#333'}`,
-                borderRadius:    4,
-                backgroundColor: showInfo ? activeDesc.color + '22' : 'transparent',
-                color:           showInfo ? activeDesc.color : '#555',
-                cursor:          'pointer',
-              }}
-            >
-              ? INFO
-            </button>
-          </div>
+        {/* Mode bucket dropdowns — B50 style, opens upward */}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}>
+          {([['B1', b1Modes], ['B2', b2Modes], ['B3', b3Modes]] as const).map(([bKey, group]) => {
+            const bc = bucketColor(bKey)
+            const activeModeInBucket = group.find(md => md.id === activeMode)
+            const isOpen = openDropdown === bKey
+            return (
+              <div key={bKey} style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setOpenDropdown(isOpen ? null : bKey)}
+                  style={{
+                    display:         'flex', alignItems: 'center', gap: 4,
+                    padding:         '4px 8px',
+                    border:          `1px solid ${activeModeInBucket ? bc : '#333'}`,
+                    borderRadius:    5,
+                    backgroundColor: activeModeInBucket ? bc + '18' : 'rgba(255,255,255,0.04)',
+                    color:           activeModeInBucket ? bc : '#666',
+                    fontSize:        9, fontFamily: 'Courier New, monospace',
+                    fontWeight:      700, letterSpacing: '0.08em',
+                    cursor:          'pointer', whiteSpace: 'nowrap',
+                    transition:      'all 0.12s',
+                  }}
+                >
+                  <span style={{ color: bc }}>{bKey}</span>
+                  {activeModeInBucket && <span style={{ color: '#aaa', fontWeight: 400, maxWidth: 70, overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeModeInBucket.name}</span>}
+                  {!activeModeInBucket && <span style={{ color: '#444' }}>—</span>}
+                  <span style={{ fontSize: 7, color: '#555' }}>▲</span>
+                </button>
+                {isOpen && (
+                  <div
+                    style={{
+                      position: 'absolute', bottom: '100%', left: 0, zIndex: 300,
+                      marginBottom: 4, minWidth: 180, maxHeight: 280, overflowY: 'auto',
+                      backgroundColor: 'rgba(4,6,18,0.98)',
+                      border: `1px solid ${bc}44`, borderRadius: 7,
+                      boxShadow: `0 -8px 32px rgba(0,0,0,0.8), 0 0 12px ${bc}18`,
+                      backdropFilter: 'blur(12px)',
+                    }}
+                  >
+                    {group.map(md => {
+                      const isActive = md.id === activeMode
+                      return (
+                        <button
+                          key={md.id}
+                          onClick={() => { setMode(md.id); setOpenDropdown(null) }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            width: '100%', padding: '6px 12px',
+                            border: 'none', cursor: 'pointer',
+                            backgroundColor: isActive ? bc + '22' : 'transparent',
+                            color: isActive ? bc : '#9ca3af',
+                            fontSize: 10, fontFamily: 'Courier New, monospace',
+                            letterSpacing: '0.04em', textAlign: 'left',
+                            transition: 'background 0.1s',
+                          }}
+                          onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.06)' }}
+                          onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}
+                        >
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: isActive ? bc : '#333', flexShrink: 0, display: 'inline-block' }} />
+                          <span style={{ fontSize: 8, color: '#555', minWidth: 20 }}>#{md.id.toString().padStart(2,'0')}</span>
+                          <span style={{ flex: 1 }}>{md.name}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {/* Close dropdowns on outside click */}
+          {openDropdown && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setOpenDropdown(null)} />
+          )}
         </div>
 
-        {/* Sliders */}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <Slider label="MTZ"  value={mtz}       onChange={setMtz}   color="#ff44ff" />
+        {/* Divider */}
+        <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+        {/* MIC button — 56px green orb, same style as floating NEXUS mic */}
+        <button
+          onClick={effectiveMicToggle}
+          title={effectiveMicActive ? 'Stop NEXUS mic' : (isNexusMic ? 'Activate NEXUS voice' : (micError ?? 'Activate mic'))}
+          style={{
+            width:           56,
+            height:          56,
+            borderRadius:    '50%',
+            background:      effectiveMicActive
+              ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+              : 'linear-gradient(135deg, rgba(34,197,94,0.15) 0%, rgba(22,163,74,0.15) 100%)',
+            border:          `1.5px solid ${effectiveMicActive ? 'rgba(34,197,94,0.8)' : micError ? '#ff4444' : 'rgba(34,197,94,0.35)'}`,
+            boxShadow:       effectiveMicActive ? '0 4px 20px rgba(34,197,94,0.5)' : '0 2px 8px rgba(34,197,94,0.15)',
+            display:         'flex',
+            flexDirection:   'column',
+            alignItems:      'center',
+            justifyContent:  'center',
+            gap:             2,
+            cursor:          'pointer',
+            flexShrink:      0,
+            position:        'relative',
+            overflow:        'hidden',
+            transition:      'all 0.2s',
+            animation:       effectiveMicActive ? 'orbMicPulse 1.5s ease-in-out infinite' : 'none',
+          }}
+        >
+          {effectiveMicActive ? <Mic size={16} color="#ffffff" /> : <MicOff size={16} color="rgba(34,197,94,0.8)" />}
+          <span style={{
+            fontSize: 7, fontFamily: 'Courier New, monospace', letterSpacing: '0.08em',
+            fontWeight: 800, color: effectiveMicActive ? '#ffffff' : 'rgba(34,197,94,0.8)',
+          }}>
+            {effectiveMicActive ? 'LIVE' : 'NEXUS'}
+          </span>
+          {effectiveMicActive && (
+            <span style={{
+              position: 'absolute', inset: 0, borderRadius: '50%',
+              border: '1.5px solid rgba(34,197,94,0.6)',
+              animation: 'ping 1.4s cubic-bezier(0,0,0.2,1) infinite',
+              opacity: 0.5,
+            }} />
+          )}
+        </button>
+
+        {/* NEXUS status text (when responding/thinking) */}
+        {nexusStatusText && (
+          <span style={{
+            fontSize: 8, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase',
+            color: nexusStatusText.includes('SPEAKING') ? '#7c3aed' : '#3A8EFF',
+            padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+            backgroundColor: nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.12)' : 'rgba(58,142,255,0.12)',
+            border: `1px solid ${nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.3)' : 'rgba(58,142,255,0.3)'}`,
+            animation: 'orbMicPulse 1.2s ease-in-out infinite',
+          }}>{nexusStatusText}</span>
+        )}
+
+        {/* Divider */}
+        <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+        {/* Inline sliders — RTT INT SPD NTE, label above each */}
+        <div style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center', minWidth: 0 }}>
+          <Slider label="RTT"  value={mtz}       onChange={setMtz}   color="#ff44ff" />
           <Slider label="INT"  value={intensity}  onChange={setInt}   color="#00ff88" />
           <Slider label="SPD"  value={speed}      onChange={setSpeed} color="#44aaff" />
-          <Slider label="HUE"  value={hue}        onChange={setHue}   color={`hsl(${hue}, 80%, 65%)`} />
+          <Slider label="NTE"  value={hue}        onChange={setHue}   color={`hsl(${hue}, 80%, 65%)`} />
         </div>
+
+        {/* Divider */}
+        <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+        {/* CAR REEL */}
+        <button
+          onClick={() => setShowReel(p => !p)}
+          style={{
+            fontSize: 9, fontFamily: 'Courier New, monospace', letterSpacing: '0.08em',
+            padding: '5px 10px', border: `1px solid ${showReel ? '#ffaa44' : '#333'}`,
+            borderRadius: 5, backgroundColor: showReel ? '#ffaa4422' : 'transparent',
+            color: showReel ? '#ffaa44' : '#555', cursor: 'pointer', flexShrink: 0,
+          }}
+        >
+          🚗 REEL
+        </button>
+
+        {/* INFO */}
+        <button
+          onClick={() => setShowInfo(p => !p)}
+          style={{
+            fontSize: 9, fontFamily: 'Courier New, monospace', letterSpacing: '0.08em',
+            padding: '5px 10px', border: `1px solid ${showInfo ? activeDesc.color : '#333'}`,
+            borderRadius: 5, backgroundColor: showInfo ? activeDesc.color + '22' : 'transparent',
+            color: showInfo ? activeDesc.color : '#555', cursor: 'pointer', flexShrink: 0,
+          }}
+        >
+          ? INFO
+        </button>
+
+        <style>{`
+          @keyframes orbMicPulse { 0%,100%{box-shadow:0 0 10px rgba(34,197,94,0.35)} 50%{box-shadow:0 0 24px rgba(34,197,94,0.7)} }
+          @keyframes ping { 75%,100%{transform:scale(1.4);opacity:0} }
+        `}</style>
       </div>
     </div>
   )

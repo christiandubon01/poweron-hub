@@ -15,6 +15,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { getBackupData } from '@/services/backupDataService'
 import { useReadOnly } from '@/contexts/ReadOnlyContext'
 import { useDemoStore } from '@/store/demoStore'
+import { useUIStore } from '@/store/uiStore'
 import Watermark from '@/components/Watermark'
 import ConclusionCards from '@/components/ConclusionCards'
 import ProactiveAlertCards from '@/components/ProactiveAlertCards'
@@ -134,6 +135,8 @@ export function AppShell({ children }: AppShellProps) {
 
   const { isReadOnly } = useReadOnly()
   const { isDemoMode, enableDemoMode, disableDemoMode, setHasHydrated, getDemoCompanyName } = useDemoStore()
+  // B62: hide floating NEXUS mic while ORB LAB is mounted (inline mic takes over)
+  const orbLabActive = useUIStore((s) => s.orbLabActive)
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
   // NDA gate — check if current user has signed NDA; show flow if not.
@@ -675,9 +678,9 @@ export function AppShell({ children }: AppShellProps) {
       </Suspense>
 
       {/* Floating NEXUS voice button — bottom right on all panels */}
-      {/* B57 FIX 2: hideFloatingOrb=true when ORB LAB is active to avoid conflict with canvas orb */}
+      {/* B62: hideFloatingOrb=true when ORB LAB is mounted (orbLabActive zustand flag) */}
       <Suspense fallback={null}>
-        <VoiceActivationButton hideFloatingOrb={activeView === 'viz-lab'} />
+        <VoiceActivationButton hideFloatingOrb={orbLabActive} />
       </Suspense>
 
       {/* Watermark — fixed bottom-right, always visible */}
