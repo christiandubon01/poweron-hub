@@ -1,14 +1,16 @@
 // @ts-nocheck
 /**
- * CommandCenterNeuralMap.tsx — B45 | Command Center Neural Map
+ * CommandCenterNeuralMap.tsx — B66 | Neural Map 1 — 5 Performance Scenarios + New Nodes
  *
- * Separate Three.js instance from Visualization Lab.
- * Feature 1: Neural Map sub-tab with Explore Mode + Goal Mode.
- * Feature 2: Path comparison panel when 2+ goal profiles active.
- * Feature 3: Actionable steps panel with target inputs + Claude path generation.
+ * B45 baseline: Neural Map sub-tab with Explore Mode + Goal Mode.
+ * B46: Path comparison panel, actionable steps, decoration overlay.
+ * B66 additions:
+ *   - 5 Performance Scenario system (Pesimo → Alto) with NEXUS auto-classification
+ *   - 3 new optional node types: RFI, Service Call, Cash Flow Velocity
+ *   - Constellation/pulse ring animated background behind the Three.js canvas
  *
  * Protected files NOT touched: authStore.ts, netlify.toml, backupDataService.ts,
- *   vite.config.ts, SVGCharts.tsx, AdminCommandCenter.tsx (only imported here)
+ *   vite.config.ts, SVGCharts.tsx, AdminCommandCenter.tsx
  */
 
 import { useRef, useEffect, useState, useCallback } from 'react'
@@ -19,10 +21,18 @@ import { callClaude, extractText } from '../services/claudeProxy'
 // ─── Types ────────────────────────────────────────────────────────────────────
 type CCMapMode = 'explore' | 'goal'
 
+/** B66: 5 performance scenarios */
+type PerformanceScenario =
+  | 'pesimo'
+  | 'pesimo_creciendo'
+  | 'mediano'
+  | 'mediano_alcista'
+  | 'alto'
+
 interface CCNode {
   id: string
   label: string
-  type: 'project' | 'agent' | 'decision' | 'data' | 'goalstep'
+  type: 'project' | 'agent' | 'decision' | 'data' | 'goalstep' | 'rfi' | 'servicecall' | 'cashflow'
   color: number
   size: number
   x: number
@@ -96,6 +106,79 @@ const AGENT_LIST = [
   { id: 'HUNTER',    label: 'HUNTER',    tier: 3, desc: 'Lead hunting' },
 ]
 
+// ─── B66: Scenario Configuration ─────────────────────────────────────────────
+const SCENARIO_CONFIG: Record<PerformanceScenario, {
+  label: string
+  emoji: string
+  description: string
+  nodeColorInt: number
+  nodeColorHex: string
+  lineColorInt: number
+  lineColorHex: string
+  glowOpacity: number
+  borderColor: string
+}> = {
+  pesimo: {
+    label: 'Pésimo',
+    emoji: '🔴',
+    description: 'Critical underperformance',
+    nodeColorInt: 0xcc1111,
+    nodeColorHex: '#cc1111',
+    lineColorInt: 0x660000,
+    lineColorHex: '#660000',
+    glowOpacity: 0.45,
+    borderColor: 'rgba(204,17,17,0.8)',
+  },
+  pesimo_creciendo: {
+    label: 'Pésimo Creciendo',
+    emoji: '🟠',
+    description: 'Below average but improving',
+    nodeColorInt: 0xff6600,
+    nodeColorHex: '#ff6600',
+    lineColorInt: 0x884400,
+    lineColorHex: '#884400',
+    glowOpacity: 0.4,
+    borderColor: 'rgba(255,102,0,0.7)',
+  },
+  mediano: {
+    label: 'Rendimiento Mediano',
+    emoji: '🟡',
+    description: 'Baseline expected output',
+    nodeColorInt: 0xffcc00,
+    nodeColorHex: '#ffcc00',
+    lineColorInt: 0x886600,
+    lineColorHex: '#886600',
+    glowOpacity: 0.35,
+    borderColor: 'rgba(255,204,0,0.7)',
+  },
+  mediano_alcista: {
+    label: 'Rendimiento Mediano Alcista',
+    emoji: '🟢',
+    description: 'Above average, growth signals',
+    nodeColorInt: 0x00ccaa,
+    nodeColorHex: '#00ccaa',
+    lineColorInt: 0x006644,
+    lineColorHex: '#006644',
+    glowOpacity: 0.4,
+    borderColor: 'rgba(0,204,170,0.7)',
+  },
+  alto: {
+    label: 'Rendimiento Alto',
+    emoji: '💚',
+    description: 'Optimal performance, all metrics green',
+    nodeColorInt: 0x00ff44,
+    nodeColorHex: '#00ff44',
+    lineColorInt: 0x00aa22,
+    lineColorHex: '#00aa22',
+    glowOpacity: 0.65,
+    borderColor: 'rgba(0,255,68,0.9)',
+  },
+}
+
+const SCENARIO_ORDER: PerformanceScenario[] = [
+  'pesimo', 'pesimo_creciendo', 'mediano', 'mediano_alcista', 'alto',
+]
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getAvgHealth(): number {
   try {
@@ -112,7 +195,75 @@ function formatMoney(n: number): string {
   return `$${n.toFixed(0)}`
 }
 
-// ─── Canvas icon helpers (mini versions for goal nodes) ──────────────────────
+/** B66: NEXUS auto-classifies performance scenario from real data */
+function classifyScenario(): PerformanceScenario {
+  try {
+    const d = getBackupData()
+    if (!d) return 'mediano'
+    const kpis = getKPIs(d)
+    const avgHealth = getAvgHealth()
+
+    // Compute score (0–100)
+    let score = 50 // baseline
+
+    // Collection rate: paid / pipeline
+    const collectionRate = kpis.paid / Math.max(1, kpis.pipeline)
+    if (collectionRate > 0.7) score += 20
+    else if (collectionRate > 0.5) score += 10
+    else if (collectionRate > 0.3) score += 2
+    else if (collectionRate < 0.15) score -= 20
+    else score -= 10
+
+    // Project health
+    if (avgHealth > 78) score += 15
+    else if (avgHealth > 60) score += 5
+    else if (avgHealth < 35) score -= 15
+    else if (avgHealth < 50) score -= 5
+
+    // Open RFI burden (stale = bad)
+    const openRfis = kpis.openRfis || 0
+    if (openRfis > 8) score -= 12
+    else if (openRfis > 4) score -= 6
+    else if (openRfis === 0) score += 5
+
+    // Pipeline volume
+    if (kpis.pipeline > 600000) score += 10
+    else if (kpis.pipeline > 200000) score += 4
+    else if (kpis.pipeline < 30000) score -= 10
+
+    // AR exposure vs paid
+    const arRatio = kpis.exposure / Math.max(1, kpis.paid)
+    if (arRatio > 2.0) score -= 8
+    else if (arRatio < 0.5) score += 5
+
+    if (score >= 78) return 'alto'
+    if (score >= 60) return 'mediano_alcista'
+    if (score >= 40) return 'mediano'
+    if (score >= 24) return 'pesimo_creciendo'
+    return 'pesimo'
+  } catch {
+    return 'mediano'
+  }
+}
+
+/** B66: Blend a node's natural color with the scenario color overlay */
+function applyScenarioColor(naturalColorInt: number, scenario: PerformanceScenario, nodeType: string): number {
+  if (nodeType === 'goalstep') return naturalColorInt // goal nodes keep their profile color
+  const sc = SCENARIO_CONFIG[scenario]
+  // Blend 60% scenario color, 40% natural color
+  const nr = (naturalColorInt >> 16) & 0xff
+  const ng = (naturalColorInt >> 8) & 0xff
+  const nb = naturalColorInt & 0xff
+  const sr = (sc.nodeColorInt >> 16) & 0xff
+  const sg = (sc.nodeColorInt >> 8) & 0xff
+  const sb = sc.nodeColorInt & 0xff
+  const r = Math.round(nr * 0.4 + sr * 0.6)
+  const g = Math.round(ng * 0.4 + sg * 0.6)
+  const b = Math.round(nb * 0.4 + sb * 0.6)
+  return (r << 16) | (g << 8) | b
+}
+
+// ─── Canvas icon helpers ──────────────────────────────────────────────────────
 function makeGoalStepCanvasCC(colorHex: string, stepIndex: number): HTMLCanvasElement {
   const SIZE = 128
   const c = document.createElement('canvas')
@@ -151,21 +302,111 @@ function makeBackgroundNodeCanvas(colorHex: string): HTMLCanvasElement {
   return c
 }
 
+/** B66: RFI node — hexagonal warning shape */
+function makeRFINodeCanvas(colorHex: string, rfiCount: number): HTMLCanvasElement {
+  const SIZE = 96
+  const c = document.createElement('canvas')
+  c.width = SIZE; c.height = SIZE
+  const ctx = c.getContext('2d')!
+  ctx.clearRect(0, 0, SIZE, SIZE)
+  // Hexagon
+  const cx = 48, cy = 48, r = 30
+  ctx.beginPath()
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i - Math.PI / 6
+    const x = cx + r * Math.cos(angle), y = cy + r * Math.sin(angle)
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+  }
+  ctx.closePath()
+  ctx.fillStyle = colorHex + '22'
+  ctx.strokeStyle = colorHex
+  ctx.lineWidth = 2.5
+  ctx.fill(); ctx.stroke()
+  // Label
+  ctx.fillStyle = colorHex
+  ctx.font = 'bold 20px monospace'
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillText('R', cx, cy - 6)
+  ctx.font = 'bold 12px monospace'
+  ctx.fillText(String(rfiCount), cx, cy + 9)
+  return c
+}
+
+/** B66: Service call node — square badge */
+function makeServiceCallCanvas(colorHex: string, callCount: number): HTMLCanvasElement {
+  const SIZE = 96
+  const c = document.createElement('canvas')
+  c.width = SIZE; c.height = SIZE
+  const ctx = c.getContext('2d')!
+  ctx.clearRect(0, 0, SIZE, SIZE)
+  // Rounded square
+  const pad = 12
+  ctx.beginPath()
+  ctx.roundRect(pad, pad, SIZE - pad * 2, SIZE - pad * 2, 8)
+  ctx.fillStyle = colorHex + '1a'
+  ctx.strokeStyle = colorHex
+  ctx.lineWidth = 2.5
+  ctx.fill(); ctx.stroke()
+  // Inner cross (wrench symbol)
+  ctx.strokeStyle = colorHex + 'cc'
+  ctx.lineWidth = 2
+  ctx.beginPath(); ctx.moveTo(48, 24); ctx.lineTo(48, 72); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(24, 48); ctx.lineTo(72, 48); ctx.stroke()
+  // Count badge
+  ctx.fillStyle = colorHex
+  ctx.font = 'bold 13px monospace'
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillText(String(callCount), 48, 48)
+  return c
+}
+
+/** B66: Cash flow velocity node — diamond with $ */
+function makeCashFlowCanvas(colorHex: string, rate: string): HTMLCanvasElement {
+  const SIZE = 96
+  const c = document.createElement('canvas')
+  c.width = SIZE; c.height = SIZE
+  const ctx = c.getContext('2d')!
+  ctx.clearRect(0, 0, SIZE, SIZE)
+  // Diamond
+  ctx.beginPath()
+  ctx.moveTo(48, 8); ctx.lineTo(88, 48); ctx.lineTo(48, 88); ctx.lineTo(8, 48)
+  ctx.closePath()
+  ctx.fillStyle = colorHex + '1a'
+  ctx.strokeStyle = colorHex
+  ctx.lineWidth = 2.5
+  ctx.fill(); ctx.stroke()
+  ctx.fillStyle = colorHex
+  ctx.font = 'bold 16px monospace'
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillText('$', 48, 36)
+  ctx.font = 'bold 10px monospace'
+  ctx.fillText(rate, 48, 56)
+  return c
+}
+
 // ─── Build scene data ─────────────────────────────────────────────────────────
-function buildSceneData(mode: CCMapMode, profiles: GoalProfile[]): { nodes: CCNode[]; edges: CCEdge[] } {
+function buildSceneData(
+  mode: CCMapMode,
+  profiles: GoalProfile[],
+  scenario: PerformanceScenario,
+): { nodes: CCNode[]; edges: CCEdge[] } {
   const nodes: CCNode[] = []
   const edges: CCEdge[] = []
   const rand = (scale = 5) => (Math.random() - 0.5) * scale
 
-  // Background business state nodes (always shown, dimmed in Goal Mode)
   const data = getBackupData()
   const projects = data?.projects || []
+  const kpis = data ? getKPIs(data) : {}
 
-  // Projects
+  // ── Project nodes ──────────────────────────────────────────────────────────
+  const projNodeIndices: number[] = []
   projects.slice(0, 8).forEach((p) => {
     const sc = health(p, data).sc
-    const clr = sc > 70 ? 0x00ff88 : sc > 40 ? 0xffcc00 : 0xff6600
+    const naturalClr = sc > 70 ? 0x00ff88 : sc > 40 ? 0xffcc00 : 0xff6600
+    const clr = applyScenarioColor(naturalClr, scenario, 'project')
     const sz = 0.10 + Math.min(0.18, (p.contract || 50000) / 1000000)
+    const idx = nodes.length
+    projNodeIndices.push(idx)
     nodes.push({
       id: 'proj_' + p.id, label: p.name || 'Project', type: 'project',
       color: clr, size: sz, x: rand(4), y: rand(3), z: rand(4),
@@ -175,12 +416,13 @@ function buildSceneData(mode: CCMapMode, profiles: GoalProfile[]): { nodes: CCNo
     })
   })
 
-  // Agents
+  // ── Agent nodes ────────────────────────────────────────────────────────────
   AGENT_LIST.slice(0, 8).forEach((ag) => {
     const tierClr = TIER_COLORS_INT[Math.min(ag.tier - 1, 4)]
+    const clr = applyScenarioColor(tierClr, scenario, 'agent')
     nodes.push({
       id: 'ag_' + ag.id, label: ag.label, type: 'agent',
-      color: tierClr, size: 0.09 + Math.random() * 0.04,
+      color: clr, size: 0.09 + Math.random() * 0.04,
       x: rand(5), y: rand(5), z: rand(5),
       vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
       meta: { tier: ag.tier, desc: ag.desc },
@@ -188,26 +430,30 @@ function buildSceneData(mode: CCMapMode, profiles: GoalProfile[]): { nodes: CCNo
     })
   })
 
-  // Data KPIs
-  const kpis = data ? getKPIs(data) : {}
+  // ── Data KPI nodes ─────────────────────────────────────────────────────────
   const metrics = [
-    { label: 'Pipeline', value: kpis.totalPipeline || 0, color: 0x22c55e },
-    { label: 'Paid',     value: kpis.totalPaid || 0,     color: 0x22c55e },
-    { label: 'Unbilled', value: kpis.totalUnbilled || 0, color: 0xa855f7 },
+    { label: 'Pipeline', value: kpis.totalPipeline || kpis.pipeline || 0, naturalColor: 0x22c55e },
+    { label: 'Paid',     value: kpis.totalPaid || kpis.paid || 0,         naturalColor: 0x22c55e },
+    { label: 'Unbilled', value: kpis.totalUnbilled || kpis.svcUnbilled || 0, naturalColor: 0xa855f7 },
   ]
+  const ledgerIdx = nodes.findIndex((n) => n.id === 'ag_LEDGER')
+  const dataNodeIndices: number[] = []
   metrics.forEach((m, i) => {
     const sz = 0.09 + Math.min(0.20, Math.abs(m.value) / 2000000)
     const absVal = Math.abs(m.value)
+    const clr = applyScenarioColor(m.naturalColor, scenario, 'data')
+    const idx = nodes.length
+    dataNodeIndices.push(idx)
     nodes.push({
       id: 'data_' + i, label: m.label, type: 'data',
-      color: m.color, size: sz, x: rand(3), y: rand(3), z: rand(3),
+      color: clr, size: sz, x: rand(3), y: rand(3), z: rand(3),
       vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
       meta: { valueStr: formatMoney(absVal) },
       isBackground: true,
     })
   })
 
-  // Agent → project edges (background)
+  // ── Agent → project background edges ──────────────────────────────────────
   const agentNodes = nodes.filter((n) => n.type === 'agent')
   const projNodes  = nodes.filter((n) => n.type === 'project')
   agentNodes.slice(0, 4).forEach((ag) => {
@@ -216,7 +462,102 @@ function buildSceneData(mode: CCMapMode, profiles: GoalProfile[]): { nodes: CCNo
     if (a >= 0 && b >= 0 && a !== b) edges.push({ a, b, isBackground: true })
   })
 
-  // Goal Mode: add goal path nodes in foreground
+  // ── B66: RFI nodes (branch off project nodes where RFIs exist) ────────────
+  projects.slice(0, 8).forEach((p, pi) => {
+    const openRfis = (p.rfis || []).filter((r: any) => r.status !== 'answered')
+    if (!openRfis.length) return
+    const parentIdx = projNodeIndices[pi]
+    if (parentIdx === undefined) return
+
+    // Calc avg age of open RFIs
+    const now = Date.now()
+    const avgAgeDays = openRfis.reduce((sum: number, r: any) => {
+      const created = r.createdAt ? new Date(r.createdAt).getTime() : now
+      return sum + Math.floor((now - created) / 86400000)
+    }, 0) / openRfis.length
+
+    const rfiClr = applyScenarioColor(
+      avgAgeDays > 14 ? 0xff4444 : avgAgeDays > 7 ? 0xffa500 : 0xffdd00,
+      scenario,
+      'rfi',
+    )
+    const pn = nodes[parentIdx]
+    const rfiIdx = nodes.length
+    nodes.push({
+      id: 'rfi_' + p.id,
+      label: `RFI (${openRfis.length})`,
+      type: 'rfi',
+      color: rfiClr,
+      size: 0.07 + openRfis.length * 0.01,
+      x: (pn?.x ?? 0) + 0.8 + rand(0.5),
+      y: (pn?.y ?? 0) + 0.8 + rand(0.5),
+      z: (pn?.z ?? 0) + rand(0.5),
+      vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+      meta: { rfiCount: openRfis.length, avgAgeDays: Math.round(avgAgeDays), projName: p.name },
+      isBackground: true,
+    })
+    // Edge from project → rfi
+    edges.push({ a: parentIdx, b: rfiIdx, isBackground: true })
+  })
+
+  // ── B66: Service call nodes (show open/active service calls) ──────────────
+  const activeCalls = data?.activeServiceCalls || []
+  if (activeCalls.length > 0) {
+    const svcClr = applyScenarioColor(0x38bdf8, scenario, 'servicecall')
+    const svcIdx = nodes.length
+    nodes.push({
+      id: 'svc_calls',
+      label: `Service (${activeCalls.length})`,
+      type: 'servicecall',
+      color: svcClr,
+      size: 0.10 + Math.min(0.12, activeCalls.length * 0.015),
+      x: rand(4) + 3,
+      y: rand(3) - 2,
+      z: rand(4),
+      vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+      meta: { callCount: activeCalls.length },
+      isBackground: true,
+    })
+    // Edge from LEDGER agent to service calls if LEDGER exists
+    if (ledgerIdx >= 0) {
+      edges.push({ a: ledgerIdx, b: svcIdx, isBackground: true })
+    }
+  }
+
+  // ── B66: Cash flow velocity node (connects LEDGER + Pipeline data) ─────────
+  const pipeline = kpis.pipeline || 0
+  const paid = kpis.paid || 0
+  if (pipeline > 0) {
+    const collRate = Math.round((paid / Math.max(1, pipeline)) * 100)
+    const cashClr = applyScenarioColor(
+      collRate > 65 ? 0x00ff88 : collRate > 40 ? 0xffcc00 : 0xff6600,
+      scenario,
+      'cashflow',
+    )
+    const cfIdx = nodes.length
+    nodes.push({
+      id: 'cashflow_vel',
+      label: 'Cash Velocity',
+      type: 'cashflow',
+      color: cashClr,
+      size: 0.11,
+      x: rand(3),
+      y: rand(3) + 3,
+      z: rand(3),
+      vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0,
+      meta: { collectionRate: collRate, paidStr: formatMoney(paid), pipelineStr: formatMoney(pipeline) },
+      isBackground: true,
+    })
+    // Connect to LEDGER agent and Pipeline data node
+    if (ledgerIdx >= 0) {
+      edges.push({ a: ledgerIdx, b: cfIdx, isBackground: true })
+    }
+    if (dataNodeIndices[0] !== undefined) {
+      edges.push({ a: dataNodeIndices[0], b: cfIdx, isBackground: true })
+    }
+  }
+
+  // ── Goal Mode: add goal path nodes in foreground ───────────────────────────
   if (mode === 'goal') {
     const activeProfiles = profiles.filter((p) => p.active)
     activeProfiles.forEach((profile, profileIdx) => {
@@ -260,6 +601,129 @@ function buildSceneData(mode: CCMapMode, profiles: GoalProfile[]): { nodes: CCNo
   }
 
   return { nodes, edges }
+}
+
+// ─── B66: Constellation Background ───────────────────────────────────────────
+function ConstellationBackground({ scenario }: { scenario: PerformanceScenario }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<number>(0)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const sc = SCENARIO_CONFIG[scenario]
+
+    // Generate stars
+    const STAR_COUNT = 90
+    const RING_COUNT = 3
+    const stars = Array.from({ length: STAR_COUNT }, () => ({
+      x: Math.random(),
+      y: Math.random(),
+      r: Math.random() * 1.5 + 0.3,
+      phase: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.008 + 0.003,
+    }))
+    // Constellation connections (static pairs)
+    const constellLines: [number, number][] = []
+    for (let i = 0; i < STAR_COUNT; i++) {
+      const j = (i + 2 + Math.floor(Math.random() * 4)) % STAR_COUNT
+      if (Math.abs(stars[i].x - stars[j].x) < 0.22 && Math.abs(stars[i].y - stars[j].y) < 0.22) {
+        constellLines.push([i, j])
+      }
+    }
+
+    // Pulse rings
+    const rings = Array.from({ length: RING_COUNT }, (_, i) => ({
+      x: 0.2 + Math.random() * 0.6,
+      y: 0.2 + Math.random() * 0.6,
+      phase: (Math.PI * 2 * i) / RING_COUNT,
+      speed: 0.005 + Math.random() * 0.004,
+      maxR: 0.12 + Math.random() * 0.1,
+    }))
+
+    let t = 0
+
+    function resize() {
+      if (!canvas) return
+      canvas.width = canvas.clientWidth
+      canvas.height = canvas.clientHeight
+    }
+    resize()
+    const ro = new ResizeObserver(resize)
+    ro.observe(canvas)
+
+    function draw() {
+      animRef.current = requestAnimationFrame(draw)
+      t += 0.016
+      if (!canvas || !ctx) return
+      const W = canvas.width, H = canvas.height
+      if (!W || !H) return
+
+      ctx.clearRect(0, 0, W, H)
+
+      // Constellation lines
+      ctx.setLineDash([3, 8])
+      ctx.lineWidth = 0.6
+      ctx.strokeStyle = sc.nodeColorHex + '18'
+      constellLines.forEach(([a, b]) => {
+        const sa = stars[a], sb = stars[b]
+        ctx.beginPath()
+        ctx.moveTo(sa.x * W, sa.y * H)
+        ctx.lineTo(sb.x * W, sb.y * H)
+        ctx.stroke()
+      })
+      ctx.setLineDash([])
+
+      // Stars
+      stars.forEach((s) => {
+        const brightness = 0.4 + Math.sin(t * s.speed * 60 + s.phase) * 0.35
+        const alpha = Math.max(0.05, brightness)
+        ctx.beginPath()
+        ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2)
+        const grad = ctx.createRadialGradient(s.x * W, s.y * H, 0, s.x * W, s.y * H, s.r * 3)
+        grad.addColorStop(0, sc.nodeColorHex + Math.round(alpha * 255).toString(16).padStart(2, '0'))
+        grad.addColorStop(1, 'transparent')
+        ctx.fillStyle = grad
+        ctx.fill()
+      })
+
+      // Pulse rings
+      rings.forEach((ring) => {
+        const progress = ((t * ring.speed * 20 + ring.phase) % (Math.PI * 2)) / (Math.PI * 2)
+        const currentR = ring.maxR * progress
+        const opacity = (1 - progress) * 0.18
+        if (opacity < 0.01) return
+        ctx.beginPath()
+        ctx.arc(ring.x * W, ring.y * H, currentR * Math.min(W, H), 0, Math.PI * 2)
+        ctx.strokeStyle = sc.nodeColorHex + Math.round(opacity * 255).toString(16).padStart(2, '0')
+        ctx.lineWidth = 1.2
+        ctx.stroke()
+      })
+    }
+    draw()
+
+    return () => {
+      cancelAnimationFrame(animRef.current)
+      ro.disconnect()
+    }
+  }, [scenario])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 0,
+      }}
+    />
+  )
 }
 
 // ─── Comparison Sidebar ───────────────────────────────────────────────────────
@@ -319,10 +783,8 @@ function ComparisonSidebar({
           )}
 
           {active.map((profile, idx) => {
-            // Estimate probability based on target vs horizon (mock heuristic)
             const monthlyRequired = profile.targetAmount / Math.max(1, profile.timeHorizonMonths)
             const probability = Math.max(10, Math.min(95, Math.round(100 - (monthlyRequired / 20000) * 15 + idx * 3)))
-            const milestoneIdx = Math.floor(profile.timeHorizonMonths / 6)
             const nextMilestoneLabel = `Month ${Math.round(profile.timeHorizonMonths * 0.33)} target`
 
             return (
@@ -333,31 +795,22 @@ function ComparisonSidebar({
                 border: `1px solid ${profile.color}44`,
                 backgroundColor: profile.color + '0a',
               }}>
-                {/* Header */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: profile.color, flexShrink: 0 }} />
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profile.name}</span>
                 </div>
-
-                {/* Target */}
                 <div style={{ marginBottom: 6 }}>
                   <div style={{ fontSize: 8, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Target</div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: profile.color }}>{formatMoney(profile.targetAmount)}</div>
                 </div>
-
-                {/* Horizon */}
                 <div style={{ marginBottom: 6 }}>
                   <div style={{ fontSize: 8, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Time Horizon</div>
                   <div style={{ fontSize: 11, color: '#d1d5db' }}>{profile.timeHorizonMonths} months</div>
                 </div>
-
-                {/* Next milestone */}
                 <div style={{ marginBottom: 6 }}>
                   <div style={{ fontSize: 8, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Projected Milestone</div>
                   <div style={{ fontSize: 10, color: '#9ca3af' }}>{nextMilestoneLabel}</div>
                 </div>
-
-                {/* Probability */}
                 <div>
                   <div style={{ fontSize: 8, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>% Probability</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -484,8 +937,8 @@ function ActionableStepsPanel({
       const data = getBackupData()
       const kpis = data ? getKPIs(data) : {}
       const projects = data?.projects?.length ?? 0
-      const pipeline = kpis.totalPipeline ?? 0
-      const paid = kpis.totalPaid ?? 0
+      const pipeline = kpis.pipeline ?? 0
+      const paid = kpis.paid ?? 0
 
       const systemPrompt = `You are a business growth strategist for Power On Solutions, an electrical contractor. Return ONLY valid JSON.`
       const userPrompt = `Current business state:
@@ -506,7 +959,6 @@ Return ONLY the JSON array, no markdown, no explanation.`
         max_tokens: 1200,
       })
       const text = extractText(res)
-      // Parse JSON
       const cleaned = text.replace(/```json|```/g, '').trim()
       const startIdx = cleaned.indexOf('[')
       const endIdx = cleaned.lastIndexOf(']')
@@ -515,7 +967,6 @@ Return ONLY the JSON array, no markdown, no explanation.`
         setLastMilestones(milestones)
         setExpanded(true)
 
-        // Create a goal profile from this
         const colorIdx = Math.floor(Math.random() * GOAL_PROFILE_COLORS.length)
         const newProfile: GoalProfile = {
           id: 'gen_' + Date.now(),
@@ -555,26 +1006,14 @@ Return ONLY the JSON array, no markdown, no explanation.`
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
-              type="range"
-              min={5000}
-              max={1000000}
-              step={5000}
-              value={targetAmount}
+              type="range" min={5000} max={1000000} step={5000} value={targetAmount}
               onChange={(e) => setTargetAmount(Number(e.target.value))}
               style={{ width: 140, accentColor: '#10b981', cursor: 'pointer' }}
             />
             <input
-              type="number"
-              min={5000}
-              max={1000000}
-              step={1000}
-              value={targetAmount}
+              type="number" min={5000} max={1000000} step={1000} value={targetAmount}
               onChange={(e) => setTargetAmount(Math.max(5000, Math.min(1000000, Number(e.target.value))))}
-              style={{
-                width: 90, padding: '3px 6px', borderRadius: 5,
-                border: '1px solid #1e3a2f', backgroundColor: '#060d0a',
-                color: '#10b981', fontSize: 11, outline: 'none',
-              }}
+              style={{ width: 90, padding: '3px 6px', borderRadius: 5, border: '1px solid #1e3a2f', backgroundColor: '#060d0a', color: '#10b981', fontSize: 11, outline: 'none' }}
             />
           </div>
         </div>
@@ -589,26 +1028,14 @@ Return ONLY the JSON array, no markdown, no explanation.`
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
-              type="range"
-              min={12}
-              max={240}
-              step={6}
-              value={timeHorizon}
+              type="range" min={12} max={240} step={6} value={timeHorizon}
               onChange={(e) => setTimeHorizon(Number(e.target.value))}
               style={{ width: 140, accentColor: '#0ea5e9', cursor: 'pointer' }}
             />
             <input
-              type="number"
-              min={12}
-              max={240}
-              step={1}
-              value={timeHorizon}
+              type="number" min={12} max={240} step={1} value={timeHorizon}
               onChange={(e) => setTimeHorizon(Math.max(12, Math.min(240, Number(e.target.value))))}
-              style={{
-                width: 60, padding: '3px 6px', borderRadius: 5,
-                border: '1px solid #1e2d3d', backgroundColor: '#060d18',
-                color: '#0ea5e9', fontSize: 11, outline: 'none',
-              }}
+              style={{ width: 60, padding: '3px 6px', borderRadius: 5, border: '1px solid #1e2d3d', backgroundColor: '#060d18', color: '#0ea5e9', fontSize: 11, outline: 'none' }}
             />
           </div>
         </div>
@@ -633,7 +1060,6 @@ Return ONLY the JSON array, no markdown, no explanation.`
           {generating ? '⏳ Generating…' : '⚡ Generate Path'}
         </button>
 
-        {/* Expand milestones toggle */}
         {lastMilestones.length > 0 && (
           <button
             onClick={() => setExpanded((e) => !e)}
@@ -650,23 +1076,12 @@ Return ONLY the JSON array, no markdown, no explanation.`
         )}
       </div>
 
-      {/* Milestones list */}
       {expanded && lastMilestones.length > 0 && (
-        <div style={{
-          marginTop: 12,
-          display: 'flex',
-          gap: 10,
-          overflowX: 'auto',
-          paddingBottom: 8,
-        }}>
+        <div style={{ marginTop: 12, display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8 }}>
           {lastMilestones.map((m, i) => (
             <div key={i} style={{
-              minWidth: 200,
-              padding: '10px 12px',
-              borderRadius: 8,
-              border: '1px solid #1e3a2f',
-              backgroundColor: '#0a1a10',
-              flexShrink: 0,
+              minWidth: 200, padding: '10px 12px', borderRadius: 8,
+              border: '1px solid #1e3a2f', backgroundColor: '#0a1a10', flexShrink: 0,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
                 <div style={{ width: 18, height: 18, borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800, color: '#000', flexShrink: 0 }}>{i + 1}</div>
@@ -689,29 +1104,34 @@ Return ONLY the JSON array, no markdown, no explanation.`
 function CCNeuralMapCanvas({
   mode,
   profiles,
+  scenario,
   onGoalNodeClick,
 }: {
   mode: CCMapMode
   profiles: GoalProfile[]
+  scenario: PerformanceScenario
   onGoalNodeClick: (node: CCNode, x: number, y: number) => void
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const modeRef = useRef<CCMapMode>(mode)
   const profilesRef = useRef<GoalProfile[]>(profiles)
+  const scenarioRef = useRef<PerformanceScenario>(scenario)
   const rebuildRef = useRef<() => void>(() => {})
   const goalRebuildRef = useRef<() => void>(() => {})
   const onGoalNodeClickRef = useRef(onGoalNodeClick)
 
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { profilesRef.current = profiles }, [profiles])
+  useEffect(() => {
+    scenarioRef.current = scenario
+    if (rebuildRef.current) rebuildRef.current()
+  }, [scenario])
   useEffect(() => { onGoalNodeClickRef.current = onGoalNodeClick }, [onGoalNodeClick])
 
-  // Trigger rebuild when mode changes
   useEffect(() => {
     if (rebuildRef.current) rebuildRef.current()
   }, [mode])
 
-  // Trigger goal rebuild when profiles change
   useEffect(() => {
     if (goalRebuildRef.current) goalRebuildRef.current()
   }, [profiles])
@@ -729,10 +1149,10 @@ function CCNeuralMapCanvas({
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setSize(W, H)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x020408, 1)
+    renderer.setClearColor(0x020408, 0)   // alpha=0 so constellation bg shows through
     mount.appendChild(renderer.domElement)
 
-    // ── B46 FIX 3: Decoration overlay (2D canvas) for glow + dash effects ─────
+    // ── Decoration overlay (2D canvas) for glow + dash effects ───────────────
     const overlayCanvas = document.createElement('canvas')
     overlayCanvas.width = W; overlayCanvas.height = H
     overlayCanvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:5;'
@@ -756,7 +1176,6 @@ function CCNeuralMapCanvas({
     let simulationActive = true
     let edgesAsTubes = false
 
-    // Label container
     let labelContainer: HTMLDivElement | null = null
     let labelDivs: HTMLDivElement[] = []
     const _labelV3 = new THREE.Vector3()
@@ -772,9 +1191,21 @@ function CCNeuralMapCanvas({
     function createNodeSprite(n: CCNode): THREE.Sprite {
       const isGoal = n.type === 'goalstep'
       const isBg   = n.isBackground && modeRef.current === 'goal'
-      const canvas = isGoal
-        ? makeGoalStepCanvasCC(n.meta?.goalColor || '#7c3aed', n.meta?.stepIndex || 0)
-        : makeBackgroundNodeCanvas('#' + n.color.toString(16).padStart(6, '0'))
+      let canvas: HTMLCanvasElement
+
+      if (isGoal) {
+        canvas = makeGoalStepCanvasCC(n.meta?.goalColor || '#7c3aed', n.meta?.stepIndex || 0)
+      } else if (n.type === 'rfi') {
+        canvas = makeRFINodeCanvas('#' + n.color.toString(16).padStart(6, '0'), n.meta?.rfiCount || 1)
+      } else if (n.type === 'servicecall') {
+        canvas = makeServiceCallCanvas('#' + n.color.toString(16).padStart(6, '0'), n.meta?.callCount || 1)
+      } else if (n.type === 'cashflow') {
+        const rateStr = (n.meta?.collectionRate || 0) + '%'
+        canvas = makeCashFlowCanvas('#' + n.color.toString(16).padStart(6, '0'), rateStr)
+      } else {
+        canvas = makeBackgroundNodeCanvas('#' + n.color.toString(16).padStart(6, '0'))
+      }
+
       const texture = new THREE.CanvasTexture(canvas)
       const mat = new THREE.SpriteMaterial({
         map: texture,
@@ -794,7 +1225,7 @@ function CCNeuralMapCanvas({
       while (goalGroup.children.length) goalGroup.remove(goalGroup.children[0])
       edgesAsTubes = false
 
-      const { nodes, edges } = buildSceneData(modeRef.current, profilesRef.current)
+      const { nodes, edges } = buildSceneData(modeRef.current, profilesRef.current, scenarioRef.current)
       const capped = nodes.slice(0, 250)
       currentNodes = capped
       currentEdges = edges.filter((e) => e.a < capped.length && e.b < capped.length)
@@ -829,6 +1260,15 @@ function CCNeuralMapCanvas({
           } else if (n.type === 'agent') {
             div.style.color = '#ca8a04'
             div.textContent = n.label
+          } else if (n.type === 'rfi') {
+            div.style.color = '#ff9944'
+            div.textContent = n.label
+          } else if (n.type === 'servicecall') {
+            div.style.color = '#38bdf8'
+            div.textContent = n.label
+          } else if (n.type === 'cashflow') {
+            div.style.color = '#34d399'
+            div.textContent = `Cash ${n.meta?.collectionRate ?? 0}%`
           } else {
             div.style.color = '#06b6d4'
             div.textContent = n.label
@@ -845,9 +1285,10 @@ function CCNeuralMapCanvas({
         const pts = new Float32Array([a.x, a.y, a.z, b.x, b.y, b.z])
         geo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
         const isBgEdge = e.isBackground && modeRef.current === 'goal'
+        const sc = SCENARIO_CONFIG[scenarioRef.current]
         const edgeColor = e.isGoal
           ? parseInt((e.pathColor || '#7c3aed').replace('#', ''), 16)
-          : 0x1a4060
+          : sc.lineColorInt
         const edgeOpacity = isBgEdge ? 0.15 : e.isGoal ? 0.75 : 0.45
         const mat = new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: edgeOpacity })
         const line = new THREE.Line(geo, mat)
@@ -860,7 +1301,7 @@ function CCNeuralMapCanvas({
 
     rebuildScene()
     rebuildRef.current = rebuildScene
-    goalRebuildRef.current = rebuildScene  // same full rebuild for simplicity
+    goalRebuildRef.current = rebuildScene
 
     // ── Force simulation ──────────────────────────────────────────────────────
     function simulateStep() {
@@ -887,6 +1328,7 @@ function CCNeuralMapCanvas({
       }
       const clusterTargets: Record<string, [number, number, number]> = {
         project: [-3, 0, 0], agent: [3, 0, 0], decision: [0, 3, 0], data: [0, -3, 0],
+        rfi: [-3, 2, 0], servicecall: [4, -2, 0], cashflow: [0, 3, 0],
       }
       for (const n of currentNodes) {
         if (n.pinned) continue
@@ -914,7 +1356,7 @@ function CCNeuralMapCanvas({
         simulationActive = false
         if (!edgesAsTubes) {
           edgesAsTubes = true
-          // Upgrade background edges to tubes
+          const sc = SCENARIO_CONFIG[scenarioRef.current]
           currentEdges.forEach((e) => {
             if (e.isGoal) return
             const a = currentNodes[e.a], b = currentNodes[e.b]; if (!a || !b || !e.line) return
@@ -923,7 +1365,7 @@ function CCNeuralMapCanvas({
             ;(e.line as any).geometry?.dispose(); (e.line as any).material?.dispose()
             const path = new THREE.LineCurve3(new THREE.Vector3(a.x, a.y, a.z), new THREE.Vector3(b.x, b.y, b.z))
             const tubeGeo = new THREE.TubeGeometry(path, 2, 0.014, 4, false)
-            const tubeMat = new THREE.MeshBasicMaterial({ color: 0x1e5080, transparent: true, opacity: isBgEdge ? 0.12 : 0.35 })
+            const tubeMat = new THREE.MeshBasicMaterial({ color: sc.lineColorInt, transparent: true, opacity: isBgEdge ? 0.12 : 0.35 })
             const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat)
             edgeGroup.add(tubeMesh); e.line = tubeMesh
           })
@@ -959,6 +1401,9 @@ function CCNeuralMapCanvas({
         const gc = n.meta?.goalColor || '#7c3aed'
         metric = `<span style="color:${gc}">Milestone ${(n.meta?.stepIndex || 0) + 1} · ${n.meta?.profileName || ''}</span>`
       }
+      if (n.type === 'rfi') metric = `<span style="color:#ff9944">${n.meta?.rfiCount} open RFIs · avg ${n.meta?.avgAgeDays}d old</span>`
+      if (n.type === 'servicecall') metric = `<span style="color:#38bdf8">${n.meta?.callCount} active service calls</span>`
+      if (n.type === 'cashflow') metric = `<span style="color:#34d399">Collection: ${n.meta?.collectionRate}% · ${n.meta?.paidStr} / ${n.meta?.pipelineStr}</span>`
       tooltipDiv.innerHTML = `<div style="font-weight:800;color:#fff;margin-bottom:2px">${n.label}</div><div style="color:#4b5563;font-size:9px;text-transform:uppercase;letter-spacing:0.08em">${typeLabel}</div>${metric ? `<div style="font-size:10px;margin-top:3px">${metric}</div>` : ''}`
       tooltipDiv.style.display = 'block'
       tooltipDiv.style.left = (mx - rect.left + 15) + 'px'
@@ -1041,7 +1486,6 @@ function CCNeuralMapCanvas({
       camera.position.z = camR * Math.sin(camPhi) * Math.cos(camTheta)
       camera.lookAt(camLookAt)
 
-      // Scale pulsing
       const pPulse = Math.sin(pulseTick * 3) * 0.5 + 0.5
       currentNodes.forEach((n) => {
         if (!n.mesh) return
@@ -1054,16 +1498,19 @@ function CCNeuralMapCanvas({
         if (n.type === 'goalstep') {
           sprite.scale.setScalar((curScale + (targetScale - curScale) * 0.12) * (1 + Math.sin(pulseTick * 2 + (n.meta?.stepIndex || 0) * 0.5) * 0.06))
         }
+        // B66: "alto" scenario — extra glow pulse on all nodes
+        if (scenarioRef.current === 'alto' && n.type !== 'goalstep') {
+          const extraPulse = 1 + Math.sin(pulseTick * 2.5 + (n.x * 0.3)) * 0.04
+          sprite.scale.multiplyScalar(extraPulse)
+        }
       })
 
-      // Goal group float
       goalGroup.children.forEach((child, i) => {
         if (child instanceof THREE.Sprite) {
           child.position.y += Math.sin(pulseTick + i * 0.4) * 0.0006
         }
       })
 
-      // Update label positions
       const fadeLabels = camR > 14
       currentNodes.forEach((n, i) => {
         const div = labelDivs[i]; if (!div) return
@@ -1079,25 +1526,25 @@ function CCNeuralMapCanvas({
 
       renderer.render(scene, camera)
 
-      // ── B46 Decoration overlay pass: node glows + animated edge dashes ──────
+      // ── Decoration overlay: node glows + animated edge dashes ──────────────
       if (overlayCtx) {
         const oc = overlayCtx
         const OW = overlayCanvas.width, OH = overlayCanvas.height
         oc.clearRect(0, 0, OW, OH)
         lineDashOffset -= 0.5
+        const sc = SCENARIO_CONFIG[scenarioRef.current]
 
-        // Soft radial glow per node, sized to node radius * 2
         currentNodes.forEach((n) => {
           const proj = new THREE.Vector3(n.x, n.y, n.z).project(camera)
-          if (proj.z > 1) return // behind camera
+          if (proj.z > 1) return
           const sx = (proj.x + 1) / 2 * OW
           const sy = (-proj.y + 1) / 2 * OH
           const pixR = Math.max(6, n.size * 55)
           const glowR = pixR * 2
           const hex = '#' + n.color.toString(16).padStart(6, '0')
-          // Hot nodes: agents and goalstep nodes and high-health projects pulse with sin(t) brightness
-          const isHot = n.type === 'agent' || n.type === 'goalstep' || ((n.meta?.healthScore ?? 75) > 70)
-          const brightness = isHot ? 0.5 + Math.sin(pulseTick * 4) * 0.28 : 0.2
+          const isHot = n.type === 'agent' || n.type === 'goalstep' || n.type === 'cashflow' || ((n.meta?.healthScore ?? 75) > 70)
+          const baseGlow = sc.glowOpacity
+          const brightness = isHot ? baseGlow + Math.sin(pulseTick * 4) * 0.18 : baseGlow * 0.45
           const a1 = Math.round(brightness * 180).toString(16).padStart(2, '0')
           const a2 = Math.round(brightness * 50).toString(16).padStart(2, '0')
           const grad = oc.createRadialGradient(sx, sy, 0, sx, sy, glowR)
@@ -1111,7 +1558,7 @@ function CCNeuralMapCanvas({
         // Faint animated dash offset on connection lines
         oc.setLineDash([4, 10])
         oc.lineDashOffset = lineDashOffset
-        oc.strokeStyle = 'rgba(100,200,255,0.06)'
+        oc.strokeStyle = sc.lineColorHex + '14'
         oc.lineWidth = 0.8
         currentEdges.forEach((e) => {
           const a = currentNodes[e.a], b = currentNodes[e.b]; if (!a || !b) return
@@ -1131,7 +1578,6 @@ function CCNeuralMapCanvas({
       if (!mount) return
       const w = mount.clientWidth, h = mount.clientHeight; if (!w || !h) return
       camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h)
-      // Also resize the decoration overlay canvas
       overlayCanvas.width = w; overlayCanvas.height = h
       overlayCtx = overlayCanvas.getContext('2d')
     })
@@ -1158,7 +1604,104 @@ function CCNeuralMapCanvas({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={mountRef} style={{ position: 'absolute', inset: 0 }} />
+  return <div ref={mountRef} style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
+}
+
+// ─── B66: Scenario Selector UI ────────────────────────────────────────────────
+function ScenarioSelector({
+  scenario,
+  autoScenario,
+  manualOverride,
+  onSelect,
+  onClearOverride,
+}: {
+  scenario: PerformanceScenario
+  autoScenario: PerformanceScenario
+  manualOverride: boolean
+  onSelect: (s: PerformanceScenario) => void
+  onClearOverride: () => void
+}) {
+  const sc = SCENARIO_CONFIG[scenario]
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      padding: '8px 16px',
+      borderBottom: '1px solid rgba(255,255,255,0.07)',
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      flexShrink: 0,
+    }}>
+      <span style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.1em', marginRight: 2 }}>
+        Scenario
+      </span>
+
+      {SCENARIO_ORDER.map((s) => {
+        const cfg = SCENARIO_CONFIG[s]
+        const isActive = scenario === s
+        const isAuto = s === autoScenario
+        return (
+          <button
+            key={s}
+            onClick={() => onSelect(s)}
+            title={cfg.description}
+            style={{
+              padding: '4px 12px',
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              cursor: 'pointer',
+              border: isActive ? `1px solid ${cfg.borderColor}` : '1px solid rgba(255,255,255,0.08)',
+              backgroundColor: isActive ? cfg.nodeColorHex + '22' : 'rgba(255,255,255,0.04)',
+              color: isActive ? cfg.nodeColorHex : '#6b7280',
+              boxShadow: isActive ? `0 0 10px ${cfg.nodeColorHex}44` : 'none',
+              transition: 'all 0.15s',
+              position: 'relative',
+            }}
+          >
+            {cfg.emoji} {cfg.label}
+            {isAuto && !manualOverride && (
+              <span style={{
+                position: 'absolute', top: -5, right: -5,
+                background: '#7c3aed', color: '#fff',
+                fontSize: 7, fontWeight: 800, borderRadius: 3,
+                padding: '1px 3px', letterSpacing: 0,
+              }}>AUTO</span>
+            )}
+          </button>
+        )
+      })}
+
+      {manualOverride && (
+        <button
+          onClick={onClearOverride}
+          style={{
+            padding: '3px 8px', borderRadius: 5, fontSize: 9, fontWeight: 700,
+            border: '1px solid rgba(124,58,237,0.4)',
+            backgroundColor: 'rgba(124,58,237,0.1)',
+            color: '#7c3aed', cursor: 'pointer',
+          }}
+        >
+          ↺ Auto
+        </button>
+      )}
+
+      <div style={{
+        marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <div style={{
+          width: 8, height: 8, borderRadius: '50%',
+          backgroundColor: sc.nodeColorHex,
+          boxShadow: `0 0 6px ${sc.nodeColorHex}`,
+        }} />
+        <span style={{ fontSize: 9, color: sc.nodeColorHex, fontWeight: 700 }}>
+          {sc.description}
+        </span>
+        {!manualOverride && (
+          <span style={{ fontSize: 8, color: '#4b5563', marginLeft: 4 }}>· NEXUS auto</span>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -1169,6 +1712,17 @@ export default function CommandCenterNeuralMap() {
   const [selectedGoalNode, setSelectedGoalNode] = useState<CCNode | null>(null)
   const [goalNodeX, setGoalNodeX] = useState(0)
   const [goalNodeY, setGoalNodeY] = useState(0)
+
+  // B66: Scenario state
+  const [autoScenario, setAutoScenario] = useState<PerformanceScenario>('mediano')
+  const [manualScenario, setManualScenario] = useState<PerformanceScenario | null>(null)
+  const activeScenario: PerformanceScenario = manualScenario ?? autoScenario
+
+  // Auto-classify scenario on mount and when entering Goal Mode (real data)
+  useEffect(() => {
+    const classified = classifyScenario()
+    setAutoScenario(classified)
+  }, [mapMode])
 
   // Load goal profiles from localStorage
   useEffect(() => {
@@ -1181,7 +1735,6 @@ export default function CommandCenterNeuralMap() {
     } catch {}
   }, [])
 
-  // Save profiles to localStorage whenever they change
   useEffect(() => {
     try {
       localStorage.setItem(GOAL_STORAGE_KEY, JSON.stringify(profiles))
@@ -1195,16 +1748,21 @@ export default function CommandCenterNeuralMap() {
   }, [])
 
   const handlePathGenerated = useCallback((newProfile: GoalProfile) => {
-    setProfiles((prev) => {
-      const updated = [...prev, newProfile]
-      return updated
-    })
-    // Switch to goal mode when a path is generated
+    setProfiles((prev) => [...prev, newProfile])
     setMapMode('goal')
+  }, [])
+
+  const handleScenarioSelect = useCallback((s: PerformanceScenario) => {
+    setManualScenario(s)
+  }, [])
+
+  const handleClearOverride = useCallback(() => {
+    setManualScenario(null)
   }, [])
 
   const activeCount = profiles.filter((p) => p.active).length
   const showComparison = mapMode === 'goal' && activeCount >= 2
+  const sc = SCENARIO_CONFIG[activeScenario]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', backgroundColor: '#020408', color: '#e2e8f0', fontFamily: 'ui-monospace, monospace' }}>
@@ -1257,7 +1815,6 @@ export default function CommandCenterNeuralMap() {
 
         {mapMode === 'goal' && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-            {/* Mini profile chips */}
             {profiles.filter((p) => p.active).slice(0, 5).map((p) => (
               <div
                 key={p.id}
@@ -1270,7 +1827,6 @@ export default function CommandCenterNeuralMap() {
                   backgroundColor: p.color,
                   cursor: 'pointer',
                   boxShadow: `0 0 6px ${p.color}88`,
-                  title: p.name,
                 }}
               />
             ))}
@@ -1278,13 +1834,27 @@ export default function CommandCenterNeuralMap() {
         )}
       </div>
 
+      {/* B66: Scenario selector */}
+      <ScenarioSelector
+        scenario={activeScenario}
+        autoScenario={autoScenario}
+        manualOverride={manualScenario !== null}
+        onSelect={handleScenarioSelect}
+        onClearOverride={handleClearOverride}
+      />
+
       {/* Map area + comparison sidebar */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas area */}
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#020408' }}>
+
+          {/* B66: Constellation background behind Three.js */}
+          <ConstellationBackground scenario={activeScenario} />
+
           <CCNeuralMapCanvas
             mode={mapMode}
             profiles={profiles}
+            scenario={activeScenario}
             onGoalNodeClick={handleGoalNodeClick}
           />
 
@@ -1298,6 +1868,31 @@ export default function CommandCenterNeuralMap() {
               profiles={profiles}
             />
           )}
+
+          {/* B66: Scenario label — top-left of map */}
+          <div style={{
+            position: 'absolute', top: 12, left: 14, zIndex: 20,
+            pointerEvents: 'none',
+          }}>
+            <div style={{
+              padding: '6px 12px',
+              borderRadius: 7,
+              border: `1px solid ${sc.borderColor}`,
+              backgroundColor: sc.nodeColorHex + '14',
+              backdropFilter: 'blur(4px)',
+              display: 'flex', alignItems: 'center', gap: 7,
+            }}>
+              <span style={{ fontSize: 14 }}>{sc.emoji}</span>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: sc.nodeColorHex, letterSpacing: '0.04em' }}>
+                  {sc.label}
+                </div>
+                <div style={{ fontSize: 8, color: '#6b7280', letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 1 }}>
+                  {sc.description}
+                </div>
+              </div>
+            </div>
+          </div>
 
           {/* Goal mode legend overlay */}
           {mapMode === 'goal' && (
@@ -1332,6 +1927,9 @@ export default function CommandCenterNeuralMap() {
                 { icon: '⬡', label: 'Projects', color: '#00ff88' },
                 { icon: '■', label: 'Agents', color: '#ca8a04' },
                 { icon: '●', label: 'Data KPIs', color: '#06b6d4' },
+                { icon: '⬡', label: 'RFI', color: '#ff9944' },
+                { icon: '■', label: 'Service', color: '#38bdf8' },
+                { icon: '◆', label: 'Cash Flow', color: '#34d399' },
               ].map((item) => (
                 <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                   <span style={{ fontSize: 11, color: item.color }}>{item.icon}</span>
