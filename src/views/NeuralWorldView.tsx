@@ -9,12 +9,15 @@
  * NW2 scope: TerrainGenerator (mountains from Supabase project data).
  * NW3 scope: CriticalPathLayer (flowing particle rivers — payment pipelines).
  * NW4 scope: AgentLayer (11 agents as distinct 3D entities with behavior).
+ * NW5 scope: DecisionGravityLayer (polyhedra clouds), SignalLayer (aurora + lightning), day cycle polish.
  */
 
 import React, { useState } from 'react'
 import { WorldEngine } from '@/components/neural-world/WorldEngine'
 import { CriticalPathLayer } from '@/components/neural-world/layers/CriticalPathLayer'
 import { AgentLayer } from '@/components/neural-world/layers/AgentLayer'
+import { DecisionGravityLayer } from '@/components/neural-world/layers/DecisionGravityLayer'
+import { SignalLayer } from '@/components/neural-world/layers/SignalLayer'
 
 function hudButtonStyle(active: boolean, r: number, g: number, b: number): React.CSSProperties {
   return {
@@ -33,8 +36,10 @@ function hudButtonStyle(active: boolean, r: number, g: number, b: number): React
 }
 
 export default function NeuralWorldView() {
-  const [riversVisible, setRiversVisible] = useState(true)
-  const [agentsVisible, setAgentsVisible] = useState(true)
+  const [riversVisible,   setRiversVisible]   = useState(true)
+  const [agentsVisible,   setAgentsVisible]   = useState(true)
+  const [gravityVisible,  setGravityVisible]  = useState(true)
+  const [signalVisible,   setSignalVisible]   = useState(true)
 
   return (
     <div
@@ -43,12 +48,14 @@ export default function NeuralWorldView() {
         height: 'calc(100vh - 56px)',
         position: 'relative',
         overflow: 'hidden',
-        background: '#050a08',
+        background: '#050508',
       }}
     >
       <WorldEngine>
         <CriticalPathLayer visible={riversVisible} />
         <AgentLayer visible={agentsVisible} />
+        <DecisionGravityLayer visible={gravityVisible} />
+        <SignalLayer visible={signalVisible} />
       </WorldEngine>
 
       {/* HUD layer controls */}
@@ -75,6 +82,18 @@ export default function NeuralWorldView() {
           style={hudButtonStyle(agentsVisible, 192, 160, 32)}
         >
           ◈ AGENTS {agentsVisible ? 'ON' : 'OFF'}
+        </button>
+        <button
+          onClick={() => setGravityVisible(v => !v)}
+          style={hudButtonStyle(gravityVisible, 160, 120, 220)}
+        >
+          ◈ GRAVITY {gravityVisible ? 'ON' : 'OFF'}
+        </button>
+        <button
+          onClick={() => setSignalVisible(v => !v)}
+          style={hudButtonStyle(signalVisible, 80, 200, 255)}
+        >
+          ◈ SIGNAL {signalVisible ? 'ON' : 'OFF'}
         </button>
       </div>
     </div>
