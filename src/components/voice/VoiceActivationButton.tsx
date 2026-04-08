@@ -609,27 +609,6 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
     }
   }, [isSending, profile])
 
-  if (!initialized) return null
-
-  const isVisible = drawerOpen || status !== 'inactive'
-
-  // ── NEXUS permanent entry point button ────────────────────────────────────
-  // Always visible when the full NEXUS drawer is not already expanded.
-  // For non-admin: opens the NEXUS voice conversation directly.
-  // For admin (B65b): shows the dual-mic selector panel first.
-  const handleOpenNexus = () => {
-    if (isAdmin) {
-      setShowAdminSelector(true)
-      return
-    }
-    // Non-admin: standard electrical context (unchanged)
-    setAdminNexusActive(false)
-    setAdminOversightActive(false)
-    setDrawerOpen(true)
-    setDrawerExpanded(true)
-    try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {}
-  }
-
   // B65b — Admin selector: handle mode selection
   const handleAdminSelect = useCallback((mode: 'electrical' | 'admin', contextMode: AdminContextMode) => {
     setShowAdminSelector(false)
@@ -653,6 +632,27 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
     setAdminContextModeState(mode)
     setAdminContextMode(mode)  // updates module singleton → picked up on next NEXUS call
   }, [])
+
+  if (!initialized) return null
+
+  const isVisible = drawerOpen || status !== 'inactive'
+
+  // ── NEXUS permanent entry point button ────────────────────────────────────
+  // Always visible when the full NEXUS drawer is not already expanded.
+  // For non-admin: opens the NEXUS voice conversation directly.
+  // For admin (B65b): shows the dual-mic selector panel first.
+  const handleOpenNexus = () => {
+    if (isAdmin) {
+      setShowAdminSelector(true)
+      return
+    }
+    // Non-admin: standard electrical context (unchanged)
+    setAdminNexusActive(false)
+    setAdminOversightActive(false)
+    setDrawerOpen(true)
+    setDrawerExpanded(true)
+    try { sessionStorage.setItem('nexus_drawer_expanded', 'true') } catch {}
+  }
 
   return (
     <>
