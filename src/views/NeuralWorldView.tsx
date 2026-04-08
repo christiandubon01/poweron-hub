@@ -37,6 +37,8 @@ import { DiveModePanel } from '@/components/neural-world/DiveModePanel'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
 import { NodeClickSystem } from '@/components/neural-world/NodeClickSystem'
 import { DataFlowLayer } from '@/components/neural-world/DataFlowLayer'
+import { SimulationLayer } from '@/components/neural-world/layers/SimulationLayer'
+import { SimDotTravelerController } from '@/components/neural-world/SimulationDotTraveler'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -57,6 +59,7 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'forecast':         false,
   'command':          false,
   'data-flow':        true,   // NW18: data flow on by default
+  'simulation':       false,  // NW19: enterprise simulation
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -92,6 +95,10 @@ function WorldLayers({
       <NodeClickSystem />
       {/* NW18: Data flow connection tubes + animated particles */}
       <DataFlowLayer visible={!!layerStates['data-flow']} />
+      {/* NW19: Enterprise simulation — org pyramids, AI agent placement */}
+      <SimulationLayer visible={!!layerStates['simulation']} />
+      {/* NW19: Business cycle dot traveler (renders Three.js + React summary panel) */}
+      <SimDotTravelerController />
     </>
   )
 }

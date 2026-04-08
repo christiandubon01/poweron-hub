@@ -30,6 +30,7 @@ import { supabase } from '@/lib/supabase'
 import { subscribeWorldData, type NWWorldData, type NWProject } from './DataBridge'
 import { SettingsPanel } from './SettingsPanel'
 import { MinimapRenderer } from './MinimapRenderer'
+import { SimulationHUD } from './SimulationHUD'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -72,10 +73,12 @@ const LAYERS: LayerDef[] = [
   { id: 'command',         label: 'Command',         icon: '⊕',  r: 255, g: 238, b: 0   },
   /** NW18: Data flow particle animations + connection tubes */
   { id: 'data-flow',       label: 'Data Flow',       icon: '⟳',  r: 0,   g: 220, b: 180 },
+  /** NW19: Enterprise simulation — org pyramids, AI agent placement */
+  { id: 'simulation',      label: 'Simulation',      icon: '⬡',  r: 255, g: 200, b: 40  },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow'])
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation'])
 )
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -826,6 +829,9 @@ export default function CommandHUD({
           window.dispatchEvent(new CustomEvent('nw:request-camera-mode', { detail: { mode } }))
         }}
       />
+
+      {/* ── NW19: SIMULATION HUD (top-right, when simulation layer is on) ── */}
+      <SimulationHUD visible={!!layerStates['simulation']} />
 
       {/* ── NW17: MOBILE DUAL JOYSTICKS + TOUCH BUTTONS ─────────────────── */}
       {isTouchDevice && (

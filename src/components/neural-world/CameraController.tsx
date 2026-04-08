@@ -254,21 +254,20 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       }
 
       if (mode === CameraMode.THIRD_PERSON) {
-        // TP: scroll cycles through distance presets
-        const order: ('CLOSE' | 'MEDIUM' | 'FAR')[] = ['CLOSE', 'MEDIUM', 'FAR']
-        const cur = order.indexOf(tpDistKey.current)
-        if (e.deltaY > 0) {
-          cycleTpDist(order[Math.min(cur + 1, order.length - 1)])
-        } else {
-          cycleTpDist(order[Math.max(cur - 1, 0)])
-        }
+        // NW19: TP scroll adjusts speed (like FP), not distance
+        const delta = e.deltaY > 0 ? -SPEED_STEP : SPEED_STEP
+        const newSpeed = Math.max(0.5, Math.min(15.0, travelSpeedRef.current + delta))
+        travelSpeedRef.current = newSpeed
+        setTravelSpeedState(newSpeed)
+        persistSpeed(newSpeed)
+        window.dispatchEvent(new CustomEvent('nw:travel-speed', { detail: { speed: newSpeed } }))
         return
       }
 
       if (mode === CameraMode.FIRST_PERSON) {
-        // FP: adjust travel speed in 0.5 increments
+        // FP: adjust travel speed in 0.5 increments (NW19: cap 15.0)
         const delta = e.deltaY > 0 ? -SPEED_STEP : SPEED_STEP
-        const newSpeed = Math.max(0.5, Math.min(10.0, travelSpeedRef.current + delta))
+        const newSpeed = Math.max(0.5, Math.min(15.0, travelSpeedRef.current + delta))
         travelSpeedRef.current = newSpeed
         setTravelSpeedState(newSpeed)
         persistSpeed(newSpeed)
@@ -312,10 +311,10 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
 
     const onMouseMove = (e: MouseEvent) => {
       if (pointerLocked.current) {
+        // NW19: accumulate raw delta — applyYawPitch handles invertY in one place
         const sens = settingsRef.current.lookSensitivity * 0.002
-        const invertMult = settingsRef.current.invertY ? 1 : -1
         yaw.current   -= e.movementX * sens
-        pitch.current += e.movementY * sens * invertMult
+        pitch.current += e.movementY * sens
         return
       }
 
@@ -345,11 +344,10 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
         return
       }
 
-      // FP/TP drag (non-pointer-lock)
+      // NW19: FP/TP drag — raw accumulation, applyYawPitch handles invertY
       const sens = settingsRef.current.lookSensitivity * 0.003
-      const invertMult = settingsRef.current.invertY ? 1 : -1
       yaw.current   -= dx * sens
-      pitch.current += dy * sens * invertMult
+      pitch.current += dy * sens
     }
 
     const onMouseUp = () => { isDragging.current = false }
@@ -635,8 +633,9 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     }
 
     function applyYawPitch(cam: THREE.PerspectiveCamera) {
-      const invertMult = settingsRef.current.invertY ? -1 : 1
-      const euler = new THREE.Euler(pitch.current * invertMult, yaw.current, 0, 'YXZ')
+      // NW19: single inversion point — invertY=true flips pitch sign
+      const effectivePitch = settingsRef.current.invertY ? -pitch.current : pitch.current
+      const euler = new THREE.Euler(effectivePitch, yaw.current, 0, 'YXZ')
       cam.quaternion.setFromEuler(euler)
     }
 

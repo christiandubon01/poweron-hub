@@ -168,11 +168,11 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
             onChange={v => applyChange({ invertY: v })}
           />
 
-          {/* Travel Speed */}
+          {/* Travel Speed (NW19: max raised to 15.0) */}
           <SliderRow
             label="TRAVEL SPEED"
             value={s.travelSpeed}
-            min={0.5} max={10.0} step={0.5}
+            min={0.5} max={15.0} step={0.5}
             display={`${s.travelSpeed.toFixed(1)} u/s`}
             onChange={v => applyChange({ travelSpeed: v })}
           />

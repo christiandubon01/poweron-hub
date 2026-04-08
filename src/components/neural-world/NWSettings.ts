@@ -52,7 +52,7 @@ export function loadNWCameraSettings(): NWCameraSettings {
       moveSensitivity:  clamp(parsed.moveSensitivity  ?? DEFAULTS.moveSensitivity,  0.1,  3.0),
       lookSensitivity:  clamp(parsed.lookSensitivity  ?? DEFAULTS.lookSensitivity,  0.1,  3.0),
       invertY:          parsed.invertY ?? DEFAULTS.invertY,
-      travelSpeed:      clamp(parsed.travelSpeed      ?? DEFAULTS.travelSpeed,      0.5, 10.0),
+      travelSpeed:      clamp(parsed.travelSpeed      ?? DEFAULTS.travelSpeed,      0.5, 15.0),
       cameraMode:       parsed.cameraMode ?? DEFAULTS.cameraMode,
       tpDistance:       (parsed.tpDistance && ['CLOSE','MEDIUM','FAR'].includes(parsed.tpDistance))
         ? parsed.tpDistance
