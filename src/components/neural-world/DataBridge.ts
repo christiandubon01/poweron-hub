@@ -19,6 +19,10 @@ export interface NWProject {
   contract_value: number
   health_score: number          // 0–100; defaults to 100 if not in DB
   org_id: string
+  /** NW9: material cost for canyon depth calculation */
+  material_cost: number
+  /** NW9: phase completion 0–100 */
+  phase_completion: number
 }
 
 export interface NWInvoice {
@@ -28,6 +32,10 @@ export interface NWInvoice {
   status: string
   due_date: string | null
   org_id: string
+  /** NW9: when invoice was created (for stalactite age) */
+  created_at: string | null
+  /** NW9: when invoice was paid (for dissolve effect) */
+  paid_at: string | null
 }
 
 export interface NWFieldLog {
@@ -35,12 +43,29 @@ export interface NWFieldLog {
   project_id: string | null
   hours: number
   org_id: string
+  /** NW9: crew / employee id for labor ridge lines */
+  crew_id: string | null
+  log_date: string | null
+}
+
+/** NW9: Open RFI record for fault lines */
+export interface NWRFI {
+  id: string
+  project_id: string | null
+  status: string       // 'open' | 'closed' | 'pending'
+  created_at: string | null
+  resolved_at: string | null
+  org_id: string
 }
 
 export interface NWWorldData {
   projects: NWProject[]
   invoices: NWInvoice[]
   fieldLogs: NWFieldLog[]
+  /** NW9: open and recently resolved RFIs */
+  rfis: NWRFI[]
+  /** NW9: solar income value (from org settings or aggregated solar project revenue) */
+  solarIncome: number
   lastFetched: number
 }
 
@@ -52,6 +77,8 @@ let _currentData: NWWorldData = {
   projects: [],
   invoices: [],
   fieldLogs: [],
+  rfis: [],
+  solarIncome: 0,
   lastFetched: 0,
 }
 
@@ -72,26 +99,34 @@ async function _fetchAll(): Promise<void> {
   _fetchInProgress = true
 
   try {
-    const [projectsResult, invoicesResult, fieldLogsResult] = await Promise.all([
+    const [projectsResult, invoicesResult, fieldLogsResult, rfisResult] = await Promise.all([
       (supabase as any)
         .from('projects')
-        .select('id, name, status, contract_value, org_id')
+        .select('id, name, status, contract_value, health_score, org_id, material_cost, phase_completion')
         .order('created_at', { ascending: false }),
 
       (supabase as any)
         .from('invoices')
-        .select('id, project_id, amount, status, due_date, org_id')
+        .select('id, project_id, amount, status, due_date, org_id, created_at, paid_at')
         .order('created_at', { ascending: false }),
 
       (supabase as any)
         .from('field_logs')
-        .select('id, project_id, hours, org_id')
+        .select('id, project_id, hours, org_id, crew_id, log_date')
         .order('log_date', { ascending: false }),
+
+      // NW9: RFIs for fault lines — non-fatal if table doesn't exist
+      (supabase as any)
+        .from('rfis')
+        .select('id, project_id, status, created_at, resolved_at, org_id')
+        .order('created_at', { ascending: false })
+        .limit(200),
     ])
 
     const rawProjects: any[] = projectsResult.data ?? []
     const rawInvoices: any[] = invoicesResult.data ?? []
     const rawFieldLogs: any[] = fieldLogsResult.data ?? []
+    const rawRFIs: any[] = rfisResult.data ?? []
 
     const projects: NWProject[] = rawProjects.map((p: any) => ({
       id: p.id ?? '',
@@ -100,6 +135,8 @@ async function _fetchAll(): Promise<void> {
       contract_value: typeof p.contract_value === 'number' ? p.contract_value : 0,
       health_score: typeof p.health_score === 'number' ? p.health_score : 100,
       org_id: p.org_id ?? '',
+      material_cost: typeof p.material_cost === 'number' ? p.material_cost : 0,
+      phase_completion: typeof p.phase_completion === 'number' ? p.phase_completion : 0,
     }))
 
     const invoices: NWInvoice[] = rawInvoices.map((inv: any) => ({
@@ -109,6 +146,8 @@ async function _fetchAll(): Promise<void> {
       status: inv.status ?? 'draft',
       due_date: inv.due_date ?? null,
       org_id: inv.org_id ?? '',
+      created_at: inv.created_at ?? null,
+      paid_at: inv.paid_at ?? null,
     }))
 
     const fieldLogs: NWFieldLog[] = rawFieldLogs.map((fl: any) => ({
@@ -116,12 +155,34 @@ async function _fetchAll(): Promise<void> {
       project_id: fl.project_id ?? null,
       hours: typeof fl.hours === 'number' ? fl.hours : 0,
       org_id: fl.org_id ?? '',
+      crew_id: fl.crew_id ?? null,
+      log_date: fl.log_date ?? null,
     }))
+
+    const rfis: NWRFI[] = rawRFIs.map((r: any) => ({
+      id: r.id ?? '',
+      project_id: r.project_id ?? null,
+      status: r.status ?? 'open',
+      created_at: r.created_at ?? null,
+      resolved_at: r.resolved_at ?? null,
+      org_id: r.org_id ?? '',
+    }))
+
+    // NW9: solar income — sum contract_value of projects tagged solar/MTZ
+    // Falls back to a proportional estimate based on invoices paid if no solar data
+    const solarProjects = projects.filter(p =>
+      p.name.toLowerCase().includes('solar') ||
+      p.name.toLowerCase().includes('mtz') ||
+      p.name.toLowerCase().includes('pv')
+    )
+    const solarIncome = solarProjects.reduce((sum, p) => sum + p.contract_value, 0)
 
     _currentData = {
       projects,
       invoices,
       fieldLogs,
+      rfis,
+      solarIncome,
       lastFetched: Date.now(),
     }
 
