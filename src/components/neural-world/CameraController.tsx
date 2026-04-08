@@ -136,6 +136,11 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
   const leftJoystick  = useRef({ active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0 })
   const rightJoystick = useRef({ active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0 })
 
+  // NW17: Touch button state (treated like held keys)
+  const touchSprintActive  = useRef(false)
+  const touchAscendActive  = useRef(false)
+  const touchDescendActive = useRef(false)
+
   // ── Persist speed when changed ────────────────────────────────────────────
   const persistSpeed = useCallback((speed: number) => {
     const s = { ...settingsRef.current, travelSpeed: speed }
@@ -361,39 +366,68 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     }
   }, [mode, renderer, camera]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Mobile joystick events ────────────────────────────────────────────────
+  // ── Mobile joystick events (NW17: 120px diameter, fixed positions, dead zone) ──
   useEffect(() => {
     if (!isTouchDevice) return
-    const JOYSTICK_RADIUS = 36
+
+    // NW17: Increased from 36→60 (120px diameter joystick)
+    const JOYSTICK_RADIUS = 60
+
+    // Fixed joystick centers at bottom corners (30px margin + 60px radius offset)
+    const getLeftCenter  = () => ({ x: 90, y: window.innerHeight - 90 })
+    const getRightCenter = () => ({ x: window.innerWidth - 90, y: window.innerHeight - 90 })
 
     const onPointerDown = (e: PointerEvent) => {
       const x = e.clientX, y = e.clientY
       const w = window.innerWidth, h = window.innerHeight
-      if (x < w / 2 && y > h * 0.5) {
+      // Left joystick zone: left half of screen, bottom 55%
+      if (x < w / 2 && y > h * 0.45) {
         if (!leftJoystick.current.active) {
-          leftJoystick.current = { active: true, id: e.pointerId, startX: x, startY: y, dx: 0, dy: 0 }
-          window.dispatchEvent(new CustomEvent('nw:joystick-start', { detail: { side: 'left', x, y } }))
+          const c = getLeftCenter()
+          leftJoystick.current = { active: true, id: e.pointerId, startX: c.x, startY: c.y, dx: 0, dy: 0 }
+          window.dispatchEvent(new CustomEvent('nw:joystick-start', { detail: { side: 'left', x: c.x, y: c.y } }))
         }
-      } else if (x >= w / 2 && y > h * 0.5) {
+      } else if (x >= w / 2 && y > h * 0.45) {
+        // Right joystick zone: right half of screen, bottom 55%
         if (!rightJoystick.current.active) {
-          rightJoystick.current = { active: true, id: e.pointerId, startX: x, startY: y, dx: 0, dy: 0 }
-          window.dispatchEvent(new CustomEvent('nw:joystick-start', { detail: { side: 'right', x, y } }))
+          const c = getRightCenter()
+          rightJoystick.current = { active: true, id: e.pointerId, startX: c.x, startY: c.y, dx: 0, dy: 0 }
+          window.dispatchEvent(new CustomEvent('nw:joystick-start', { detail: { side: 'right', x: c.x, y: c.y } }))
         }
       }
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      const deadZone = settingsRef.current.touchDeadZone ?? 0.15
       for (const [joy, side] of [[leftJoystick, 'left'], [rightJoystick, 'right']] as const) {
         if (joy.current.active && e.pointerId === joy.current.id) {
           let dx = e.clientX - joy.current.startX
           let dy = e.clientY - joy.current.startY
           const dist = Math.sqrt(dx*dx + dy*dy)
           if (dist > JOYSTICK_RADIUS) { dx = (dx/dist)*JOYSTICK_RADIUS; dy = (dy/dist)*JOYSTICK_RADIUS }
-          joy.current.dx = dx / JOYSTICK_RADIUS
-          joy.current.dy = dy / JOYSTICK_RADIUS
+          // Normalize to [-1, 1]
+          let ndx = dx / JOYSTICK_RADIUS
+          let ndy = dy / JOYSTICK_RADIUS
+          // Apply dead zone: zero out input within inner dead zone ring
+          const ndist = Math.sqrt(ndx*ndx + ndy*ndy)
+          if (ndist < deadZone) {
+            ndx = 0; ndy = 0
+          } else {
+            // Rescale so full range remains [0,1] outside dead zone
+            const scale = (ndist - deadZone) / (1 - deadZone)
+            ndx = (ndx / ndist) * scale
+            ndy = (ndy / ndist) * scale
+          }
+          joy.current.dx = ndx
+          joy.current.dy = ndy
           window.dispatchEvent(new CustomEvent('nw:joystick-move', {
-            detail: { side, dx: joy.current.dx, dy: joy.current.dy,
-                      thumbX: joy.current.startX + dx, thumbY: joy.current.startY + dy }
+            detail: {
+              side,
+              dx: ndx,
+              dy: ndy,
+              thumbX: joy.current.startX + dx,
+              thumbY: joy.current.startY + dy,
+            }
           }))
         }
       }
@@ -419,6 +453,31 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       window.removeEventListener('pointercancel', onPointerUp)
     }
   }, [isTouchDevice, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── NW17: Touch button events (sprint toggle, ascend/descend held) ────────
+  useEffect(() => {
+    if (!isTouchDevice) return
+    function onTouchSprint(e: Event) {
+      const ev = e as CustomEvent<{ active: boolean }>
+      touchSprintActive.current = ev.detail?.active ?? false
+    }
+    function onTouchAscend(e: Event) {
+      const ev = e as CustomEvent<{ active: boolean }>
+      touchAscendActive.current = ev.detail?.active ?? false
+    }
+    function onTouchDescend(e: Event) {
+      const ev = e as CustomEvent<{ active: boolean }>
+      touchDescendActive.current = ev.detail?.active ?? false
+    }
+    window.addEventListener('nw:touch-sprint', onTouchSprint)
+    window.addEventListener('nw:touch-ascend', onTouchAscend)
+    window.addEventListener('nw:touch-descend', onTouchDescend)
+    return () => {
+      window.removeEventListener('nw:touch-sprint', onTouchSprint)
+      window.removeEventListener('nw:touch-ascend', onTouchAscend)
+      window.removeEventListener('nw:touch-descend', onTouchDescend)
+    }
+  }, [isTouchDevice])
 
   // ── Listen for settings changes from SettingsPanel ────────────────────────
   useEffect(() => {
@@ -486,7 +545,7 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     // ── First Person ──────────────────────────────────────────────────────
     function updateFirstPerson() {
       const settings = settingsRef.current
-      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight']
+      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight'] || touchSprintActive.current
       const speed = (travelSpeedRef.current / 60) * settings.moveSensitivity * (isSprint ? SPRINT_MULT : 1)
 
       // Build forward / right vectors from yaw
@@ -497,17 +556,19 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       if (keys.current['KeyS'] || keys.current['ArrowDown'])  pos.current.addScaledVector(forward, -speed)
       if (keys.current['KeyA'] || keys.current['ArrowLeft'])  pos.current.addScaledVector(right,   -speed)
       if (keys.current['KeyD'] || keys.current['ArrowRight']) pos.current.addScaledVector(right,    speed)
-      if (keys.current['Space']) pos.current.y += speed
-      if (keys.current['KeyQ']) pos.current.y -= speed
+      if (keys.current['Space'] || touchAscendActive.current)  pos.current.y += speed
+      if (keys.current['KeyQ']  || touchDescendActive.current) pos.current.y -= speed
 
-      // Mobile joystick
+      // NW17: Mobile joystick with touch sensitivity multiplier
       if (leftJoystick.current.active) {
-        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed)
-        pos.current.addScaledVector(right,    leftJoystick.current.dx * speed)
+        const touchMult = settings.touchSensitivity ?? 1.5
+        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed * touchMult)
+        pos.current.addScaledVector(right,    leftJoystick.current.dx * speed * touchMult)
       }
       if (rightJoystick.current.active) {
-        yaw.current   -= rightJoystick.current.dx * 0.04
-        pitch.current += rightJoystick.current.dy * 0.04
+        const touchMult = settings.touchSensitivity ?? 1.5
+        yaw.current   -= rightJoystick.current.dx * 0.04 * touchMult
+        pitch.current += rightJoystick.current.dy * 0.04 * touchMult
       }
 
       if (pos.current.y < MIN_Y) pos.current.y = MIN_Y
@@ -519,7 +580,7 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     // ── Third Person ──────────────────────────────────────────────────────
     function updateThirdPerson() {
       const settings = settingsRef.current
-      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight']
+      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight'] || touchSprintActive.current
       const speed = (travelSpeedRef.current / 60) * settings.moveSensitivity * (isSprint ? SPRINT_MULT : 1)
 
       const forward = new THREE.Vector3(-Math.sin(yaw.current), 0, -Math.cos(yaw.current))
@@ -529,17 +590,19 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       if (keys.current['KeyS'] || keys.current['ArrowDown'])  pos.current.addScaledVector(forward, -speed)
       if (keys.current['KeyA'] || keys.current['ArrowLeft'])  pos.current.addScaledVector(right,   -speed)
       if (keys.current['KeyD'] || keys.current['ArrowRight']) pos.current.addScaledVector(right,    speed)
-      if (keys.current['Space']) pos.current.y += speed
-      if (keys.current['KeyQ']) pos.current.y -= speed
+      if (keys.current['Space'] || touchAscendActive.current)  pos.current.y += speed
+      if (keys.current['KeyQ']  || touchDescendActive.current) pos.current.y -= speed
 
-      // Mobile joystick
+      // NW17: Mobile joystick with touch sensitivity multiplier
       if (leftJoystick.current.active) {
-        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed)
-        pos.current.addScaledVector(right,    leftJoystick.current.dx * speed)
+        const touchMult = settings.touchSensitivity ?? 1.5
+        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed * touchMult)
+        pos.current.addScaledVector(right,    leftJoystick.current.dx * speed * touchMult)
       }
       if (rightJoystick.current.active) {
-        yaw.current   -= rightJoystick.current.dx * 0.04
-        pitch.current += rightJoystick.current.dy * 0.04
+        const touchMult = settings.touchSensitivity ?? 1.5
+        yaw.current   -= rightJoystick.current.dx * 0.04 * touchMult
+        pitch.current += rightJoystick.current.dy * 0.04 * touchMult
       }
 
       if (pos.current.y < MIN_Y) pos.current.y = MIN_Y

@@ -165,6 +165,9 @@ export default function CommandHUD({
   const [leftJoy, setLeftJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
   const [rightJoy, setRightJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
 
+  // NW17: Touch button states
+  const [sprintActive, setSprintActive] = useState(false)
+
   // ── FPS counter via nw:frame events ────────────────────────────────────────
   useEffect(() => {
     function onFrame() {
@@ -208,12 +211,13 @@ export default function CommandHUD({
     return () => document.removeEventListener('pointerlockchange', onChange)
   }, [])
 
-  // ── Mobile joystick events ──────────────────────────────────────────────
+  // ── Mobile joystick events (NW17: fixed positions, 120px) ────────────────
   useEffect(() => {
     if (!isTouchDevice) return
 
     function onJoyStart(e: Event) {
       const ev = e as CustomEvent<{ side: string; x: number; y: number }>
+      // cx/cy are the fixed center coords dispatched by CameraController
       if (ev.detail.side === 'left') {
         setLeftJoy({ active: true, cx: ev.detail.x, cy: ev.detail.y, tx: ev.detail.x, ty: ev.detail.y })
       } else {
@@ -821,70 +825,215 @@ export default function CommandHUD({
         }}
       />
 
-      {/* ── MOBILE DUAL JOYSTICKS ────────────────────────────────────────── */}
+      {/* ── NW17: MOBILE DUAL JOYSTICKS + TOUCH BUTTONS ─────────────────── */}
       {isTouchDevice && (
         <>
-          {/* Left joystick */}
+          {/* ── Left joystick: ghost ring always visible + active thumb ── */}
+          {/* Ghost ring (always shown on touch device) */}
+          <div style={{
+            position: 'fixed',
+            left: 90 - 60,
+            bottom: 90 - 60,
+            // Use bottom positioning to match fixed center at (90, h-90)
+            width: 120,
+            height: 120,
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.18)',
+            border: `2px solid rgba(0,255,136,${leftJoy.active ? '0.45' : '0.15'})`,
+            zIndex: 50,
+            pointerEvents: 'none',
+            transition: 'border-color 0.15s',
+          }} />
+          {/* Active thumb — only when joystick active */}
           {leftJoy.active && (
-            <>
-              {/* Outer ring */}
-              <div style={{
-                position: 'fixed',
-                left: leftJoy.cx - 40,
-                top: leftJoy.cy - 40,
-                width: 80,
-                height: 80,
-                borderRadius: '50%',
-                background: 'rgba(0,0,0,0.35)',
-                border: '2px solid rgba(255,255,255,0.15)',
-                zIndex: 50,
-                pointerEvents: 'none',
-              }} />
-              {/* Thumb */}
-              <div style={{
-                position: 'fixed',
-                left: leftJoy.tx - 16,
-                top: leftJoy.ty - 16,
-                width: 32,
-                height: 32,
-                borderRadius: '50%',
-                background: 'rgba(0,255,136,0.4)',
-                border: '2px solid rgba(0,255,136,0.7)',
-                zIndex: 51,
-                pointerEvents: 'none',
-              }} />
-            </>
+            <div style={{
+              position: 'fixed',
+              left: leftJoy.tx - 25,
+              top:  leftJoy.ty - 25,
+              width: 50,
+              height: 50,
+              borderRadius: '50%',
+              background: 'rgba(0,255,136,0.35)',
+              border: '2px solid rgba(0,255,136,0.75)',
+              zIndex: 51,
+              pointerEvents: 'none',
+              boxShadow: '0 0 12px rgba(0,255,136,0.3)',
+            }} />
           )}
-          {/* Right joystick */}
+
+          {/* ── Right joystick: ghost ring + active thumb ── */}
+          <div style={{
+            position: 'fixed',
+            right: 90 - 60,
+            bottom: 90 - 60,
+            width: 120,
+            height: 120,
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.18)',
+            border: `2px solid rgba(0,229,204,${rightJoy.active ? '0.45' : '0.15'})`,
+            zIndex: 50,
+            pointerEvents: 'none',
+            transition: 'border-color 0.15s',
+          }} />
           {rightJoy.active && (
-            <>
-              <div style={{
-                position: 'fixed',
-                left: rightJoy.cx - 40,
-                top: rightJoy.cy - 40,
-                width: 80,
-                height: 80,
-                borderRadius: '50%',
-                background: 'rgba(0,0,0,0.35)',
-                border: '2px solid rgba(255,255,255,0.15)',
-                zIndex: 50,
-                pointerEvents: 'none',
-              }} />
-              <div style={{
-                position: 'fixed',
-                left: rightJoy.tx - 16,
-                top: rightJoy.ty - 16,
-                width: 32,
-                height: 32,
-                borderRadius: '50%',
-                background: 'rgba(0,229,204,0.4)',
-                border: '2px solid rgba(0,229,204,0.7)',
-                zIndex: 51,
-                pointerEvents: 'none',
-              }} />
-            </>
+            <div style={{
+              position: 'fixed',
+              left: rightJoy.tx - 25,
+              top:  rightJoy.ty - 25,
+              width: 50,
+              height: 50,
+              borderRadius: '50%',
+              background: 'rgba(0,229,204,0.35)',
+              border: '2px solid rgba(0,229,204,0.75)',
+              zIndex: 51,
+              pointerEvents: 'none',
+              boxShadow: '0 0 12px rgba(0,229,204,0.3)',
+            }} />
           )}
-          {/* Mobile speed toggle button (between joysticks) */}
+
+          {/* ── ASCEND button — right side, above right joystick ── */}
+          <button
+            onPointerDown={() => window.dispatchEvent(new CustomEvent('nw:touch-ascend', { detail: { active: true } }))}
+            onPointerUp={() => window.dispatchEvent(new CustomEvent('nw:touch-ascend', { detail: { active: false } }))}
+            onPointerLeave={() => window.dispatchEvent(new CustomEvent('nw:touch-ascend', { detail: { active: false } }))}
+            style={{
+              position: 'fixed',
+              right: 30,
+              bottom: 210,
+              width: 52,
+              height: 52,
+              minWidth: 44,
+              minHeight: 44,
+              borderRadius: 10,
+              border: '2px solid rgba(0,229,204,0.4)',
+              background: 'rgba(0,0,0,0.6)',
+              color: '#00e5cc',
+              fontSize: 22,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 52,
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
+              touchAction: 'none',
+              userSelect: 'none',
+            }}
+            title="Ascend (Space)"
+          >
+            ↑
+          </button>
+
+          {/* ── DESCEND button — right side, between ascend and right joystick ── */}
+          <button
+            onPointerDown={() => window.dispatchEvent(new CustomEvent('nw:touch-descend', { detail: { active: true } }))}
+            onPointerUp={() => window.dispatchEvent(new CustomEvent('nw:touch-descend', { detail: { active: false } }))}
+            onPointerLeave={() => window.dispatchEvent(new CustomEvent('nw:touch-descend', { detail: { active: false } }))}
+            style={{
+              position: 'fixed',
+              right: 30,
+              bottom: 148,
+              width: 52,
+              height: 52,
+              minWidth: 44,
+              minHeight: 44,
+              borderRadius: 10,
+              border: '2px solid rgba(0,229,204,0.4)',
+              background: 'rgba(0,0,0,0.6)',
+              color: '#00e5cc',
+              fontSize: 22,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 52,
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
+              touchAction: 'none',
+              userSelect: 'none',
+            }}
+            title="Descend (Q)"
+          >
+            ↓
+          </button>
+
+          {/* ── SPRINT TOGGLE — left side, above left joystick ── */}
+          <button
+            onClick={() => {
+              const next = !sprintActive
+              setSprintActive(next)
+              window.dispatchEvent(new CustomEvent('nw:touch-sprint', { detail: { active: next } }))
+            }}
+            style={{
+              position: 'fixed',
+              left: 30,
+              bottom: 210,
+              width: 52,
+              height: 52,
+              minWidth: 44,
+              minHeight: 44,
+              borderRadius: 10,
+              border: `2px solid ${sprintActive ? 'rgba(255,102,68,0.9)' : 'rgba(255,255,255,0.25)'}`,
+              background: sprintActive ? 'rgba(255,102,68,0.25)' : 'rgba(0,0,0,0.6)',
+              color: sprintActive ? '#ff6644' : 'rgba(255,255,255,0.65)',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              letterSpacing: 0.8,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 52,
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
+              touchAction: 'none',
+              userSelect: 'none',
+              transition: 'all 0.15s',
+            }}
+            title="Sprint Toggle (Shift)"
+          >
+            {sprintActive ? 'SPRINT' : 'RUN'}
+          </button>
+
+          {/* ── CAMERA MODE CYCLE — top-center HUD ── */}
+          <button
+            onClick={() => {
+              const modes = [CameraMode.ORBIT, CameraMode.FIRST_PERSON, CameraMode.THIRD_PERSON] as const
+              const cur = modes.indexOf(cameraMode as typeof modes[number])
+              const next = modes[(cur + 1) % modes.length]
+              onCameraModeChange(next)
+            }}
+            style={{
+              position: 'fixed',
+              top: 14,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              minWidth: 80,
+              minHeight: 44,
+              height: 44,
+              paddingLeft: 14,
+              paddingRight: 14,
+              borderRadius: 8,
+              border: '2px solid rgba(0,255,136,0.35)',
+              background: 'rgba(0,0,0,0.6)',
+              color: '#00ff88',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              letterSpacing: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 52,
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
+              touchAction: 'none',
+              userSelect: 'none',
+            }}
+            title="Cycle camera mode"
+          >
+            {cameraMode === CameraMode.ORBIT ? 'ORBIT' : cameraMode === CameraMode.FIRST_PERSON ? '1P' : '3P'}
+          </button>
+
+          {/* ── SPEED TOGGLE — bottom-center between joysticks ── */}
           <button
             onClick={() => {
               const modes = ['NORMAL', 'FAST', 'SLOW'] as const
@@ -898,8 +1047,10 @@ export default function CommandHUD({
               bottom: 40,
               left: '50%',
               transform: 'translateX(-50%)',
-              zIndex: 50,
-              padding: '8px 16px',
+              minWidth: 60,
+              minHeight: 44,
+              paddingLeft: 16,
+              paddingRight: 16,
               borderRadius: 20,
               border: `2px solid ${speedModeColor}`,
               background: 'rgba(0,0,0,0.6)',
@@ -909,7 +1060,14 @@ export default function CommandHUD({
               fontFamily: 'monospace',
               cursor: 'pointer',
               backdropFilter: 'blur(6px)',
+              zIndex: 52,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              touchAction: 'none',
+              userSelect: 'none',
             }}
+            title="Cycle speed mode"
           >
             {speedModeLabel}
           </button>

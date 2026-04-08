@@ -1,7 +1,7 @@
 /**
- * NWSettings.ts — NW16: localStorage persistence for Neural World camera / movement settings.
+ * NWSettings.ts — NW17: localStorage persistence for Neural World camera / movement settings.
  *
- * All settings persist to 'nw_settings_v1' key.
+ * All settings persist to 'nw_settings_v2' key (bumped from v1 for new touch fields).
  * Loaded on mount, saved on change via debounce.
  */
 
@@ -18,6 +18,10 @@ export interface NWCameraSettings {
   cameraMode: string
   /** Third person distance preset (CLOSE | MEDIUM | FAR) */
   tpDistance: 'CLOSE' | 'MEDIUM' | 'FAR'
+  /** NW17: Touch-specific sensitivity multiplier applied on top of move/look sensitivity (0.1–3.0, default 1.5) */
+  touchSensitivity: number
+  /** NW17: Inner dead zone fraction of joystick radius — no movement within this zone (0.05–0.25, default 0.15) */
+  touchDeadZone: number
 }
 
 export const TP_DISTANCES: Record<'CLOSE' | 'MEDIUM' | 'FAR', number> = {
@@ -26,7 +30,7 @@ export const TP_DISTANCES: Record<'CLOSE' | 'MEDIUM' | 'FAR', number> = {
   FAR:    100,
 }
 
-const STORAGE_KEY = 'nw_settings_v1'
+const STORAGE_KEY = 'nw_settings_v2'
 
 const DEFAULTS: NWCameraSettings = {
   moveSensitivity: 1.0,
@@ -35,6 +39,8 @@ const DEFAULTS: NWCameraSettings = {
   travelSpeed:     2.0,
   cameraMode:      'ORBIT',
   tpDistance:      'MEDIUM',
+  touchSensitivity: 1.5,
+  touchDeadZone:    0.15,
 }
 
 export function loadNWCameraSettings(): NWCameraSettings {
@@ -43,14 +49,16 @@ export function loadNWCameraSettings(): NWCameraSettings {
     if (!raw) return { ...DEFAULTS }
     const parsed = JSON.parse(raw) as Partial<NWCameraSettings>
     return {
-      moveSensitivity: clamp(parsed.moveSensitivity ?? DEFAULTS.moveSensitivity, 0.1, 3.0),
-      lookSensitivity: clamp(parsed.lookSensitivity ?? DEFAULTS.lookSensitivity, 0.1, 3.0),
-      invertY:         parsed.invertY ?? DEFAULTS.invertY,
-      travelSpeed:     clamp(parsed.travelSpeed ?? DEFAULTS.travelSpeed, 0.5, 10.0),
-      cameraMode:      parsed.cameraMode ?? DEFAULTS.cameraMode,
-      tpDistance:      (parsed.tpDistance && ['CLOSE','MEDIUM','FAR'].includes(parsed.tpDistance))
+      moveSensitivity:  clamp(parsed.moveSensitivity  ?? DEFAULTS.moveSensitivity,  0.1,  3.0),
+      lookSensitivity:  clamp(parsed.lookSensitivity  ?? DEFAULTS.lookSensitivity,  0.1,  3.0),
+      invertY:          parsed.invertY ?? DEFAULTS.invertY,
+      travelSpeed:      clamp(parsed.travelSpeed      ?? DEFAULTS.travelSpeed,      0.5, 10.0),
+      cameraMode:       parsed.cameraMode ?? DEFAULTS.cameraMode,
+      tpDistance:       (parsed.tpDistance && ['CLOSE','MEDIUM','FAR'].includes(parsed.tpDistance))
         ? parsed.tpDistance
         : DEFAULTS.tpDistance,
+      touchSensitivity: clamp(parsed.touchSensitivity ?? DEFAULTS.touchSensitivity, 0.1,  3.0),
+      touchDeadZone:    clamp(parsed.touchDeadZone    ?? DEFAULTS.touchDeadZone,    0.05, 0.25),
     }
   } catch {
     return { ...DEFAULTS }

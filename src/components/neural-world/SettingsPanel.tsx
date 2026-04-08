@@ -1,5 +1,5 @@
 /**
- * SettingsPanel.tsx — NW16: Collapsible settings panel (gear icon) in the HUD.
+ * SettingsPanel.tsx — NW17: Collapsible settings panel (gear icon) in the HUD.
  *
  * Settings persisted to localStorage via NWSettings.
  * Changes dispatched via 'nw:settings-change' CustomEvent so CameraController
@@ -13,6 +13,8 @@
  *   - Current speed display (read-only)
  *   - Camera mode selector
  *   - Third person distance selector
+ *   - NW17: Touch sensitivity multiplier (0.1 – 3.0, default 1.5) — touch only
+ *   - NW17: Touch dead zone (5% – 25%, default 15%) — touch only
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
@@ -28,7 +30,10 @@ interface SettingsPanelProps {
   onCameraModeChange: (mode: CameraMode) => void
 }
 
-const PANEL_W = 230
+const PANEL_W = 260
+
+// NW17: Detect touch device to show touch-specific settings
+const isTouchDevice = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0
 
 export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelProps) {
   const [open, setOpen]       = useState(false)
@@ -85,18 +90,20 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
       alignItems: 'flex-end',
       gap: 4,
     }}>
-      {/* Gear toggle button */}
+      {/* Gear toggle button — NW17: min 44×44px for Apple HIG touch target */}
       <button
         onClick={() => setOpen(o => !o)}
         title="Camera Settings"
         style={{
-          width: 34,
-          height: 34,
-          borderRadius: 6,
+          width: isTouchDevice ? 48 : 34,
+          height: isTouchDevice ? 48 : 34,
+          minWidth: 44,
+          minHeight: 44,
+          borderRadius: 8,
           border: `1px solid ${open ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.15)'}`,
           background: open ? 'rgba(0,229,204,0.15)' : 'rgba(0,0,0,0.6)',
           color: open ? '#00e5cc' : 'rgba(255,255,255,0.55)',
-          fontSize: 17,
+          fontSize: isTouchDevice ? 20 : 17,
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
@@ -104,6 +111,8 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
           backdropFilter: 'blur(6px)',
           transition: 'all 0.15s',
           lineHeight: 1,
+          touchAction: 'none',
+          userSelect: 'none',
         }}
       >
         ⚙
@@ -240,10 +249,50 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
             </div>
           </div>
 
+          {/* ── NW17: Touch-specific settings ── */}
+          {isTouchDevice && (
+            <>
+              <Divider />
+
+              <div style={{
+                color: '#ff8840',
+                fontSize: 9,
+                letterSpacing: 2,
+                marginBottom: 2,
+                fontWeight: 700,
+              }}>
+                ◈ TOUCH CONTROLS
+              </div>
+
+              {/* Touch Sensitivity Multiplier */}
+              <SliderRow
+                label="TOUCH SENSITIVITY"
+                value={s.touchSensitivity ?? 1.5}
+                min={0.1} max={3.0} step={0.05}
+                display={(s.touchSensitivity ?? 1.5).toFixed(2) + 'x'}
+                onChange={v => applyChange({ touchSensitivity: v })}
+                touchFriendly
+              />
+
+              {/* Touch Dead Zone */}
+              <SliderRow
+                label="DEAD ZONE"
+                value={s.touchDeadZone ?? 0.15}
+                min={0.05} max={0.25} step={0.01}
+                display={Math.round((s.touchDeadZone ?? 0.15) * 100) + '%'}
+                onChange={v => applyChange({ touchDeadZone: v })}
+                touchFriendly
+              />
+            </>
+          )}
+
           {/* Hint */}
           <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 8, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>
             1P: Scroll = speed · Shift = sprint<br/>
             3P: Scroll = distance · 1/2/3 = preset
+            {isTouchDevice && (
+              <><br/>Touch: ↑↓ ascend/descend · SPRINT toggle</>
+            )}
           </div>
         </div>
       )}
@@ -254,7 +303,7 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function SliderRow({
-  label, value, min, max, step, display, onChange,
+  label, value, min, max, step, display, onChange, touchFriendly = false,
 }: {
   label: string
   value: number
@@ -263,6 +312,7 @@ function SliderRow({
   step: number
   display: string
   onChange: (v: number) => void
+  touchFriendly?: boolean
 }) {
   return (
     <div>
@@ -277,7 +327,12 @@ function SliderRow({
         step={step}
         value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
-        style={{ width: '100%', accentColor: '#00e5cc', cursor: 'pointer' }}
+        style={{
+          width: '100%',
+          accentColor: '#00e5cc',
+          cursor: 'pointer',
+          height: touchFriendly ? 24 : undefined,
+        }}
       />
     </div>
   )
