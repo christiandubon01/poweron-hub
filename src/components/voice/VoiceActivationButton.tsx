@@ -84,7 +84,7 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   const lastCleanedTranscriptRef    = useRef('')
 
   // B61a — Session store
-  const { activeSessionId, setActiveSessionId, bumpSession, prependSession, setSessionList } = useNexusStore()
+  const { activeSessionId, setActiveSessionId, bumpSession, prependSession, setSessionList, updateSessionTopicName } = useNexusStore()
 
   // FIX 4 — Session continuity: key for sessionStorage persistence
   const DRAWER_SESSION_KEY = 'nexus_drawer_messages_v1'
@@ -151,6 +151,49 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, profile?.org_id])
 
+  // B61b — Auto-name session after 2 completed exchanges (message_count reaches 4)
+  const autoNameSession = useCallback(async (sessionId: string) => {
+    try {
+      // Fetch last 4 messages (2 user + 2 assistant)
+      const { data: msgs } = await supabase
+        .from('nexus_messages')
+        .select('role, content')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: false })
+        .limit(4)
+
+      if (!msgs || msgs.length < 4) return
+
+      // Reverse so oldest is first (chronological order for Claude)
+      const chronological = [...msgs].reverse()
+
+      // Call Claude via proxy with naming system prompt
+      const { callClaude, extractText } = await import('@/services/claudeProxy')
+      const resp = await callClaude({
+        system: 'You are a session naming assistant. Given this conversation, respond with ONLY a 2-5 word topic name. No punctuation. No quotes. Examples: Pipeline Review, Surgery Center RFIs, Weekly Cash Flow',
+        messages: chronological.map((m) => ({
+          role:    m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+        max_tokens: 20,
+      })
+
+      const topicName = extractText(resp)?.trim()
+      if (!topicName) return
+
+      // Update Supabase + local store
+      await supabase
+        .from('nexus_sessions')
+        .update({ topic_name: topicName })
+        .eq('id', sessionId)
+
+      updateSessionTopicName(sessionId, topicName)
+      console.log('[VoiceButton] Auto-named session:', topicName)
+    } catch (err) {
+      console.warn('[VoiceButton] Auto-naming failed (non-critical):', err)
+    }
+  }, [updateSessionTopicName])
+
   // B61a — Helper: persist a user+assistant message pair to nexus_messages and bump session
   const persistMessagePair = useCallback(async (
     userContent: string,
@@ -185,10 +228,15 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
         .eq('id', sessionId)
 
       bumpSession(sessionId, now, newCount)
+
+      // B61b — Trigger auto-naming after exactly 2 exchanges (4 messages)
+      if (newCount === 4) {
+        autoNameSession(sessionId)
+      }
     } catch (err) {
       console.error('[VoiceButton] Failed to persist messages:', err)
     }
-  }, [user?.id, bumpSession])
+  }, [user?.id, bumpSession, autoNameSession])
 
   // B61a — Session switch: clear state, load messages from selected session
   const handleSessionSwitch = useCallback((sessionId: string, loadedMessages: DrawerMessage[]) => {

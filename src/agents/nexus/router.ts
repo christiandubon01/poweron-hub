@@ -16,6 +16,7 @@ import { getBackupData, getProjectFinancials, num } from '@/services/backupDataS
 import { buildOwnerProfileContext } from '@/services/ownerProfileService'
 import { useDemoStore } from '@/store/demoStore'
 import { buildEchoRollingBlock, getEmptyEchoBlock } from '@/services/echoRollingWindow'
+import { useNexusStore } from '@/store/nexusStore'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
 
 // ── Status Bucket Helpers ───────────────────────────────────────────────────
@@ -595,6 +596,73 @@ async function loadAgentContext(
 }
 
 
+// ── B61b: Cross-Session Memory ──────────────────────────────────────────────
+
+/**
+ * Builds a compact cross-session context block for NEXUS.
+ * Fetches the last 3 completed sessions (excluding the current one)
+ * and their last 2 assistant messages each.
+ * Total block is capped at 300 characters.
+ */
+async function buildCrossSessionContext(userId: string): Promise<string> {
+  try {
+    const activeSessionId = useNexusStore.getState().activeSessionId
+
+    // Fetch last 3 completed sessions for this user, excluding the current one
+    let query = supabase
+      .from('nexus_sessions')
+      .select('id, topic_name')
+      .eq('user_id', userId)
+      .order('last_active', { ascending: false })
+      .limit(activeSessionId ? 4 : 3)  // fetch one extra if we need to exclude active
+
+    const { data: rawSessions, error: sessErr } = await query
+    if (sessErr || !rawSessions || rawSessions.length === 0) return ''
+
+    const sessions = rawSessions as Array<{ id: string; topic_name: string | null }>
+    const filtered = sessions
+      .filter(s => s.id !== activeSessionId)
+      .slice(0, 3)
+
+    if (filtered.length === 0) return ''
+
+    const parts: string[] = []
+    for (const session of filtered) {
+      const { data: rawMsgs, error: msgErr } = await supabase
+        .from('nexus_messages')
+        .select('content')
+        .eq('session_id', session.id)
+        .eq('role', 'assistant')
+        .order('created_at', { ascending: false })
+        .limit(2)
+
+      if (msgErr || !rawMsgs || rawMsgs.length === 0) continue
+
+      const msgs    = rawMsgs as Array<{ content: string }>
+      const excerpts = [...msgs].reverse().map(m => m.content.slice(0, 80)).join(', ')
+      const label    = session.topic_name || 'Previous Session'
+      parts.push(`[Session: ${label}] NEXUS said: ${excerpts}`)
+    }
+
+    if (parts.length === 0) return ''
+
+    const MAX_CHARS  = 300
+    const header     = 'RECENT SESSION CONTEXT (for reference only):\n'
+    let   body       = parts.join('\n')
+
+    // Truncate body to fit within budget
+    if ((header + body).length > MAX_CHARS) {
+      body = (header + body).slice(0, MAX_CHARS - 3) + '...'
+      return body
+    }
+
+    return header + body
+  } catch (err) {
+    console.warn('[Router] Cross-session context fetch failed (non-critical):', err)
+    return ''
+  }
+}
+
 // ── Route to Agent ──────────────────────────────────────────────────────────
 
 /**
@@ -732,11 +800,18 @@ If the NEXUS synthesis already fully answered the question — stop there. Do NO
     }
   }
 
+  // B61b — Cross-session memory: inject last 3 sessions' assistant excerpts
+  let crossSessionBlock = ''
+  if (routerUserId) {
+    crossSessionBlock = await buildCrossSessionContext(routerUserId)
+  }
+
   const systemPrompt = [
     demoPersonalityPrefix ? `${demoPersonalityPrefix}\n---\n\n` : '',
     buildSystemPrompt(),
     liveBusinessCtx ? `\n---\n\n${liveBusinessCtx}` : '',
     `\n---\n\n${echoMemoryBlock}`,
+    crossSessionBlock ? `\n---\n\n${crossSessionBlock}` : '',
     `\n---\n\n${capabilitySummary}`,
     ownerProfileCtx ? `\n---\n\n${ownerProfileCtx}` : '',
     agentPromptFragment ? `\n---\n\n## Agent Mode\n${agentPromptFragment}` : '',

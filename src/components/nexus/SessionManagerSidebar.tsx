@@ -15,8 +15,8 @@
  *  onClose          — called to collapse the sidebar
  */
 
-import React, { useEffect, useCallback } from 'react'
-import { Plus, X, MessageSquare } from 'lucide-react'
+import React, { useEffect, useCallback, useState, useRef } from 'react'
+import { Plus, X, MessageSquare, Pencil, Check } from 'lucide-react'
 import { useNexusStore, type NexusSessionRow } from '@/store/nexusStore'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
@@ -55,14 +55,58 @@ interface SessionCardProps {
   session:   NexusSessionRow
   isActive:  boolean
   onSelect:  () => void
+  onRename:  (id: string, newName: string) => Promise<void>
 }
 
-function SessionCard({ session, isActive, onSelect }: SessionCardProps) {
+function SessionCard({ session, isActive, onSelect, onRename }: SessionCardProps) {
   const agentColor = AGENT_COLORS[session.agent ?? 'nexus'] ?? '#8b5cf6'
 
+  // B61b — Editable title state
+  const [isEditing, setIsEditing]   = useState(false)
+  const [editValue, setEditValue]   = useState(session.topic_name || 'New Session')
+  const [isSaving, setIsSaving]     = useState(false)
+  const inputRef                    = useRef<HTMLInputElement>(null)
+
+  // Keep editValue in sync with external topic_name updates (auto-naming)
+  React.useEffect(() => {
+    if (!isEditing) setEditValue(session.topic_name || 'New Session')
+  }, [session.topic_name, isEditing])
+
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditValue(session.topic_name || 'New Session')
+    setIsEditing(true)
+    setTimeout(() => inputRef.current?.select(), 0)
+  }
+
+  const cancelEdit = () => {
+    setIsEditing(false)
+    setEditValue(session.topic_name || 'New Session')
+  }
+
+  const saveEdit = async () => {
+    const trimmed = editValue.trim()
+    if (!trimmed || trimmed === (session.topic_name || 'New Session')) {
+      cancelEdit()
+      return
+    }
+    setIsSaving(true)
+    try {
+      await onRename(session.id, trimmed)
+    } finally {
+      setIsSaving(false)
+      setIsEditing(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter')  { e.preventDefault(); saveEdit() }
+    if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
+  }
+
   return (
-    <button
-      onClick={onSelect}
+    <div
+      onClick={isEditing ? undefined : onSelect}
       style={{
         width:        '100%',
         textAlign:    'left',
@@ -70,23 +114,98 @@ function SessionCard({ session, isActive, onSelect }: SessionCardProps) {
         borderRadius: '10px',
         border:       `1.5px solid ${isActive ? agentColor : 'rgba(255,255,255,0.07)'}`,
         background:   isActive ? `${agentColor}14` : 'rgba(255,255,255,0.03)',
-        cursor:       'pointer',
+        cursor:       isEditing ? 'default' : 'pointer',
         transition:   'border-color 0.15s, background 0.15s',
         marginBottom: '6px',
         display:      'block',
+        position:     'relative',
       }}
+      onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.border = `1.5px solid ${agentColor}66` }}
+      onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.border = `1.5px solid rgba(255,255,255,0.07)` }}
     >
-      {/* Topic name */}
-      <div style={{
-        fontSize:     '12px',
-        fontWeight:   600,
-        color:        isActive ? '#f9fafb' : '#d1d5db',
-        marginBottom: '4px',
-        overflow:     'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace:   'nowrap',
-      }}>
-        {session.topic_name || 'New Session'}
+      {/* Topic name row — either display or edit mode */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+        {isEditing ? (
+          /* Edit input */
+          <>
+            <input
+              ref={inputRef}
+              value={editValue}
+              onChange={e => setEditValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              autoFocus
+              disabled={isSaving}
+              onClick={e => e.stopPropagation()}
+              style={{
+                flex:        1,
+                fontSize:    '12px',
+                fontWeight:  600,
+                color:       '#f9fafb',
+                background:  'rgba(255,255,255,0.08)',
+                border:      `1px solid ${agentColor}66`,
+                borderRadius:'4px',
+                padding:     '2px 5px',
+                outline:     'none',
+                minWidth:    0,
+              }}
+            />
+            {/* Save checkmark */}
+            <button
+              onClick={e => { e.stopPropagation(); saveEdit() }}
+              disabled={isSaving}
+              title="Save"
+              style={{
+                background:  'none',
+                border:      'none',
+                cursor:      isSaving ? 'default' : 'pointer',
+                color:       agentColor,
+                padding:     '2px',
+                display:     'flex',
+                flexShrink:  0,
+              }}
+            >
+              <Check size={12} />
+            </button>
+          </>
+        ) : (
+          /* Display mode */
+          <>
+            <div
+              style={{
+                flex:         1,
+                fontSize:     '12px',
+                fontWeight:   600,
+                color:        isActive ? '#f9fafb' : '#d1d5db',
+                overflow:     'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace:   'nowrap',
+              }}
+              onDoubleClick={startEdit}
+              title="Double-click to rename"
+            >
+              {session.topic_name || 'New Session'}
+            </div>
+            {/* Pencil icon — only visible on hover via CSS class would be ideal, always visible here for simplicity */}
+            <button
+              onClick={startEdit}
+              title="Rename session"
+              style={{
+                background:  'none',
+                border:      'none',
+                cursor:      'pointer',
+                color:       '#4b5563',
+                padding:     '2px',
+                display:     'flex',
+                flexShrink:  0,
+                opacity:     0.6,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = agentColor; (e.currentTarget as HTMLButtonElement).style.opacity = '1' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#4b5563'; (e.currentTarget as HTMLButtonElement).style.opacity = '0.6' }}
+            >
+              <Pencil size={10} />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Meta row */}
@@ -125,7 +244,7 @@ function SessionCard({ session, isActive, onSelect }: SessionCardProps) {
           {session.agent ?? 'nexus'}
         </span>
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -139,7 +258,7 @@ interface SessionManagerSidebarProps {
 
 export function SessionManagerSidebar({ onSelectSession, onNewSession, onClose }: SessionManagerSidebarProps) {
   const { user, profile } = useAuth()
-  const { activeSessionId, sessionList, setSessionList, setActiveSessionId, prependSession } = useNexusStore()
+  const { activeSessionId, sessionList, setSessionList, setActiveSessionId, prependSession, updateSessionTopicName } = useNexusStore()
 
   // ── Load sessions on mount ────────────────────────────────────────────────
 
@@ -190,6 +309,20 @@ export function SessionManagerSidebar({ onSelectSession, onNewSession, onClose }
       console.error('[SessionManagerSidebar] Failed to create session:', err)
     }
   }, [user?.id, profile?.org_id, prependSession, setActiveSessionId, onNewSession])
+
+  // ── B61b: Rename session ─────────────────────────────────────────────────
+
+  const handleRename = useCallback(async (sessionId: string, newName: string) => {
+    try {
+      await supabase
+        .from('nexus_sessions')
+        .update({ topic_name: newName })
+        .eq('id', sessionId)
+      updateSessionTopicName(sessionId, newName)
+    } catch (err) {
+      console.error('[SessionManagerSidebar] Failed to rename session:', err)
+    }
+  }, [updateSessionTopicName])
 
   // ── Select session: load last 6 messages ─────────────────────────────────
 
@@ -321,6 +454,7 @@ export function SessionManagerSidebar({ onSelectSession, onNewSession, onClose }
               session   = {session}
               isActive  = {session.id === activeSessionId}
               onSelect  = {() => handleSelectSession(session.id)}
+              onRename  = {handleRename}
             />
           ))
         )}

@@ -37,6 +37,8 @@ interface NexusState {
   bumpSession: (id: string, lastActive: string, messageCount: number) => void
   /** Prepend a newly created session to the list */
   prependSession: (session: NexusSessionRow) => void
+  /** Update a single session's topic_name in the cache */
+  updateSessionTopicName: (id: string, topicName: string) => void
 }
 
 export const useNexusStore = create<NexusState>((set) => ({
@@ -56,4 +58,11 @@ export const useNexusStore = create<NexusState>((set) => ({
 
   prependSession: (session) =>
     set((state) => ({ sessionList: [session, ...state.sessionList] })),
+
+  updateSessionTopicName: (id, topicName) =>
+    set((state) => ({
+      sessionList: state.sessionList.map((s) =>
+        s.id === id ? { ...s, topic_name: topicName } : s
+      ),
+    })),
 }))
