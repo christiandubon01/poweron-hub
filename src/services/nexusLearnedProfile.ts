@@ -351,6 +351,134 @@ export function getRecentTurns(count: number = 6): ConversationTurn[] {
   return getConversationThread().slice(-count)
 }
 
+// ── B61c: Feedback-driven confidence scoring ─────────────────────────────────
+
+/**
+ * Apply thumbs-up feedback to learned patterns related to a given agent.
+ * Thumbs up: increment confidence by 2 (vs passive +1 from pattern detection).
+ * This makes NEXUS learn faster from explicit positive feedback.
+ */
+export async function applyThumbsUpToProfile(
+  orgId: string,
+  userId: string,
+  agentId: string,
+): Promise<void> {
+  // Also update localStorage cache for immediate effect
+  applyFeedbackToLocalCache(userId, agentId, 2)
+
+  try {
+    const { error: testError } = await supabase
+      .from('nexus_learned_profile' as never)
+      .select('id')
+      .limit(1)
+
+    if (testError) return // Table not available yet
+
+    // Find active patterns that match this agent as a focus area
+    const { data: rows, error } = await supabase
+      .from('nexus_learned_profile' as never)
+      .select('id, confidence')
+      .eq('user_id', userId)
+      .eq('active', true)
+      .or(`pattern_type.eq.focus_area,pattern_value.ilike.%${agentId}%`)
+      .limit(5)
+
+    if (error || !rows) return
+
+    for (const row of rows as any[]) {
+      await supabase
+        .from('nexus_learned_profile' as never)
+        .update({
+          confidence:    (row.confidence || 1) + 2, // +2 for explicit thumbs up
+          last_observed: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+    }
+
+    console.log(`[LearnedProfile] Thumbs up applied to ${(rows as any[]).length} patterns for agent: ${agentId}`)
+  } catch (err) {
+    console.warn('[LearnedProfile] applyThumbsUpToProfile failed (non-critical):', err)
+  }
+}
+
+/**
+ * Apply thumbs-down feedback to learned patterns related to a given agent.
+ * Thumbs down: decrement confidence by 1.
+ * If confidence reaches 0: set active=false (pattern is no longer trusted).
+ */
+export async function applyThumbsDownToProfile(
+  orgId: string,
+  userId: string,
+  agentId: string,
+): Promise<void> {
+  // Also update localStorage cache for immediate effect
+  applyFeedbackToLocalCache(userId, agentId, -1)
+
+  try {
+    const { error: testError } = await supabase
+      .from('nexus_learned_profile' as never)
+      .select('id')
+      .limit(1)
+
+    if (testError) return // Table not available yet
+
+    // Find active patterns that match this agent as a focus area
+    const { data: rows, error } = await supabase
+      .from('nexus_learned_profile' as never)
+      .select('id, confidence')
+      .eq('user_id', userId)
+      .eq('active', true)
+      .or(`pattern_type.eq.focus_area,pattern_value.ilike.%${agentId}%`)
+      .limit(5)
+
+    if (error || !rows) return
+
+    for (const row of rows as any[]) {
+      const newConf = Math.max(0, (row.confidence || 1) - 1)
+      await supabase
+        .from('nexus_learned_profile' as never)
+        .update({
+          confidence:    newConf,
+          active:        newConf > 0, // Deactivate pattern if confidence hits 0
+          last_observed: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+    }
+
+    console.log(`[LearnedProfile] Thumbs down applied to ${(rows as any[]).length} patterns for agent: ${agentId}`)
+  } catch (err) {
+    console.warn('[LearnedProfile] applyThumbsDownToProfile failed (non-critical):', err)
+  }
+}
+
+/**
+ * Apply confidence delta to localStorage cache for immediate effect.
+ * +delta for thumbs up, -delta for thumbs down.
+ */
+function applyFeedbackToLocalCache(userId: string, agentId: string, delta: number): void {
+  try {
+    const cached = getCachedPatterns(userId)
+    const agentLower = agentId.toLowerCase()
+    let changed = false
+
+    for (const p of cached) {
+      if (
+        p.pattern_type === 'focus_area' ||
+        p.pattern_value.toLowerCase().includes(agentLower)
+      ) {
+        const newConf = Math.max(0, (p.confidence || 1) + delta)
+        p.confidence = newConf
+        p.active = newConf > 0
+        changed = true
+      }
+    }
+
+    if (changed) {
+      localStorage.setItem(`${CACHE_KEY}_${userId}`, JSON.stringify(cached))
+    }
+  } catch { /* ignore */ }
+}
+
 // ── Local cache helpers ─────────────────────────────────────────────────────
 
 function getCachedPatterns(userId: string): LearnedPattern[] {

@@ -20,8 +20,10 @@ import { getActiveMode, setActiveMode, MODE_CONFIGS, type NexusAgentMode } from 
 import { MessageBubble, AgentBadge } from './MessageBubble'
 import { renderMarkdown } from '@/components/voice/VoiceTranscriptPanel'
 // NexusPresenceOrb moved to VoiceTranscriptPanel
-import { clearConversationThread } from '@/services/nexusLearnedProfile'
+import { clearConversationThread, applyThumbsUpToProfile, applyThumbsDownToProfile } from '@/services/nexusLearnedProfile'
 import { extractAndStoreConversationSignals, initEchoMemory } from '@/agents/echo/echoMemory'
+import { supabase } from '@/lib/supabase'
+import { useNexusStore } from '@/store/nexusStore'
 import { MorningBriefingCard } from './MorningBriefingCard'
 import SessionDebrief from '@/components/SessionDebrief'
 import { extractConclusions, saveConclusions, type ConclusionItem } from '@/services/sessionConclusionService'
@@ -51,6 +53,8 @@ interface ChatMessage {
   agentId?:     string
   impactLevel?: ClassifiedIntent['impactLevel']
   metadata?:    { type?: string; stats?: any; [key: string]: any }
+  /** B61c: Supabase nexus_messages row UUID for rating updates */
+  supabaseId?:  string
 }
 
 interface PendingProposal {
@@ -152,6 +156,8 @@ function DeepDiveSections({ content, agentId }: { content: string; agentId?: str
 
 export function NexusChatPanel() {
   const { profile } = useAuth()
+  // B61c: Active session for nexus_messages persistence + rating
+  const { activeSessionId } = useNexusStore()
   const [messages, setMessages]             = useState<ChatMessage[]>([])
   const [input, setInput]                   = useState('')
   const [isProcessing, setIsProcessing]     = useState(false)
@@ -417,6 +423,8 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
         setLastMsgMode(response.mode)
         // Stream text in character by character for perceived first-token speed
         streamResponseText(newMsgId, response.agent.content)
+        // B61c: Persist to nexus_messages for rating capability (fire-and-forget)
+        persistAssistantMessage(newMsgId, response.agent.content, response.agent.agentId)
       }
 
     } catch (err) {
@@ -546,16 +554,79 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
     setStreamingMsgId(null)
   }, [])
 
-  // B29 — T2 Micro Feedback: handle thumbs tap (one-shot, cannot change after)
+  // B61c: Persist an assistant message to nexus_messages and return the row UUID.
+  // Fire-and-forget — updates the local ChatMessage state with the Supabase ID.
+  const persistAssistantMessage = useCallback(async (
+    msgId: string,
+    content: string,
+    agentId: string,
+  ) => {
+    const sessionId = activeSessionId
+    const userId = profile?.id
+    if (!sessionId || !userId) return
+
+    try {
+      const { data, error } = await supabase
+        .from('nexus_messages')
+        .insert({
+          session_id: sessionId,
+          user_id:    userId,
+          role:       'assistant',
+          content,
+          agent:      agentId,
+          rating:     0,
+        })
+        .select('id')
+        .single()
+
+      if (error || !data) return
+
+      // Store the Supabase UUID in the local ChatMessage for rating updates
+      const supabaseId = (data as any).id
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? { ...m, supabaseId } : m
+      ))
+    } catch (err) {
+      console.warn('[NexusChat] Failed to persist message to nexus_messages:', err)
+    }
+  }, [activeSessionId, profile?.id])
+
+  // B29 — T2 Micro Feedback (B61c enhanced): handle thumbs tap (one-shot, cannot change after)
+  // Also writes rating to nexus_messages and adjusts confidence in nexus_learned_profile.
   const handleThumbsFeedback = useCallback((msg: ChatMessage, vote: 'up' | 'down') => {
     if (messageFeedback[msg.id]) return // already voted
     setMessageFeedback(prev => ({ ...prev, [msg.id]: vote }))
+
+    // B29: log to audit_decisions (existing)
     logMicroFeedback({
       agent: (msg.agentId ?? 'nexus').toUpperCase(),
       response_preview: msg.content,
       feedback: vote,
       org_id: profile?.org_id,
     })
+
+    // B61c: Write rating to nexus_messages if we have the Supabase row ID
+    if (msg.supabaseId) {
+      const ratingValue = vote === 'up' ? 1 : -1
+      supabase
+        .from('nexus_messages')
+        .update({ rating: ratingValue })
+        .eq('id', msg.supabaseId)
+        .then(({ error }) => {
+          if (error) console.warn('[NexusChat] Failed to write rating:', error.message)
+          else console.log(`[NexusChat] Rating ${ratingValue} written to nexus_messages:`, msg.supabaseId)
+        })
+    }
+
+    // B61c: Adjust confidence in nexus_learned_profile
+    if (profile?.org_id && profile?.id) {
+      const agentId = msg.agentId ?? 'nexus'
+      if (vote === 'up') {
+        applyThumbsUpToProfile(profile.org_id, profile.id, agentId).catch(() => {})
+      } else {
+        applyThumbsDownToProfile(profile.org_id, profile.id, agentId).catch(() => {})
+      }
+    }
   }, [messageFeedback, profile])
 
   // Trigger deep dive mode
@@ -820,41 +891,41 @@ Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionabl
                   impactLevel={msg.impactLevel}
                 />
               )}
-              {/* B29 — T2 Micro Feedback: thumbs up/down below every AI response */}
+              {/* B61c — Response Rating: thumbs up/down below every AI response */}
               {msg.role === 'assistant' && msg.content && streamingMsgId !== msg.id && (
-                <div className="flex items-center gap-1 mt-1 pl-10">
-                  {(['up', 'down'] as const).map((vote) => {
-                    const voted = messageFeedback[msg.id]
-                    const isSelected = voted === vote
-                    const isOther = voted && voted !== vote
-                    return (
+                <div className="flex items-center gap-1.5 mt-1 pl-10">
+                  {messageFeedback[msg.id] ? (
+                    /* Once rated — show rating icon + thanks text only */
+                    <>
+                      <span style={{ fontSize: 13 }}>
+                        {messageFeedback[msg.id] === 'up' ? '👍' : '👎'}
+                      </span>
+                      <span className="text-[10px] font-mono text-text-4">
+                        Thanks for the feedback
+                      </span>
+                    </>
+                  ) : (
+                    /* Unrated — show both buttons */
+                    (['up', 'down'] as const).map((vote) => (
                       <button
                         key={vote}
                         onClick={() => handleThumbsFeedback(msg, vote)}
-                        disabled={!!voted}
                         title={vote === 'up' ? 'Helpful' : 'Not helpful'}
-                        className="flex items-center justify-center rounded transition-colors"
+                        className="flex items-center justify-center rounded transition-colors hover:bg-bg-3"
                         style={{
                           width: 22,
                           height: 22,
                           fontSize: 13,
-                          cursor: voted ? 'default' : 'pointer',
-                          opacity: isOther ? 0.25 : 1,
-                          backgroundColor: isSelected
-                            ? vote === 'up' ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)'
-                            : 'transparent',
-                          color: isSelected
-                            ? vote === 'up' ? '#4ade80' : '#f87171'
-                            : '#4b5563',
-                          border: isSelected
-                            ? `1px solid ${vote === 'up' ? '#4ade8044' : '#f8717144'}`
-                            : '1px solid transparent',
+                          cursor: 'pointer',
+                          backgroundColor: 'transparent',
+                          color: '#4b5563',
+                          border: '1px solid transparent',
                         }}
                       >
                         {vote === 'up' ? '👍' : '👎'}
                       </button>
-                    )
-                  })}
+                    ))
+                  )}
                 </div>
               )}
               {/* Show "Deep Dive" button below latest briefing response */}

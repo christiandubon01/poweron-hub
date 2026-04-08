@@ -489,6 +489,44 @@ function getContextBoost(conversationHistory: ConversationMessage[]): { agent: T
  * Import callClaude from proxy service for fallback.
  */
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { supabase } from '@/lib/supabase'
+
+// ── B61c: Feedback-loop boost — agents confirmed by thumbs-up ────────────────
+
+/**
+ * Fetch the last 10 positively-rated (thumbs up) assistant messages from
+ * nexus_messages and return a set of agent IDs that have received approval.
+ * This set is used to apply a small 0.05 score boost during classification.
+ *
+ * Reads from Supabase; returns empty set on failure (non-critical path).
+ */
+async function getRecentlyApprovedAgents(): Promise<Set<TargetAgent>> {
+  try {
+    const { data, error } = await supabase
+      .from('nexus_messages' as never)
+      .select('agent')
+      .eq('role', 'assistant')
+      .eq('rating', 1)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (error || !data) return new Set()
+
+    const approved = new Set<TargetAgent>()
+    for (const row of data as any[]) {
+      const agent = (row.agent ?? '').toLowerCase() as TargetAgent
+      if (isValidAgent(agent)) approved.add(agent)
+    }
+
+    if (approved.size > 0) {
+      console.log('[Classifier] Feedback boost agents:', [...approved].join(', '))
+    }
+
+    return approved
+  } catch {
+    return new Set()
+  }
+}
 
 /**
  * Perform Tier 3: Claude fallback.
@@ -575,6 +613,9 @@ export async function classifyIntent(
   const intentType = detectIntentType(message)
   console.log(`[Classifier] Intent type → ${intentType}`)
 
+  // B61c: Load recently approved agents for feedback boost (non-blocking)
+  const approvedAgents = await getRecentlyApprovedAgents()
+
   const categoryMap: Record<TargetAgent, IntentCategory> = {
     vault: 'estimating',
     pulse: 'dashboard',
@@ -603,10 +644,14 @@ export async function classifyIntent(
   const guaranteed = checkGuaranteedRoutes(message)
   if (guaranteed) {
     console.log(`[Classifier] Tier 0 guaranteed → ${guaranteed.agent} (${guaranteed.score.toFixed(2)})`)
+    // B61c: Apply feedback boost even to guaranteed routes
+    const boostedScore = approvedAgents.has(guaranteed.agent)
+      ? Math.min(guaranteed.score + 0.05, 1.0)
+      : guaranteed.score
     return {
       category: categoryMap[guaranteed.agent],
       targetAgent: guaranteed.agent,
-      confidence: guaranteed.score,
+      confidence: boostedScore,
       entities: [],
       requiresConfirmation: guaranteed.agent === 'ledger' || guaranteed.agent === 'vault',
       impactLevel: impactMap[guaranteed.agent],
@@ -625,6 +670,12 @@ export async function classifyIntent(
     // Apply context boost if applicable
     if (contextBoost && contextBoost.agent === tier1.agent) {
       finalScore = Math.min(finalScore + contextBoost.boost, 1.0)
+    }
+
+    // B61c: Apply feedback boost for agents confirmed by recent thumbs-up
+    if (approvedAgents.has(finalAgent)) {
+      finalScore = Math.min(finalScore + 0.05, 1.0)
+      console.log(`[Classifier] Feedback boost +0.05 applied to ${finalAgent}`)
     }
 
     console.log(`[Classifier] Tier 1 winner → ${finalAgent} (${finalScore.toFixed(2)})`)
