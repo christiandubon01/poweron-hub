@@ -392,13 +392,14 @@ export default function VisualSuitePanel({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
+    // B69: explicit height breaks flex-1 collapse chain — canvas was blank because
+    // getBoundingClientRect returned 0 when all ancestors used flex:1 with no
+    // defined height. calc(100vh - 106px) matches NeuralMap safe pattern.
     <div style={{
       display:         'flex',
       flexDirection:   'column',
       width:           '100%',
-      height:          '100%',
-      flex:            1,
-      minHeight:       0,
+      height:          'calc(100vh - 106px)',
       backgroundColor: '#000',
       overflow:        'hidden',
       fontFamily:      'Courier New, monospace',
@@ -406,6 +407,7 @@ export default function VisualSuitePanel({
     }}>
 
       {/* ── Canvas — fills all space above 72px bottom bar ── */}
+      {/* B69: flex:1 + minHeight:0 safe because parent now has explicit calc height */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <canvas
           ref={canvasRef}
