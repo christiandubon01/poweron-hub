@@ -600,6 +600,16 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return () => document.removeEventListener('poweron:show-proposals', handleShowProposals)
   }, [onNav])
 
+  // NW15: Listen for cross-view navigation events (e.g. Neural World link from BusinessOverview)
+  useEffect(() => {
+    function handlePowerOnNav(e: Event) {
+      const ev = e as CustomEvent<{ view: string }>
+      if (ev.detail?.view) onNav(ev.detail.view)
+    }
+    window.addEventListener('poweron:nav', handlePowerOnNav)
+    return () => window.removeEventListener('poweron:nav', handlePowerOnNav)
+  }, [onNav])
+
   // Relative time formatter for "Saved"
   const getRelativeTime = (isoString: string): string => {
     const date = new Date(isoString)
@@ -1627,6 +1637,23 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 <Zap size={14} />
                 +Log
               </button>
+
+              {/* NW15: Neural World quick-launch — PULSE panel shortcut */}
+              {!isMobile && (
+                <button
+                  onClick={() => onNav('neural-world')}
+                  title="Neural World — 3D Business Visualization"
+                  className="px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1 flex-shrink-0"
+                  style={{
+                    background: 'rgba(0,229,204,0.12)',
+                    border: '1px solid rgba(0,229,204,0.35)',
+                    color: '#00e5cc',
+                  }}
+                >
+                  <Globe size={13} />
+                  Neural World
+                </button>
+              )}
 
               {/* Undo Button */}
               {!isMobile && (

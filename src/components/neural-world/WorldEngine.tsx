@@ -40,6 +40,7 @@ import { CameraController, CameraMode } from './CameraController'
 import { CollisionSystem } from './CollisionSystem'
 import { TerrainGenerator } from './TerrainGenerator'
 import { supabase } from '@/lib/supabase'
+import { startParticleWatchdog, stopParticleWatchdog } from './ParticleManager'
 
 // ── Day/Night cycle config ────────────────────────────────────────────────────
 
@@ -547,6 +548,10 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
       // Dispatch frame event — children subscribe to this
       window.dispatchEvent(new Event('nw:frame'))
 
+      // NW15: Dispatch LOD update event with camera so TerrainGenerator can
+      // call lod.update(camera) for all mountain LOD objects
+      window.dispatchEvent(new CustomEvent('nw:lod-update', { detail: { camera } }))
+
       renderer.render(scene, camera)
     }
     animate()
@@ -778,8 +783,12 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    // NW15: Start global particle watchdog (caps at 5000, auto-reduce at <30fps)
+    startParticleWatchdog()
+
     const cleanup = initScene()
     return () => {
+      stopParticleWatchdog()
       if (cleanup) cleanup()
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
       // NW12: Clean up valley glow

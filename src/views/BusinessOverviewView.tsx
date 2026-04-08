@@ -487,7 +487,32 @@ Be concise and actionable. Format with clear section headers.`
           <div style={{ fontSize: 22, fontWeight: 800, color: '#a3e635', fontFamily: 'ui-monospace, monospace' }}>{fmtDollar(combinedCollected)}</div>
           <div style={{ fontSize: 10, color: '#374151' }}>Electrical only (real payments)</div>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* NW15: Neural World quick-launch */}
+          <button
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('poweron:nav', { detail: { view: 'neural-world' } }))
+            }}
+            title="Neural World — 3D Business Visualization"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: 'rgba(0,229,204,0.08)',
+              border: '1px solid rgba(0,229,204,0.3)',
+              borderRadius: 8,
+              padding: '5px 12px',
+              cursor: 'pointer',
+              fontFamily: 'ui-monospace, monospace',
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(0,229,204,0.15)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(0,229,204,0.08)' }}
+          >
+            <span style={{ fontSize: 12, color: '#00e5cc' }}>◈</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#00e5cc', letterSpacing: '0.08em' }}>NEURAL WORLD</span>
+          </button>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, backgroundColor: 'rgba(22,163,74,0.08)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: 8, padding: '4px 12px' }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#16a34a', boxShadow: '0 0 6px #16a34a' }} />
             <span style={{ fontSize: 11, fontWeight: 700, color: '#16a34a', letterSpacing: '0.08em' }}>BUSINESS OVERVIEW</span>

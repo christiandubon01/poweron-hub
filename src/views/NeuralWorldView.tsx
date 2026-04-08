@@ -7,6 +7,10 @@
  *       Fullscreen toggle button in HUD top-left.
  *       Scroll lock: all wheel events captured inside canvas.
  *
+ * NW15 additions:
+ *   - Loading screen with 4-stage progress bar (25/50/75/100%)
+ *   - Mobile graceful degradation: viewport < 768px shows "requires desktop" message
+ *
  * Route: neural-world
  * Role gate: owner + admin only.
  */
@@ -87,7 +91,166 @@ function WorldLayers({
 
 // ── Main View ─────────────────────────────────────────────────────────────────
 
+// ── Loading stage definition ──────────────────────────────────────────────────
+
+interface LoadStage {
+  label: string
+  pct: number
+}
+
+const LOAD_STAGES: LoadStage[] = [
+  { label: 'Connecting to data',    pct: 25  },
+  { label: 'Generating terrain',    pct: 50  },
+  { label: 'Initializing atmosphere', pct: 75 },
+  { label: 'Ready',                 pct: 100 },
+]
+
+// ── Mobile guard ──────────────────────────────────────────────────────────────
+
+function MobileGuard() {
+  return (
+    <div style={{
+      width: '100%',
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#050508',
+      color: '#00e5cc',
+      fontFamily: 'monospace',
+      padding: '24px',
+      textAlign: 'center',
+    }}>
+      <div style={{ fontSize: 32, marginBottom: 16 }}>◈</div>
+      <div style={{ fontSize: 14, letterSpacing: 2, marginBottom: 8 }}>
+        NEURAL WORLD
+      </div>
+      <div style={{
+        fontSize: 11,
+        color: 'rgba(0,229,204,0.6)',
+        letterSpacing: 1,
+        lineHeight: 1.7,
+        maxWidth: 280,
+      }}>
+        Neural World requires a desktop browser for the full 3D experience.
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <a
+          href="/"
+          style={{
+            fontSize: 10,
+            color: 'rgba(0,229,204,0.5)',
+            letterSpacing: 1.5,
+            textDecoration: 'none',
+            border: '1px solid rgba(0,229,204,0.3)',
+            padding: '6px 14px',
+            borderRadius: 3,
+          }}
+        >
+          ← RETURN TO DASHBOARD
+        </a>
+      </div>
+    </div>
+  )
+}
+
+// ── Loading screen ────────────────────────────────────────────────────────────
+
+function LoadingScreen({ stage }: { stage: LoadStage }) {
+  return (
+    <div style={{
+      position: 'absolute',
+      inset: 0,
+      zIndex: 200,
+      background: '#050508',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontFamily: 'monospace',
+    }}>
+      {/* Title */}
+      <div style={{ fontSize: 10, letterSpacing: 4, color: 'rgba(0,229,204,0.5)', marginBottom: 12 }}>
+        POWERON
+      </div>
+      <div style={{ fontSize: 20, letterSpacing: 3, color: '#00e5cc', marginBottom: 32 }}>
+        ◈ NEURAL WORLD
+      </div>
+
+      {/* Stage label */}
+      <div style={{
+        fontSize: 11,
+        color: 'rgba(0,229,204,0.8)',
+        letterSpacing: 1.5,
+        marginBottom: 16,
+      }}>
+        {stage.label}
+      </div>
+
+      {/* Progress bar */}
+      <div style={{
+        width: 260,
+        height: 2,
+        background: 'rgba(0,229,204,0.1)',
+        borderRadius: 1,
+        overflow: 'hidden',
+        position: 'relative',
+      }}>
+        <div style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          height: '100%',
+          width: `${stage.pct}%`,
+          background: '#00e5cc',
+          transition: 'width 0.4s ease',
+          boxShadow: '0 0 8px #00e5cc',
+        }} />
+      </div>
+
+      {/* Percentage */}
+      <div style={{
+        fontSize: 10,
+        color: 'rgba(0,229,204,0.45)',
+        letterSpacing: 1,
+        marginTop: 10,
+      }}>
+        {stage.pct}%
+      </div>
+    </div>
+  )
+}
+
+// ── Main View ─────────────────────────────────────────────────────────────────
+
 export default function NeuralWorldView() {
+  // NW15: Mobile guard — show message if viewport < 768px
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  useEffect(() => {
+    function onResize() { setIsMobile(window.innerWidth < 768) }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  // NW15: Loading screen state
+  const [loadStageIdx, setLoadStageIdx] = useState(0)
+  const [loadDone, setLoadDone] = useState(false)
+
+  // Advance through loading stages on mount
+  useEffect(() => {
+    if (isMobile) return
+    // Stage 0 → stage 1 after 400ms (data connection)
+    const t1 = setTimeout(() => setLoadStageIdx(1), 400)
+    // Stage 1 → stage 2 after another 600ms (terrain gen)
+    const t2 = setTimeout(() => setLoadStageIdx(2), 1000)
+    // Stage 2 → stage 3 after another 500ms (atmosphere)
+    const t3 = setTimeout(() => setLoadStageIdx(3), 1500)
+    // Stage 3 → hide loading screen after another 400ms (ready)
+    const t4 = setTimeout(() => setLoadDone(true), 1900)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
+  }, [isMobile])
+
   // NW7: Unified layer state
   const [layerStates, setLayerStates] = useState<LayerStates>(DEFAULT_LAYER_STATES)
 
@@ -178,6 +341,11 @@ export default function NeuralWorldView() {
     }
   }, [atmosphereMode])
 
+  // NW15: Mobile guard — render early before world mounts
+  if (isMobile) {
+    return <MobileGuard />
+  }
+
   return (
     <div
       style={{
@@ -190,6 +358,9 @@ export default function NeuralWorldView() {
         background: '#050508',
       }}
     >
+      {/* NW15: Loading screen — shown until world initializes */}
+      {!loadDone && <LoadingScreen stage={LOAD_STAGES[loadStageIdx]} />}
+
       {/* ── Canvas area — normal or split compare ── */}
       {compareMode ? (
         <div style={{ display: 'flex', width: '100%', height: '100%' }}>

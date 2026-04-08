@@ -39,6 +39,7 @@ import {
   type NWProject,
   type NWInvoice,
 } from '../DataBridge'
+import { MeshPool } from '../ObjectPool'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -126,6 +127,8 @@ export function AccountingLayer() {
 
   // Risk: AR stalactite indicators (amber spikes over stale invoices)
   const arStalactitesRef = useRef<Map<string, THREE.Mesh>>(new Map())
+  // NW15: Object pool for stalactite meshes (pre-alloc 10, max 40)
+  const stalactitePoolRef = useRef<MeshPool | null>(null)
 
   // Risk: dependency shadow (dark sphere above dominant project)
   const depShadowRef     = useRef<THREE.Mesh | null>(null)
@@ -435,12 +438,35 @@ export function AccountingLayer() {
   // ── AR stalactites (invoice >30 days) ─────────────────────────────────────
 
   function updateARStalactites(invoices: NWInvoice[], projects: NWProject[]) {
+    // NW15: Lazily create pool on first use (pre-alloc 10, max 40 stalactites)
+    if (!stalactitePoolRef.current) {
+      stalactitePoolRef.current = new MeshPool(
+        () => {
+          const geo = new THREE.ConeGeometry(0.35, 2, 6)
+          const mat = new THREE.MeshLambertMaterial({
+            color: 0xcc4400,
+            emissive: new THREE.Color(0xaa2200),
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.85,
+          })
+          const m = new THREE.Mesh(geo, mat)
+          m.frustumCulled = true
+          scene.add(m)
+          return m
+        },
+        10,  // preallocate
+        40   // max pool size
+      )
+    }
+
     const staleIds = new Set(invoices.map(inv => inv.id))
 
-    // Remove resolved stalactites
+    // Return resolved stalactites to pool
     for (const [id, mesh] of arStalactitesRef.current) {
       if (!staleIds.has(id)) {
-        disposeObj(scene, mesh)
+        scene.remove(mesh)
+        stalactitePoolRef.current!.release(mesh)
         arStalactitesRef.current.delete(id)
       }
     }
@@ -470,15 +496,12 @@ export function AccountingLayer() {
       const ageDays = ageMs / (24 * 60 * 60 * 1000)
       const spikeLen = Math.min(8, (ageDays - 30) / 10 + 1.5)
 
-      const geo = new THREE.ConeGeometry(0.35, spikeLen, 6)
-      const mat = new THREE.MeshLambertMaterial({
-        color: 0xcc4400,
-        emissive: new THREE.Color(0xaa2200),
-        emissiveIntensity: 0.5 + Math.min(1, (ageDays - 30) / 60),
-        transparent: true,
-        opacity: 0.85,
-      })
-      const mesh = new THREE.Mesh(geo, mat)
+      // NW15: Acquire from pool instead of creating new geometry
+      const mesh = stalactitePoolRef.current!.acquire()
+      // Re-use geometry by scaling — avoids recreating geo every time
+      mesh.scale.setY(spikeLen / 2)
+      const mat = mesh.material as THREE.MeshLambertMaterial
+      mat.emissiveIntensity = 0.5 + Math.min(1, (ageDays - 30) / 60)
       // Hang downward from high point (stalactite = upside-down cone)
       mesh.rotation.z = Math.PI
       mesh.position.set(x, 18 + spikeLen / 2, z)
@@ -864,10 +887,15 @@ export function AccountingLayer() {
       disposeObj(scene, subCostStreamRef.current)
       subCostStreamRef.current = null
 
+      // NW15: dispose stalactite pool (removes all pooled meshes + geometry)
       for (const [, mesh] of arStalactitesRef.current) {
-        disposeObj(scene, mesh)
+        scene.remove(mesh)
       }
       arStalactitesRef.current.clear()
+      if (stalactitePoolRef.current) {
+        stalactitePoolRef.current.dispose()
+        stalactitePoolRef.current = null
+      }
 
       disposeObj(scene, depShadowRef.current)
       depShadowRef.current = null

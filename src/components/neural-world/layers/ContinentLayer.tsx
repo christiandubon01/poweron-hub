@@ -19,10 +19,11 @@ import * as THREE from 'three'
 import { useWorldContext } from '../WorldContext'
 import { subscribeWorldData, type NWWorldData } from '../DataBridge'
 import { supabase } from '@/lib/supabase'
+import { registerParticles, unregisterParticles } from '../ParticleManager'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const PLASMA_COUNT = 400
+const PLASMA_COUNT_REQUESTED = 400
 const RIVER_HALF_WIDTH = 18   // x: -18..18
 const RIVER_DEPTH = 380        // z: -190..190
 const ISLAND_RADIUS = 15
@@ -42,6 +43,8 @@ export function ContinentLayer() {
   const plasmaRef = useRef<THREE.Points | null>(null)
   const plasmaPositionsRef = useRef<Float32Array | null>(null)
   const plasmaVelocitiesRef = useRef<Float32Array | null>(null)
+  // NW15: actual allowed count from ParticleManager
+  const plasmaCountRef = useRef<number>(PLASMA_COUNT_REQUESTED)
 
   // MTZ Solar island
   const islandRef = useRef<THREE.Mesh | null>(null)
@@ -63,6 +66,10 @@ export function ContinentLayer() {
       ;(plasmaRef.current.material as THREE.Material).dispose()
       plasmaRef.current = null
     }
+
+    // NW15: Register with ParticleManager (respects global 5000-particle cap)
+    const PLASMA_COUNT = registerParticles('continent-plasma', 'Plasma River', PLASMA_COUNT_REQUESTED)
+    plasmaCountRef.current = PLASMA_COUNT
 
     const positions = new Float32Array(PLASMA_COUNT * 3)
     const colors = new Float32Array(PLASMA_COUNT * 3)
@@ -200,7 +207,8 @@ export function ContinentLayer() {
       const velocities = plasmaVelocitiesRef.current
       if (!plasma || !positions || !velocities) return
 
-      for (let i = 0; i < PLASMA_COUNT; i++) {
+      const pCount = plasmaCountRef.current
+      for (let i = 0; i < pCount; i++) {
         // Move particle northward
         positions[i * 3 + 2] += velocities[i] * dt
 
@@ -346,6 +354,8 @@ export function ContinentLayer() {
         frameHandlerRef.current = null
       }
       window.removeEventListener('nw:solar-income-toggle', onSolarToggle)
+      // NW15: unregister particles from global cap
+      unregisterParticles('continent-plasma')
       unsub()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

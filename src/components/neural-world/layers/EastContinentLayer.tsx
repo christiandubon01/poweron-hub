@@ -33,6 +33,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from '../WorldContext'
 import { subscribeWorldData, type NWWorldData } from '../DataBridge'
+import { MeshPool } from '../ObjectPool'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -206,6 +207,8 @@ export function EastContinentLayer() {
   // ── Refs for all Three.js objects ─────────────────────────────────────────
   const towerGroupsRef = useRef<THREE.Group[]>([])
   const churnPoolsRef  = useRef<Array<{ mesh: THREE.Mesh; createdAt: number }>>([])
+  // NW15: Object pool for churn pool discs (pre-alloc 5, max 20)
+  const churnPoolMeshPoolRef = useRef<MeshPool | null>(null)
   const mrrMountainRef = useRef<THREE.Mesh | null>(null)
   const mrrGlowRef     = useRef<THREE.PointLight | null>(null)
   const agentCellsRef  = useRef<Array<{ mesh: THREE.Mesh; agentId: string }>>([])
@@ -340,13 +343,37 @@ export function EastContinentLayer() {
   // ── Build churn pools ─────────────────────────────────────────────────────
 
   function buildChurnPools(hubState: HubState) {
-    // Remove expired pools (> 30 days)
+    // NW15: Lazily create churn pool mesh pool
+    if (!churnPoolMeshPoolRef.current) {
+      churnPoolMeshPoolRef.current = new MeshPool(
+        () => {
+          const geo = new THREE.PlaneGeometry(8, 8, 4, 4)
+          const mat = new THREE.MeshLambertMaterial({
+            color:       0x220010,
+            emissive:    new THREE.Color(0xff0033).multiplyScalar(0.25),
+            transparent: true,
+            opacity:     0.8,
+            depthWrite:  false,
+          })
+          const m = new THREE.Mesh(geo, mat)
+          m.frustumCulled = true
+          m.rotation.x = -Math.PI / 2
+          scene.add(m)
+          return m
+        },
+        5,   // preallocate
+        20   // max
+      )
+    }
+
+    // Remove expired pools (> 30 days) — return to pool
     const thirtyDays = 30 * 24 * 60 * 60 * 1000
     const now = Date.now()
     const retained: Array<{ mesh: THREE.Mesh; createdAt: number }> = []
     for (const pool of churnPoolsRef.current) {
       if (now - pool.createdAt > thirtyDays) {
-        disposeObj(scene, pool.mesh)
+        scene.remove(pool.mesh)
+        churnPoolMeshPoolRef.current!.release(pool.mesh)
       } else {
         retained.push(pool)
       }
@@ -366,20 +393,16 @@ export function EastContinentLayer() {
         const { x, z } = towerGridPosition(sub.tier, Math.max(0, idx))
 
         const poolRadius = tier.baseRadius * 2.0
-        const poolGeo    = new THREE.PlaneGeometry(poolRadius * 2, poolRadius * 2, 4, 4)
-        const poolMat    = new THREE.MeshLambertMaterial({
-          color:       0x220010,
-          emissive:    new THREE.Color(0xff0033).multiplyScalar(0.25),
-          transparent: true,
-          opacity:     1.0 - age / thirtyDays,   // fades as it approaches 30-day mark
-          depthWrite:  false,
-        })
-        const pool    = new THREE.Mesh(poolGeo, poolMat)
-        pool.rotation.x = -Math.PI / 2
+
+        // NW15: acquire from pool
+        const pool = churnPoolMeshPoolRef.current!.acquire()
+        pool.scale.set(poolRadius, 1, poolRadius)
+        const mat = pool.material as THREE.MeshLambertMaterial
+        mat.opacity = 1.0 - age / thirtyDays   // fades as it approaches 30-day mark
         pool.position.set(x, 0.05, z)
         pool.userData.subId = sub.id
         scene.add(pool)
-        churnPoolsRef.current.push({ mesh: pool, createdAt: sub.cancelledAt })
+        churnPoolsRef.current.push({ mesh: pool, createdAt: sub.cancelledAt! })
       }
     }
   }
@@ -980,9 +1003,13 @@ export function EastContinentLayer() {
       }
       towerGroupsRef.current = []
 
-      // Churn pools
-      for (const p of churnPoolsRef.current) disposeObj(scene, p.mesh)
+      // Churn pools — NW15: dispose object pool
+      for (const p of churnPoolsRef.current) scene.remove(p.mesh)
       churnPoolsRef.current = []
+      if (churnPoolMeshPoolRef.current) {
+        churnPoolMeshPoolRef.current.dispose()
+        churnPoolMeshPoolRef.current = null
+      }
 
       // MRR mountain
       if (mrrMountainRef.current) { disposeObj(scene, mrrMountainRef.current); mrrMountainRef.current = null }

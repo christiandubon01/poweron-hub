@@ -15,6 +15,13 @@
  * - Listens to 'nw:scenario-override' events (when ctx.applyScenario is true)
  * - Applies per-project heightMultiplier to mountains in real time via Y-axis scale
  * - Listens to 'nw:scenario-activate' to clear overrides when scenario deactivates
+ *
+ * NW15 scope:
+ * - LOD (Level of Detail) via THREE.LOD for each mountain:
+ *     dist 0–50   → high detail (8 radial segments)
+ *     dist 50–120 → medium detail (5 radial segments)
+ *     dist 120+   → low detail (3 radial segments)
+ * - frustumCulled = true explicitly set on all mesh objects
  */
 
 import { useEffect, useRef } from 'react'
@@ -54,10 +61,41 @@ function isProjectOverdue(project: NWProject): boolean {
     || project.status === 'in_progress' && project.health_score < 60
 }
 
+// ── LOD helper — builds a THREE.LOD with high/medium/low detail cones ─────────
+
+function buildMountainLOD(
+  height: number,
+  radius: number,
+  color: number,
+): THREE.LOD {
+  const lod = new THREE.LOD()
+
+  const detailLevels: Array<{ segments: number; dist: number }> = [
+    { segments: 8, dist: 0   },   // high detail: 0–50 units
+    { segments: 5, dist: 50  },   // medium detail: 50–120 units
+    { segments: 3, dist: 120 },   // low detail: 120+ units
+  ]
+
+  for (const { segments, dist } of detailLevels) {
+    const geo = new THREE.ConeGeometry(radius, height, segments)
+    const mat = new THREE.MeshLambertMaterial({
+      color,
+      emissive: new THREE.Color(color).multiplyScalar(0.15),
+    })
+    const mesh = new THREE.Mesh(geo, mat)
+    mesh.castShadow = true
+    mesh.receiveShadow = false
+    mesh.frustumCulled = true
+    lod.addLevel(mesh, dist)
+  }
+
+  return lod
+}
+
 // ── Mountain data structure ────────────────────────────────────────────────────
 
 interface Mountain {
-  mesh: THREE.Mesh
+  lod: THREE.LOD
   ring: THREE.Mesh | null
   baseY: number
   height: number
@@ -95,25 +133,19 @@ export function TerrainGenerator() {
       const overdue = isProjectOverdue(project)
       const height = Math.max(0.3, contractValueToHeight(project.contract_value))
       const radius = height * 0.3
+      const color  = statusColor(project, overdue)
 
-      // Mountain cone
-      const geo = new THREE.ConeGeometry(radius, height, 8)
-      const mat = new THREE.MeshLambertMaterial({
-        color: statusColor(project, overdue),
-        emissive: new THREE.Color(statusColor(project, overdue)).multiplyScalar(0.15),
-      })
-      const mesh = new THREE.Mesh(geo, mat)
-      mesh.castShadow = true
-      mesh.receiveShadow = false
+      // NW15: LOD mountain — high/medium/low detail by camera distance
+      const lod = buildMountainLOD(height, radius, color)
 
       const { x, z } = seededPosition(project.id)
       const baseY = height / 2   // cone origin is at centroid
-      mesh.position.set(x, baseY, z)
-      mesh.userData.projectId = project.id
-      mesh.userData.projectName = project.name
-      mesh.userData.mountainRadius = radius
+      lod.position.set(x, baseY, z)
+      lod.userData.projectId = project.id
+      lod.userData.projectName = project.name
+      lod.userData.mountainRadius = radius
 
-      scene.add(mesh)
+      scene.add(lod)
 
       // Risk ring at base
       let ring: THREE.Mesh | null = null
@@ -126,6 +158,7 @@ export function TerrainGenerator() {
           opacity: 0.7,
         })
         ring = new THREE.Mesh(ringGeo, ringMat)
+        ring.frustumCulled = true
         ring.rotation.x = Math.PI / 2
         ring.position.set(x, 0.1, z)
         scene.add(ring)
@@ -139,7 +172,7 @@ export function TerrainGenerator() {
       const pulseOffset = Math.random() * Math.PI * 2
 
       const mountain: Mountain = {
-        mesh,
+        lod,
         ring,
         baseY,
         height,
@@ -170,12 +203,16 @@ export function TerrainGenerator() {
 
   function disposeMountains() {
     for (const m of mountainsRef.current) {
-      scene.remove(m.mesh)
-      m.mesh.geometry.dispose()
-      if (Array.isArray(m.mesh.material)) {
-        m.mesh.material.forEach(mat => mat.dispose())
-      } else {
-        m.mesh.material.dispose()
+      // NW15: dispose each LOD level mesh
+      scene.remove(m.lod)
+      for (const level of m.lod.levels) {
+        const levelMesh = level.object as THREE.Mesh
+        if (levelMesh.geometry) levelMesh.geometry.dispose()
+        if (Array.isArray(levelMesh.material)) {
+          levelMesh.material.forEach(mat => mat.dispose())
+        } else if (levelMesh.material) {
+          levelMesh.material.dispose()
+        }
       }
       if (m.ring) {
         scene.remove(m.ring)
@@ -212,9 +249,10 @@ export function TerrainGenerator() {
         const pulseFactor = 1 + Math.sin(t) * m.pulseAmplitude
         // NW6: apply scenario height multiplier (Y only so width is preserved)
         const sm = m.scenarioMultiplier
-        m.mesh.scale.set(pulseFactor, sm * pulseFactor, pulseFactor)
+        // NW15: scale the LOD object (all LOD levels inherit scale)
+        m.lod.scale.set(pulseFactor, sm * pulseFactor, pulseFactor)
         // Keep base planted on ground: adjust y since scale affects centroid
-        m.mesh.position.y = m.baseY * sm * pulseFactor
+        m.lod.position.y = m.baseY * sm * pulseFactor
 
         // Pulse ring opacity if present
         if (m.ring) {
@@ -261,6 +299,19 @@ export function TerrainGenerator() {
       }
     }
 
+    // NW15: LOD update requires camera reference — listen for nw:frame and call
+    // lod.update(camera) so Three.js selects the right detail level each frame.
+    // We get the camera via the WorldContext.
+    function onLODUpdate(e: Event) {
+      const detail = (e as CustomEvent<{ camera?: THREE.Camera }>).detail
+      const cam = detail?.camera
+      if (!cam) return
+      for (const m of mountainsRef.current) {
+        m.lod.update(cam as THREE.Camera)
+      }
+    }
+    window.addEventListener('nw:lod-update', onLODUpdate as EventListener)
+
     window.addEventListener('nw:scenario-override', onScenarioOverride)
     window.addEventListener('nw:scenario-activate', onScenarioActivate)
 
@@ -274,6 +325,7 @@ export function TerrainGenerator() {
       }
       window.removeEventListener('nw:scenario-override', onScenarioOverride)
       window.removeEventListener('nw:scenario-activate', onScenarioActivate)
+      window.removeEventListener('nw:lod-update', onLODUpdate as EventListener)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene])
