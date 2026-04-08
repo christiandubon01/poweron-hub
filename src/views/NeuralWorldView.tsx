@@ -11,6 +11,9 @@
  * NW4 scope: AgentLayer (11 agents as distinct 3D entities with behavior).
  * NW5 scope: DecisionGravityLayer (polyhedra clouds), SignalLayer (aurora + lightning), day cycle polish.
  * NW6 scope: ScenarioBuilder panel — terrain reshape sliders, snapshot save/load, compare mode.
+ * NW7 scope: CommandHUD (full command surface), all 10 layer toggles, FPS counter,
+ *            data shadow, cinematic letterbox, crosshair, third-person orb glow (#00ff88),
+ *            graceful perf degradation, Supabase layer-state persistence.
  */
 
 import React, { useState, useCallback } from 'react'
@@ -19,55 +22,70 @@ import { CriticalPathLayer } from '@/components/neural-world/layers/CriticalPath
 import { AgentLayer } from '@/components/neural-world/layers/AgentLayer'
 import { DecisionGravityLayer } from '@/components/neural-world/layers/DecisionGravityLayer'
 import { SignalLayer } from '@/components/neural-world/layers/SignalLayer'
+import { PulseLayer } from '@/components/neural-world/layers/PulseLayer'
+import { PressureLayer } from '@/components/neural-world/layers/PressureLayer'
+import { VelocityLayer } from '@/components/neural-world/layers/VelocityLayer'
+import { RiskSurfaceLayer } from '@/components/neural-world/layers/RiskSurfaceLayer'
+import { ForecastLayer } from '@/components/neural-world/layers/ForecastLayer'
+import { CommandLayer } from '@/components/neural-world/layers/CommandLayer'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
+import CommandHUD, {
+  AtmosphereMode as HUDAtmosphereMode,
+  CameraMode as HUDCameraMode,
+  type LayerStates,
+} from '@/components/neural-world/CommandHUD'
 
-function hudButtonStyle(active: boolean, r: number, g: number, b: number): React.CSSProperties {
-  return {
-    background: active ? `rgba(${r},${g},${b},0.18)` : 'rgba(255,255,255,0.04)',
-    border: `1px solid ${active ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.12)'}`,
-    color: active ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.35)',
-    padding: '5px 11px',
-    borderRadius: 3,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    cursor: 'pointer',
-    fontFamily: 'monospace',
-    transition: 'all 0.15s ease',
-    whiteSpace: 'nowrap' as const,
-  }
+// ── Default layer state ───────────────────────────────────────────────────────
+
+const DEFAULT_LAYER_STATES: LayerStates = {
+  'pulse':            false,
+  'pressure':         true,   // ON by default
+  'critical-path':    false,
+  'agents':           false,
+  'decision-gravity': false,
+  'velocity':         false,
+  'risk-surface':     true,   // ON by default
+  'signal':           false,
+  'forecast':         false,
+  'command':          false,
 }
 
-/** Layers component used inside each WorldEngine instance */
-function WorldLayers({
-  riversVisible,
-  agentsVisible,
-  gravityVisible,
-  signalVisible,
-}: {
-  riversVisible: boolean
-  agentsVisible: boolean
-  gravityVisible: boolean
-  signalVisible: boolean
-}) {
+// ── WorldLayers — renders all layer components inside a single WorldEngine ────
+
+function WorldLayers({ layerStates }: { layerStates: LayerStates }) {
   return (
     <>
-      <CriticalPathLayer visible={riversVisible} />
-      <AgentLayer visible={agentsVisible} />
-      <DecisionGravityLayer visible={gravityVisible} />
-      <SignalLayer visible={signalVisible} />
+      <PulseLayer           visible={!!layerStates['pulse']} />
+      <PressureLayer        visible={!!layerStates['pressure']} />
+      <CriticalPathLayer    visible={!!layerStates['critical-path']} />
+      <AgentLayer           visible={!!layerStates['agents']} />
+      <DecisionGravityLayer visible={!!layerStates['decision-gravity']} />
+      <VelocityLayer        visible={!!layerStates['velocity']} />
+      <RiskSurfaceLayer     visible={!!layerStates['risk-surface']} />
+      <SignalLayer          visible={!!layerStates['signal']} />
+      <ForecastLayer        visible={!!layerStates['forecast']} />
+      <CommandLayer         visible={!!layerStates['command']} />
     </>
   )
 }
 
+// ── Main View ─────────────────────────────────────────────────────────────────
+
 export default function NeuralWorldView() {
-  const [riversVisible,   setRiversVisible]   = useState(true)
-  const [agentsVisible,   setAgentsVisible]   = useState(true)
-  const [gravityVisible,  setGravityVisible]  = useState(true)
-  const [signalVisible,   setSignalVisible]   = useState(true)
+  // NW7: Unified layer state
+  const [layerStates, setLayerStates] = useState<LayerStates>(DEFAULT_LAYER_STATES)
+
+  // NW7: HUD atmosphere + camera mode (synced to WorldEngine via events)
+  const [atmosphereMode, setAtmosphereMode] = useState<HUDAtmosphereMode>(HUDAtmosphereMode.SCIFI_V1)
+  const [cameraMode, setCameraMode] = useState<HUDCameraMode>(HUDCameraMode.FIRST_PERSON)
 
   // NW6: scenario + compare mode state
   const [scenarioActive, setScenarioActive] = useState(false)
   const [compareMode,    setCompareMode]    = useState(false)
+
+  const handleLayerToggle = useCallback((id: string, value: boolean) => {
+    setLayerStates(prev => ({ ...prev, [id]: value }))
+  }, [])
 
   const handleScenarioModeChange = useCallback((active: boolean) => {
     setScenarioActive(active)
@@ -103,13 +121,8 @@ export default function NeuralWorldView() {
               borderRight: '2px solid rgba(245,158,11,0.4)',
             }}
           >
-            <WorldEngine applyScenario={false}>
-              <WorldLayers
-                riversVisible={riversVisible}
-                agentsVisible={agentsVisible}
-                gravityVisible={gravityVisible}
-                signalVisible={signalVisible}
-              />
+            <WorldEngine applyScenario={false} hideBuiltinHUD={true}>
+              <WorldLayers layerStates={layerStates} />
             </WorldEngine>
             {/* Left label */}
             <div style={{
@@ -138,13 +151,8 @@ export default function NeuralWorldView() {
               position: 'relative',
             }}
           >
-            <WorldEngine applyScenario={true}>
-              <WorldLayers
-                riversVisible={riversVisible}
-                agentsVisible={agentsVisible}
-                gravityVisible={gravityVisible}
-                signalVisible={signalVisible}
-              />
+            <WorldEngine applyScenario={true} hideBuiltinHUD={true}>
+              <WorldLayers layerStates={layerStates} />
             </WorldEngine>
             {/* Right label */}
             <div style={{
@@ -165,13 +173,8 @@ export default function NeuralWorldView() {
         </div>
       ) : (
         /* Normal mode: single WorldEngine, applies scenario overrides when active */
-        <WorldEngine applyScenario={true}>
-          <WorldLayers
-            riversVisible={riversVisible}
-            agentsVisible={agentsVisible}
-            gravityVisible={gravityVisible}
-            signalVisible={signalVisible}
-          />
+        <WorldEngine applyScenario={true} hideBuiltinHUD={true}>
+          <WorldLayers layerStates={layerStates} />
         </WorldEngine>
       )}
 
@@ -182,17 +185,17 @@ export default function NeuralWorldView() {
       />
 
       {/* ── NW6: Mode badge — top center of canvas ── */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 14,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 25,
-          pointerEvents: 'none',
-        }}
-      >
-        {scenarioActive ? (
+      {scenarioActive && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 14,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 25,
+            pointerEvents: 'none',
+          }}
+        >
           <div style={{
             background: 'rgba(245,158,11,0.15)',
             border: '1px solid rgba(245,158,11,0.6)',
@@ -206,60 +209,18 @@ export default function NeuralWorldView() {
           }}>
             ⬛ SCENARIO MODE
           </div>
-        ) : (
-          <div style={{
-            background: 'rgba(0,229,130,0.08)',
-            border: '1px solid rgba(0,229,130,0.3)',
-            color: '#00e582',
-            padding: '4px 14px',
-            borderRadius: 3,
-            fontSize: 10,
-            letterSpacing: 2,
-            fontFamily: 'monospace',
-          }}>
-            ◈ LIVE DATA
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ── HUD layer controls ── */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 16,
-          right: 16,
-          zIndex: 10,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-          pointerEvents: 'auto',
-        }}
-      >
-        <button
-          onClick={() => setRiversVisible(v => !v)}
-          style={hudButtonStyle(riversVisible, 64, 192, 160)}
-        >
-          ◈ RIVERS {riversVisible ? 'ON' : 'OFF'}
-        </button>
-        <button
-          onClick={() => setAgentsVisible(v => !v)}
-          style={hudButtonStyle(agentsVisible, 192, 160, 32)}
-        >
-          ◈ AGENTS {agentsVisible ? 'ON' : 'OFF'}
-        </button>
-        <button
-          onClick={() => setGravityVisible(v => !v)}
-          style={hudButtonStyle(gravityVisible, 160, 120, 220)}
-        >
-          ◈ GRAVITY {gravityVisible ? 'ON' : 'OFF'}
-        </button>
-        <button
-          onClick={() => setSignalVisible(v => !v)}
-          style={hudButtonStyle(signalVisible, 80, 200, 255)}
-        >
-          ◈ SIGNAL {signalVisible ? 'ON' : 'OFF'}
-        </button>
-      </div>
+      {/* ── NW7: CommandHUD — full command surface ── */}
+      <CommandHUD
+        layerStates={layerStates}
+        onLayerToggle={handleLayerToggle}
+        cameraMode={cameraMode}
+        onCameraModeChange={setCameraMode}
+        atmosphereMode={atmosphereMode}
+        onAtmosphereModeChange={setAtmosphereMode}
+      />
     </div>
   )
 }

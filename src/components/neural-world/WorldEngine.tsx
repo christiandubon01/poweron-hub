@@ -142,9 +142,11 @@ interface WorldEngineProps {
   children?: React.ReactNode
   /** Pass true to make child layers apply scenario overrides (NW6) */
   applyScenario?: boolean
+  /** NW7: When true, suppress built-in AtmosphereManager and CameraController UI (replaced by CommandHUD) */
+  hideBuiltinHUD?: boolean
 }
 
-export function WorldEngine({ children, applyScenario = false }: WorldEngineProps) {
+export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = false }: WorldEngineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Three.js core refs
@@ -224,6 +226,13 @@ export function WorldEngine({ children, applyScenario = false }: WorldEngineProp
             playerPosition.current.set(pos.x, pos.y, pos.z)
           }
         }
+        // NW7: Notify CommandHUD of persisted modes
+        window.dispatchEvent(new CustomEvent('nw:mode-init', {
+          detail: {
+            atmosphereMode: settings.atmosphere_mode ?? AtmosphereMode.SCIFI_V1,
+            cameraMode: settings.camera_mode ?? CameraMode.FIRST_PERSON,
+          },
+        }))
       } catch (err) {
         console.warn('[WorldEngine] loadNWSettings error (non-blocking):', err)
       }
@@ -259,6 +268,30 @@ export function WorldEngine({ children, applyScenario = false }: WorldEngineProp
       }
     }, 1000)
   }, [playerPosition])
+
+  // NW7: Listen for CommandHUD mode-change requests
+  useEffect(() => {
+    function onRequestAtmo(e: Event) {
+      const ev = e as CustomEvent<{ mode: AtmosphereMode }>
+      if (ev.detail?.mode) {
+        setAtmosphereMode(ev.detail.mode)
+        saveNWSettings(ev.detail.mode, cameraMode)
+      }
+    }
+    function onRequestCam(e: Event) {
+      const ev = e as CustomEvent<{ mode: CameraMode }>
+      if (ev.detail?.mode) {
+        setCameraMode(ev.detail.mode)
+        saveNWSettings(atmosphereMode, ev.detail.mode)
+      }
+    }
+    window.addEventListener('nw:request-atmosphere-mode', onRequestAtmo)
+    window.addEventListener('nw:request-camera-mode', onRequestCam)
+    return () => {
+      window.removeEventListener('nw:request-atmosphere-mode', onRequestAtmo)
+      window.removeEventListener('nw:request-camera-mode', onRequestCam)
+    }
+  }, [atmosphereMode, cameraMode, saveNWSettings])
 
   // Wrap atmosphere/camera mode change handlers to also persist
   const handleAtmosphereModeChange = useCallback((mode: AtmosphereMode) => {
@@ -580,10 +613,12 @@ export function WorldEngine({ children, applyScenario = false }: WorldEngineProp
             dirLightRef={dirLightRef}
             groundMeshRef={groundMeshRef}
             ambientLight2Ref={ambientLight2Ref}
+            showUI={!hideBuiltinHUD}
           />
           <CameraController
             mode={cameraMode}
             onModeChange={handleCameraModeChange}
+            showUI={!hideBuiltinHUD}
           />
           <CollisionSystem playerPosition={playerPosition} />
           <TerrainGenerator />
@@ -610,8 +645,8 @@ export function WorldEngine({ children, applyScenario = false }: WorldEngineProp
         </div>
       )}
 
-      {/* HUD hint overlay */}
-      {contextValue && (
+      {/* HUD hint overlay — hidden when CommandHUD is active */}
+      {contextValue && !hideBuiltinHUD && (
         <div
           style={{
             position: 'absolute',

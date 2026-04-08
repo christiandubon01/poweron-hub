@@ -21,6 +21,8 @@ export enum CameraMode {
 interface CameraControllerProps {
   mode: CameraMode
   onModeChange: (mode: CameraMode) => void
+  /** NW7: When true the built-in toggle UI is hidden (replaced by CommandHUD) */
+  showUI?: boolean
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ const CINEMATIC_SPEED = 0.003   // radians per frame
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function CameraController({ mode, onModeChange }: CameraControllerProps) {
+export function CameraController({ mode, onModeChange, showUI = true }: CameraControllerProps) {
   const { scene, camera, renderer } = useWorldContext()
 
   // Input state
@@ -60,10 +62,11 @@ export function CameraController({ mode, onModeChange }: CameraControllerProps) 
   // ── Orb setup ────────────────────────────────────────────────────────────
   useEffect(() => {
     const geo = new THREE.SphereGeometry(0.4, 16, 12)
+    // NW7: Third-person orb glows company color #00ff88
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x00ffcc,
-      emissive: 0x00ddaa,
-      emissiveIntensity: 1.5,
+      color: 0x00ff88,
+      emissive: 0x00cc66,
+      emissiveIntensity: 1.8,
       roughness: 0.1,
       metalness: 0.3,
     })
@@ -160,6 +163,9 @@ export function CameraController({ mode, onModeChange }: CameraControllerProps) 
 
   // ── Per-frame update ──────────────────────────────────────────────────────
   useEffect(() => {
+    // NW7: Track last position for speed dispatch
+    const _lastPos = pos.current.clone()
+
     function onFrame() {
       if (mode === CameraMode.CINEMATIC) {
         updateCinematic()
@@ -168,6 +174,10 @@ export function CameraController({ mode, onModeChange }: CameraControllerProps) 
       } else if (mode === CameraMode.THIRD_PERSON) {
         updateThirdPerson()
       }
+      // Dispatch player speed for CommandHUD
+      const currentSpeed = pos.current.distanceTo(_lastPos)
+      _lastPos.copy(pos.current)
+      window.dispatchEvent(new CustomEvent('nw:player-speed', { detail: { speed: currentSpeed } }))
     }
 
     function updateFirstPerson() {
@@ -255,6 +265,9 @@ export function CameraController({ mode, onModeChange }: CameraControllerProps) 
     { key: CameraMode.THIRD_PERSON, label: '3P' },
     { key: CameraMode.CINEMATIC, label: 'CIN' },
   ]
+
+  // NW7: CommandHUD replaces built-in UI when showUI=false
+  if (!showUI) return null
 
   return (
     <div

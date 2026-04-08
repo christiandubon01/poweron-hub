@@ -121,6 +121,8 @@ interface AtmosphereManagerProps {
   groundMeshRef: React.MutableRefObject<THREE.Mesh | null>
   /** Secondary ambient for SCIFI_V2_SUBSTRATE dual ambient */
   ambientLight2Ref: React.MutableRefObject<THREE.AmbientLight | null>
+  /** NW7: When true the built-in toggle UI is hidden (replaced by CommandHUD) */
+  showUI?: boolean
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -132,6 +134,7 @@ export function AtmosphereManager({
   dirLightRef,
   groundMeshRef,
   ambientLight2Ref,
+  showUI = true,
 }: AtmosphereManagerProps) {
   const { scene } = useWorldContext()
   const particlesRef = useRef<THREE.Points | null>(null)
@@ -409,6 +412,8 @@ export function AtmosphereManager({
   }
 
   // ── Toggle UI ─────────────────────────────────────────────────────────────
+  if (!showUI) return null
+
   return (
     <div
       style={{
