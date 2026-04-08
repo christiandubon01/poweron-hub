@@ -834,7 +834,7 @@ export default function CombinedNeuralMap() {
     <div
       ref={containerRef}
       style={{
-        position: 'relative', width: '100%', height: '100%',
+        position: 'relative', width: '100%', height: 'calc(100vh - 106px)',
         overflow: 'hidden', backgroundColor: '#060608',
         display: 'flex', flexDirection: 'column'
       }}

@@ -1150,6 +1150,8 @@ function CCNeuralMapCanvas({
     renderer.setSize(W, H)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setClearColor(0x020408, 0)   // alpha=0 so constellation bg shows through
+    renderer.domElement.style.width = '100%'
+    renderer.domElement.style.height = '100%'
     mount.appendChild(renderer.domElement)
 
     // ── Decoration overlay (2D canvas) for glow + dash effects ───────────────
@@ -1765,7 +1767,7 @@ export default function CommandCenterNeuralMap() {
   const sc = SCENARIO_CONFIG[activeScenario]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', backgroundColor: '#020408', color: '#e2e8f0', fontFamily: 'ui-monospace, monospace' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 106px)', overflow: 'hidden', backgroundColor: '#020408', color: '#e2e8f0', fontFamily: 'ui-monospace, monospace' }}>
 
       {/* Feature 3 — Actionable steps panel (above map) */}
       <ActionableStepsPanel onPathGenerated={handlePathGenerated} />
