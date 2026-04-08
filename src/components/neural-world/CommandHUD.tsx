@@ -37,7 +37,8 @@ export enum AtmosphereMode {
   COASTAL_FOG       = 'COASTAL_FOG',
   SCIFI_V1          = 'SCIFI_V1',
   SCIFI_V2_SUBSTRATE = 'SCIFI_V2_SUBSTRATE',
-  RESERVED          = 'RESERVED',
+  /** NW14: V5 Enterprise — night mirror world with enterprise metrics terrain */
+  V5_ENTERPRISE     = 'V5_ENTERPRISE',
 }
 
 export enum CameraMode {
@@ -78,7 +79,7 @@ const ATMO_LABELS: Record<AtmosphereMode, string> = {
   [AtmosphereMode.COASTAL_FOG]:        'COASTAL FOG',
   [AtmosphereMode.SCIFI_V1]:           'SCI-FI V1',
   [AtmosphereMode.SCIFI_V2_SUBSTRATE]: 'SCI-FI V2',
-  [AtmosphereMode.RESERVED]:          'ALT',
+  [AtmosphereMode.V5_ENTERPRISE]:     'V5 ENTERPRISE',
 }
 
 // ── Exported state type for parent to consume ─────────────────────────────────
@@ -596,6 +597,7 @@ export default function CommandHUD({
           </div>
           {(Object.values(AtmosphereMode) as AtmosphereMode[]).map(mode => {
             const isActive = mode === atmosphereMode
+            const isV5 = mode === AtmosphereMode.V5_ENTERPRISE
             return (
               <button
                 key={mode}
@@ -604,18 +606,20 @@ export default function CommandHUD({
                   window.dispatchEvent(new CustomEvent('nw:request-atmosphere-mode', { detail: { mode } }))
                 }}
                 style={{
-                  padding: '3px 9px',
+                  padding: isV5 ? '4px 9px' : '3px 9px',
                   fontSize: 9,
                   fontWeight: isActive ? 700 : 400,
-                  letterSpacing: 0.5,
+                  letterSpacing: isV5 ? 1.5 : 0.5,
                   borderRadius: 3,
                   border: isActive
-                    ? '1px solid rgba(0,255,136,0.8)'
-                    : '1px solid rgba(255,255,255,0.08)',
+                    ? isV5 ? '1px solid rgba(160,80,255,0.9)' : '1px solid rgba(0,255,136,0.8)'
+                    : isV5 ? '1px solid rgba(120,50,200,0.4)' : '1px solid rgba(255,255,255,0.08)',
                   background: isActive
-                    ? 'rgba(0,255,136,0.12)'
-                    : 'rgba(255,255,255,0.03)',
-                  color: isActive ? '#00ff88' : 'rgba(255,255,255,0.45)',
+                    ? isV5 ? 'rgba(120,40,220,0.25)' : 'rgba(0,255,136,0.12)'
+                    : isV5 ? 'rgba(80,20,140,0.15)' : 'rgba(255,255,255,0.03)',
+                  color: isActive
+                    ? isV5 ? '#c080ff' : '#00ff88'
+                    : isV5 ? 'rgba(160,100,220,0.7)' : 'rgba(255,255,255,0.45)',
                   cursor: 'pointer',
                   textAlign: 'left',
                   transition: 'all 0.12s',

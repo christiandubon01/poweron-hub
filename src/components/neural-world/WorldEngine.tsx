@@ -212,6 +212,8 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
   // Atmosphere + camera mode state
   const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>(AtmosphereMode.SCIFI_V1)
   const [cameraMode, setCameraMode] = useState<CameraMode>(CameraMode.FIRST_PERSON)
+  // NW14: ref for animation-loop access (avoids stale closure)
+  const atmosphereModeRef = useRef<AtmosphereMode>(AtmosphereMode.SCIFI_V1)
 
   // ── NW2: neural_world_settings save/restore ────────────────────────────────
   const nwSettingsOrgIdRef = useRef<string | null>(null)
@@ -322,9 +324,15 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     }
   }, [atmosphereMode, cameraMode, saveNWSettings])
 
+  // NW14: Keep atmosphereModeRef in sync with state for animation loop
+  useEffect(() => {
+    atmosphereModeRef.current = atmosphereMode
+  }, [atmosphereMode])
+
   // Wrap atmosphere/camera mode change handlers to also persist
   const handleAtmosphereModeChange = useCallback((mode: AtmosphereMode) => {
     setAtmosphereMode(mode)
+    atmosphereModeRef.current = mode
     saveNWSettings(mode, cameraMode)
   }, [cameraMode, saveNWSettings])
 
@@ -552,7 +560,12 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     //   4–6 min  (t 0.50–0.75)  Dusk  — deep amber-purple #c06020 → #200840
     //   6–8 min  (t 0.75–1.00)  Night — near black        #050508
 
-    cycleTimeRef.current = (cycleTimeRef.current + delta) % CYCLE_DURATION
+    // NW14: V5 ENTERPRISE forces permanent deep-night phase
+    if (atmosphereModeRef.current === AtmosphereMode.V5_ENTERPRISE) {
+      cycleTimeRef.current = 0.87 * CYCLE_DURATION
+    } else {
+      cycleTimeRef.current = (cycleTimeRef.current + delta) % CYCLE_DURATION
+    }
     const t = cycleTimeRef.current / CYCLE_DURATION
 
     // Apply sky colour + lighting from keyframes (always active)

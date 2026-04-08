@@ -11,7 +11,7 @@
  * Role gate: owner + admin only.
  */
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { WorldEngine } from '@/components/neural-world/WorldEngine'
 import { CriticalPathLayer } from '@/components/neural-world/layers/CriticalPathLayer'
 import { AgentLayer } from '@/components/neural-world/layers/AgentLayer'
@@ -28,6 +28,7 @@ import { WestContinentLayer } from '@/components/neural-world/layers/WestContine
 import { EastContinentLayer } from '@/components/neural-world/layers/EastContinentLayer'
 import { AccountingLayer } from '@/components/neural-world/layers/AccountingLayer'
 import { CustomerTerritoryLayer } from '@/components/neural-world/layers/CustomerTerritoryLayer'
+import { EnterpriseMetricsLayer } from '@/components/neural-world/layers/EnterpriseMetricsLayer'
 import { DiveModePanel } from '@/components/neural-world/DiveModePanel'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
 import CommandHUD, {
@@ -53,7 +54,14 @@ const DEFAULT_LAYER_STATES: LayerStates = {
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
 
-function WorldLayers({ layerStates }: { layerStates: LayerStates }) {
+function WorldLayers({
+  layerStates,
+  atmosphereMode,
+}: {
+  layerStates: LayerStates
+  atmosphereMode: HUDAtmosphereMode
+}) {
+  const isV5 = atmosphereMode === HUDAtmosphereMode.V5_ENTERPRISE
   return (
     <>
       <PulseLayer           visible={!!layerStates['pulse']} />
@@ -71,6 +79,8 @@ function WorldLayers({ layerStates }: { layerStates: LayerStates }) {
       <EastContinentLayer />
       <AccountingLayer />
       <CustomerTerritoryLayer />
+      {/* NW14: V5 Enterprise Metrics — night mirror world */}
+      <EnterpriseMetricsLayer visible={isV5} />
     </>
   )
 }
@@ -91,6 +101,11 @@ export default function NeuralWorldView() {
 
   // NW7b: Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // NW14: V5 Enterprise badge — shows on first V5 entry
+  const [showV5Badge, setShowV5Badge] = useState(false)
+  const v5BadgeDismissedRef = useRef(false)
+  const v5EnteredRef = useRef(false)
 
   const handleLayerToggle = useCallback((id: string, value: boolean) => {
     setLayerStates(prev => ({ ...prev, [id]: value }))
@@ -149,6 +164,20 @@ export default function NeuralWorldView() {
     }
   }, [])
 
+  // NW14: V5 badge on first entry into V5_ENTERPRISE mode
+  useEffect(() => {
+    if (atmosphereMode === HUDAtmosphereMode.V5_ENTERPRISE && !v5EnteredRef.current) {
+      v5EnteredRef.current = true
+      if (!v5BadgeDismissedRef.current) {
+        setShowV5Badge(true)
+        setTimeout(() => {
+          setShowV5Badge(false)
+          v5BadgeDismissedRef.current = true
+        }, 5000)
+      }
+    }
+  }, [atmosphereMode])
+
   return (
     <div
       style={{
@@ -175,7 +204,7 @@ export default function NeuralWorldView() {
             }}
           >
             <WorldEngine applyScenario={false} hideBuiltinHUD={true}>
-              <WorldLayers layerStates={layerStates} />
+              <WorldLayers layerStates={layerStates} atmosphereMode={atmosphereMode} />
             </WorldEngine>
             <div style={{
               position: 'absolute',
@@ -203,7 +232,7 @@ export default function NeuralWorldView() {
             }}
           >
             <WorldEngine applyScenario={true} hideBuiltinHUD={true}>
-              <WorldLayers layerStates={layerStates} />
+              <WorldLayers layerStates={layerStates} atmosphereMode={atmosphereMode} />
             </WorldEngine>
             <div style={{
               position: 'absolute',
@@ -223,7 +252,7 @@ export default function NeuralWorldView() {
         </div>
       ) : (
         <WorldEngine applyScenario={true} hideBuiltinHUD={true}>
-          <WorldLayers layerStates={layerStates} />
+          <WorldLayers layerStates={layerStates} atmosphereMode={atmosphereMode} />
         </WorldEngine>
       )}
 
@@ -257,6 +286,59 @@ export default function NeuralWorldView() {
             fontWeight: 600,
           }}>
             ⬛ SCENARIO MODE
+          </div>
+        </div>
+      )}
+
+      {/* ── NW14: V5 Enterprise complete badge — shows on first V5 entry ── */}
+      {showV5Badge && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 50,
+            pointerEvents: 'none',
+            animation: 'fadeInOut 5s ease-in-out forwards',
+          }}
+        >
+          <div style={{
+            background: 'rgba(15, 5, 35, 0.92)',
+            border: '1px solid rgba(160, 80, 255, 0.8)',
+            borderRadius: 12,
+            padding: '24px 40px',
+            textAlign: 'center',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 0 60px rgba(120, 40, 220, 0.5)',
+          }}>
+            <div style={{
+              fontSize: 11,
+              letterSpacing: 4,
+              color: 'rgba(160, 100, 255, 0.7)',
+              marginBottom: 8,
+              fontFamily: 'monospace',
+            }}>
+              NEURAL WORLD
+            </div>
+            <div style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: '#c080ff',
+              letterSpacing: 2,
+              fontFamily: 'monospace',
+              marginBottom: 6,
+            }}>
+              ◈ V5 ENTERPRISE
+            </div>
+            <div style={{
+              fontSize: 11,
+              color: 'rgba(200, 170, 255, 0.75)',
+              letterSpacing: 1,
+              fontFamily: 'monospace',
+            }}>
+              NIGHT MIRROR WORLD · ENTERPRISE METRICS LANDSCAPE
+            </div>
           </div>
         </div>
       )}

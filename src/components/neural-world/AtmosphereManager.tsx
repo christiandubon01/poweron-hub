@@ -18,7 +18,8 @@ export enum AtmosphereMode {
   COASTAL_FOG = 'COASTAL_FOG',
   SCIFI_V1 = 'SCIFI_V1',
   SCIFI_V2_SUBSTRATE = 'SCIFI_V2_SUBSTRATE',
-  RESERVED = 'RESERVED',
+  /** NW14: V5 Enterprise — permanent night, dark mirror ground, enterprise metrics terrain */
+  V5_ENTERPRISE = 'V5_ENTERPRISE',
 }
 
 interface AtmosphereConfig {
@@ -89,16 +90,17 @@ const CONFIGS: Record<AtmosphereMode, AtmosphereConfig> = {
     groundColor: 0x050a08,
     particleType: 'nebula',
   },
-  [AtmosphereMode.RESERVED]: {
-    skyColor: 0x0a0a0a,
-    fogColor: 0x0a0a0a,
-    fogDensity: 0.01,
-    ambientColor: 0x404040,
-    ambientIntensity: 0.5,
-    dirLightColor: 0xffffff,
-    dirLightIntensity: 1.0,
-    groundColor: 0x1a1a1a,
-    particleType: 'none',
+  /** NW14: V5 ENTERPRISE — permanent deep-night, mirror ground */
+  [AtmosphereMode.V5_ENTERPRISE]: {
+    skyColor: 0x000005,
+    fogColor: 0x000005,
+    fogDensity: 0.006,
+    ambientColor: 0x080820,
+    ambientIntensity: 0.25,
+    dirLightColor: 0x3040c0,
+    dirLightIntensity: 0.3,
+    groundColor: 0x050508,
+    particleType: 'crystal',
   },
 }
 
@@ -108,7 +110,7 @@ const MODE_LABELS: Record<AtmosphereMode, string> = {
   [AtmosphereMode.COASTAL_FOG]: 'COASTAL FOG',
   [AtmosphereMode.SCIFI_V1]: 'SCI-FI V1',
   [AtmosphereMode.SCIFI_V2_SUBSTRATE]: 'SUBSTRATE',
-  [AtmosphereMode.RESERVED]: 'RESERVED',
+  [AtmosphereMode.V5_ENTERPRISE]: 'V5 ENTERPRISE',
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -175,19 +177,43 @@ export function AtmosphereManager({
       }
     }
 
-    // Ground color
+    // Ground color / material
     if (groundMeshRef.current) {
-      const mat = groundMeshRef.current.material as THREE.MeshLambertMaterial
-      mat.color.set(cfg.groundColor)
-      // SCIFI_V2_SUBSTRATE: semi-transparent ground
-      if (mode === AtmosphereMode.SCIFI_V2_SUBSTRATE) {
-        mat.transparent = true
-        mat.opacity = 0.7
+      if (mode === AtmosphereMode.V5_ENTERPRISE) {
+        // NW14: Swap to MeshStandardMaterial — dark mirror with full metalness
+        const existingMat = groundMeshRef.current.material as THREE.Material
+        if (!(existingMat instanceof THREE.MeshStandardMaterial) || !(existingMat as any)._v5Mirror) {
+          existingMat.dispose()
+          const mirrorMat = new THREE.MeshStandardMaterial({
+            color: 0x050508,
+            metalness: 1.0,
+            roughness: 0.0,
+            envMapIntensity: 1.0,
+          }) as THREE.MeshStandardMaterial & { _v5Mirror?: boolean }
+          mirrorMat._v5Mirror = true
+          groundMeshRef.current.material = mirrorMat
+        }
       } else {
-        mat.transparent = false
-        mat.opacity = 1.0
+        // Restore to MeshLambertMaterial if we were in V5 mode
+        const existingMat = groundMeshRef.current.material as THREE.Material & { _v5Mirror?: boolean }
+        if (existingMat._v5Mirror) {
+          existingMat.dispose()
+          const lambertMat = new THREE.MeshLambertMaterial({ color: cfg.groundColor })
+          groundMeshRef.current.material = lambertMat
+        } else {
+          const mat = groundMeshRef.current.material as THREE.MeshLambertMaterial
+          mat.color.set(cfg.groundColor)
+          // SCIFI_V2_SUBSTRATE: semi-transparent ground
+          if (mode === AtmosphereMode.SCIFI_V2_SUBSTRATE) {
+            mat.transparent = true
+            mat.opacity = 0.7
+          } else {
+            mat.transparent = false
+            mat.opacity = 1.0
+          }
+          mat.needsUpdate = true
+        }
       }
-      mat.needsUpdate = true
     }
 
     // Rebuild particles
