@@ -1,12 +1,31 @@
 /**
- * CameraController.tsx — First person / third person / cinematic camera modes.
+ * CameraController.tsx — NW7b: Full camera controls overhaul.
  *
- * FIRST_PERSON: WASD + QE movement, mouse drag to look, pitch clamped -80/+80°
- * THIRD_PERSON: Camera follows glowing orb 4 behind / 2 above
- * CINEMATIC:    Auto-pilot slow circle, altitude 20, 0.003 rad/frame
+ * FIRST_PERSON:
+ *   W = ascend, S = descend, A = strafe left, D = strafe right
+ *   Mouse drag (or pointer lock) = full 3D rotation — pitch & yaw UNCLAMPED for full spherical look
+ *   Left Shift held OR toggled = x2 speed
+ *   C held OR toggled = slow mode 0.3x
+ *   Click inside canvas → request pointer lock; ESC releases
+ *   Crosshair shown when pointer locked
+ *   Mouse wheel = zoom only (0.1x–10x)
+ *
+ * THIRD_PERSON:
+ *   WASD = lateral movement, Space = ascend, Z = descend
+ *   Camera trails orb with smooth lerp
+ *   Mouse drag rotates camera around orb on all axes
+ *   Mouse wheel = zoom (distance to orb)
+ *
+ * CINEMATIC: Auto-pilot slow circle
+ *
+ * MOBILE DUAL JOYSTICK:
+ *   Detect touch via navigator.maxTouchPoints > 0
+ *   Left joystick bottom-left = movement
+ *   Right joystick bottom-right = camera look
+ *   Speed toggle button between joysticks
  */
 
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from './WorldContext'
 
@@ -18,23 +37,37 @@ export enum CameraMode {
   CINEMATIC = 'CINEMATIC',
 }
 
+export enum SpeedMode {
+  SLOW = 'SLOW',       // 0.3x
+  NORMAL = 'NORMAL',   // 1x
+  FAST = 'FAST',       // 2x
+}
+
 interface CameraControllerProps {
   mode: CameraMode
   onModeChange: (mode: CameraMode) => void
-  /** NW7: When true the built-in toggle UI is hidden (replaced by CommandHUD) */
+  /** When true the built-in toggle UI is hidden (replaced by CommandHUD) */
   showUI?: boolean
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const MOVE_SPEED = 0.15
-const SPRINT_MULTIPLIER = 3
+const BASE_MOVE_SPEED = 0.15
+const SPEED_MULTIPLIERS: Record<SpeedMode, number> = {
+  [SpeedMode.SLOW]: 0.3,
+  [SpeedMode.NORMAL]: 1,
+  [SpeedMode.FAST]: 2,
+}
 const MIN_Y = 2          // levitation floor
-const PITCH_MIN = -80 * (Math.PI / 180)
-const PITCH_MAX = 80 * (Math.PI / 180)
 const CINEMATIC_RADIUS = 40
 const CINEMATIC_ALTITUDE = 20
 const CINEMATIC_SPEED = 0.003   // radians per frame
+const MOUSE_SENSITIVITY = 0.003
+const ZOOM_MIN = 0.1
+const ZOOM_MAX = 10
+const TP_TRAIL_DISTANCE = 4
+const TP_TRAIL_HEIGHT = 2
+const TP_LERP = 0.12
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -50,7 +83,7 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
   const yaw = useRef(0)
   const pitch = useRef(0)
 
-  // Position state (shared / accessible to CollisionSystem)
+  // Position state
   const pos = useRef(new THREE.Vector3(0, MIN_Y, 10))
 
   // Cinematic angle
@@ -59,10 +92,30 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
   // Orb mesh for third person
   const orbRef = useRef<THREE.Mesh | null>(null)
 
+  // Zoom / FOV state
+  const zoomLevel = useRef(1.0)  // 1.0 = default
+  const baseFOV = useRef(70)
+
+  // Speed mode
+  const speedModeRef = useRef<SpeedMode>(SpeedMode.NORMAL)
+  const [speedModeState, setSpeedModeState] = useState<SpeedMode>(SpeedMode.NORMAL)
+  const shiftToggled = useRef(false)
+  const cToggled = useRef(false)
+
+  // Pointer lock
+  const pointerLocked = useRef(false)
+  const [isPointerLocked, setIsPointerLocked] = useState(false)
+
+  // Mobile detection
+  const isTouchDevice = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0
+
+  // Joystick state refs
+  const leftJoystick = useRef({ active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0 })
+  const rightJoystick = useRef({ active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0 })
+
   // ── Orb setup ────────────────────────────────────────────────────────────
   useEffect(() => {
     const geo = new THREE.SphereGeometry(0.4, 16, 12)
-    // NW7: Third-person orb glows company color #00ff88
     const mat = new THREE.MeshStandardMaterial({
       color: 0x00ff88,
       emissive: 0x00cc66,
@@ -89,10 +142,61 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
     }
   }, [mode])
 
+  // ── Resolve speed multiplier ──────────────────────────────────────────────
+  const getSpeedMultiplier = useCallback(() => {
+    // Held keys override toggles
+    if (keys.current['ShiftLeft'] || keys.current['ShiftRight']) return SPEED_MULTIPLIERS[SpeedMode.FAST]
+    if (keys.current['KeyC']) return SPEED_MULTIPLIERS[SpeedMode.SLOW]
+    return SPEED_MULTIPLIERS[speedModeRef.current]
+  }, [])
+
   // ── Keyboard events ───────────────────────────────────────────────────────
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => { keys.current[e.code] = true }
-    const onKeyUp = (e: KeyboardEvent) => { keys.current[e.code] = false }
+    const onKeyDown = (e: KeyboardEvent) => {
+      keys.current[e.code] = true
+
+      // Toggle shift (speed x2)
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        // Just holding — toggle handled on key up if it was a tap
+      }
+      // Toggle C (slow mode)
+      if (e.code === 'KeyC' && !e.repeat) {
+        // Will be handled in speed dispatch
+      }
+      // ESC releases pointer lock
+      if (e.code === 'Escape') {
+        if (document.pointerLockElement) {
+          document.exitPointerLock()
+        }
+      }
+    }
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      keys.current[e.code] = false
+
+      // Toggle speed modes on release (tap behavior)
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        if (speedModeRef.current === SpeedMode.FAST) {
+          speedModeRef.current = SpeedMode.NORMAL
+          setSpeedModeState(SpeedMode.NORMAL)
+        } else {
+          speedModeRef.current = SpeedMode.FAST
+          setSpeedModeState(SpeedMode.FAST)
+        }
+        window.dispatchEvent(new CustomEvent('nw:speed-mode', { detail: { mode: speedModeRef.current } }))
+      }
+      if (e.code === 'KeyC') {
+        if (speedModeRef.current === SpeedMode.SLOW) {
+          speedModeRef.current = SpeedMode.NORMAL
+          setSpeedModeState(SpeedMode.NORMAL)
+        } else {
+          speedModeRef.current = SpeedMode.SLOW
+          setSpeedModeState(SpeedMode.SLOW)
+        }
+        window.dispatchEvent(new CustomEvent('nw:speed-mode', { detail: { mode: speedModeRef.current } }))
+      }
+    }
+
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     return () => {
@@ -101,25 +205,79 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
     }
   }, [])
 
-  // ── Mouse drag events ─────────────────────────────────────────────────────
+  // ── Pointer lock change handler ──────────────────────────────────────────
+  useEffect(() => {
+    const onPointerLockChange = () => {
+      const locked = document.pointerLockElement === renderer.domElement
+      pointerLocked.current = locked
+      setIsPointerLocked(locked)
+    }
+    document.addEventListener('pointerlockchange', onPointerLockChange)
+    return () => document.removeEventListener('pointerlockchange', onPointerLockChange)
+  }, [renderer])
+
+  // ── Scroll lock: capture ALL wheel events on canvas, convert to zoom ──────
+  useEffect(() => {
+    const canvas = renderer.domElement
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const delta = e.deltaY > 0 ? 1.08 : 0.92
+      zoomLevel.current = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel.current * delta))
+      camera.fov = baseFOV.current / zoomLevel.current
+      camera.updateProjectionMatrix()
+    }
+
+    // Also capture at document level when Neural World is mounted
+    const onDocWheel = (e: WheelEvent) => {
+      // Check if the event target is inside our canvas container
+      const container = canvas.parentElement
+      if (container && (container.contains(e.target as Node) || e.target === canvas)) {
+        e.preventDefault()
+      }
+    }
+
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    document.addEventListener('wheel', onDocWheel, { passive: false })
+
+    return () => {
+      canvas.removeEventListener('wheel', onWheel)
+      document.removeEventListener('wheel', onDocWheel)
+    }
+  }, [renderer, camera])
+
+  // ── Mouse drag events + pointer lock ─────────────────────────────────────
   useEffect(() => {
     const canvas = renderer.domElement
 
     const onMouseDown = (e: MouseEvent) => {
       if (mode === CameraMode.CINEMATIC) return
+      // First person: request pointer lock on click
+      if (mode === CameraMode.FIRST_PERSON && !pointerLocked.current) {
+        canvas.requestPointerLock()
+        return
+      }
       isDragging.current = true
       lastMouse.current = { x: e.clientX, y: e.clientY }
     }
 
     const onMouseMove = (e: MouseEvent) => {
+      // Pointer lock mode: use movementX/Y
+      if (pointerLocked.current) {
+        yaw.current -= e.movementX * MOUSE_SENSITIVITY
+        pitch.current -= e.movementY * MOUSE_SENSITIVITY
+        // Full spherical — no clamp
+        return
+      }
+      // Drag mode (third person)
       if (!isDragging.current) return
       const dx = e.clientX - lastMouse.current.x
       const dy = e.clientY - lastMouse.current.y
       lastMouse.current = { x: e.clientX, y: e.clientY }
-
-      yaw.current -= dx * 0.003
-      pitch.current -= dy * 0.003
-      pitch.current = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitch.current))
+      yaw.current -= dx * MOUSE_SENSITIVITY
+      pitch.current -= dy * MOUSE_SENSITIVITY
+      // Full spherical — no clamp for third person either
     }
 
     const onMouseUp = () => { isDragging.current = false }
@@ -128,42 +286,100 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
 
-    // Touch support
-    const onTouchStart = (e: TouchEvent) => {
-      if (mode === CameraMode.CINEMATIC) return
-      if (e.touches.length === 1) {
-        isDragging.current = true
-        lastMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-      }
-    }
-    const onTouchMove = (e: TouchEvent) => {
-      if (!isDragging.current || e.touches.length !== 1) return
-      const dx = e.touches[0].clientX - lastMouse.current.x
-      const dy = e.touches[0].clientY - lastMouse.current.y
-      lastMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-      yaw.current -= dx * 0.003
-      pitch.current -= dy * 0.003
-      pitch.current = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitch.current))
-    }
-    const onTouchEnd = () => { isDragging.current = false }
-
-    canvas.addEventListener('touchstart', onTouchStart, { passive: true })
-    window.addEventListener('touchmove', onTouchMove, { passive: true })
-    window.addEventListener('touchend', onTouchEnd)
-
     return () => {
       canvas.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
-      canvas.removeEventListener('touchstart', onTouchStart)
-      window.removeEventListener('touchmove', onTouchMove)
-      window.removeEventListener('touchend', onTouchEnd)
     }
   }, [mode, renderer])
 
+  // ── Mobile joystick pointer events ────────────────────────────────────────
+  useEffect(() => {
+    if (!isTouchDevice) return
+
+    const JOYSTICK_RADIUS = 36
+
+    const onPointerDown = (e: PointerEvent) => {
+      const x = e.clientX
+      const y = e.clientY
+      const w = window.innerWidth
+      const h = window.innerHeight
+
+      // Left half bottom → left joystick
+      if (x < w / 2 && y > h * 0.5) {
+        if (!leftJoystick.current.active) {
+          leftJoystick.current = { active: true, id: e.pointerId, startX: x, startY: y, dx: 0, dy: 0 }
+          window.dispatchEvent(new CustomEvent('nw:joystick-start', { detail: { side: 'left', x, y } }))
+        }
+      }
+      // Right half bottom → right joystick
+      else if (x >= w / 2 && y > h * 0.5) {
+        if (!rightJoystick.current.active) {
+          rightJoystick.current = { active: true, id: e.pointerId, startX: x, startY: y, dx: 0, dy: 0 }
+          window.dispatchEvent(new CustomEvent('nw:joystick-start', { detail: { side: 'right', x, y } }))
+        }
+      }
+    }
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (leftJoystick.current.active && e.pointerId === leftJoystick.current.id) {
+        let dx = e.clientX - leftJoystick.current.startX
+        let dy = e.clientY - leftJoystick.current.startY
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist > JOYSTICK_RADIUS) {
+          dx = (dx / dist) * JOYSTICK_RADIUS
+          dy = (dy / dist) * JOYSTICK_RADIUS
+        }
+        leftJoystick.current.dx = dx / JOYSTICK_RADIUS
+        leftJoystick.current.dy = dy / JOYSTICK_RADIUS
+        window.dispatchEvent(new CustomEvent('nw:joystick-move', {
+          detail: { side: 'left', dx: leftJoystick.current.dx, dy: leftJoystick.current.dy,
+                    thumbX: leftJoystick.current.startX + dx, thumbY: leftJoystick.current.startY + dy }
+        }))
+      }
+      if (rightJoystick.current.active && e.pointerId === rightJoystick.current.id) {
+        let dx = e.clientX - rightJoystick.current.startX
+        let dy = e.clientY - rightJoystick.current.startY
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist > JOYSTICK_RADIUS) {
+          dx = (dx / dist) * JOYSTICK_RADIUS
+          dy = (dy / dist) * JOYSTICK_RADIUS
+        }
+        rightJoystick.current.dx = dx / JOYSTICK_RADIUS
+        rightJoystick.current.dy = dy / JOYSTICK_RADIUS
+        window.dispatchEvent(new CustomEvent('nw:joystick-move', {
+          detail: { side: 'right', dx: rightJoystick.current.dx, dy: rightJoystick.current.dy,
+                    thumbX: rightJoystick.current.startX + dx, thumbY: rightJoystick.current.startY + dy }
+        }))
+      }
+    }
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (leftJoystick.current.active && e.pointerId === leftJoystick.current.id) {
+        leftJoystick.current = { active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0 }
+        window.dispatchEvent(new CustomEvent('nw:joystick-end', { detail: { side: 'left' } }))
+      }
+      if (rightJoystick.current.active && e.pointerId === rightJoystick.current.id) {
+        rightJoystick.current = { active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0 }
+        window.dispatchEvent(new CustomEvent('nw:joystick-end', { detail: { side: 'right' } }))
+      }
+    }
+
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [isTouchDevice, mode])
+
   // ── Per-frame update ──────────────────────────────────────────────────────
   useEffect(() => {
-    // NW7: Track last position for speed dispatch
     const _lastPos = pos.current.clone()
 
     function onFrame() {
@@ -181,29 +397,35 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
     }
 
     function updateFirstPerson() {
-      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight']
-      const speed = MOVE_SPEED * (isSprint ? SPRINT_MULTIPLIER : 1)
+      const speedMult = getSpeedMultiplier()
+      const speed = BASE_MOVE_SPEED * speedMult
 
-      // Build forward/right vectors from yaw only (for horizontal movement)
-      const forward = new THREE.Vector3(
-        -Math.sin(yaw.current),
-        0,
-        -Math.cos(yaw.current)
-      )
+      // Build strafe vectors from yaw
       const right = new THREE.Vector3(
         Math.cos(yaw.current),
         0,
         -Math.sin(yaw.current)
       )
 
-      if (keys.current['KeyW']) pos.current.addScaledVector(forward, speed)
-      if (keys.current['KeyS']) pos.current.addScaledVector(forward, -speed)
+      // NW7b: W = ascend, S = descend, A = strafe left, D = strafe right
       if (keys.current['KeyA']) pos.current.addScaledVector(right, -speed)
       if (keys.current['KeyD']) pos.current.addScaledVector(right, speed)
-      if (keys.current['KeyQ']) pos.current.y += speed
-      if (keys.current['KeyE']) pos.current.y -= speed
+      if (keys.current['KeyW']) pos.current.y += speed
+      if (keys.current['KeyS']) pos.current.y -= speed
 
-      // Collision: stay at min y=2
+      // Mobile joystick input
+      if (leftJoystick.current.active) {
+        const jx = leftJoystick.current.dx  // strafe
+        const jy = leftJoystick.current.dy  // ascend/descend
+        pos.current.addScaledVector(right, jx * speed)
+        pos.current.y -= jy * speed  // invert: push up = ascend
+      }
+      if (rightJoystick.current.active) {
+        yaw.current -= rightJoystick.current.dx * 0.04
+        pitch.current -= rightJoystick.current.dy * 0.04
+      }
+
+      // Floor constraint
       if (pos.current.y < MIN_Y) pos.current.y = MIN_Y
 
       camera.position.copy(pos.current)
@@ -211,34 +433,49 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
     }
 
     function updateThirdPerson() {
-      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight']
-      const speed = MOVE_SPEED * (isSprint ? SPRINT_MULTIPLIER : 1)
+      const speedMult = getSpeedMultiplier()
+      const speed = BASE_MOVE_SPEED * speedMult
 
       const forward = new THREE.Vector3(-Math.sin(yaw.current), 0, -Math.cos(yaw.current))
       const right = new THREE.Vector3(Math.cos(yaw.current), 0, -Math.sin(yaw.current))
 
+      // NW7b: WASD lateral, Space ascend, Z descend
       if (keys.current['KeyW']) pos.current.addScaledVector(forward, speed)
       if (keys.current['KeyS']) pos.current.addScaledVector(forward, -speed)
       if (keys.current['KeyA']) pos.current.addScaledVector(right, -speed)
       if (keys.current['KeyD']) pos.current.addScaledVector(right, speed)
-      if (keys.current['KeyQ']) pos.current.y += speed
-      if (keys.current['KeyE']) pos.current.y -= speed
+      if (keys.current['Space']) pos.current.y += speed
+      if (keys.current['KeyZ']) pos.current.y -= speed
+
+      // Mobile joystick: left = forward/back + strafe
+      if (leftJoystick.current.active) {
+        pos.current.addScaledVector(right, leftJoystick.current.dx * speed)
+        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed)
+      }
+      if (rightJoystick.current.active) {
+        yaw.current -= rightJoystick.current.dx * 0.04
+        pitch.current -= rightJoystick.current.dy * 0.04
+      }
+
       if (pos.current.y < MIN_Y) pos.current.y = MIN_Y
 
       // Orb follows player
       if (orbRef.current) {
         orbRef.current.position.copy(pos.current)
-        // Subtle bob
         orbRef.current.position.y = pos.current.y + Math.sin(Date.now() * 0.002) * 0.15
       }
 
-      // Camera trails 4 units behind, 2 above
-      const behind = forward.clone().multiplyScalar(-4)
-      const targetCamPos = pos.current.clone().add(behind)
-      targetCamPos.y = pos.current.y + 2
+      // Camera orbits around orb based on yaw/pitch
+      const dist = TP_TRAIL_DISTANCE / zoomLevel.current
+      const camOffset = new THREE.Vector3(
+        Math.sin(yaw.current) * Math.cos(pitch.current) * dist,
+        Math.sin(pitch.current) * dist + TP_TRAIL_HEIGHT,
+        Math.cos(yaw.current) * Math.cos(pitch.current) * dist,
+      )
+      const targetCamPos = pos.current.clone().add(camOffset)
 
       // Smooth follow
-      camera.position.lerp(targetCamPos, 0.12)
+      camera.position.lerp(targetCamPos, TP_LERP)
       camera.lookAt(pos.current)
     }
 
@@ -257,17 +494,28 @@ export function CameraController({ mode, onModeChange, showUI = true }: CameraCo
 
     window.addEventListener('nw:frame', onFrame)
     return () => window.removeEventListener('nw:frame', onFrame)
-  }, [mode, camera])
+  }, [mode, camera, getSpeedMultiplier])
+
+  // ── Dispatch speed mode on mount ─────────────────────────────────────────
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('nw:speed-mode', { detail: { mode: speedModeRef.current } }))
+  }, [])
+
+  // ── Release pointer lock on mode change ──────────────────────────────────
+  useEffect(() => {
+    if (mode !== CameraMode.FIRST_PERSON && document.pointerLockElement) {
+      document.exitPointerLock()
+    }
+  }, [mode])
 
   // ── Toggle UI ─────────────────────────────────────────────────────────────
+  if (!showUI) return null
+
   const modes = [
     { key: CameraMode.FIRST_PERSON, label: '1P' },
     { key: CameraMode.THIRD_PERSON, label: '3P' },
     { key: CameraMode.CINEMATIC, label: 'CIN' },
   ]
-
-  // NW7: CommandHUD replaces built-in UI when showUI=false
-  if (!showUI) return null
 
   return (
     <div

@@ -1,16 +1,19 @@
 /**
- * CommandHUD.tsx — NW7: Full command surface HUD for Neural World.
+ * CommandHUD.tsx — NW7b: Full command surface HUD for Neural World.
  *
  * Layout:
- *   top-left    : "PowerOn Neural World" title + LIVE DATA badge
+ *   top-left    : "PowerOn Neural World" title + LIVE DATA badge + fullscreen toggle
  *   top-right   : Atmosphere mode switcher (6 buttons) + FPS counter
- *   bottom-center: Camera mode (1P / 3P / CIN) buttons + speed indicator
+ *   bottom-center: Camera mode (1P / 3P / CIN) buttons + speed indicator + speed mode
  *   left-side   : Layer toggle panel — 10 layers with icon + label + on/off state
  *
  * Also renders:
- *   - Crosshair overlay in first-person mode
+ *   - Crosshair overlay in first-person mode (when pointer locked)
  *   - Letterbox bars in cinematic mode
  *   - Data shadow floating panel near player (fades after 2 s)
+ *   - Mobile dual joystick overlays (touch devices)
+ *   - Speed mode indicator (x0.3 / x1 / x2)
+ *   - Fullscreen toggle button
  *
  * Layer defaults: Pressure + Risk Surface ON, all others OFF.
  * Active layer state persisted to neural_world_settings on change.
@@ -65,7 +68,6 @@ const LAYERS: LayerDef[] = [
   { id: 'command',         label: 'Command',         icon: '⊕',  r: 255, g: 238, b: 0   },
 ]
 
-// Default on: pressure + risk-surface
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
   LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface'])
 )
@@ -99,6 +101,8 @@ interface CommandHUDProps {
   onCameraModeChange: (mode: CameraMode) => void
   atmosphereMode: AtmosphereMode
   onAtmosphereModeChange: (mode: AtmosphereMode) => void
+  isFullscreen?: boolean
+  onToggleFullscreen?: () => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -110,6 +114,8 @@ export default function CommandHUD({
   onCameraModeChange,
   atmosphereMode,
   onAtmosphereModeChange,
+  isFullscreen = false,
+  onToggleFullscreen,
 }: CommandHUDProps) {
 
   // FPS counter
@@ -120,10 +126,21 @@ export default function CommandHUD({
   // Speed indicator
   const [speed, setSpeed] = useState<number>(0)
 
+  // Speed mode
+  const [speedMode, setSpeedMode] = useState<string>('NORMAL')
+
+  // Pointer lock state
+  const [isPointerLocked, setIsPointerLocked] = useState(false)
+
   // Data shadow
   const [dataShadow, setDataShadow] = useState<DataShadowEntry | null>(null)
   const shadowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const worldDataRef   = useRef<NWWorldData | null>(null)
+
+  // Mobile joystick display state
+  const isTouchDevice = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0
+  const [leftJoy, setLeftJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
+  const [rightJoy, setRightJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
 
   // ── FPS counter via nw:frame events ────────────────────────────────────────
   useEffect(() => {
@@ -150,6 +167,62 @@ export default function CommandHUD({
     window.addEventListener('nw:player-speed', onSpeed)
     return () => window.removeEventListener('nw:player-speed', onSpeed)
   }, [])
+
+  // ── Speed mode from CameraController ──────────────────────────────────────
+  useEffect(() => {
+    function onSpeedMode(e: Event) {
+      const ev = e as CustomEvent<{ mode: string }>
+      setSpeedMode(ev.detail?.mode ?? 'NORMAL')
+    }
+    window.addEventListener('nw:speed-mode', onSpeedMode)
+    return () => window.removeEventListener('nw:speed-mode', onSpeedMode)
+  }, [])
+
+  // ── Pointer lock state tracking ──────────────────────────────────────────
+  useEffect(() => {
+    const onChange = () => setIsPointerLocked(!!document.pointerLockElement)
+    document.addEventListener('pointerlockchange', onChange)
+    return () => document.removeEventListener('pointerlockchange', onChange)
+  }, [])
+
+  // ── Mobile joystick events ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!isTouchDevice) return
+
+    function onJoyStart(e: Event) {
+      const ev = e as CustomEvent<{ side: string; x: number; y: number }>
+      if (ev.detail.side === 'left') {
+        setLeftJoy({ active: true, cx: ev.detail.x, cy: ev.detail.y, tx: ev.detail.x, ty: ev.detail.y })
+      } else {
+        setRightJoy({ active: true, cx: ev.detail.x, cy: ev.detail.y, tx: ev.detail.x, ty: ev.detail.y })
+      }
+    }
+    function onJoyMove(e: Event) {
+      const ev = e as CustomEvent<{ side: string; dx: number; dy: number; thumbX: number; thumbY: number }>
+      if (ev.detail.side === 'left') {
+        setLeftJoy(prev => ({ ...prev, tx: ev.detail.thumbX, ty: ev.detail.thumbY }))
+      } else {
+        setRightJoy(prev => ({ ...prev, tx: ev.detail.thumbX, ty: ev.detail.thumbY }))
+      }
+    }
+    function onJoyEnd(e: Event) {
+      const ev = e as CustomEvent<{ side: string }>
+      if (ev.detail.side === 'left') {
+        setLeftJoy({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
+      } else {
+        setRightJoy({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
+      }
+    }
+
+    window.addEventListener('nw:joystick-start', onJoyStart)
+    window.addEventListener('nw:joystick-move', onJoyMove)
+    window.addEventListener('nw:joystick-end', onJoyEnd)
+    return () => {
+      window.removeEventListener('nw:joystick-start', onJoyStart)
+      window.removeEventListener('nw:joystick-move', onJoyMove)
+      window.removeEventListener('nw:joystick-end', onJoyEnd)
+    }
+  }, [isTouchDevice])
 
   // ── Sync atmosphere/camera modes from WorldEngine init load ───────────────
   useEffect(() => {
@@ -181,9 +254,8 @@ export default function CommandHUD({
     const data = worldDataRef.current
     if (!data || data.projects.length === 0) return
 
-    // Show data for a random nearby project (simplified — no raycasting)
     const now = Date.now()
-    if (dataShadow && dataShadow.expiresAt > now + 1800) return  // throttle
+    if (dataShadow && dataShadow.expiresAt > now + 1800) return
 
     const project = data.projects[Math.floor(Math.random() * Math.min(data.projects.length, 8))]
     if (shadowTimerRef.current) clearTimeout(shadowTimerRef.current)
@@ -220,6 +292,10 @@ export default function CommandHUD({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(layerStates)])
 
+  // ── Speed mode label + color ──────────────────────────────────────────────
+  const speedModeLabel = speedMode === 'FAST' ? 'x2' : speedMode === 'SLOW' ? 'x0.3' : 'x1'
+  const speedModeColor = speedMode === 'FAST' ? '#ff6644' : speedMode === 'SLOW' ? '#44aaff' : '#00ff88'
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   const fpsColor = fps < 30
@@ -253,8 +329,8 @@ export default function CommandHUD({
         </>
       )}
 
-      {/* ── CROSSHAIR (first-person) ────────────────────────────────────── */}
-      {cameraMode === CameraMode.FIRST_PERSON && (
+      {/* ── CROSSHAIR (first-person + pointer locked) ──────────────────── */}
+      {cameraMode === CameraMode.FIRST_PERSON && isPointerLocked && (
         <div
           style={{
             position: 'absolute',
@@ -265,7 +341,6 @@ export default function CommandHUD({
             pointerEvents: 'none',
           }}
         >
-          {/* Horizontal bar */}
           <div style={{
             position: 'absolute',
             width: 14,
@@ -275,7 +350,6 @@ export default function CommandHUD({
             left: '50%',
             transform: 'translate(-50%, -50%)',
           }} />
-          {/* Vertical bar */}
           <div style={{
             position: 'absolute',
             width: 1.5,
@@ -285,7 +359,6 @@ export default function CommandHUD({
             left: '50%',
             transform: 'translate(-50%, -50%)',
           }} />
-          {/* Center dot */}
           <div style={{
             position: 'absolute',
             width: 3,
@@ -299,56 +372,87 @@ export default function CommandHUD({
         </div>
       )}
 
-      {/* ── TOP-LEFT: TITLE + LIVE BADGE ──────────────────────────────────── */}
+      {/* ── TOP-LEFT: TITLE + LIVE BADGE + FULLSCREEN TOGGLE ──────────── */}
       <div
         style={{
           position: 'absolute',
           top: 14,
           left: 14,
           zIndex: 25,
-          pointerEvents: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
         }}
       >
-        <div style={{
-          color: '#00ff88',
-          fontSize: 13,
-          fontFamily: 'monospace',
-          fontWeight: 700,
-          letterSpacing: 2.5,
-          textTransform: 'uppercase',
-          textShadow: '0 0 8px rgba(0,255,136,0.4)',
-        }}>
-          PowerOn Neural World
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+        <div style={{ pointerEvents: 'none' }}>
           <div style={{
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            background: '#00ff88',
-            boxShadow: '0 0 6px #00ff88',
-            animation: 'nw-blink 1.8s ease infinite',
-          }} />
-          <span style={{
             color: '#00ff88',
-            fontSize: 9,
+            fontSize: 13,
             fontFamily: 'monospace',
-            letterSpacing: 2,
-            opacity: 0.75,
+            fontWeight: 700,
+            letterSpacing: 2.5,
+            textTransform: 'uppercase',
+            textShadow: '0 0 8px rgba(0,255,136,0.4)',
           }}>
-            LIVE DATA
-          </span>
-          {activeLayerCount > 0 && (
+            PowerOn Neural World
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <div style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: '#00ff88',
+              boxShadow: '0 0 6px #00ff88',
+              animation: 'nw-blink 1.8s ease infinite',
+            }} />
             <span style={{
-              color: 'rgba(255,255,255,0.35)',
+              color: '#00ff88',
+              fontSize: 9,
+              fontFamily: 'monospace',
+              letterSpacing: 2,
+              opacity: 0.75,
+            }}>
+              LIVE DATA
+            </span>
+            {activeLayerCount > 0 && (
+              <span style={{
+                color: 'rgba(255,255,255,0.35)',
+                fontSize: 9,
+                fontFamily: 'monospace',
+                letterSpacing: 1,
+              }}>
+                · {activeLayerCount} LAYER{activeLayerCount !== 1 ? 'S' : ''} ACTIVE
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Fullscreen toggle button */}
+        {onToggleFullscreen && (
+          <button
+            onClick={onToggleFullscreen}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '4px 10px',
+              borderRadius: 4,
+              border: '1px solid rgba(0,255,136,0.4)',
+              background: isFullscreen ? 'rgba(0,255,136,0.15)' : 'rgba(0,0,0,0.5)',
+              color: '#00ff88',
+              cursor: 'pointer',
               fontSize: 9,
               fontFamily: 'monospace',
               letterSpacing: 1,
-            }}>
-              · {activeLayerCount} LAYER{activeLayerCount !== 1 ? 'S' : ''} ACTIVE
-            </span>
-          )}
-        </div>
+              backdropFilter: 'blur(6px)',
+              transition: 'all 0.15s',
+              width: 'fit-content',
+            }}
+          >
+            <span style={{ fontSize: 12 }}>{isFullscreen ? '⊡' : '⊞'}</span>
+            {isFullscreen ? 'EXIT FULLSCREEN · ESC' : 'FULLSCREEN'}
+          </button>
+        )}
       </div>
 
       {/* ── TOP-RIGHT: ATMOSPHERE SWITCHER + FPS ─────────────────────────── */}
@@ -508,7 +612,7 @@ export default function CommandHUD({
         })}
       </div>
 
-      {/* ── BOTTOM-CENTER: CAMERA MODE + SPEED ───────────────────────────── */}
+      {/* ── BOTTOM-CENTER: CAMERA MODE + SPEED + SPEED MODE ──────────────── */}
       <div
         style={{
           position: 'absolute',
@@ -522,16 +626,27 @@ export default function CommandHUD({
           gap: 5,
         }}
       >
-        {/* Speed indicator */}
+        {/* Speed mode indicator */}
         <div style={{
-          color: 'rgba(255,255,255,0.3)',
-          fontSize: 9,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
           fontFamily: 'monospace',
-          letterSpacing: 1.5,
-          display: speed > 0.01 ? 'block' : 'none',
+          fontSize: 10,
+          letterSpacing: 1,
         }}>
-          {speed > 0.4 ? 'SPRINT' : speed > 0.05 ? 'WALK' : ''} ·{' '}
-          {(speed * 10).toFixed(1)} U/S
+          <span style={{
+            color: speedModeColor,
+            fontWeight: 700,
+            textShadow: `0 0 6px ${speedModeColor}40`,
+          }}>
+            {speedModeLabel}
+          </span>
+          {speed > 0.01 && (
+            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 9, letterSpacing: 1.5 }}>
+              {speed > 0.4 ? 'SPRINT' : speed > 0.05 ? 'WALK' : 'CREEP'} · {(speed * 10).toFixed(1)} U/S
+            </span>
+          )}
         </div>
 
         {/* Camera mode buttons */}
@@ -586,9 +701,108 @@ export default function CommandHUD({
           pointerEvents: 'none',
           whiteSpace: 'nowrap',
         }}>
-          WASD · drag to look · QE up/down · Shift sprint
+          {cameraMode === CameraMode.FIRST_PERSON
+            ? 'AD strafe · WS up/down · click to lock · Shift x2 · C x0.3'
+            : cameraMode === CameraMode.THIRD_PERSON
+            ? 'WASD move · Space/Z up/down · drag to orbit · Shift x2 · C x0.3'
+            : 'Auto-pilot · scroll to zoom'}
         </div>
       </div>
+
+      {/* ── MOBILE DUAL JOYSTICKS ────────────────────────────────────────── */}
+      {isTouchDevice && (
+        <>
+          {/* Left joystick */}
+          {leftJoy.active && (
+            <>
+              {/* Outer ring */}
+              <div style={{
+                position: 'fixed',
+                left: leftJoy.cx - 40,
+                top: leftJoy.cy - 40,
+                width: 80,
+                height: 80,
+                borderRadius: '50%',
+                background: 'rgba(0,0,0,0.35)',
+                border: '2px solid rgba(255,255,255,0.15)',
+                zIndex: 50,
+                pointerEvents: 'none',
+              }} />
+              {/* Thumb */}
+              <div style={{
+                position: 'fixed',
+                left: leftJoy.tx - 16,
+                top: leftJoy.ty - 16,
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                background: 'rgba(0,255,136,0.4)',
+                border: '2px solid rgba(0,255,136,0.7)',
+                zIndex: 51,
+                pointerEvents: 'none',
+              }} />
+            </>
+          )}
+          {/* Right joystick */}
+          {rightJoy.active && (
+            <>
+              <div style={{
+                position: 'fixed',
+                left: rightJoy.cx - 40,
+                top: rightJoy.cy - 40,
+                width: 80,
+                height: 80,
+                borderRadius: '50%',
+                background: 'rgba(0,0,0,0.35)',
+                border: '2px solid rgba(255,255,255,0.15)',
+                zIndex: 50,
+                pointerEvents: 'none',
+              }} />
+              <div style={{
+                position: 'fixed',
+                left: rightJoy.tx - 16,
+                top: rightJoy.ty - 16,
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                background: 'rgba(0,229,204,0.4)',
+                border: '2px solid rgba(0,229,204,0.7)',
+                zIndex: 51,
+                pointerEvents: 'none',
+              }} />
+            </>
+          )}
+          {/* Mobile speed toggle button (between joysticks) */}
+          <button
+            onClick={() => {
+              const modes = ['NORMAL', 'FAST', 'SLOW'] as const
+              const idx = modes.indexOf(speedMode as typeof modes[number])
+              const next = modes[(idx + 1) % modes.length]
+              setSpeedMode(next)
+              window.dispatchEvent(new CustomEvent('nw:request-speed-mode', { detail: { mode: next } }))
+            }}
+            style={{
+              position: 'fixed',
+              bottom: 40,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 50,
+              padding: '8px 16px',
+              borderRadius: 20,
+              border: `2px solid ${speedModeColor}`,
+              background: 'rgba(0,0,0,0.6)',
+              color: speedModeColor,
+              fontSize: 14,
+              fontWeight: 700,
+              fontFamily: 'monospace',
+              cursor: 'pointer',
+              backdropFilter: 'blur(6px)',
+            }}
+          >
+            {speedModeLabel}
+          </button>
+        </>
+      )}
 
       {/* ── DATA SHADOW PANEL ─────────────────────────────────────────────── */}
       {dataShadow && (

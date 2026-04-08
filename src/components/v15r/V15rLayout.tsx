@@ -807,7 +807,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       return
     }
     // B52: Auto-collapse sidebar when entering visual-suite fullscreen mode
-    if (view === 'visual-suite') {
+    // NW7b: Also auto-collapse for neural-world
+    if (view === 'visual-suite' || view === 'neural-world') {
       if (!isMobile) {
         setDesktopCollapsed(true)
         localStorage.setItem('sidebar_collapsed', 'true')
@@ -1402,13 +1403,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       {/* B52: fullscreen override when visual-suite is active */}
       <div
         className="flex flex-col flex-1 transition-all duration-300"
-        style={activeView === 'visual-suite'
+        style={activeView === 'visual-suite' || activeView === 'neural-world'
           ? { position: 'fixed', inset: 0, zIndex: 55, marginLeft: 0 }
           : { marginLeft: isMobile ? 0 : sidebarWidth }
         }
       >
         {/* TOP BAR — hidden in visual-suite fullscreen */}
-        {activeView === 'visual-suite' ? null : (
+        {activeView === 'visual-suite' || activeView === 'neural-world' ? null : (
         <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
@@ -1733,7 +1734,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         {/* CONTENT AREA — B52: fullscreen when visual-suite, otherwise normal */}
         <main
           className="flex-1"
-          style={activeView === 'visual-suite'
+          style={activeView === 'visual-suite' || activeView === 'neural-world'
             ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
             : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'auto', overflowY: 'auto', minWidth: 320, display: 'flex', flexDirection: 'column' }
           }
@@ -1744,14 +1745,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         </main>
 
         {/* Toast Notification — hidden in fullscreen mode */}
-        {toastMessage && activeView !== 'visual-suite' && (
+        {toastMessage && activeView !== 'visual-suite' && activeView !== 'neural-world' && (
           <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-pulse" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-primary)' }}>
             {toastMessage}
           </div>
         )}
 
         {/* Copyright Footer — hidden in fullscreen mode */}
-        {activeView !== 'visual-suite' && (
+        {activeView !== 'visual-suite' && activeView !== 'neural-world' && (
           <div className="text-center text-[10px] text-gray-600 py-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
             &copy; 2026 Power On Solutions LLC &middot; PowerOn Hub V3.0
           </div>

@@ -1,22 +1,17 @@
 /**
  * NeuralWorldView.tsx — Entry point for the Neural World 3D visualization.
  *
- * Full-viewport canvas. Height: calc(100vh - 56px).
- * Route: neural-world
- * Role gate: owner + admin only (enforced via sidebar placement in adminBucket3).
+ * NW7b: Full screen mode (100vw × 100vh), no footer visible.
+ *       Sidebar collapses to icon-only when Neural World opens.
+ *       ESC exits fullscreen and restores sidebar.
+ *       Fullscreen toggle button in HUD top-left.
+ *       Scroll lock: all wheel events captured inside canvas.
  *
- * NW1 scope: World engine foundation only — no data connection.
- * NW2 scope: TerrainGenerator (mountains from Supabase project data).
- * NW3 scope: CriticalPathLayer (flowing particle rivers — payment pipelines).
- * NW4 scope: AgentLayer (11 agents as distinct 3D entities with behavior).
- * NW5 scope: DecisionGravityLayer (polyhedra clouds), SignalLayer (aurora + lightning), day cycle polish.
- * NW6 scope: ScenarioBuilder panel — terrain reshape sliders, snapshot save/load, compare mode.
- * NW7 scope: CommandHUD (full command surface), all 10 layer toggles, FPS counter,
- *            data shadow, cinematic letterbox, crosshair, third-person orb glow (#00ff88),
- *            graceful perf degradation, Supabase layer-state persistence.
+ * Route: neural-world
+ * Role gate: owner + admin only.
  */
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { WorldEngine } from '@/components/neural-world/WorldEngine'
 import { CriticalPathLayer } from '@/components/neural-world/layers/CriticalPathLayer'
 import { AgentLayer } from '@/components/neural-world/layers/AgentLayer'
@@ -39,12 +34,12 @@ import CommandHUD, {
 
 const DEFAULT_LAYER_STATES: LayerStates = {
   'pulse':            false,
-  'pressure':         true,   // ON by default
+  'pressure':         true,
   'critical-path':    false,
   'agents':           false,
   'decision-gravity': false,
   'velocity':         false,
-  'risk-surface':     true,   // ON by default
+  'risk-surface':     true,
   'signal':           false,
   'forecast':         false,
   'command':          false,
@@ -75,13 +70,16 @@ export default function NeuralWorldView() {
   // NW7: Unified layer state
   const [layerStates, setLayerStates] = useState<LayerStates>(DEFAULT_LAYER_STATES)
 
-  // NW7: HUD atmosphere + camera mode (synced to WorldEngine via events)
+  // NW7: HUD atmosphere + camera mode
   const [atmosphereMode, setAtmosphereMode] = useState<HUDAtmosphereMode>(HUDAtmosphereMode.SCIFI_V1)
   const [cameraMode, setCameraMode] = useState<HUDCameraMode>(HUDCameraMode.FIRST_PERSON)
 
   // NW6: scenario + compare mode state
   const [scenarioActive, setScenarioActive] = useState(false)
   const [compareMode,    setCompareMode]    = useState(false)
+
+  // NW7b: Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const handleLayerToggle = useCallback((id: string, value: boolean) => {
     setLayerStates(prev => ({ ...prev, [id]: value }))
@@ -96,21 +94,65 @@ export default function NeuralWorldView() {
     setCompareMode(active)
   }, [])
 
+  // NW7b: Toggle fullscreen — dispatch event for V15rLayout to respond
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => {
+      const next = !prev
+      window.dispatchEvent(new CustomEvent('nw:fullscreen', { detail: { fullscreen: next } }))
+      return next
+    })
+  }, [])
+
+  // NW7b: Auto-enter fullscreen on mount, restore on unmount
+  useEffect(() => {
+    // Auto-enter fullscreen
+    setIsFullscreen(true)
+    window.dispatchEvent(new CustomEvent('nw:fullscreen', { detail: { fullscreen: true } }))
+
+    return () => {
+      // Restore on unmount
+      window.dispatchEvent(new CustomEvent('nw:fullscreen', { detail: { fullscreen: false } }))
+    }
+  }, [])
+
+  // NW7b: ESC key exits fullscreen (but not pointer lock — that's handled by CameraController)
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code === 'Escape' && isFullscreen && !document.pointerLockElement) {
+        setIsFullscreen(false)
+        window.dispatchEvent(new CustomEvent('nw:fullscreen', { detail: { fullscreen: false } }))
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isFullscreen])
+
+  // NW7b: Scroll lock at document level
+  useEffect(() => {
+    function preventScroll(e: WheelEvent) {
+      e.preventDefault()
+    }
+    document.addEventListener('wheel', preventScroll, { passive: false })
+    return () => {
+      document.removeEventListener('wheel', preventScroll)
+    }
+  }, [])
+
   return (
     <div
       style={{
         width: '100%',
-        height: 'calc(100vh - 56px)',
-        position: 'relative',
+        height: isFullscreen ? '100vh' : 'calc(100vh - 56px)',
+        position: isFullscreen ? 'fixed' : 'relative',
+        inset: isFullscreen ? 0 : undefined,
+        zIndex: isFullscreen ? 100 : undefined,
         overflow: 'hidden',
         background: '#050508',
       }}
     >
       {/* ── Canvas area — normal or split compare ── */}
       {compareMode ? (
-        /* Compare mode: live data left | scenario right */
         <div style={{ display: 'flex', width: '100%', height: '100%' }}>
-          {/* Left — LIVE DATA (no scenario overrides) */}
           <div
             key="compare-live"
             style={{
@@ -124,7 +166,6 @@ export default function NeuralWorldView() {
             <WorldEngine applyScenario={false} hideBuiltinHUD={true}>
               <WorldLayers layerStates={layerStates} />
             </WorldEngine>
-            {/* Left label */}
             <div style={{
               position: 'absolute',
               bottom: 8,
@@ -141,7 +182,6 @@ export default function NeuralWorldView() {
             </div>
           </div>
 
-          {/* Right — SCENARIO (overrides applied) */}
           <div
             key="compare-scenario"
             style={{
@@ -154,7 +194,6 @@ export default function NeuralWorldView() {
             <WorldEngine applyScenario={true} hideBuiltinHUD={true}>
               <WorldLayers layerStates={layerStates} />
             </WorldEngine>
-            {/* Right label */}
             <div style={{
               position: 'absolute',
               bottom: 8,
@@ -172,7 +211,6 @@ export default function NeuralWorldView() {
           </div>
         </div>
       ) : (
-        /* Normal mode: single WorldEngine, applies scenario overrides when active */
         <WorldEngine applyScenario={true} hideBuiltinHUD={true}>
           <WorldLayers layerStates={layerStates} />
         </WorldEngine>
@@ -184,7 +222,7 @@ export default function NeuralWorldView() {
         onCompareModeChange={handleCompareModeChange}
       />
 
-      {/* ── NW6: Mode badge — top center of canvas ── */}
+      {/* ── NW6: Mode badge ── */}
       {scenarioActive && (
         <div
           style={{
@@ -212,7 +250,7 @@ export default function NeuralWorldView() {
         </div>
       )}
 
-      {/* ── NW7: CommandHUD — full command surface ── */}
+      {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD
         layerStates={layerStates}
         onLayerToggle={handleLayerToggle}
@@ -220,6 +258,8 @@ export default function NeuralWorldView() {
         onCameraModeChange={setCameraMode}
         atmosphereMode={atmosphereMode}
         onAtmosphereModeChange={setAtmosphereMode}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
       />
     </div>
   )
