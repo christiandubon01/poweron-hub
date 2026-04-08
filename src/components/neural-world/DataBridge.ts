@@ -8,6 +8,7 @@
  * NW2 scope: projects, invoices, field_logs
  * NW9 scope: rfis, solarIncome
  * NW11 scope: crewMembers, hubEvents, accountingSignals
+ * NW13 scope: clientTerritories — customer intelligence layer
  */
 
 import { supabase } from '@/lib/supabase'
@@ -27,6 +28,10 @@ export interface NWProject {
   phase_completion: number
   /** NW11: when project was created */
   created_at: string | null
+  /** NW13: project type from DB */
+  type: string | null
+  /** NW13: client_id for territory grouping */
+  client_id: string | null
 }
 
 export interface NWInvoice {
@@ -82,6 +87,63 @@ export interface NWHubEvent {
   org_id: string
 }
 
+// ── NW13: Client territory types ─────────────────────────────────────────────
+
+/** Terrain archetype for a customer territory */
+export type NWTerritoryTerrain = 'green_rolling' | 'rocky_unstable' | 'flat_barren'
+
+/** Structure archetype placed at territory center */
+export type NWTerritoryStructure =
+  | 'residential'   // small house geometry
+  | 'commercial'    // office tower geometry
+  | 'solar'         // house with panel array
+  | 'service_only'  // small shed geometry
+  | 'prospect'      // wireframe ghost structure
+
+/** Weather sentiment over territory */
+export type NWTerritoryWeather = 'clear' | 'overcast' | 'storm'
+
+/** NW13: Derived client territory record — one per unique client */
+export interface NWClientTerritory {
+  /** Unique client key: client_id if available, else normalized client name */
+  clientKey: string
+  /** Display name */
+  clientName: string
+  /** Client type from DB or inferred from project types */
+  clientType: 'residential' | 'commercial' | 'industrial' | 'solar' | 'service' | 'prospect'
+  /** Total contract value across all projects (territory size) */
+  lifetimeValue: number
+  /** Number of projects */
+  projectCount: number
+  /** Number of active / in_progress projects */
+  activeProjectCount: number
+  /** Most recent project created_at or last_move date */
+  lastContactAt: string | null
+  /** Days since last contact (derived) */
+  daysSinceContact: number
+  /** Sum of open RFIs across projects */
+  openRfiCount: number
+  /** Ratio of paid to billed (0–1, 1 = fully paid) */
+  paidRatio: number
+  /** Seeded world-space position on west continent */
+  worldX: number
+  worldZ: number
+  /** Territory half-size in world units (derived from lifetimeValue) */
+  territoryRadius: number
+  /** Terrain type based on relationship quality */
+  terrain: NWTerritoryTerrain
+  /** Structure archetype */
+  structure: NWTerritoryStructure
+  /** Weather sentiment */
+  weather: NWTerritoryWeather
+  /** Contact frequency 0–1 (drives path opacity) */
+  contactFrequency: number
+  /** Array of project IDs for this client */
+  projectIds: string[]
+  /** Project types associated with this client */
+  projectTypes: string[]
+}
+
 /** NW11: Derived accounting signals — computed from raw data each refresh */
 export interface NWAccountingSignals {
   /** Total monthly overhead (sum of all overhead category items) */
@@ -120,6 +182,8 @@ export interface NWWorldData {
   hubEvents: NWHubEvent[]
   /** NW11: computed accounting signals */
   accountingSignals: NWAccountingSignals
+  /** NW13: derived client territory records */
+  clientTerritories: NWClientTerritory[]
   lastFetched: number
 }
 
@@ -149,6 +213,7 @@ let _currentData: NWWorldData = {
   crewMembers: [],
   hubEvents: [],
   accountingSignals: { ..._emptySignals },
+  clientTerritories: [],
   lastFetched: 0,
 }
 
@@ -179,7 +244,7 @@ async function _fetchAll(): Promise<void> {
     ] = await Promise.all([
       (supabase as any)
         .from('projects')
-        .select('id, name, status, contract_value, health_score, org_id, material_cost, phase_completion, created_at')
+        .select('id, name, status, contract_value, health_score, org_id, material_cost, phase_completion, created_at, type, client_id')
         .order('created_at', { ascending: false }),
 
       (supabase as any)
@@ -231,6 +296,8 @@ async function _fetchAll(): Promise<void> {
       material_cost: typeof p.material_cost === 'number' ? p.material_cost : 0,
       phase_completion: typeof p.phase_completion === 'number' ? p.phase_completion : 0,
       created_at: p.created_at ?? null,
+      type: p.type ?? null,
+      client_id: p.client_id ?? null,
     }))
 
     const invoices: NWInvoice[] = rawInvoices.map((inv: any) => ({
@@ -372,6 +439,10 @@ async function _fetchAll(): Promise<void> {
       recentFeatureLaunches,
     }
 
+    // ── NW13: Compute client territories ─────────────────────────────────────
+
+    const clientTerritories = _buildClientTerritories(projects, invoices, rfis)
+
     _currentData = {
       projects,
       invoices,
@@ -381,6 +452,7 @@ async function _fetchAll(): Promise<void> {
       crewMembers,
       hubEvents,
       accountingSignals,
+      clientTerritories,
       lastFetched: Date.now(),
     }
 
@@ -390,6 +462,221 @@ async function _fetchAll(): Promise<void> {
   } finally {
     _fetchInProgress = false
   }
+}
+
+// ── NW13: Client territory builder ────────────────────────────────────────────
+
+/** Deterministic seeded position for a client territory on west continent.
+ *  Uses a distinct zone (x=-170 to -30) to coexist with project mountains. */
+function _clientTerritoryPosition(key: string): { x: number; z: number } {
+  let h1 = 0xbeefdead
+  let h2 = 0x57ce6c14
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i)
+    h1 = Math.imul(h1 ^ c, 2246822507)
+    h2 = Math.imul(h2 ^ c, 3266489909)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2654435761) ^ Math.imul(h2 ^ (h2 >>> 13), 1597334677)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2654435761) ^ Math.imul(h1 ^ (h1 >>> 13), 1597334677)
+  const n1 = (h1 >>> 0) / 0xffffffff
+  const n2 = (h2 >>> 0) / 0xffffffff
+  // West continent customer zone — spread across full width, z spread wide
+  const x = -30 - n1 * 145  // -30 to -175
+  const z = (n2 - 0.5) * 340  // -170 to 170
+  return { x, z }
+}
+
+/** Derive territory radius from lifetime value (world units). */
+function _territoryRadius(lifetimeValue: number): number {
+  if (lifetimeValue <= 0) return 3
+  if (lifetimeValue >= 100000) return 18
+  if (lifetimeValue >= 50000)  return 14 + (lifetimeValue - 50000) / 50000 * 4
+  if (lifetimeValue >= 10000)  return 8  + (lifetimeValue - 10000) / 40000 * 6
+  if (lifetimeValue >= 1000)   return 4  + (lifetimeValue - 1000)  / 9000  * 4
+  return 3 + lifetimeValue / 1000
+}
+
+/** Build client territory records from raw data. */
+function _buildClientTerritories(
+  projects: NWProject[],
+  invoices: NWInvoice[],
+  rfis: NWRFI[],
+): NWClientTerritory[] {
+  const now = Date.now()
+  const MS_12_MONTHS = 365 * 24 * 60 * 60 * 1000
+
+  // Group projects by client_id (may be null) or project name as fallback
+  const clientMap = new Map<string, {
+    name: string
+    projects: NWProject[]
+    clientType: NWClientTerritory['clientType']
+  }>()
+
+  for (const p of projects) {
+    // Derive a client key: use client_id if present, else slugify project name
+    // Since NWProject doesn't carry client_id, we group by first word of name
+    // (best-effort without a clients join — the real join happens via client_id in Supabase)
+    const clientKey = _deriveClientKey(p)
+    const existing  = clientMap.get(clientKey)
+    if (existing) {
+      existing.projects.push(p)
+    } else {
+      clientMap.set(clientKey, {
+        name: _deriveClientName(p),
+        projects: [p],
+        clientType: _deriveClientType(p),
+      })
+    }
+  }
+
+  // Build territory per client
+  const territories: NWClientTerritory[] = []
+
+  for (const [clientKey, data] of clientMap) {
+    const { name, projects: cProjects, clientType } = data
+
+    // Financial aggregates
+    const lifetimeValue  = cProjects.reduce((s, p) => s + p.contract_value, 0)
+    const totalBilled    = cProjects.reduce((s, p) => s + (p as any).billed_amount || 0, 0)
+    const totalPaid      = invoices
+      .filter(inv => cProjects.some(p => p.id === inv.project_id) && inv.status === 'paid')
+      .reduce((s, inv) => s + inv.amount, 0)
+    const totalInvoiced  = invoices
+      .filter(inv => cProjects.some(p => p.id === inv.project_id))
+      .reduce((s, inv) => s + inv.amount, 0)
+    const paidRatio = totalInvoiced > 0 ? Math.min(1, totalPaid / totalInvoiced) : 0.5
+
+    // Activity
+    const activeProjectCount = cProjects.filter(p =>
+      p.status === 'in_progress' || p.status === 'approved' || p.status === 'pending'
+    ).length
+
+    // Last contact: most recent created_at across this client's projects
+    let lastContactAt: string | null = null
+    let lastContactMs = 0
+    for (const p of cProjects) {
+      if (p.created_at) {
+        const t = new Date(p.created_at).getTime()
+        if (t > lastContactMs) {
+          lastContactMs = t
+          lastContactAt = p.created_at
+        }
+      }
+    }
+    const daysSinceContact = lastContactAt
+      ? Math.floor((now - lastContactMs) / (24 * 60 * 60 * 1000))
+      : 999
+
+    // RFI count for this client's projects
+    const projectIds    = cProjects.map(p => p.id)
+    const openRfiCount  = rfis.filter(r =>
+      r.project_id && projectIds.includes(r.project_id) && r.status === 'open'
+    ).length
+
+    // Contact frequency: inverse of daysSinceContact, clamped 0–1
+    const contactFrequency = daysSinceContact < 7   ? 1.0
+                           : daysSinceContact < 30  ? 0.7
+                           : daysSinceContact < 90  ? 0.4
+                           : daysSinceContact < 180 ? 0.2
+                           : 0.05
+
+    // Terrain archetype
+    let terrain: NWTerritoryTerrain
+    if (daysSinceContact > 365) {
+      terrain = 'flat_barren'      // dormant 12+ months
+    } else if (paidRatio < 0.6 || openRfiCount >= 3) {
+      terrain = 'rocky_unstable'   // difficult payment / lots of open RFIs
+    } else {
+      terrain = 'green_rolling'    // loyal long-term
+    }
+
+    // Structure archetype
+    let structure: NWTerritoryStructure
+    if (cProjects.length === 0 || cProjects.every(p => p.status === 'lead')) {
+      structure = 'prospect'
+    } else if (cProjects.every(p => p.name.toLowerCase().includes('solar') || p.name.toLowerCase().includes('pv'))) {
+      structure = 'solar'
+    } else if (clientType === 'commercial' || clientType === 'industrial') {
+      structure = 'commercial'
+    } else if (cProjects.every(p => p.status === 'completed' || p.status === 'cancelled') &&
+               !cProjects.some(p =>
+                 p.contract_value > 5000 ||
+                 p.name.toLowerCase().includes('remodel') ||
+                 p.name.toLowerCase().includes('new')
+               )) {
+      structure = 'service_only'
+    } else {
+      structure = 'residential'
+    }
+
+    // Weather sentiment
+    let weather: NWTerritoryWeather
+    if (openRfiCount >= 3 || paidRatio < 0.5) {
+      weather = 'storm'
+    } else if (openRfiCount >= 1 || paidRatio < 0.75) {
+      weather = 'overcast'
+    } else {
+      weather = 'clear'
+    }
+
+    const { x: worldX, z: worldZ } = _clientTerritoryPosition(clientKey)
+    const territoryRadius           = _territoryRadius(lifetimeValue)
+    const projectTypes              = [...new Set(cProjects.map(p => p.status))]
+
+    territories.push({
+      clientKey,
+      clientName: name,
+      clientType,
+      lifetimeValue,
+      projectCount: cProjects.length,
+      activeProjectCount,
+      lastContactAt,
+      daysSinceContact,
+      openRfiCount,
+      paidRatio,
+      worldX,
+      worldZ,
+      territoryRadius,
+      terrain,
+      structure,
+      weather,
+      contactFrequency,
+      projectIds,
+      projectTypes,
+    })
+  }
+
+  // Sort by lifetimeValue descending (largest territory first for z-ordering)
+  territories.sort((a, b) => b.lifetimeValue - a.lifetimeValue)
+
+  return territories
+}
+
+/** Derive a stable client key from a project record. */
+function _deriveClientKey(p: NWProject): string {
+  // Prefer client_id for grouping; fall back to first 2 words of project name
+  if (p.client_id) return `client_${p.client_id}`
+  const words = p.name.trim().split(/\s+/)
+  if (words.length >= 2) {
+    return (words[0] + ' ' + words[1]).toLowerCase().replace(/[^a-z0-9 ]/g, '')
+  }
+  return words[0].toLowerCase().replace(/[^a-z0-9]/g, '') || p.id
+}
+
+/** Derive a display name for the client from the project record. */
+function _deriveClientName(p: NWProject): string {
+  const words = p.name.trim().split(/\s+/)
+  return words.slice(0, 2).join(' ')
+}
+
+/** Derive client type from project type field. */
+function _deriveClientType(p: NWProject): NWClientTerritory['clientType'] {
+  const t = p.type ?? ''
+  if (t.includes('commercial') || t.includes('industrial')) return 'commercial'
+  if (t.includes('solar') || t.includes('pv'))              return 'solar'
+  if (t.includes('service'))                                 return 'service'
+  if (p.status === 'lead')                                   return 'prospect'
+  return 'residential'
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────

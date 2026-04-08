@@ -27,6 +27,8 @@ import { ContinentLayer } from '@/components/neural-world/layers/ContinentLayer'
 import { WestContinentLayer } from '@/components/neural-world/layers/WestContinentLayer'
 import { EastContinentLayer } from '@/components/neural-world/layers/EastContinentLayer'
 import { AccountingLayer } from '@/components/neural-world/layers/AccountingLayer'
+import { CustomerTerritoryLayer } from '@/components/neural-world/layers/CustomerTerritoryLayer'
+import { DiveModePanel } from '@/components/neural-world/DiveModePanel'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
@@ -68,6 +70,7 @@ function WorldLayers({ layerStates }: { layerStates: LayerStates }) {
       <WestContinentLayer />
       <EastContinentLayer />
       <AccountingLayer />
+      <CustomerTerritoryLayer />
     </>
   )
 }
@@ -257,6 +260,9 @@ export default function NeuralWorldView() {
           </div>
         </div>
       )}
+
+      {/* ── NW13: DiveModePanel — client territory intelligence overlay ── */}
+      <DiveModePanel />
 
       {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD
