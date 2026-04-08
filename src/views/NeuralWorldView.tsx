@@ -35,6 +35,8 @@ import { CustomerTerritoryLayer } from '@/components/neural-world/layers/Custome
 import { EnterpriseMetricsLayer } from '@/components/neural-world/layers/EnterpriseMetricsLayer'
 import { DiveModePanel } from '@/components/neural-world/DiveModePanel'
 import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
+import { NodeClickSystem } from '@/components/neural-world/NodeClickSystem'
+import { DataFlowLayer } from '@/components/neural-world/DataFlowLayer'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -54,6 +56,7 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'signal':           false,
   'forecast':         false,
   'command':          false,
+  'data-flow':        true,   // NW18: data flow on by default
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -85,6 +88,10 @@ function WorldLayers({
       <CustomerTerritoryLayer />
       {/* NW14: V5 Enterprise Metrics — night mirror world */}
       <EnterpriseMetricsLayer visible={isV5} />
+      {/* NW18: Clickable nodes with info panels */}
+      <NodeClickSystem />
+      {/* NW18: Data flow connection tubes + animated particles */}
+      <DataFlowLayer visible={!!layerStates['data-flow']} />
     </>
   )
 }
@@ -341,6 +348,123 @@ export default function NeuralWorldView() {
     }
   }, [atmosphereMode])
 
+  // NW18: Business Cycle tour state
+  const [isCyclePlaying, setIsCyclePlaying]   = useState(false)
+  const [cycleStepLabel, setCycleStepLabel]   = useState('')
+  const cycleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+
+  const startBusinessCycle = useCallback(() => {
+    if (isCyclePlaying) return
+    setIsCyclePlaying(true)
+
+    // Clear any existing timers
+    cycleTimersRef.current.forEach(t => clearTimeout(t))
+    cycleTimersRef.current = []
+
+    // Helper to schedule a step
+    function step(ms: number, label: string, fn?: () => void) {
+      cycleTimersRef.current.push(setTimeout(() => {
+        setCycleStepLabel(label)
+        fn?.()
+      }, ms))
+    }
+
+    // STEP 1 (0s): Fly to SPARK tower — lead broadcast
+    step(0, 'LEAD BROADCAST — SPARK Tower', () => {
+      window.dispatchEvent(new CustomEvent('nw:cycle-fly', {
+        detail: { x: 60, y: 25, z: -120, lookX: 60, lookY: 10, lookZ: -120, duration: 2000 },
+      }))
+      // Trigger data flow layer to highlight lead flow
+      window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: 'leads' } }))
+    })
+
+    // STEP 2 (4s): Fly to a project mountain — lead converted
+    step(4000, 'LEAD CONVERTED — Project Mountain', () => {
+      window.dispatchEvent(new CustomEvent('nw:cycle-fly', {
+        detail: { x: -110, y: 18, z: 20, lookX: -110, lookY: 0, lookZ: 20, duration: 2500 },
+      }))
+      window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: 'materials' } }))
+    })
+
+    // STEP 3 (8s): Crew dispatch animation
+    step(8000, 'CREW DISPATCHED — Labor Ridges', () => {
+      window.dispatchEvent(new CustomEvent('nw:cycle-fly', {
+        detail: { x: -90, y: 22, z: 0, lookX: -130, lookY: 5, lookZ: -30, duration: 2000 },
+      }))
+      window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: 'crew' } }))
+    })
+
+    // STEP 4 (12s): Fly to completed project — payment flow
+    step(12000, 'PAYMENT RECEIVED — Project Complete', () => {
+      window.dispatchEvent(new CustomEvent('nw:cycle-fly', {
+        detail: { x: -60, y: 20, z: -60, lookX: -60, lookY: 0, lookZ: -60, duration: 2000 },
+      }))
+      window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: 'payments' } }))
+    })
+
+    // STEP 5 (15.5s): River — invoice aging check
+    step(15500, 'INVOICE AGING — AR Stalactites', () => {
+      window.dispatchEvent(new CustomEvent('nw:cycle-fly', {
+        detail: { x: -50, y: 18, z: 40, lookX: -50, lookY: 10, lookZ: 40, duration: 2000 },
+      }))
+      window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: 'aging' } }))
+    })
+
+    // STEP 6 (18s): Fly back to overview
+    step(18000, 'BUSINESS CYCLE COMPLETE', () => {
+      window.dispatchEvent(new CustomEvent('nw:cycle-fly', {
+        detail: { x: -20, y: 80, z: 120, lookX: -80, lookY: 0, lookZ: 0, duration: 2500 },
+      }))
+      window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: null } }))
+    })
+
+    // STEP END (21s): finish
+    step(21000, '', () => {
+      setIsCyclePlaying(false)
+      setCycleStepLabel('')
+    })
+  }, [isCyclePlaying])
+
+  const stopBusinessCycle = useCallback(() => {
+    cycleTimersRef.current.forEach(t => clearTimeout(t))
+    cycleTimersRef.current = []
+    setIsCyclePlaying(false)
+    setCycleStepLabel('')
+    window.dispatchEvent(new CustomEvent('nw:cycle-highlight', { detail: { flow: null } }))
+  }, [])
+
+  // ESC skips business cycle
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.code === 'Escape' && isCyclePlaying) {
+        stopBusinessCycle()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isCyclePlaying, stopBusinessCycle])
+
+  // NW18: Camera fly-to controller (drives camera in ORBIT mode via event)
+  useEffect(() => {
+    function onCycleFly(e: Event) {
+      const ev = e as CustomEvent<{
+        x: number; y: number; z: number
+        lookX: number; lookY: number; lookZ: number
+        duration: number
+      }>
+      window.dispatchEvent(new CustomEvent('nw:fly-to', { detail: ev.detail }))
+    }
+    window.addEventListener('nw:cycle-fly', onCycleFly)
+    return () => window.removeEventListener('nw:cycle-fly', onCycleFly)
+  }, [])
+
+  // Cleanup cycle timers on unmount
+  useEffect(() => {
+    return () => {
+      cycleTimersRef.current.forEach(t => clearTimeout(t))
+    }
+  }, [])
+
   // NW15: Mobile guard — render early before world mounts
   if (isMobile) {
     return <MobileGuard />
@@ -516,6 +640,92 @@ export default function NeuralWorldView() {
 
       {/* ── NW13: DiveModePanel — client territory intelligence overlay ── */}
       <DiveModePanel />
+
+      {/* ── NW18: Business Cycle button ── */}
+      <div style={{
+        position: 'absolute',
+        bottom: 72,
+        right: 14,
+        zIndex: 30,
+      }}>
+        {!isCyclePlaying ? (
+          <button
+            onClick={startBusinessCycle}
+            style={{
+              background: 'rgba(0, 20, 15, 0.88)',
+              border: '1px solid rgba(0,229,204,0.5)',
+              borderRadius: 6,
+              color: '#00e5cc',
+              fontSize: 9,
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              letterSpacing: 1.5,
+              padding: '7px 12px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(8px)',
+              transition: 'all 0.15s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+            title="Show Business Cycle (20s tour)"
+          >
+            <span style={{ fontSize: 12 }}>▶</span>
+            BUSINESS CYCLE
+          </button>
+        ) : (
+          <button
+            onClick={stopBusinessCycle}
+            style={{
+              background: 'rgba(20, 5, 5, 0.88)',
+              border: '1px solid rgba(255,80,80,0.5)',
+              borderRadius: 6,
+              color: '#ff5050',
+              fontSize: 9,
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              letterSpacing: 1.5,
+              padding: '7px 12px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+            title="Stop tour (ESC)"
+          >
+            <span style={{ fontSize: 12 }}>■</span>
+            STOP TOUR
+          </button>
+        )}
+      </div>
+
+      {/* ── NW18: Business Cycle step label ── */}
+      {isCyclePlaying && cycleStepLabel && (
+        <div style={{
+          position: 'absolute',
+          bottom: 108,
+          right: 14,
+          zIndex: 30,
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            background: 'rgba(0, 0, 0, 0.75)',
+            border: '1px solid rgba(0,229,204,0.3)',
+            borderRadius: 5,
+            color: '#00e5cc',
+            fontSize: 9,
+            fontFamily: 'monospace',
+            letterSpacing: 1.2,
+            padding: '5px 10px',
+            backdropFilter: 'blur(6px)',
+            maxWidth: 220,
+            textAlign: 'right',
+          }}>
+            {cycleStepLabel}
+          </div>
+        </div>
+      )}
 
       {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD

@@ -541,6 +541,21 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
       animFrameRef.current = requestAnimationFrame(animate)
 
       const delta = clockRef.current.getDelta()
+      const deltaMs = delta * 1000
+
+      // NW18: Apply camera fly-to animation if active
+      const flyTo = flyToRef.current
+      if (flyTo?.active) {
+        flyTo.elapsed = Math.min(flyTo.elapsed + deltaMs, flyTo.duration)
+        const t = flyTo.elapsed / flyTo.duration
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t  // ease-in-out
+        camera.position.lerpVectors(flyTo.startPos, flyTo.targetPos, ease)
+        camera.lookAt(flyTo.lookAt)
+        if (flyTo.elapsed >= flyTo.duration) {
+          flyTo.active = false
+          flyToRef.current = null
+        }
+      }
 
       // Day/night cycle
       updateDayNight(delta, scene)
@@ -779,6 +794,40 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     }
     window.addEventListener('nw:revenue-health', onRevenueHealth)
     return () => window.removeEventListener('nw:revenue-health', onRevenueHealth)
+  }, [])
+
+  // ── NW18: Camera fly-to for Business Cycle tour ───────────────────────────
+  const flyToRef = useRef<{
+    targetPos: THREE.Vector3
+    lookAt: THREE.Vector3
+    duration: number
+    elapsed: number
+    startPos: THREE.Vector3
+    startLook: THREE.Vector3
+    active: boolean
+  } | null>(null)
+
+  useEffect(() => {
+    function onFlyTo(e: Event) {
+      const ev = e as CustomEvent<{
+        x: number; y: number; z: number
+        lookX: number; lookY: number; lookZ: number
+        duration: number
+      }>
+      const cam = cameraRef.current
+      if (!cam) return
+      flyToRef.current = {
+        targetPos: new THREE.Vector3(ev.detail.x, ev.detail.y, ev.detail.z),
+        lookAt:    new THREE.Vector3(ev.detail.lookX, ev.detail.lookY, ev.detail.lookZ),
+        duration:  ev.detail.duration ?? 2000,
+        elapsed:   0,
+        startPos:  cam.position.clone(),
+        startLook: new THREE.Vector3(0, 0, 0),
+        active:    true,
+      }
+    }
+    window.addEventListener('nw:fly-to', onFlyTo)
+    return () => window.removeEventListener('nw:fly-to', onFlyTo)
   }, [])
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────

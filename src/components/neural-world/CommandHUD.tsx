@@ -70,10 +70,12 @@ const LAYERS: LayerDef[] = [
   { id: 'signal',          label: 'Signal',          icon: '∿',  r: 80,  g: 200, b: 255 },
   { id: 'forecast',        label: 'Forecast',        icon: '◐',  r: 200, g: 160, b: 255 },
   { id: 'command',         label: 'Command',         icon: '⊕',  r: 255, g: 238, b: 0   },
+  /** NW18: Data flow particle animations + connection tubes */
+  { id: 'data-flow',       label: 'Data Flow',       icon: '⟳',  r: 0,   g: 220, b: 180 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface'])
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow'])
 )
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
