@@ -106,6 +106,9 @@ const VisualSuiteStandalone = lazy(() => chunkRetry(() => import('@/views/Visual
 // B36 — Admin Command Center (lazy-loaded)
 const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminCommandCenter')))
 
+// NW1 — Neural World (lazy-loaded)
+const NeuralWorldView = lazy(() => chunkRetry(() => import('@/views/NeuralWorldView')))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
 // B51 — Wins Log floating button + drawer
@@ -528,6 +531,10 @@ export function AppShell({ children }: AppShellProps) {
       // B36 — Admin Command Center
       case 'admin-command-center':
         return <Suspense fallback={<PanelLoading />}><AdminCommandCenter /></Suspense>
+
+      // NW1 — Neural World (3D immersive visualization)
+      case 'neural-world':
+        return <Suspense fallback={<PanelLoading />}><NeuralWorldView /></Suspense>
 
       // B68 — Business Overview split view (full build)
       case 'business-overview':

@@ -42,6 +42,7 @@ import {
   Trophy,
   Pin,
   Building2,
+  Globe,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
@@ -778,6 +779,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Neural Map — Electrical', icon: Map, view: 'admin-command-center', badge: null, subtitle: 'Command Center' },
     // Neural Map — Combined: sidebar link to Viz Lab (Combined tab, placeholder B67)
     { label: 'Neural Map — Combined', icon: Brain, view: 'viz-lab', badge: 'B67', subtitle: 'Viz Lab · Combined' },
+    // NW1 — Neural World: 3D immersive visualization
+    { label: 'Neural World', icon: Globe, view: 'neural-world', badge: 'NW1', subtitle: null },
   ]
   // BUCKET 4 — BUSINESS OVERVIEW (default collapsed, green border)
   const adminBucket4 = [
