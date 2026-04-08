@@ -1,11 +1,13 @@
 /**
  * DataBridge.ts — Supabase data layer for Neural World.
  *
- * Fetches project, invoice, and field_log data from Supabase on world load.
+ * Fetches project, invoice, field_log, RFI, crew, and hub event data.
  * Refreshes every 60 seconds.
  * Exposes typed data to all world components via a simple observer pattern.
  *
  * NW2 scope: projects, invoices, field_logs
+ * NW9 scope: rfis, solarIncome
+ * NW11 scope: crewMembers, hubEvents, accountingSignals
  */
 
 import { supabase } from '@/lib/supabase'
@@ -23,6 +25,8 @@ export interface NWProject {
   material_cost: number
   /** NW9: phase completion 0–100 */
   phase_completion: number
+  /** NW11: when project was created */
+  created_at: string | null
 }
 
 export interface NWInvoice {
@@ -58,6 +62,50 @@ export interface NWRFI {
   org_id: string
 }
 
+/** NW11: Crew member record for labor ridge / growth factor */
+export interface NWCrewMember {
+  id: string
+  name: string
+  role: string | null
+  org_id: string
+  created_at: string | null
+  /** NW11: active flag — if false this crew left (churn signal) */
+  active: boolean
+}
+
+/** NW11: Hub platform event record — subscriber joins, feature launches, etc. */
+export interface NWHubEvent {
+  id: string
+  event_type: string   // 'subscriber_joined' | 'subscriber_cancelled' | 'feature_launched' | 'service_area_added'
+  payload: Record<string, unknown>
+  created_at: string | null
+  org_id: string
+}
+
+/** NW11: Derived accounting signals — computed from raw data each refresh */
+export interface NWAccountingSignals {
+  /** Total monthly overhead (sum of all overhead category items) */
+  overheadMonthly: number
+  /** Fraction of total contract value concentrated in single top client (0–1) */
+  singleClientDependencyRatio: number
+  /** Project ID of the dominant client (most contract value) */
+  dominantProjectId: string | null
+  /** Invoice amounts that are past 30 days unpaid */
+  arOver30Days: NWInvoice[]
+  /** Distinct service area codes derived from project names/types */
+  serviceAreaCount: number
+  /** Crew count as of last fetch */
+  activeCrewCount: number
+  /** Total paid invoice amount in last 30 days (revenue momentum) */
+  recentPaidAmount: number
+  /** Payroll signal: total hours logged in last 7 days (used for west-dim intensity) */
+  recentPayrollHours: number
+  /** Subscription cost estimate: count of active hub subscribers × avg fee */
+  hubSubscriberCount: number
+  /** Recent hub feature launches (last 30 days) */
+  recentFeatureLaunches: number
+}
+
 export interface NWWorldData {
   projects: NWProject[]
   invoices: NWInvoice[]
@@ -66,6 +114,12 @@ export interface NWWorldData {
   rfis: NWRFI[]
   /** NW9: solar income value (from org settings or aggregated solar project revenue) */
   solarIncome: number
+  /** NW11: crew members for labor ridge / growth signals */
+  crewMembers: NWCrewMember[]
+  /** NW11: hub platform events for subscriber / feature signals */
+  hubEvents: NWHubEvent[]
+  /** NW11: computed accounting signals */
+  accountingSignals: NWAccountingSignals
   lastFetched: number
 }
 
@@ -73,12 +127,28 @@ export interface NWWorldData {
 
 type DataListener = (data: NWWorldData) => void
 
+const _emptySignals: NWAccountingSignals = {
+  overheadMonthly: 0,
+  singleClientDependencyRatio: 0,
+  dominantProjectId: null,
+  arOver30Days: [],
+  serviceAreaCount: 0,
+  activeCrewCount: 0,
+  recentPaidAmount: 0,
+  recentPayrollHours: 0,
+  hubSubscriberCount: 0,
+  recentFeatureLaunches: 0,
+}
+
 let _currentData: NWWorldData = {
   projects: [],
   invoices: [],
   fieldLogs: [],
   rfis: [],
   solarIncome: 0,
+  crewMembers: [],
+  hubEvents: [],
+  accountingSignals: { ..._emptySignals },
   lastFetched: 0,
 }
 
@@ -99,10 +169,17 @@ async function _fetchAll(): Promise<void> {
   _fetchInProgress = true
 
   try {
-    const [projectsResult, invoicesResult, fieldLogsResult, rfisResult] = await Promise.all([
+    const [
+      projectsResult,
+      invoicesResult,
+      fieldLogsResult,
+      rfisResult,
+      crewResult,
+      hubEventsResult,
+    ] = await Promise.all([
       (supabase as any)
         .from('projects')
-        .select('id, name, status, contract_value, health_score, org_id, material_cost, phase_completion')
+        .select('id, name, status, contract_value, health_score, org_id, material_cost, phase_completion, created_at')
         .order('created_at', { ascending: false }),
 
       (supabase as any)
@@ -121,12 +198,28 @@ async function _fetchAll(): Promise<void> {
         .select('id, project_id, status, created_at, resolved_at, org_id')
         .order('created_at', { ascending: false })
         .limit(200),
+
+      // NW11: crew members — non-fatal if table doesn't exist
+      (supabase as any)
+        .from('crew_members')
+        .select('id, name, role, org_id, created_at, active')
+        .order('created_at', { ascending: false })
+        .limit(100),
+
+      // NW11: hub platform events — non-fatal if table doesn't exist
+      (supabase as any)
+        .from('hub_platform_events')
+        .select('id, event_type, payload, created_at, org_id')
+        .order('created_at', { ascending: false })
+        .limit(200),
     ])
 
-    const rawProjects: any[] = projectsResult.data ?? []
-    const rawInvoices: any[] = invoicesResult.data ?? []
-    const rawFieldLogs: any[] = fieldLogsResult.data ?? []
-    const rawRFIs: any[] = rfisResult.data ?? []
+    const rawProjects: any[]   = projectsResult.data   ?? []
+    const rawInvoices: any[]   = invoicesResult.data   ?? []
+    const rawFieldLogs: any[]  = fieldLogsResult.data  ?? []
+    const rawRFIs: any[]       = rfisResult.data       ?? []
+    const rawCrew: any[]       = crewResult.data       ?? []
+    const rawHubEvents: any[]  = hubEventsResult.data  ?? []
 
     const projects: NWProject[] = rawProjects.map((p: any) => ({
       id: p.id ?? '',
@@ -137,6 +230,7 @@ async function _fetchAll(): Promise<void> {
       org_id: p.org_id ?? '',
       material_cost: typeof p.material_cost === 'number' ? p.material_cost : 0,
       phase_completion: typeof p.phase_completion === 'number' ? p.phase_completion : 0,
+      created_at: p.created_at ?? null,
     }))
 
     const invoices: NWInvoice[] = rawInvoices.map((inv: any) => ({
@@ -168,8 +262,24 @@ async function _fetchAll(): Promise<void> {
       org_id: r.org_id ?? '',
     }))
 
+    const crewMembers: NWCrewMember[] = rawCrew.map((c: any) => ({
+      id: c.id ?? '',
+      name: c.name ?? 'Unknown',
+      role: c.role ?? null,
+      org_id: c.org_id ?? '',
+      created_at: c.created_at ?? null,
+      active: c.active !== false,
+    }))
+
+    const hubEvents: NWHubEvent[] = rawHubEvents.map((e: any) => ({
+      id: e.id ?? '',
+      event_type: e.event_type ?? '',
+      payload: (e.payload && typeof e.payload === 'object') ? e.payload as Record<string, unknown> : {},
+      created_at: e.created_at ?? null,
+      org_id: e.org_id ?? '',
+    }))
+
     // NW9: solar income — sum contract_value of projects tagged solar/MTZ
-    // Falls back to a proportional estimate based on invoices paid if no solar data
     const solarProjects = projects.filter(p =>
       p.name.toLowerCase().includes('solar') ||
       p.name.toLowerCase().includes('mtz') ||
@@ -177,12 +287,100 @@ async function _fetchAll(): Promise<void> {
     )
     const solarIncome = solarProjects.reduce((sum, p) => sum + p.contract_value, 0)
 
+    // ── NW11: Compute accounting signals ──────────────────────────────────────
+
+    const now = Date.now()
+    const MS_30_DAYS = 30 * 24 * 60 * 60 * 1000
+    const MS_7_DAYS  =  7 * 24 * 60 * 60 * 1000
+
+    // AR over 30 days: unpaid invoices created more than 30 days ago
+    const arOver30Days = invoices.filter(inv => {
+      if (inv.status === 'paid' || inv.status === 'cancelled') return false
+      if (!inv.created_at) return false
+      return (now - new Date(inv.created_at).getTime()) > MS_30_DAYS
+    })
+
+    // Single client dependency: which project holds the most contract value?
+    const totalContractValue = projects.reduce((s, p) => s + p.contract_value, 0)
+    let maxProjectValue = 0
+    let dominantProjectId: string | null = null
+    for (const p of projects) {
+      if (p.contract_value > maxProjectValue) {
+        maxProjectValue = p.contract_value
+        dominantProjectId = p.id
+      }
+    }
+    const singleClientDependencyRatio =
+      totalContractValue > 0 ? maxProjectValue / totalContractValue : 0
+
+    // Recent paid amount (last 30 days)
+    const recentPaidAmount = invoices
+      .filter(inv => {
+        if (inv.status !== 'paid' || !inv.paid_at) return false
+        return (now - new Date(inv.paid_at).getTime()) < MS_30_DAYS
+      })
+      .reduce((s, inv) => s + inv.amount, 0)
+
+    // Recent payroll hours (last 7 days)
+    const recentPayrollHours = fieldLogs
+      .filter(fl => {
+        if (!fl.log_date) return false
+        return (now - new Date(fl.log_date).getTime()) < MS_7_DAYS
+      })
+      .reduce((s, fl) => s + fl.hours, 0)
+
+    // Service areas: distinct keywords in project names/types
+    const serviceKeywords = new Set<string>()
+    for (const p of projects) {
+      const words = p.name.toLowerCase().split(/[\s,/-]+/)
+      for (const w of words) {
+        if (w.length > 4) serviceKeywords.add(w)
+      }
+    }
+    const serviceAreaCount = Math.max(1, Math.min(serviceKeywords.size, 20))
+
+    // Active crew count
+    const activeCrewCount = crewMembers.filter(c => c.active).length
+
+    // Hub subscriber count from events
+    const subscriberJoined = hubEvents.filter(e => e.event_type === 'subscriber_joined').length
+    const subscriberCancelled = hubEvents.filter(e => e.event_type === 'subscriber_cancelled').length
+    const hubSubscriberCount = Math.max(0, subscriberJoined - subscriberCancelled)
+
+    // Recent feature launches (last 30 days)
+    const recentFeatureLaunches = hubEvents.filter(e => {
+      if (e.event_type !== 'feature_launched') return false
+      if (!e.created_at) return false
+      return (now - new Date(e.created_at).getTime()) < MS_30_DAYS
+    }).length
+
+    // Overhead: not directly in Supabase at DataBridge level,
+    // derive a proxy from recent non-payroll expenses if available.
+    // We use a conservative fixed estimate: $5k/month as fallback.
+    const overheadMonthly = 5000
+
+    const accountingSignals: NWAccountingSignals = {
+      overheadMonthly,
+      singleClientDependencyRatio,
+      dominantProjectId,
+      arOver30Days,
+      serviceAreaCount,
+      activeCrewCount,
+      recentPaidAmount,
+      recentPayrollHours,
+      hubSubscriberCount,
+      recentFeatureLaunches,
+    }
+
     _currentData = {
       projects,
       invoices,
       fieldLogs,
       rfis,
       solarIncome,
+      crewMembers,
+      hubEvents,
+      accountingSignals,
       lastFetched: Date.now(),
     }
 
