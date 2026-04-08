@@ -10,14 +10,16 @@
  * NW3 scope: CriticalPathLayer (flowing particle rivers — payment pipelines).
  * NW4 scope: AgentLayer (11 agents as distinct 3D entities with behavior).
  * NW5 scope: DecisionGravityLayer (polyhedra clouds), SignalLayer (aurora + lightning), day cycle polish.
+ * NW6 scope: ScenarioBuilder panel — terrain reshape sliders, snapshot save/load, compare mode.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { WorldEngine } from '@/components/neural-world/WorldEngine'
 import { CriticalPathLayer } from '@/components/neural-world/layers/CriticalPathLayer'
 import { AgentLayer } from '@/components/neural-world/layers/AgentLayer'
 import { DecisionGravityLayer } from '@/components/neural-world/layers/DecisionGravityLayer'
 import { SignalLayer } from '@/components/neural-world/layers/SignalLayer'
+import { ScenarioBuilder } from '@/components/neural-world/ScenarioBuilder'
 
 function hudButtonStyle(active: boolean, r: number, g: number, b: number): React.CSSProperties {
   return {
@@ -35,11 +37,46 @@ function hudButtonStyle(active: boolean, r: number, g: number, b: number): React
   }
 }
 
+/** Layers component used inside each WorldEngine instance */
+function WorldLayers({
+  riversVisible,
+  agentsVisible,
+  gravityVisible,
+  signalVisible,
+}: {
+  riversVisible: boolean
+  agentsVisible: boolean
+  gravityVisible: boolean
+  signalVisible: boolean
+}) {
+  return (
+    <>
+      <CriticalPathLayer visible={riversVisible} />
+      <AgentLayer visible={agentsVisible} />
+      <DecisionGravityLayer visible={gravityVisible} />
+      <SignalLayer visible={signalVisible} />
+    </>
+  )
+}
+
 export default function NeuralWorldView() {
   const [riversVisible,   setRiversVisible]   = useState(true)
   const [agentsVisible,   setAgentsVisible]   = useState(true)
   const [gravityVisible,  setGravityVisible]  = useState(true)
   const [signalVisible,   setSignalVisible]   = useState(true)
+
+  // NW6: scenario + compare mode state
+  const [scenarioActive, setScenarioActive] = useState(false)
+  const [compareMode,    setCompareMode]    = useState(false)
+
+  const handleScenarioModeChange = useCallback((active: boolean) => {
+    setScenarioActive(active)
+    if (!active) setCompareMode(false)
+  }, [])
+
+  const handleCompareModeChange = useCallback((active: boolean) => {
+    setCompareMode(active)
+  }, [])
 
   return (
     <div
@@ -51,14 +88,141 @@ export default function NeuralWorldView() {
         background: '#050508',
       }}
     >
-      <WorldEngine>
-        <CriticalPathLayer visible={riversVisible} />
-        <AgentLayer visible={agentsVisible} />
-        <DecisionGravityLayer visible={gravityVisible} />
-        <SignalLayer visible={signalVisible} />
-      </WorldEngine>
+      {/* ── Canvas area — normal or split compare ── */}
+      {compareMode ? (
+        /* Compare mode: live data left | scenario right */
+        <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+          {/* Left — LIVE DATA (no scenario overrides) */}
+          <div
+            key="compare-live"
+            style={{
+              width: '50%',
+              height: '100%',
+              overflow: 'hidden',
+              position: 'relative',
+              borderRight: '2px solid rgba(245,158,11,0.4)',
+            }}
+          >
+            <WorldEngine applyScenario={false}>
+              <WorldLayers
+                riversVisible={riversVisible}
+                agentsVisible={agentsVisible}
+                gravityVisible={gravityVisible}
+                signalVisible={signalVisible}
+              />
+            </WorldEngine>
+            {/* Left label */}
+            <div style={{
+              position: 'absolute',
+              bottom: 8,
+              left: 0,
+              right: 0,
+              textAlign: 'center',
+              fontSize: 9,
+              color: '#00e5cc',
+              fontFamily: 'monospace',
+              letterSpacing: 1.5,
+              pointerEvents: 'none',
+            }}>
+              ◈ LIVE DATA
+            </div>
+          </div>
 
-      {/* HUD layer controls */}
+          {/* Right — SCENARIO (overrides applied) */}
+          <div
+            key="compare-scenario"
+            style={{
+              width: '50%',
+              height: '100%',
+              overflow: 'hidden',
+              position: 'relative',
+            }}
+          >
+            <WorldEngine applyScenario={true}>
+              <WorldLayers
+                riversVisible={riversVisible}
+                agentsVisible={agentsVisible}
+                gravityVisible={gravityVisible}
+                signalVisible={signalVisible}
+              />
+            </WorldEngine>
+            {/* Right label */}
+            <div style={{
+              position: 'absolute',
+              bottom: 8,
+              left: 0,
+              right: 0,
+              textAlign: 'center',
+              fontSize: 9,
+              color: '#f59e0b',
+              fontFamily: 'monospace',
+              letterSpacing: 1.5,
+              pointerEvents: 'none',
+            }}>
+              ◈ SCENARIO PROJECTION
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Normal mode: single WorldEngine, applies scenario overrides when active */
+        <WorldEngine applyScenario={true}>
+          <WorldLayers
+            riversVisible={riversVisible}
+            agentsVisible={agentsVisible}
+            gravityVisible={gravityVisible}
+            signalVisible={signalVisible}
+          />
+        </WorldEngine>
+      )}
+
+      {/* ── NW6: Scenario Builder panel ── */}
+      <ScenarioBuilder
+        onScenarioModeChange={handleScenarioModeChange}
+        onCompareModeChange={handleCompareModeChange}
+      />
+
+      {/* ── NW6: Mode badge — top center of canvas ── */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 14,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 25,
+          pointerEvents: 'none',
+        }}
+      >
+        {scenarioActive ? (
+          <div style={{
+            background: 'rgba(245,158,11,0.15)',
+            border: '1px solid rgba(245,158,11,0.6)',
+            color: '#f59e0b',
+            padding: '4px 14px',
+            borderRadius: 3,
+            fontSize: 10,
+            letterSpacing: 2,
+            fontFamily: 'monospace',
+            fontWeight: 600,
+          }}>
+            ⬛ SCENARIO MODE
+          </div>
+        ) : (
+          <div style={{
+            background: 'rgba(0,229,130,0.08)',
+            border: '1px solid rgba(0,229,130,0.3)',
+            color: '#00e582',
+            padding: '4px 14px',
+            borderRadius: 3,
+            fontSize: 10,
+            letterSpacing: 2,
+            fontFamily: 'monospace',
+          }}>
+            ◈ LIVE DATA
+          </div>
+        )}
+      </div>
+
+      {/* ── HUD layer controls ── */}
       <div
         style={{
           position: 'absolute',

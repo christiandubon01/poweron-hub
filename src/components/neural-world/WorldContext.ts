@@ -11,6 +11,8 @@ export interface WorldContextValue {
   renderer: THREE.WebGLRenderer
   playerPosition: MutableRefObject<THREE.Vector3>
   playerYaw: MutableRefObject<number>
+  /** When true, this world instance applies scenario overrides from ScenarioBuilder */
+  applyScenario: boolean
 }
 
 export const WorldContext = createContext<WorldContextValue | null>(null)

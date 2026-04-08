@@ -169,7 +169,7 @@ interface AgentLayerProps {
 }
 
 export function AgentLayer({ visible }: AgentLayerProps) {
-  const { scene } = useWorldContext()
+  const { scene, applyScenario } = useWorldContext()
 
   const agentsRef        = useRef<AgentEntity[]>([])
   const beamsRef         = useRef<Beam[]>([])
@@ -178,6 +178,12 @@ export function AgentLayer({ visible }: AgentLayerProps) {
   const clockRef         = useRef(new THREE.Clock())
   const elapsedRef       = useRef(0)
   const visibleRef       = useRef(visible)
+
+  // NW6: scenario overrides — when heights change, agents reroute toward taller mountains
+  const scenarioOverridesRef = useRef<Record<string, number>>({})
+  const nodeProjectIdsRef    = useRef<string[]>([])  // parallel array to nodesRef
+  const applyScenarioRef     = useRef(applyScenario)
+  applyScenarioRef.current   = applyScenario
 
   // Keep visibility in sync
   useEffect(() => {
@@ -539,6 +545,15 @@ export function AgentLayer({ visible }: AgentLayerProps) {
     const nodes = nodesRef.current
     if (nodes.length === 0) return ag.currentPos.clone()
 
+    // NW6: when scenario is active with overrides, bias toward taller mountains
+    const hasScenarioOverrides =
+      applyScenarioRef.current &&
+      Object.values(scenarioOverridesRef.current).some(v => Math.abs(v - 1.0) > 0.05)
+
+    if (hasScenarioOverrides) {
+      return pickScenarioWeightedTarget()
+    }
+
     if (ag.def.erratic) {
       // SCOUT: pick a random node
       const idx = Math.floor(Math.random() * nodes.length)
@@ -816,11 +831,14 @@ export function AgentLayer({ visible }: AgentLayerProps) {
       ['in_progress', 'approved', 'pending', 'on_hold', 'completed'].includes(p.status)
     )
 
+    let projectIds: string[] = []
+
     if (activeProjects.length >= MIN_NODES) {
       nodesRef.current = activeProjects.map(p => {
         const { x, z } = seededPosition(p.id)
         return new THREE.Vector3(x, AGENT_Y, z)
       })
+      projectIds = activeProjects.map(p => p.id)
     } else {
       // Pad with defaults
       const extra = DEFAULT_NODES.slice(0, Math.max(0, MIN_NODES - activeProjects.length))
@@ -829,7 +847,10 @@ export function AgentLayer({ visible }: AgentLayerProps) {
         return new THREE.Vector3(x, AGENT_Y, z)
       })
       nodesRef.current = [...fromProjects, ...extra]
+      projectIds = [...activeProjects.map(p => p.id), ...extra.map(() => '')]
     }
+
+    nodeProjectIdsRef.current = projectIds
 
     // Reassign agent targets to new node list
     const nodes = nodesRef.current
@@ -838,6 +859,29 @@ export function AgentLayer({ visible }: AgentLayerProps) {
       const targetIdx = i % nodes.length
       ag.targetPos = nodes[targetIdx].clone()
     }
+  }
+
+  // ── NW6: Pick scenario-weighted target node ────────────────────────────────
+
+  function pickScenarioWeightedTarget(): THREE.Vector3 {
+    const nodes = nodesRef.current
+    const ids   = nodeProjectIdsRef.current
+    const overrides = scenarioOverridesRef.current
+
+    if (nodes.length === 0) return DEFAULT_NODES[0].clone()
+
+    // Weight each node by its scenario height multiplier (higher = more traffic)
+    const weights = nodes.map((_, i) => {
+      const id = ids[i] ?? ''
+      return Math.max(0.1, overrides[id] ?? 1.0)
+    })
+    const totalWeight = weights.reduce((s, w) => s + w, 0)
+    let rand = Math.random() * totalWeight
+    for (let i = 0; i < nodes.length; i++) {
+      rand -= weights[i]
+      if (rand <= 0) return nodes[i].clone()
+    }
+    return nodes[nodes.length - 1].clone()
   }
 
   // ── Effect: subscribe to world data ──────────────────────────────────────
@@ -851,6 +895,30 @@ export function AgentLayer({ visible }: AgentLayerProps) {
       updateNodes(data.projects)
     })
 
+    // NW6: scenario reroute — update overrides, agents will naturally use new weights on next target pick
+    function onScenarioOverride(e: Event) {
+      if (!applyScenarioRef.current) return
+      const detail = (e as CustomEvent<{ overrides: Record<string, number> }>).detail
+      scenarioOverridesRef.current = detail.overrides
+      // Force agents to immediately pick new targets based on new weights
+      const nodes = nodesRef.current
+      if (nodes.length === 0) return
+      for (const ag of agentsRef.current) {
+        ag.targetPos = pickScenarioWeightedTarget()
+      }
+    }
+
+    function onScenarioActivate(e: Event) {
+      if (!applyScenarioRef.current) return
+      const detail = (e as CustomEvent<{ active: boolean }>).detail
+      if (!detail.active) {
+        scenarioOverridesRef.current = {}
+      }
+    }
+
+    window.addEventListener('nw:scenario-override', onScenarioOverride)
+    window.addEventListener('nw:scenario-activate', onScenarioActivate)
+
     return () => {
       unsub()
       disposeAgents()
@@ -858,6 +926,8 @@ export function AgentLayer({ visible }: AgentLayerProps) {
         window.removeEventListener('nw:frame', frameHandlerRef.current)
         frameHandlerRef.current = null
       }
+      window.removeEventListener('nw:scenario-override', onScenarioOverride)
+      window.removeEventListener('nw:scenario-activate', onScenarioActivate)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene])

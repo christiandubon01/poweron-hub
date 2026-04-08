@@ -10,6 +10,11 @@
  * - Pulse animation: slow pulse; risk score > 70 increases amplitude
  * - Registers each mountain with CollisionSystem via 'nw:register-mountain' event
  * - Cleans up Three.js geometry/material on unmount or data refresh
+ *
+ * NW6 scope:
+ * - Listens to 'nw:scenario-override' events (when ctx.applyScenario is true)
+ * - Applies per-project heightMultiplier to mountains in real time via Y-axis scale
+ * - Listens to 'nw:scenario-activate' to clear overrides when scenario deactivates
  */
 
 import { useEffect, useRef } from 'react'
@@ -59,16 +64,24 @@ interface Mountain {
   pulseAmplitude: number  // 0.01–0.08
   pulseSpeed: number      // radians / second
   pulseOffset: number     // randomised start phase
+  projectId: string
+  /** NW6: scenario height multiplier (1.0 = no change) */
+  scenarioMultiplier: number
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function TerrainGenerator() {
-  const { scene } = useWorldContext()
+  const { scene, applyScenario } = useWorldContext()
   const mountainsRef = useRef<Mountain[]>([])
   const frameHandlerRef = useRef<(() => void) | null>(null)
   const clockRef = useRef(new THREE.Clock())
   const elapsedRef = useRef(0)
+
+  // NW6: scenario override map — projectId → heightMultiplier
+  const scenarioOverridesRef = useRef<Record<string, number>>({})
+  const applyScenarioRef = useRef(applyScenario)
+  applyScenarioRef.current = applyScenario
 
   // ── Build mountains from project list ──────────────────────────────────────
 
@@ -133,6 +146,8 @@ export function TerrainGenerator() {
         pulseAmplitude: riskAmplitude,
         pulseSpeed,
         pulseOffset,
+        projectId: project.id,
+        scenarioMultiplier: scenarioOverridesRef.current[project.id] ?? 1.0,
       }
 
       mountains.push(mountain)
@@ -194,10 +209,12 @@ export function TerrainGenerator() {
 
       for (const m of mountainsRef.current) {
         const t = elapsedRef.current * m.pulseSpeed + m.pulseOffset
-        const scaleFactor = 1 + Math.sin(t) * m.pulseAmplitude
-        m.mesh.scale.setScalar(scaleFactor)
+        const pulseFactor = 1 + Math.sin(t) * m.pulseAmplitude
+        // NW6: apply scenario height multiplier (Y only so width is preserved)
+        const sm = m.scenarioMultiplier
+        m.mesh.scale.set(pulseFactor, sm * pulseFactor, pulseFactor)
         // Keep base planted on ground: adjust y since scale affects centroid
-        m.mesh.position.y = m.baseY * scaleFactor
+        m.mesh.position.y = m.baseY * sm * pulseFactor
 
         // Pulse ring opacity if present
         if (m.ring) {
@@ -221,6 +238,32 @@ export function TerrainGenerator() {
       setupFrameHandler()
     })
 
+    // NW6: scenario override event handlers (only act when applyScenario is true)
+    function onScenarioOverride(e: Event) {
+      if (!applyScenarioRef.current) return
+      const detail = (e as CustomEvent<{ overrides: Record<string, number> }>).detail
+      scenarioOverridesRef.current = detail.overrides
+      // Apply to existing mountains immediately (no rebuild needed)
+      for (const m of mountainsRef.current) {
+        m.scenarioMultiplier = detail.overrides[m.projectId] ?? 1.0
+      }
+    }
+
+    function onScenarioActivate(e: Event) {
+      if (!applyScenarioRef.current) return
+      const detail = (e as CustomEvent<{ active: boolean }>).detail
+      if (!detail.active) {
+        // Reset all multipliers to 1.0
+        scenarioOverridesRef.current = {}
+        for (const m of mountainsRef.current) {
+          m.scenarioMultiplier = 1.0
+        }
+      }
+    }
+
+    window.addEventListener('nw:scenario-override', onScenarioOverride)
+    window.addEventListener('nw:scenario-activate', onScenarioActivate)
+
     return () => {
       unsub()
       disposeDataBridge()
@@ -229,6 +272,8 @@ export function TerrainGenerator() {
         window.removeEventListener('nw:frame', frameHandlerRef.current)
         frameHandlerRef.current = null
       }
+      window.removeEventListener('nw:scenario-override', onScenarioOverride)
+      window.removeEventListener('nw:scenario-activate', onScenarioActivate)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene])

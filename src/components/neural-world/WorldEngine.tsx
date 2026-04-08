@@ -140,9 +140,11 @@ function lerpKeyframes(t: number): Omit<SkyKeyframe, 't'> {
 
 interface WorldEngineProps {
   children?: React.ReactNode
+  /** Pass true to make child layers apply scenario overrides (NW6) */
+  applyScenario?: boolean
 }
 
-export function WorldEngine({ children }: WorldEngineProps) {
+export function WorldEngine({ children, applyScenario = false }: WorldEngineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Three.js core refs
@@ -277,6 +279,7 @@ export function WorldEngine({ children }: WorldEngineProps) {
     renderer: THREE.WebGLRenderer
     playerPosition: React.MutableRefObject<THREE.Vector3>
     playerYaw: React.MutableRefObject<number>
+    applyScenario: boolean
   } | null>(null)
 
   // ── Init Three.js ─────────────────────────────────────────────────────────
@@ -385,6 +388,7 @@ export function WorldEngine({ children }: WorldEngineProps) {
       renderer,
       playerPosition,
       playerYaw,
+      applyScenario,
     })
 
     // Start animation
@@ -568,7 +572,7 @@ export function WorldEngine({ children }: WorldEngineProps) {
       }}
     >
       {contextValue && (
-        <WorldContext.Provider value={contextValue}>
+        <WorldContext.Provider value={{ ...contextValue, applyScenario }}>
           <AtmosphereManager
             activeMode={atmosphereMode}
             onModeChange={handleAtmosphereModeChange}

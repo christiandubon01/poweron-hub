@@ -15,6 +15,9 @@
  * - Celebration pulse: when a project transitions to fully paid, speed × 3 for 3 s,
  *   color brightens to a fast white-blue pulse.
  * - Responds to `visible` prop for HUD layer toggle.
+ *
+ * NW6: Responds to 'nw:scenario-override' events — flow speed scales with height multiplier
+ *      (taller mountain = more active project = faster river throughput).
  */
 
 import { useEffect, useRef } from 'react'
@@ -144,13 +147,18 @@ interface CriticalPathLayerProps {
 }
 
 export function CriticalPathLayer({ visible }: CriticalPathLayerProps) {
-  const { scene } = useWorldContext()
+  const { scene, applyScenario } = useWorldContext()
 
   const riversRef        = useRef<RiverData[]>([])
   const frameHandlerRef  = useRef<(() => void) | null>(null)
   const clockRef         = useRef(new THREE.Clock())
   const elapsedRef       = useRef(0)
   const visibleRef       = useRef(visible)
+
+  // NW6: scenario override speeds — projectId → heightMultiplier
+  const scenarioOverridesRef = useRef<Record<string, number>>({})
+  const applyScenarioRef = useRef(applyScenario)
+  applyScenarioRef.current = applyScenario
 
   // Keep visibility in sync without rebuilding rivers
   useEffect(() => {
@@ -286,7 +294,9 @@ export function CriticalPathLayer({ visible }: CriticalPathLayerProps) {
         }
 
         // ── Advance particles along curve ────────────────────────────────
-        const curSpeed = river.speed
+        // NW6: scale speed by scenario height multiplier if applicable
+        const scenarioMult = scenarioOverridesRef.current[river.projectId] ?? 1.0
+        const curSpeed = river.speed * scenarioMult
         for (let i = 0; i < PARTICLE_COUNT; i++) {
           river.tValues[i] += curSpeed * delta
           if (river.tValues[i] > 1.0) river.tValues[i] -= 1.0
@@ -329,6 +339,24 @@ export function CriticalPathLayer({ visible }: CriticalPathLayerProps) {
       }
     })
 
+    // NW6: scenario override listener — instantly updates river speeds
+    function onScenarioOverride(e: Event) {
+      if (!applyScenarioRef.current) return
+      const detail = (e as CustomEvent<{ overrides: Record<string, number> }>).detail
+      scenarioOverridesRef.current = detail.overrides
+    }
+
+    function onScenarioActivate(e: Event) {
+      if (!applyScenarioRef.current) return
+      const detail = (e as CustomEvent<{ active: boolean }>).detail
+      if (!detail.active) {
+        scenarioOverridesRef.current = {}
+      }
+    }
+
+    window.addEventListener('nw:scenario-override', onScenarioOverride)
+    window.addEventListener('nw:scenario-activate', onScenarioActivate)
+
     return () => {
       unsub()
       disposeRivers()
@@ -336,6 +364,8 @@ export function CriticalPathLayer({ visible }: CriticalPathLayerProps) {
         window.removeEventListener('nw:frame', frameHandlerRef.current)
         frameHandlerRef.current = null
       }
+      window.removeEventListener('nw:scenario-override', onScenarioOverride)
+      window.removeEventListener('nw:scenario-activate', onScenarioActivate)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene])
