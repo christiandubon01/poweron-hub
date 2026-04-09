@@ -37,6 +37,7 @@ import { FogInterviewPanel, FogCalibrateButton } from './FogInterviewPanel'
 import ActionableInsightPanel, { InsightTriggerButton, type CubeInsightPayload } from './ActionableInsightPanel'
 import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
+import LegendPanel, { LegendButton } from './LegendPanel'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -99,6 +100,31 @@ const LAYERS: LayerDef[] = [
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
   LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation'])
 )
+
+// ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
+
+const LAYER_DESCRIPTIONS: Record<string, string> = {
+  'pulse':           'Heartbeat indicators showing real-time data refresh activity across the world.',
+  'pressure':        'Stress indicators on nodes under operational pressure. Brighter = more overloaded.',
+  'critical-path':   'Highlights the longest dependency chain across active projects. The bottleneck path.',
+  'agents':          'Static agent position markers showing where each AI agent is stationed by domain.',
+  'decision-gravity':'Shows which nodes attract the most decision-making activity and management attention.',
+  'velocity':        'Speed of work completion across projects and domains. Green = fast-moving, red = stalled.',
+  'risk-surface':    'Heat map of financial and operational risk across the landscape. High risk glows red.',
+  'signal':          'Communication flow strength between connected nodes. Brighter = stronger signal.',
+  'forecast':        'Projected future state overlays based on current trends and velocity data.',
+  'command':         'Active command and control connections radiating from the Fortress command center.',
+  'data-flow':       'Animated particles showing payment, material, lead, and crew movement in real time.',
+  'simulation':      'Enterprise size presets with org pyramids and AI/human workforce configurations.',
+  'agent-flight':    'Flying agent orbs with task cycles, data cubes, and domain return animations.',
+  'human-workers':   'Ground-level amber worker orbs with shift coverage, fatigue state, and handoff chains.',
+  'fog-revenue':     'Red-to-green fog gradient showing cash collection stage per project in the landscape.',
+  'fog-security':    'Amber/red fog showing security coverage strength and gaps across the perimeter.',
+  'fog-bandwidth':   'Purple fog showing where your time and attention concentrates across domains.',
+  'fog-improvement': 'Teal fog highlighting optimization opportunities and underperforming process areas.',
+  'katsuro-bridge':  'Katsuro Raijin tower with read lines, life block overlays, and handoff animations.',
+  'automation-flows':'Ground-level n8n-style trigger → condition → action → result paths with active flow glow.',
+}
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
   [AtmosphereMode.MOJAVE]:             'MOJAVE',
@@ -257,6 +283,12 @@ export default function CommandHUD({
   // NW34: Projection Guide state
   const [projectionGuideOpen, setProjectionGuideOpen]     = useState(false)
   const [projectionGuideActive, setProjectionGuideActive] = useState(false)
+
+  // NW37: Legend panel state
+  const [legendOpen, setLegendOpen] = useState(false)
+
+  // NW37: Layer tooltip hover state
+  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null)
 
   // NW33: Listen for what-if apply/exit events
   useEffect(() => {
@@ -615,6 +647,9 @@ export default function CommandHUD({
         onClose={() => setProjectionGuideOpen(false)}
       />
 
+      {/* ── NW37: LEGEND PANEL ──────────────────────────────────────────── */}
+      <LegendPanel open={legendOpen} onClose={() => setLegendOpen(false)} />
+
       {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
       <InstructionalOverlay />
 
@@ -735,6 +770,12 @@ export default function CommandHUD({
             ROSTER
           </button>
         )}
+
+        {/* NW37: LEGEND button — visual legend panel for all objects */}
+        <LegendButton
+          open={legendOpen}
+          onClick={() => setLegendOpen(prev => !prev)}
+        />
 
         {/* Fullscreen toggle button */}
         {onToggleFullscreen && (
@@ -888,41 +929,103 @@ export default function CommandHUD({
         {LAYERS.map(layer => {
           const isOn = !!layerStates[layer.id]
           const { r, g, b } = layer
+          const desc = LAYER_DESCRIPTIONS[layer.id]
+          const isHovered = hoveredLayerId === layer.id
           return (
-            <button
-              key={layer.id}
-              onClick={() => onLayerToggle(layer.id, !isOn)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                padding: '5px 8px',
-                borderRadius: 4,
-                border: `1px solid ${isOn ? `rgba(${r},${g},${b},0.7)` : 'rgba(255,255,255,0.07)'}`,
-                background: isOn
-                  ? `rgba(${r},${g},${b},0.12)`
-                  : 'rgba(255,255,255,0.02)',
-                color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.28)',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-                fontFamily: 'monospace',
-                fontSize: 10,
-                textAlign: 'left',
-                width: '100%',
-                letterSpacing: 0.3,
-              }}
-            >
-              <span style={{ fontSize: 12, lineHeight: 1, minWidth: 14 }}>{layer.icon}</span>
-              <span style={{ flex: 1 }}>{layer.label}</span>
-              <span style={{
-                fontSize: 8,
-                letterSpacing: 0.5,
-                opacity: 0.7,
-                color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.2)',
-              }}>
-                {isOn ? 'ON' : 'OFF'}
-              </span>
-            </button>
+            <div key={layer.id} style={{ position: 'relative' }}>
+              <button
+                onClick={() => onLayerToggle(layer.id, !isOn)}
+                onMouseEnter={() => setHoveredLayerId(layer.id)}
+                onMouseLeave={() => setHoveredLayerId(null)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  padding: '5px 8px',
+                  borderRadius: 4,
+                  border: `1px solid ${isOn ? `rgba(${r},${g},${b},0.7)` : 'rgba(255,255,255,0.07)'}`,
+                  background: isOn
+                    ? `rgba(${r},${g},${b},0.12)`
+                    : 'rgba(255,255,255,0.02)',
+                  color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.28)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  textAlign: 'left',
+                  width: '100%',
+                  letterSpacing: 0.3,
+                }}
+              >
+                <span style={{ fontSize: 12, lineHeight: 1, minWidth: 14 }}>{layer.icon}</span>
+                <span style={{ flex: 1 }}>{layer.label}</span>
+                {/* NW37: info icon */}
+                {desc && (
+                  <span style={{
+                    fontSize: 9,
+                    color: isOn ? `rgba(${r},${g},${b},0.55)` : 'rgba(255,255,255,0.18)',
+                    marginRight: 2,
+                    lineHeight: 1,
+                    fontWeight: 700,
+                    userSelect: 'none',
+                  }}>
+                    ⓘ
+                  </span>
+                )}
+                <span style={{
+                  fontSize: 8,
+                  letterSpacing: 0.5,
+                  opacity: 0.7,
+                  color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.2)',
+                }}>
+                  {isOn ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* NW37: tooltip on hover */}
+              {isHovered && desc && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '100%',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    marginLeft: 8,
+                    zIndex: 60,
+                    maxWidth: 200,
+                    minWidth: 140,
+                    padding: '7px 10px',
+                    background: 'rgba(8,8,12,0.95)',
+                    border: '1px solid rgba(0,229,204,0.35)',
+                    borderRadius: 5,
+                    backdropFilter: 'blur(10px)',
+                    boxShadow: '0 4px 18px rgba(0,0,0,0.7)',
+                    pointerEvents: 'none',
+                    animation: 'nw-layer-tooltip-in 0.2s ease both',
+                  }}
+                >
+                  <div style={{
+                    color: `rgb(${r},${g},${b})`,
+                    fontSize: 9,
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    letterSpacing: 0.8,
+                    marginBottom: 4,
+                  }}>
+                    {layer.label}
+                  </div>
+                  <div style={{
+                    color: 'rgba(255,255,255,0.55)',
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                    lineHeight: 1.5,
+                    letterSpacing: 0.2,
+                  }}>
+                    {desc}
+                  </div>
+                </div>
+              )}
+            </div>
           )
         })}
       </div>
@@ -1698,6 +1801,10 @@ export default function CommandHUD({
           25%  { transform: translate(-50%, -50%) scale(1.0); }
           80%  { opacity: 1; transform: translate(-50%, -50%) scale(1.0); }
           100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+        }
+        @keyframes nw-layer-tooltip-in {
+          from { opacity: 0; transform: translateY(-50%) translateX(-6px); }
+          to   { opacity: 1; transform: translateY(-50%) translateX(0); }
         }
       `}</style>
     </>
