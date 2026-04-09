@@ -1,27 +1,21 @@
 /**
- * TerrainGenerator.tsx — Terrain mountains from Supabase project data.
+ * TerrainGenerator.tsx — NW38: Geological cross-section mountains.
  *
- * NW2 scope:
- * - Fetches projects via DataBridge
- * - Creates ConeGeometry mountain per project
- * - Height = contract_value via scale formula
- * - Color by status: active green, pending amber, overdue red, completed dark green
- * - Risk ring at base if overdue or health_score < 60
- * - Pulse animation: slow pulse; risk score > 70 increases amplitude
- * - Registers each mountain with CollisionSystem via 'nw:register-mountain' event
- * - Cleans up Three.js geometry/material on unmount or data refresh
+ * NW2  scope: project mountains driven by contract_value
+ * NW6  scope: scenario height multiplier via nw:scenario-override events
+ * NW15 scope: LOD (8/5/3 segments) + frustum culling
+ * NW38 scope: Replace single ConeGeometry with 5 stacked CylinderGeometry rings:
+ *   1. OBSIDIAN  (base) — risk / open RFIs
+ *   2. RUBY             — expenses (materials + labor)
+ *   3. EMERALD          — management effort (hours logged)
+ *   4. GOLD             — billable completed work (billed to date)
+ *   5. DIAMOND   (top)  — unbilled potential
  *
- * NW6 scope:
- * - Listens to 'nw:scenario-override' events (when ctx.applyScenario is true)
- * - Applies per-project heightMultiplier to mountains in real time via Y-axis scale
- * - Listens to 'nw:scenario-activate' to clear overrides when scenario deactivates
- *
- * NW15 scope:
- * - LOD (Level of Detail) via THREE.LOD for each mountain:
- *     dist 0–50   → high detail (8 radial segments)
- *     dist 50–120 → medium detail (5 radial segments)
- *     dist 120+   → low detail (3 radial segments)
- * - frustumCulled = true explicitly set on all mesh objects
+ * Performance budget per NW38:
+ *   - LOD: 8 segs (close), 5 (medium, 50+), 3 (far, 120+)
+ *   - Gold sparkle PointLights: max 3 per mountain, only on closest 5 mountains
+ *   - Transformation ripple: plays once per phase change, not per frame
+ *   - Material animTick: emissive pulse on high-LOD group only
  */
 
 import { useEffect, useRef } from 'react'
@@ -36,184 +30,179 @@ import {
   type NWProject,
   type NWWorldData,
 } from './DataBridge'
+import {
+  buildGeologicalMountainLOD,
+  computeRingFractions,
+  type GeoMtnHandle,
+} from './utils/GeologicalMountain'
 
-// ── Status colours ────────────────────────────────────────────────────────────
-
-const STATUS_COLOR: Record<string, number> = {
-  in_progress:  0x4a9a6a,   // active green
-  approved:     0x4a9a6a,   // treat approved same as active
-  pending:      0xbf9a20,   // amber
-  estimate:     0xbf9a20,
-  lead:         0xbf9a20,
-  on_hold:      0xbf9a20,
-  overdue:      0xbf5020,   // red (not a DB status — computed)
-  completed:    0x3a7a5a,   // dark green
-  cancelled:    0x555555,
-}
-
-function statusColor(project: NWProject, isOverdue: boolean): number {
-  if (isOverdue) return STATUS_COLOR['overdue']
-  return STATUS_COLOR[project.status] ?? STATUS_COLOR['pending']
-}
-
-function isProjectOverdue(project: NWProject): boolean {
-  return project.status === 'on_hold' && project.health_score < 60
-    || project.status === 'in_progress' && project.health_score < 60
-}
-
-// ── LOD helper — builds a THREE.LOD with high/medium/low detail cones ─────────
-
-function buildMountainLOD(
-  height: number,
-  radius: number,
-  color: number,
-): THREE.LOD {
-  const lod = new THREE.LOD()
-
-  const detailLevels: Array<{ segments: number; dist: number }> = [
-    { segments: 8, dist: 0   },   // high detail: 0–50 units
-    { segments: 5, dist: 50  },   // medium detail: 50–120 units
-    { segments: 3, dist: 120 },   // low detail: 120+ units
-  ]
-
-  for (const { segments, dist } of detailLevels) {
-    const geo = new THREE.ConeGeometry(radius, height, segments)
-    const mat = new THREE.MeshLambertMaterial({
-      color,
-      emissive: new THREE.Color(color).multiplyScalar(0.15),
-    })
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.castShadow = true
-    mesh.receiveShadow = false
-    mesh.frustumCulled = true
-    lod.addLevel(mesh, dist)
-  }
-
-  return lod
-}
-
-// ── Mountain data structure ────────────────────────────────────────────────────
+// ── Mountain runtime record ────────────────────────────────────────────────────
 
 interface Mountain {
-  lod: THREE.LOD
-  ring: THREE.Mesh | null
-  baseY: number
-  height: number
-  pulseAmplitude: number  // 0.01–0.08
-  pulseSpeed: number      // radians / second
-  pulseOffset: number     // randomised start phase
-  projectId: string
-  /** NW6: scenario height multiplier (1.0 = no change) */
+  handle:            GeoMtnHandle
+  ring:              THREE.Mesh | null
+  pulseAmplitude:    number   // 0.02–0.12
+  pulseSpeed:        number   // radians / second
+  pulseOffset:       number   // randomised start phase
+  projectId:         string
+  x:                 number
+  z:                 number
   scenarioMultiplier: number
+  /** cleanup callback for any active transformation ripple */
+  rippleCleanup:     (() => void) | null
+  /** whether this mountain currently has gold sparkle lights active */
+  sparkleActive:     boolean
+}
+
+function isProjectOverdue(p: NWProject): boolean {
+  return (p.status === 'on_hold' || p.status === 'in_progress') && p.health_score < 60
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function TerrainGenerator() {
   const { scene, applyScenario } = useWorldContext()
-  const mountainsRef = useRef<Mountain[]>([])
-  const frameHandlerRef = useRef<(() => void) | null>(null)
-  const clockRef = useRef(new THREE.Clock())
-  const elapsedRef = useRef(0)
+
+  const mountainsRef      = useRef<Mountain[]>([])
+  const frameHandlerRef   = useRef<(() => void) | null>(null)
+  const clockRef          = useRef(new THREE.Clock())
+  const elapsedRef        = useRef(0)
 
   // NW6: scenario override map — projectId → heightMultiplier
   const scenarioOverridesRef = useRef<Record<string, number>>({})
-  const applyScenarioRef = useRef(applyScenario)
-  applyScenarioRef.current = applyScenario
+  const applyScenarioRef     = useRef(applyScenario)
+  applyScenarioRef.current   = applyScenario
 
-  // ── Build mountains from project list ──────────────────────────────────────
+  // ── Build geological mountains from world data ─────────────────────────────
 
-  function buildMountains(projects: NWProject[]) {
-    // Dispose previous
+  function buildMountains(data: NWWorldData) {
     disposeMountains()
 
+    const { projects, rfis, fieldLogs, invoices } = data
     const mountains: Mountain[] = []
 
-    projects.forEach((project) => {
-      const overdue = isProjectOverdue(project)
-      const height = Math.max(0.3, contractValueToHeight(project.contract_value))
-      const radius = height * 0.3
-      const color  = statusColor(project, overdue)
-
-      // NW15: LOD mountain — high/medium/low detail by camera distance
-      const lod = buildMountainLOD(height, radius, color)
-
+    for (const project of projects) {
       const { x, z } = seededPosition(project.id)
-      const baseY = height / 2   // cone origin is at centroid
-      lod.position.set(x, baseY, z)
-      lod.userData.projectId = project.id
-      lod.userData.projectName = project.name
-      lod.userData.mountainRadius = radius
+      const overdue   = isProjectOverdue(project)
+      const height    = Math.max(0.5, contractValueToHeight(project.contract_value))
+      const radius    = height * 0.3
 
-      scene.add(lod)
+      // ── NW38: geological LOD mountain ──────────────────────────────────────
+      const handle = buildGeologicalMountainLOD(project, rfis, fieldLogs, invoices)
 
-      // Risk ring at base
+      // Position: geological mountains root at y=0 (origin at ground level)
+      handle.lod.position.set(x, 0, z)
+      handle.lod.userData.projectId     = project.id
+      handle.lod.userData.projectName   = project.name
+      handle.lod.userData.mountainRadius = radius
+
+      scene.add(handle.lod)
+
+      // ── Risk ring at base for overdue / unhealthy projects ─────────────────
       let ring: THREE.Mesh | null = null
-      const showRing = overdue || project.health_score < 60
-      if (showRing) {
+      if (overdue || project.health_score < 60) {
         const ringGeo = new THREE.TorusGeometry(radius * 1.4, 0.12, 6, 32)
         const ringMat = new THREE.MeshBasicMaterial({
-          color: 0xff3300,
+          color:       0xff3300,
           transparent: true,
-          opacity: 0.7,
+          opacity:     0.7,
         })
         ring = new THREE.Mesh(ringGeo, ringMat)
         ring.frustumCulled = true
-        ring.rotation.x = Math.PI / 2
+        ring.rotation.x    = Math.PI / 2
         ring.position.set(x, 0.1, z)
         scene.add(ring)
       }
 
-      // Pulse parameters
-      const riskAmplitude = project.health_score > 70
-        ? 0.06 + (project.health_score - 70) / 30 * 0.06   // 0.06–0.12
+      // ── Pulse parameters ───────────────────────────────────────────────────
+      // Low health = more visible pulse; healthy = subtle
+      const riskAmplitude = project.health_score < 60
+        ? 0.06 + (60 - project.health_score) / 60 * 0.06
         : 0.02
-      const pulseSpeed = 1.5 + Math.random() * 0.5          // ~1.5–2 rad/s
+      const pulseSpeed  = 1.5 + Math.random() * 0.5
       const pulseOffset = Math.random() * Math.PI * 2
 
       const mountain: Mountain = {
-        lod,
+        handle,
         ring,
-        baseY,
-        height,
         pulseAmplitude: riskAmplitude,
         pulseSpeed,
         pulseOffset,
         projectId: project.id,
+        x,
+        z,
         scenarioMultiplier: scenarioOverridesRef.current[project.id] ?? 1.0,
+        rippleCleanup: null,
+        sparkleActive: false,
       }
 
       mountains.push(mountain)
 
       // Register with CollisionSystem
       window.dispatchEvent(new CustomEvent('nw:register-mountain', {
-        detail: {
-          x,
-          z,
-          radius,
-          projectId: project.id,
-        },
+        detail: { x, z, radius, projectId: project.id },
       }))
-    })
+    }
 
     mountainsRef.current = mountains
+  }
+
+  // ── Gold sparkle light management ─────────────────────────────────────────
+  // Only the 5 closest mountains to camera get sparkle lights.
+  // Called inside the frame handler when camera moves significantly.
+
+  const cameraRef = useRef<THREE.Camera | null>(null)
+  const sparkleRankRef = useRef<Set<string>>(new Set())
+
+  function updateSparkleAssignments() {
+    const cam = cameraRef.current
+    if (!cam) return
+    const camPos = cam.position
+
+    // Sort mountains by distance to camera
+    const sorted = [...mountainsRef.current].sort((a, b) => {
+      const dA = camPos.distanceToSquared(new THREE.Vector3(a.x, 0, a.z))
+      const dB = camPos.distanceToSquared(new THREE.Vector3(b.x, 0, b.z))
+      return dA - dB
+    })
+
+    const newRank = new Set(sorted.slice(0, 5).map(m => m.projectId))
+
+    // Enable sparkle for newly-ranked mountains
+    for (const m of sorted) {
+      const shouldHave = newRank.has(m.projectId)
+      if (shouldHave && !m.sparkleActive) {
+        const goldLayerY =
+          (m.handle.fracs.obsidian + m.handle.fracs.ruby + m.handle.fracs.emerald) *
+          m.handle.totalHeight +
+          m.handle.fracs.gold * m.handle.totalHeight * 0.5
+        m.handle.setGoldSparkle(scene, m.x, goldLayerY, m.z)
+        m.sparkleActive = true
+      } else if (!shouldHave && m.sparkleActive) {
+        m.handle.setGoldSparkle(null, m.x, 0, m.z)
+        m.sparkleActive = false
+      }
+    }
+
+    sparkleRankRef.current = newRank
   }
 
   // ── Dispose ────────────────────────────────────────────────────────────────
 
   function disposeMountains() {
     for (const m of mountainsRef.current) {
-      // NW15: dispose each LOD level mesh
-      scene.remove(m.lod)
-      for (const level of m.lod.levels) {
-        const levelMesh = level.object as THREE.Mesh
-        if (levelMesh.geometry) levelMesh.geometry.dispose()
-        if (Array.isArray(levelMesh.material)) {
-          levelMesh.material.forEach(mat => mat.dispose())
-        } else if (levelMesh.material) {
-          levelMesh.material.dispose()
-        }
+      // Cancel any active ripple
+      if (m.rippleCleanup) { m.rippleCleanup(); m.rippleCleanup = null }
+
+      // Remove sparkle lights
+      if (m.sparkleActive) {
+        m.handle.setGoldSparkle(null, m.x, 0, m.z)
+        m.sparkleActive = false
       }
+
+      scene.remove(m.handle.lod)
+      m.handle.dispose()
+
       if (m.ring) {
         scene.remove(m.ring)
         m.ring.geometry.dispose()
@@ -225,12 +214,10 @@ export function TerrainGenerator() {
       }
     }
     mountainsRef.current = []
-
-    // Clear all registered mountains
     window.dispatchEvent(new CustomEvent('nw:clear-mountains'))
   }
 
-  // ── Pulse animation ────────────────────────────────────────────────────────
+  // ── Frame handler: pulse + material animation ──────────────────────────────
 
   function setupFrameHandler() {
     if (frameHandlerRef.current) {
@@ -239,25 +226,35 @@ export function TerrainGenerator() {
 
     clockRef.current.start()
     elapsedRef.current = 0
+    let sparkleTickCounter = 0
 
     const handler = () => {
       const delta = clockRef.current.getDelta()
       elapsedRef.current += delta
+      const t = elapsedRef.current
+
+      // Update sparkle assignments every ~60 frames (~1s at 60fps)
+      sparkleTickCounter++
+      if (sparkleTickCounter >= 60) {
+        sparkleTickCounter = 0
+        updateSparkleAssignments()
+      }
 
       for (const m of mountainsRef.current) {
-        const t = elapsedRef.current * m.pulseSpeed + m.pulseOffset
-        const pulseFactor = 1 + Math.sin(t) * m.pulseAmplitude
-        // NW6: apply scenario height multiplier (Y only so width is preserved)
-        const sm = m.scenarioMultiplier
-        // NW15: scale the LOD object (all LOD levels inherit scale)
-        m.lod.scale.set(pulseFactor, sm * pulseFactor, pulseFactor)
-        // Keep base planted on ground: adjust y since scale affects centroid
-        m.lod.position.y = m.baseY * sm * pulseFactor
+        const phase     = t * m.pulseSpeed + m.pulseOffset
+        const pulse     = 1 + Math.sin(phase) * m.pulseAmplitude
+        const sm        = m.scenarioMultiplier
+
+        // Scale the LOD group; geological mountains root at y=0 so no Y correction needed
+        m.handle.lod.scale.set(pulse, sm * pulse, pulse)
+
+        // Animate material emissive / sparkle lights
+        m.handle.animTick(t)
 
         // Pulse ring opacity if present
         if (m.ring) {
           const ringMat = m.ring.material as THREE.MeshBasicMaterial
-          ringMat.opacity = 0.4 + Math.abs(Math.sin(t * 2)) * 0.4
+          ringMat.opacity = 0.4 + Math.abs(Math.sin(phase * 2)) * 0.4
         }
       }
     }
@@ -266,22 +263,50 @@ export function TerrainGenerator() {
     frameHandlerRef.current = handler
   }
 
+  // ── Phase transition detection ─────────────────────────────────────────────
+  // When gold fraction grows between data refreshes, spawn a transformation ripple.
+
+  function detectPhaseTransitions(newData: NWWorldData) {
+    for (const m of mountainsRef.current) {
+      const project = newData.projects.find(p => p.id === m.projectId)
+      if (!project) continue
+
+      // Recompute fracs with new data
+      const newFracs = computeRingFractions(
+        project, newData.rfis, newData.fieldLogs, newData.invoices
+      )
+
+      const goldGrew = newFracs.gold - m.handle.prevGoldFrac > 0.05
+      if (goldGrew) {
+        // Cancel previous ripple if any
+        if (m.rippleCleanup) { m.rippleCleanup(); m.rippleCleanup = null }
+        m.rippleCleanup = m.handle.spawnTransformRipple(scene, m.x, m.z)
+        m.handle.prevGoldFrac = newFracs.gold
+      }
+    }
+  }
+
   // ── Effect: init DataBridge + subscribe ────────────────────────────────────
 
   useEffect(() => {
     initDataBridge()
 
+    let firstBuild = true
+
     const unsub = subscribeWorldData((data: NWWorldData) => {
-      buildMountains(data.projects)
+      if (!firstBuild) {
+        detectPhaseTransitions(data)
+      }
+      firstBuild = false
+      buildMountains(data)
       setupFrameHandler()
     })
 
-    // NW6: scenario override event handlers (only act when applyScenario is true)
+    // NW6: scenario override events
     function onScenarioOverride(e: Event) {
       if (!applyScenarioRef.current) return
       const detail = (e as CustomEvent<{ overrides: Record<string, number> }>).detail
       scenarioOverridesRef.current = detail.overrides
-      // Apply to existing mountains immediately (no rebuild needed)
       for (const m of mountainsRef.current) {
         m.scenarioMultiplier = detail.overrides[m.projectId] ?? 1.0
       }
@@ -291,7 +316,6 @@ export function TerrainGenerator() {
       if (!applyScenarioRef.current) return
       const detail = (e as CustomEvent<{ active: boolean }>).detail
       if (!detail.active) {
-        // Reset all multipliers to 1.0
         scenarioOverridesRef.current = {}
         for (const m of mountainsRef.current) {
           m.scenarioMultiplier = 1.0
@@ -299,19 +323,18 @@ export function TerrainGenerator() {
       }
     }
 
-    // NW15: LOD update requires camera reference — listen for nw:frame and call
-    // lod.update(camera) so Three.js selects the right detail level each frame.
-    // We get the camera via the WorldContext.
+    // NW15: LOD update — call lod.update(camera) so THREE.LOD picks the right level
     function onLODUpdate(e: Event) {
       const detail = (e as CustomEvent<{ camera?: THREE.Camera }>).detail
-      const cam = detail?.camera
+      const cam    = detail?.camera
       if (!cam) return
+      cameraRef.current = cam
       for (const m of mountainsRef.current) {
-        m.lod.update(cam as THREE.Camera)
+        m.handle.lod.update(cam as THREE.Camera)
       }
     }
-    window.addEventListener('nw:lod-update', onLODUpdate as EventListener)
 
+    window.addEventListener('nw:lod-update',       onLODUpdate as EventListener)
     window.addEventListener('nw:scenario-override', onScenarioOverride)
     window.addEventListener('nw:scenario-activate', onScenarioActivate)
 
@@ -323,9 +346,9 @@ export function TerrainGenerator() {
         window.removeEventListener('nw:frame', frameHandlerRef.current)
         frameHandlerRef.current = null
       }
+      window.removeEventListener('nw:lod-update',       onLODUpdate as EventListener)
       window.removeEventListener('nw:scenario-override', onScenarioOverride)
       window.removeEventListener('nw:scenario-activate', onScenarioActivate)
-      window.removeEventListener('nw:lod-update', onLODUpdate as EventListener)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene])

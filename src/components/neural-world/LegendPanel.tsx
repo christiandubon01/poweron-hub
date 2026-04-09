@@ -39,6 +39,49 @@ interface LegendSection {
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
+// ── Mountain Materials section ────────────────────────────────────────────────
+// NW38: each swatch uses a CSS gradient to mimic metallic/gem appearance
+
+interface MaterialSwatch {
+  gradient: string   // CSS background (linear-gradient for metallic look)
+  glow:     string   // box-shadow color
+  name:     string
+  desc:     string
+}
+
+const MATERIAL_SWATCHES: MaterialSwatch[] = [
+  {
+    gradient: 'linear-gradient(135deg, #2a2a4e 0%, #1a1a2e 40%, #0a0a15 70%, #2a2a4e 100%)',
+    glow:     '#1a1a2e',
+    name:     'OBSIDIAN — Risk',
+    desc:     'Open RFIs, unknowns, unclear scope. Shrinks as questions resolve. Starts at 60–70% of new mountains.',
+  },
+  {
+    gradient: 'linear-gradient(135deg, #ff3380 0%, #E0115F 45%, #800030 75%, #ff3380 100%)',
+    glow:     '#E0115F',
+    name:     'RUBY — Expenses',
+    desc:     'Materials purchased, labor logged, overhead allocated. Never disappears — permanent cost record.',
+  },
+  {
+    gradient: 'linear-gradient(135deg, #7aeea0 0%, #50C878 45%, #206040 75%, #7aeea0 100%)',
+    glow:     '#50C878',
+    name:     'EMERALD — Management',
+    desc:     'Scheduling, compliance, crew dispatch, inspections. Thickest during rough-in. Thins at trim.',
+  },
+  {
+    gradient: 'linear-gradient(135deg, #ffe566 0%, #FFD700 40%, #8a6a00 70%, #ffe566 100%)',
+    glow:     '#FFD700',
+    name:     'GOLD — Earned Revenue',
+    desc:     'Billable completed work. Grows as phases finish. Converts from diamond when BLUEPRINT marks phases complete.',
+  },
+  {
+    gradient: 'linear-gradient(135deg, #e8faff 0%, #B9F2FF 40%, #5aaabb 70%, #e8faff 100%)',
+    glow:     '#B9F2FF',
+    name:     'DIAMOND — Unbilled Potential',
+    desc:     'Contract value not yet earned. Always on top. Shrinks as work completes. Zero at project end.',
+  },
+]
+
 const LEGEND_SECTIONS: LegendSection[] = [
   {
     id: 'terrain',
@@ -175,6 +218,225 @@ const LEGEND_SECTIONS: LegendSection[] = [
     ],
   },
 ]
+
+// ── MountainMaterialsSection — NW38 ──────────────────────────────────────────
+
+function MountainMaterialsSection() {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {/* Section header */}
+      <button
+        onClick={() => setOpen(prev => !prev)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '7px 10px',
+          borderRadius: 5,
+          border: '1px solid rgba(185,242,255,0.35)',
+          background: 'rgba(185,242,255,0.08)',
+          cursor: 'pointer',
+          fontFamily: 'monospace',
+          transition: 'all 0.15s',
+          textAlign: 'left',
+        }}
+      >
+        <span style={{ fontSize: 14 }}>💎</span>
+        <span style={{
+          flex: 1,
+          color: '#B9F2FF',
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: 1.5,
+          textTransform: 'uppercase',
+          textShadow: '0 0 6px rgba(185,242,255,0.4)',
+        }}>
+          MOUNTAIN MATERIALS
+        </span>
+        <span style={{
+          color: '#B9F2FF',
+          fontSize: 10,
+          opacity: 0.7,
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform 0.2s',
+          display: 'inline-block',
+        }}>
+          ▾
+        </span>
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+          paddingLeft: 4,
+          paddingRight: 4,
+        }}>
+          {/* Layer order label */}
+          <div style={{
+            padding: '4px 8px',
+            color: 'rgba(255,255,255,0.28)',
+            fontSize: 9,
+            fontFamily: 'monospace',
+            letterSpacing: 0.8,
+          }}>
+            BOTTOM → TOP: obsidian · ruby · emerald · gold · diamond
+          </div>
+
+          {MATERIAL_SWATCHES.map((sw, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8,
+                padding: '5px 8px',
+                borderRadius: 4,
+                background: 'rgba(255,255,255,0.025)',
+                transition: 'background 0.1s',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.055)'
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.025)'
+              }}
+            >
+              {/* Metallic gradient swatch */}
+              <div style={{
+                width: 20,
+                height: 20,
+                minWidth: 20,
+                borderRadius: 3,
+                background: sw.gradient,
+                boxShadow: `0 0 8px ${sw.glow}88, inset 0 1px 0 rgba(255,255,255,0.2)`,
+                marginTop: 1,
+                flexShrink: 0,
+              }} />
+
+              {/* Text */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  color: 'rgba(255,255,255,0.85)',
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  fontWeight: 700,
+                  letterSpacing: 0.3,
+                  lineHeight: 1.3,
+                }}>
+                  {sw.name}
+                </div>
+                <div style={{
+                  color: 'rgba(255,255,255,0.4)',
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  letterSpacing: 0.2,
+                  lineHeight: 1.4,
+                  marginTop: 1,
+                }}>
+                  {sw.desc}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Transformation arrow */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '5px 8px',
+            borderRadius: 4,
+            background: 'rgba(255,215,0,0.04)',
+            border: '1px solid rgba(255,215,0,0.12)',
+          }}>
+            <div style={{
+              width: 20,
+              height: 20,
+              minWidth: 20,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 13,
+              flexShrink: 0,
+            }}>
+              ⟳
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                color: 'rgba(255,215,0,0.8)',
+                fontSize: 11,
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                letterSpacing: 0.3,
+              }}>
+                Diamond → Gold
+              </div>
+              <div style={{
+                color: 'rgba(255,255,255,0.35)',
+                fontSize: 10,
+                fontFamily: 'monospace',
+                lineHeight: 1.4,
+                marginTop: 1,
+              }}>
+                When BLUEPRINT marks a phase complete, a ripple wave converts diamond cap into gold. 2 second animation.
+              </div>
+            </div>
+          </div>
+
+          {/* Collapse animation note */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '5px 8px',
+            borderRadius: 4,
+            background: 'rgba(255,215,0,0.04)',
+            border: '1px solid rgba(255,215,0,0.12)',
+          }}>
+            <div style={{
+              width: 20,
+              height: 20,
+              minWidth: 20,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 13,
+              flexShrink: 0,
+            }}>
+              ✦
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                color: 'rgba(255,215,0,0.8)',
+                fontSize: 11,
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                letterSpacing: 0.3,
+              }}>
+                Project Complete
+              </div>
+              <div style={{
+                color: 'rgba(255,255,255,0.35)',
+                fontSize: 10,
+                fontFamily: 'monospace',
+                lineHeight: 1.4,
+                marginTop: 1,
+              }}>
+                Gold flows to river · Ruby scatters · Emerald dissolves · Diamond shatters upward. A small gold monument remains.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── CollapsibleSection sub-component ─────────────────────────────────────────
 
@@ -486,6 +748,9 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
           scrollbarWidth: 'thin',
           scrollbarColor: 'rgba(255,215,0,0.2) transparent',
         }}>
+          {/* ── NW38: Mountain Materials section ─────────────────────────── */}
+          <MountainMaterialsSection />
+
           {LEGEND_SECTIONS.map((section, idx) => (
             <CollapsibleSection
               key={section.id}

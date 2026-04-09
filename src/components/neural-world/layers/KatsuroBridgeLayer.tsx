@@ -169,6 +169,7 @@ export function KatsuroBridgeLayer({ visible }: KatsuroBridgeLayerProps) {
   const frameHandlerRef     = useRef<(() => void) | null>(null)
   const elapsedRef          = useRef(0)
   const handoffTimerRef     = useRef<ReturnType<typeof setInterval> | null>(null)
+  const initTimeoutRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
   const allLabelSprites     = useRef<NWLabel[]>([])
 
   // Audit mode
@@ -592,8 +593,8 @@ export function KatsuroBridgeLayer({ visible }: KatsuroBridgeLayerProps) {
       triggerHandoff(types[Math.floor(Math.random() * types.length)])
     }, HANDOFF_INTERVAL)
 
-    // Store timeout for cleanup
-    ;(handoffTimerRef.current as unknown as { _initTimeout: ReturnType<typeof setTimeout> })._initTimeout = timeout
+    // Store timeout for cleanup in its own ref (cannot attach to a plain number)
+    initTimeoutRef.current = timeout
   }
 
   function setupEventListeners() {
@@ -795,9 +796,11 @@ export function KatsuroBridgeLayer({ visible }: KatsuroBridgeLayerProps) {
     }
     if (handoffTimerRef.current) {
       clearInterval(handoffTimerRef.current)
-      const t = (handoffTimerRef.current as unknown as { _initTimeout?: ReturnType<typeof setTimeout> })._initTimeout
-      if (t) clearTimeout(t)
       handoffTimerRef.current = null
+    }
+    if (initTimeoutRef.current) {
+      clearTimeout(initTimeoutRef.current)
+      initTimeoutRef.current = null
     }
     if (subtitleTimerRef.current) {
       clearTimeout(subtitleTimerRef.current)
