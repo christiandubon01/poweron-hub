@@ -150,12 +150,26 @@ export function FortressLayer() {
     buildFortress(hubStateRef.current)
     setupFrameHandler()
 
+    // NW35: Tactical table click opens Agent Roster — proximity check on canvas click
+    function onCanvasClick() {
+      const px = playerPosition.current.x
+      const pz = playerPosition.current.z
+      const dx = px - FORTRESS_CX
+      const dz = pz - FORTRESS_CZ
+      const dist = Math.sqrt(dx * dx + dz * dz)
+      if (dist < 8) {
+        window.dispatchEvent(new CustomEvent('nw:open-roster'))
+      }
+    }
+    window.addEventListener('nw:player-interact', onCanvasClick)
+
     return () => {
       // Cleanup
       if (frameHandlerRef.current) {
         window.removeEventListener('nw:frame', frameHandlerRef.current)
         frameHandlerRef.current = null
       }
+      window.removeEventListener('nw:player-interact', onCanvasClick)
       if (fortressGroupRef.current) {
         disposeObj(scene, fortressGroupRef.current)
         fortressGroupRef.current = null

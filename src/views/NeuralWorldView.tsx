@@ -47,8 +47,10 @@ import { HumanWorkerLayer } from '@/components/neural-world/layers/HumanWorkerLa
 import { HandoffChain } from '@/components/neural-world/HandoffChain'
 import { FortressLayer } from '@/components/neural-world/layers/FortressLayer'
 import { FogDomainLayer } from '@/components/neural-world/layers/FogDomainLayer'
+import { KatsuroBridgeLayer } from '@/components/neural-world/layers/KatsuroBridgeLayer'
 import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
 import { FlightAnalyticsPanel } from '@/components/neural-world/FlightAnalyticsPanel'
+import { AgentRosterPanel, KatsuroSubtitleOverlay } from '@/components/neural-world/AgentRosterPanel'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -77,6 +79,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'fog-security':     false,
   'fog-bandwidth':    false,
   'fog-improvement':  false,
+  // NW35: Katsuro Bridge Tower
+  'katsuro-bridge':   false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -137,6 +141,8 @@ function WorldLayers({
         bandwidthFogVisible={!!layerStates['fog-bandwidth']}
         improvementFogVisible={!!layerStates['fog-improvement']}
       />
+      {/* NW35: Katsuro Bridge Tower + planned agent wireframes + life blocks */}
+      <KatsuroBridgeLayer visible={!!layerStates['katsuro-bridge']} />
     </>
   )
 }
@@ -324,6 +330,9 @@ export default function NeuralWorldView() {
   // NW7b: Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // NW35: Agent Roster panel
+  const [rosterOpen, setRosterOpen] = useState(false)
+
   // NW14: V5 Enterprise badge — shows on first V5 entry
   const [showV5Badge, setShowV5Badge] = useState(false)
   const v5BadgeDismissedRef = useRef(false)
@@ -436,6 +445,13 @@ export default function NeuralWorldView() {
       }
     }
   }, [atmosphereMode])
+
+  // NW35: Listen for nw:open-roster from FortressLayer tactical table
+  useEffect(() => {
+    function onOpenRoster() { setRosterOpen(true) }
+    window.addEventListener('nw:open-roster', onOpenRoster)
+    return () => window.removeEventListener('nw:open-roster', onOpenRoster)
+  }, [])
 
   // NW18: Business Cycle tour state
   const [isCyclePlaying, setIsCyclePlaying]   = useState(false)
@@ -825,6 +841,12 @@ export default function NeuralWorldView() {
       {/* ── NW29: Flight analytics panel + chart icon toggle ── */}
       <FlightAnalyticsPanel />
 
+      {/* ── NW35: Katsuro handoff subtitle overlay ── */}
+      <KatsuroSubtitleOverlay />
+
+      {/* ── NW35: Agent Roster panel (20-agent command center) ── */}
+      <AgentRosterPanel open={rosterOpen} onClose={() => setRosterOpen(false)} />
+
       {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD
         layerStates={layerStates}
@@ -835,6 +857,7 @@ export default function NeuralWorldView() {
         onAtmosphereModeChange={setAtmosphereMode}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
+        onOpenRoster={() => setRosterOpen(true)}
       />
     </div>
   )

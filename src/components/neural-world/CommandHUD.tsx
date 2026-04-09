@@ -90,6 +90,8 @@ const LAYERS: LayerDef[] = [
   { id: 'fog-security',    label: 'Security Fog',    icon: '🔒', r: 255, g: 179, b: 71  },
   { id: 'fog-bandwidth',   label: 'Bandwidth Fog',   icon: '🧠', r: 170, g: 102, b: 238 },
   { id: 'fog-improvement', label: 'Improvement Fog', icon: '🌱', r: 0,   g: 204, b: 187 },
+  /** NW35: Katsuro Bridge Tower — read lines, life blocks, handoff animations */
+  { id: 'katsuro-bridge',  label: 'Katsuro Bridge',  icon: '⚡', r: 255, g: 48,  b: 48  },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -127,6 +129,8 @@ interface CommandHUDProps {
   onAtmosphereModeChange: (mode: AtmosphereMode) => void
   isFullscreen?: boolean
   onToggleFullscreen?: () => void
+  /** NW35: Opens the 20-agent roster panel */
+  onOpenRoster?: () => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -140,6 +144,7 @@ export default function CommandHUD({
   onAtmosphereModeChange,
   isFullscreen = false,
   onToggleFullscreen,
+  onOpenRoster,
 }: CommandHUDProps) {
 
   // FPS counter
@@ -699,6 +704,35 @@ export default function CommandHUD({
           active={projectionGuideActive}
           onClick={() => setProjectionGuideOpen(prev => !prev)}
         />
+
+        {/* NW35: ROSTER button — opens 20-agent command center selector */}
+        {onOpenRoster && (
+          <button
+            onClick={onOpenRoster}
+            title="Open Agent Roster (20 agents)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '5px 10px',
+              borderRadius: 5,
+              border: '1px solid rgba(255,48,48,0.50)',
+              background: 'rgba(5,0,0,0.75)',
+              color: '#FF8080',
+              cursor: 'pointer',
+              fontSize: 9,
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              letterSpacing: 1.5,
+              backdropFilter: 'blur(8px)',
+              transition: 'all 0.15s',
+              width: 'fit-content',
+            }}
+          >
+            <span style={{ fontSize: 11 }}>◈</span>
+            ROSTER
+          </button>
+        )}
 
         {/* Fullscreen toggle button */}
         {onToggleFullscreen && (
