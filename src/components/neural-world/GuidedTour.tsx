@@ -22,6 +22,7 @@ import React, {
 } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from './WorldContext'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -167,18 +168,24 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
     }
   }
 
+  // B73: bottom-center initial position
+  const initX = Math.round(window.innerWidth / 2 - (isMobile ? window.innerWidth * 0.45 : 260))
+  const initY = window.innerHeight - 28 - 200  // approx height
+
   return (
+    <ResizablePanel
+      panelKey="nw-tour-subtitle"
+      defaultWidth={isMobile ? Math.round(window.innerWidth * 0.9) : 520}
+      defaultHeight={200}
+      titleBarHeight={60}
+      zIndex={120}
+      initialPos={{ x: initX, y: initY }}
+    >
     <div
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
       style={{
-        position: 'absolute',
-        bottom: 28,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: isMobile ? '90%' : undefined,
-        maxWidth: isMobile ? undefined : 500,
-        zIndex: 120,
+        width: '100%',
         background: 'rgba(8,8,12,0.92)',
         backdropFilter: 'blur(14px)',
         borderRadius: 12,
@@ -189,6 +196,7 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
         flexDirection: 'column',
         gap: 10,
         animation: 'nw-tour-subtitle-fade-in 0.35s ease both',
+        boxSizing: 'border-box',
       }}
     >
       {/* Top row: NEXUS icon + narration */}
@@ -205,11 +213,11 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
           animation: 'nw-tour-orb-pulse 2s ease-in-out infinite',
         }} />
 
-        {/* Narration text */}
+        {/* Narration text — B73: +25% body from 16 → 20 */}
         <div style={{
           flex: 1,
           color: '#ffffff',
-          fontSize: 16,
+          fontSize: 20,
           fontFamily: "'Syne', 'Segoe UI', sans-serif",
           lineHeight: 1.55,
           minHeight: 50,
@@ -257,7 +265,7 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
           ))}
         </div>
 
-        {/* Skip + Next buttons */}
+        {/* Skip + Next buttons — B73: min 14px from 10 */}
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             onClick={onSkip}
@@ -268,7 +276,7 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
               background: 'rgba(255,255,255,0.05)',
               color: 'rgba(255,255,255,0.5)',
               cursor: 'pointer',
-              fontSize: 10,
+              fontSize: 14,
               fontFamily: 'monospace',
               letterSpacing: 1,
               transition: 'all 0.15s',
@@ -287,7 +295,7 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
               background: 'rgba(0,220,200,0.12)',
               color: '#00ddcc',
               cursor: 'pointer',
-              fontSize: 10,
+              fontSize: 14,
               fontFamily: 'monospace',
               letterSpacing: 1.5,
               fontWeight: 700,
@@ -301,6 +309,7 @@ function SubtitlePanel({ stopIndex, phase, typedText, onNext, onSkip }: Subtitle
         </div>
       </div>
     </div>
+    </ResizablePanel>
   )
 }
 

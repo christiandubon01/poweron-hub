@@ -16,6 +16,7 @@
  */
 
 import React, { useState, useCallback } from 'react'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -654,16 +655,18 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
         }}
       />
 
-      {/* ── Slide-in panel ─────────────────────────────────────────────────── */}
+      {/* ── Slide-in panel — B73: resizable + proportional zoom ─────────── */}
+      <ResizablePanel
+        panelKey="nw-legend-panel"
+        defaultWidth={370}
+        defaultHeight={Math.min(window.innerHeight - 20, 700)}
+        titleBarHeight={52}
+        zIndex={45}
+        initialPos={{ x: 0, y: 0 }}
+      >
       <div
         style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          bottom: 0,
           width: '100%',
-          maxWidth: 350,
-          zIndex: 45,
           display: 'flex',
           flexDirection: 'column',
           background: 'rgba(4,8,12,0.97)',
@@ -671,6 +674,8 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
           borderRight: '1px solid rgba(255,215,0,0.12)',
           boxShadow: '4px 0 32px rgba(0,0,0,0.75)',
           animation: 'nw-legend-slide-in 0.28s cubic-bezier(0.25,0.46,0.45,0.94) both',
+          boxSizing: 'border-box',
+          minHeight: Math.min(window.innerHeight - 20, 700),
         }}
       >
         {/* Panel header */}
@@ -684,13 +689,14 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
         }}>
           <span style={{
             color: '#FFD700',
-            fontSize: 18,
+            fontSize: 22,
             filter: 'drop-shadow(0 0 6px rgba(255,215,0,0.5))',
           }}>◈</span>
           <div style={{ flex: 1 }}>
+            {/* B73: heading +20% from 12 → 15 */}
             <div style={{
               color: '#FFD700',
-              fontSize: 12,
+              fontSize: 15,
               fontFamily: 'monospace',
               fontWeight: 700,
               letterSpacing: 2,
@@ -699,9 +705,10 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
             }}>
               VISUAL LEGEND
             </div>
+            {/* B73: body min 14px from 9 */}
             <div style={{
               color: 'rgba(255,255,255,0.35)',
-              fontSize: 9,
+              fontSize: 14,
               fontFamily: 'monospace',
               letterSpacing: 1,
               marginTop: 2,
@@ -718,8 +725,10 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
               background: 'rgba(255,255,255,0.05)',
               color: 'rgba(255,255,255,0.6)',
               cursor: 'pointer',
-              fontSize: 10,
+              fontSize: 14,
               fontFamily: 'monospace',
+              position: 'relative',
+              zIndex: 50,
               letterSpacing: 1,
               transition: 'all 0.15s',
             }}
@@ -783,7 +792,7 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
               background: 'rgba(0,220,200,0.07)',
               color: '#00ddcc',
               cursor: 'pointer',
-              fontSize: 10,
+              fontSize: 14,
               fontFamily: 'monospace',
               letterSpacing: 1.5,
               fontWeight: 700,
@@ -811,7 +820,7 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
           }}>
             <span style={{
               color: 'rgba(255,255,255,0.2)',
-              fontSize: 9,
+              fontSize: 14,
               fontFamily: 'monospace',
               letterSpacing: 0.8,
             }}>
@@ -826,7 +835,7 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
                 background: 'rgba(255,215,0,0.08)',
                 color: '#FFD700',
                 cursor: 'pointer',
-                fontSize: 9,
+                fontSize: 14,
                 fontFamily: 'monospace',
                 letterSpacing: 1.5,
                 transition: 'all 0.15s',
@@ -843,6 +852,7 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
           </div>
         </div>
       </div>
+      </ResizablePanel>
     </>
   )
 }

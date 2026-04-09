@@ -22,6 +22,7 @@ import { useWorldContext } from './WorldContext'
 import { DOMAIN_DEFS } from './layers/AgentFlightLayer'
 import { getWorldData, seededPosition, type NWProject } from './DataBridge'
 import type { DomainZoneConfig } from './DomainZone'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Agent color map ────────────────────────────────────────────────────────────
 
@@ -671,45 +672,46 @@ export function ProximityInfoCard({ visible }: ProximityInfoCardProps) {
   // For project content, LINE 4 is the materials line (styled differently)
   const isProject = content.entityId.startsWith('project-')
 
+  // B73: ProximityInfoCard — resizable, positioned at camera-projected screen coords
+  const cardPosX = Math.max(10, Math.min(window.innerWidth - 320, screenX - 150))
+  const cardPosY = Math.max(10, Math.min(window.innerHeight - 280, screenY - cardOffsetY - 200))
+
   return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 22,
-        overflow: 'hidden',
+    <ResizablePanel
+      panelKey={`proximity-card-${content.entityId}`}
+      defaultWidth={300}
+      defaultHeight={240}
+      titleBarHeight={38}
+      zIndex={22}
+      initialPos={{ x: cardPosX, y: cardPosY }}
+      containerStyle={{
+        opacity:    showing ? 1 : 0,
+        transition: `opacity ${transitionTime} ease`,
+        pointerEvents: 'all',
+        userSelect: 'none',
       }}
     >
       <div
         style={{
-          position:         'absolute',
-          left:             screenX,
-          top:              screenY,
-          transform:        `translate(-50%, calc(-100% - ${cardOffsetY}px))`,
-          opacity:          showing ? 1 : 0,
-          transition:       `opacity ${transitionTime} ease, transform ${transitionTime} ease`,
-          maxWidth:         280,
-          padding:          '14px 16px',
-          background:       'rgba(8,8,12,0.92)',
-          border:           `1px solid ${content.line1Color}66`,
-          borderRadius:     12,
-          fontFamily:       'monospace',
-          backdropFilter:   'blur(10px)',
+          width:        '100%',
+          padding:      '14px 16px',
+          background:   'rgba(8,8,12,0.92)',
+          border:       `1px solid ${content.line1Color}66`,
+          borderRadius: 12,
+          fontFamily:   'monospace',
+          backdropFilter: 'blur(10px)',
           WebkitBackdropFilter: 'blur(10px)',
-          boxShadow:        `0 4px 28px rgba(0,0,0,0.7), 0 0 24px ${content.line1Color}18`,
-          pointerEvents:    'none',
-          minWidth:         200,
-          userSelect:       'none',
+          boxShadow:    `0 4px 28px rgba(0,0,0,0.7), 0 0 24px ${content.line1Color}18`,
+          boxSizing:    'border-box',
         }}
       >
-        {/* LINE 1 — DOMAIN NAME */}
+        {/* LINE 1 — DOMAIN NAME — B73: +20% heading from 14 → 18 */}
         <div style={{
-          fontSize:     14,
+          fontSize:     18,
           fontWeight:   700,
           color:        content.line1Color,
           letterSpacing: 1.5,
-          marginBottom: 7,
+          marginBottom: 8,
           textShadow:   `0 0 10px ${content.line1Color}55`,
           whiteSpace:   'nowrap',
           overflow:     'hidden',
@@ -718,9 +720,9 @@ export function ProximityInfoCard({ visible }: ProximityInfoCardProps) {
           {content.line1Text}
         </div>
 
-        {/* LINE 2 — CURRENT ACTIVITY */}
+        {/* LINE 2 — CURRENT ACTIVITY — B73: +25% body from 12 → 15 */}
         <div style={{
-          fontSize:     12,
+          fontSize:     15,
           color:        'rgba(255,255,255,0.88)',
           letterSpacing: 0.3,
           marginBottom: 5,
@@ -729,10 +731,10 @@ export function ProximityInfoCard({ visible }: ProximityInfoCardProps) {
           {content.line2Text}
         </div>
 
-        {/* LINE 3 — ASSIGNED AGENTS */}
+        {/* LINE 3 — ASSIGNED AGENTS — B73: min 14px from 11 */}
         {content.line3Agents.length > 0 && (
           <div style={{
-            fontSize:     11,
+            fontSize:     14,
             letterSpacing: 0.3,
             marginBottom: 5,
             display:      'flex',
@@ -745,10 +747,10 @@ export function ProximityInfoCard({ visible }: ProximityInfoCardProps) {
               <span key={agent.name} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 <span style={{ color: agent.color, fontWeight: 700 }}>{agent.name}</span>
                 {agent.primary && content.line3Agents.length > 1 && (
-                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 9 }}>(primary)</span>
+                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 14 }}>(primary)</span>
                 )}
                 {!agent.primary && (
-                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 9 }}>(support)</span>
+                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 14 }}>(support)</span>
                 )}
                 {i < Math.min(content.line3Agents.length, 3) - 1 && (
                   <span style={{ color: 'rgba(255,255,255,0.25)' }}>,</span>
@@ -758,9 +760,9 @@ export function ProximityInfoCard({ visible }: ProximityInfoCardProps) {
           </div>
         )}
 
-        {/* LINE 4 — HUMAN ROLES / MATERIALS */}
+        {/* LINE 4 — HUMAN ROLES / MATERIALS — B73: min 14px from 11 */}
         <div style={{
-          fontSize:     11,
+          fontSize:     14,
           color:        isProject ? 'rgba(255,255,255,0.55)' : '#FF9040',
           letterSpacing: 0.3,
           marginBottom: 6,
@@ -769,35 +771,35 @@ export function ProximityInfoCard({ visible }: ProximityInfoCardProps) {
           {content.line4Text}
         </div>
 
-        {/* LINE 5 — HEALTH STATUS */}
+        {/* LINE 5 — HEALTH STATUS — B73: min 14px from 10-11 */}
         <div style={{
-          fontSize:    11,
+          fontSize:    14,
           display:     'flex',
           alignItems:  'center',
           gap:         5,
           letterSpacing: 0.3,
         }}>
           <div style={{
-            width:       6,
-            height:      6,
+            width:       7,
+            height:      7,
             borderRadius: '50%',
             background:  healthColor,
             boxShadow:   `0 0 6px ${healthColor}`,
             flexShrink:  0,
           }} />
-          <span style={{ color: healthColor, fontWeight: 700, fontSize: 10 }}>
+          <span style={{ color: healthColor, fontWeight: 700, fontSize: 14 }}>
             {content.line5.level === 'green'
               ? 'HEALTHY'
               : content.line5.level === 'amber'
               ? 'ATTENTION'
               : 'CRITICAL'}
           </span>
-          <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10 }}>
+          <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14 }}>
             — {content.line5.reason}
           </span>
         </div>
       </div>
-    </div>
+    </ResizablePanel>
   )
 }
 

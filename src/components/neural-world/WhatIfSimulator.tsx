@@ -25,6 +25,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { getWorldData } from './DataBridge'
 import { callClaude } from '@/services/claudeProxy'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -394,26 +395,31 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
         </div>
       )}
 
-      {/* ── PANEL ── */}
+      {/* ── PANEL backdrop ── */}
       <div
         onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
         style={{
           position: 'absolute',
           inset: 0,
-          zIndex: 60,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          zIndex: 59,
           background: animIn ? 'rgba(0,0,0,0.50)' : 'rgba(0,0,0,0)',
           backdropFilter: animIn ? 'blur(4px)' : 'blur(0px)',
           transition: 'background 0.3s, backdrop-filter 0.3s',
           pointerEvents: 'all',
         }}
+      />
+
+      {/* ── PANEL content — B73: resizable + proportional zoom ── */}
+      <ResizablePanel
+        panelKey="whatif-simulator"
+        defaultWidth={520}
+        defaultHeight={620}
+        titleBarHeight={54}
+        zIndex={60}
       >
         <div
           style={{
-            width: 500,
-            maxHeight: '85vh',
+            width: '100%',
             display: 'flex',
             flexDirection: 'column',
             background: 'rgba(6,12,24,0.97)',
@@ -425,6 +431,7 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
             transform: animIn ? 'translateY(0) scale(1)' : 'translateY(24px) scale(0.97)',
             transition: 'opacity 0.28s, transform 0.28s',
             fontFamily: 'monospace',
+            boxSizing: 'border-box',
           }}
         >
           {/* ── HEADER ── */}
@@ -446,16 +453,18 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 18,
+              fontSize: 22,
               flexShrink: 0,
             }}>
               ⚡
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ color: '#ffa000', fontSize: 13, fontWeight: 700, letterSpacing: 2 }}>
+              {/* B73: heading +20% from 13 → 16 */}
+              <div style={{ color: '#ffa000', fontSize: 16, fontWeight: 700, letterSpacing: 2 }}>
                 WHAT-IF SIMULATOR
               </div>
-              <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10, marginTop: 2 }}>
+              {/* B73: body +25% from 10 → 14 (min) */}
+              <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 14, marginTop: 2 }}>
                 Simulate scenarios · Reshape the Neural World
               </div>
             </div>
@@ -465,10 +474,12 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
                 background: 'none',
                 border: 'none',
                 color: 'rgba(255,255,255,0.4)',
-                fontSize: 18,
+                fontSize: 20,
                 cursor: 'pointer',
                 padding: 4,
                 lineHeight: 1,
+                position: 'relative',
+                zIndex: 65,
               }}
             >
               ×
@@ -491,7 +502,7 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
                 border: 'none',
                 borderBottom: activeTab === 'whatif' ? '2px solid #ffa000' : '2px solid transparent',
                 color: activeTab === 'whatif' ? '#ffa000' : 'rgba(255,255,255,0.35)',
-                fontSize: 9,
+                fontSize: 14,
                 fontFamily: 'monospace',
                 letterSpacing: 1.5,
                 padding: '8px 10px 6px',
@@ -509,7 +520,7 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
                 border: 'none',
                 borderBottom: activeTab === 'vision' ? '2px solid #00ccff' : '2px solid transparent',
                 color: activeTab === 'vision' ? '#00ccff' : 'rgba(255,255,255,0.35)',
-                fontSize: 9,
+                fontSize: 14,
                 fontFamily: 'monospace',
                 letterSpacing: 1.5,
                 padding: '8px 10px 6px',
@@ -545,7 +556,7 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
                     border: '1px solid rgba(255,160,0,0.3)',
                     borderRadius: 8,
                     color: 'rgba(255,255,255,0.85)',
-                    fontSize: 13,
+                    fontSize: 17,
                     fontFamily: 'monospace',
                     padding: '10px 12px',
                     resize: 'none',
@@ -640,7 +651,7 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
             {/* ── VISION TAB ── */}
             {activeTab === 'vision' && (
               <div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10, letterSpacing: 1, marginBottom: 4 }}>
+                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 14, letterSpacing: 1, marginBottom: 4 }}>
                   DESCRIBE A FEATURE OR TOOL YOU WANT TO BUILD
                 </div>
                 <p style={{
@@ -928,7 +939,7 @@ export default function WhatIfSimulator({ open, onClose }: WhatIfSimulatorProps)
             </button>
           </div>
         </div>
-      </div>
+      </ResizablePanel>
     </>
   )
 }

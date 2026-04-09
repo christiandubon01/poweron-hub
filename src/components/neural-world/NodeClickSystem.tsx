@@ -30,6 +30,7 @@ import {
   type NWWorldData,
   type NWProject,
 } from './DataBridge'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Node metadata ──────────────────────────────────────────────────────────────
 
@@ -242,148 +243,162 @@ interface InfoPanelProps {
   scale: number
 }
 
-function InfoPanel({ node, screenX, screenY, onClose, scale }: InfoPanelProps) {
-  // NW27: min 320px, max 450px — 380px fits nicely
-  const panelWidth = 380
+// B73: Domain info popup — resizable + proportional zoom
+const INFO_PANEL_DEFAULT_W = 400
+const INFO_PANEL_DEFAULT_H = 500
+
+function InfoPanel({ node, screenX, screenY, onClose }: InfoPanelProps) {
+  // B73: Position determined by click location (clamped to viewport) for initial placement.
+  // ResizablePanel will override with localStorage position if panel was dragged.
   const margin = 12
-
-  // Account for scale when clamping to viewport (transform-origin: top left)
-  const scaledW = panelWidth * scale
-  const scaledH = 480 * scale   // approx max panel height × scale
-
-  const x = Math.max(margin, Math.min(window.innerWidth  - scaledW - margin, screenX + 18))
-  const y = Math.max(margin, Math.min(window.innerHeight - scaledH - margin, screenY - 80))
+  const initX = Math.max(margin, Math.min(window.innerWidth  - INFO_PANEL_DEFAULT_W - margin, screenX + 18))
+  const initY = Math.max(margin, Math.min(window.innerHeight - INFO_PANEL_DEFAULT_H - margin, screenY - 80))
 
   return (
-    <div
-      onClick={e => e.stopPropagation()}
-      style={{
-        position: 'fixed',
-        left: x,
-        top: y,
-        width: panelWidth,
-        zIndex: 60,
-        // NW27: high-contrast dark background
-        background: 'rgba(10,10,16,0.95)',
-        // NW27: green accent border
-        border: '1px solid rgba(46,232,154,0.3)',
-        borderRadius: 12,
-        backdropFilter: 'blur(16px)',
-        boxShadow: `0 0 32px ${node.accentColor}1a, 0 6px 32px rgba(0,0,0,0.8)`,
-        fontFamily: 'monospace',
-        animation: 'nw-node-panel-in 0.18s ease',
-        // NW27: distance-based scale (billboard behavior for 2D overlay)
-        transform: `scale(${scale})`,
-        transformOrigin: 'top left',
+    <ResizablePanel
+      panelKey={`node-info-${node.id}`}
+      defaultWidth={INFO_PANEL_DEFAULT_W}
+      defaultHeight={INFO_PANEL_DEFAULT_H}
+      titleBarHeight={52}
+      zIndex={60}
+      containerStyle={{
+        // Initial position from click; ResizablePanel overrides with saved pos
+        left: initX,
+        top:  initY,
+        transform: 'none',
       }}
     >
-      {/* Header */}
-      <div style={{
-        padding: '14px 16px 10px',
-        borderBottom: `1px solid ${node.accentColor}33`,
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 8,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* NW27b: title font 18px minimum */}
-          <div style={{
-            fontSize: 18,
-            fontWeight: 700,
-            color: node.accentColor,
-            letterSpacing: 1.5,
-            textShadow: `0 0 10px ${node.accentColor}60`,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}>
-            {node.name}
-          </div>
-          <div style={{
-            fontSize: 11,
-            color: 'rgba(255,255,255,0.55)',
-            letterSpacing: 1,
-            marginTop: 3,
-          }}>
-            {node.type}
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none',
-            border: '1px solid rgba(255,255,255,0.2)',
-            color: 'rgba(255,255,255,0.65)',
-            fontSize: 14,
-            cursor: 'pointer',
-            borderRadius: 4,
-            padding: '2px 8px',
-            lineHeight: 1.4,
-            flexShrink: 0,
-            transition: 'all 0.12s',
-          }}
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* Scrollable body — NW27: scroll captures here, doesn't propagate to camera */}
-      <ScrollBody>
-        {/* Description — NW27b: body font 14px minimum */}
-        <div style={{ padding: '12px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
-          <div style={{
-            fontSize: 14,
-            color: 'rgba(255,255,255,0.82)',
-            lineHeight: 1.65,
-            letterSpacing: 0.3,
-          }}>
-            {node.description}
-          </div>
-        </div>
-
-        {/* Connections */}
-        {node.connections.length > 0 && (
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
-            <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: 1.5, marginBottom: 6 }}>
-              CONNECTIONS
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%',
+          // NW27: high-contrast dark background
+          background: 'rgba(10,10,16,0.95)',
+          // NW27: green accent border
+          border: '1px solid rgba(46,232,154,0.3)',
+          borderRadius: 12,
+          backdropFilter: 'blur(16px)',
+          boxShadow: `0 0 32px ${node.accentColor}1a, 0 6px 32px rgba(0,0,0,0.8)`,
+          fontFamily: 'monospace',
+          animation: 'nw-node-panel-in 0.18s ease',
+          boxSizing: 'border-box',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '14px 16px 10px',
+          borderBottom: `1px solid ${node.accentColor}33`,
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* B73: title heading +20% from 18 → 22 */}
+            <div style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: node.accentColor,
+              letterSpacing: 1.5,
+              textShadow: `0 0 10px ${node.accentColor}60`,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+              {node.name}
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {node.connections.map((c, i) => (
-                <span key={i} style={{
-                  fontSize: 11,
-                  color: node.accentColor,
-                  background: `${node.accentColor}18`,
-                  border: `1px solid ${node.accentColor}44`,
-                  borderRadius: 3,
-                  padding: '2px 7px',
-                  letterSpacing: 0.5,
-                }}>
-                  {c}
-                </span>
+            {/* B73: subheading +25% body from 11 → 14 */}
+            <div style={{
+              fontSize: 14,
+              color: 'rgba(255,255,255,0.55)',
+              letterSpacing: 1,
+              marginTop: 3,
+            }}>
+              {node.type}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: '1px solid rgba(255,255,255,0.2)',
+              color: 'rgba(255,255,255,0.65)',
+              fontSize: 16,
+              cursor: 'pointer',
+              borderRadius: 4,
+              padding: '3px 10px',
+              lineHeight: 1.4,
+              flexShrink: 0,
+              transition: 'all 0.12s',
+              position: 'relative',
+              zIndex: 65,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <ScrollBody>
+          {/* B73: description body +25% from 14 → 18 */}
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
+            <div style={{
+              fontSize: 18,
+              color: 'rgba(255,255,255,0.82)',
+              lineHeight: 1.65,
+              letterSpacing: 0.3,
+            }}>
+              {node.description}
+            </div>
+          </div>
+
+          {/* Connections */}
+          {node.connections.length > 0 && (
+            <div style={{ padding: '10px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
+              {/* B73: section label min 14px from 9 */}
+              <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.35)', letterSpacing: 1.5, marginBottom: 6 }}>
+                CONNECTIONS
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {node.connections.map((c, i) => (
+                  <span key={i} style={{
+                    fontSize: 14,
+                    color: node.accentColor,
+                    background: `${node.accentColor}18`,
+                    border: `1px solid ${node.accentColor}44`,
+                    borderRadius: 3,
+                    padding: '2px 7px',
+                    letterSpacing: 0.5,
+                  }}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Metrics */}
+          <div style={{ padding: '10px 16px 14px' }}>
+            {/* B73: section label min 14px from 9 */}
+            <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.35)', letterSpacing: 1.5, marginBottom: 8 }}>
+              KEY METRICS
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {Object.entries(node.metrics).map(([key, val]) => (
+                <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  {/* B73: metric label +25% body from 11 → 14 */}
+                  <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', letterSpacing: 0.5 }}>{key}</span>
+                  {/* B73: metric value +30% data from 11 → 15 */}
+                  <span style={{ fontSize: 15, color: 'rgba(255,255,255,0.88)', fontWeight: 600, letterSpacing: 0.5, textAlign: 'right', maxWidth: 180 }}>
+                    {typeof val === 'number' ? val.toLocaleString() : val}
+                  </span>
+                </div>
               ))}
             </div>
           </div>
-        )}
-
-        {/* Metrics */}
-        <div style={{ padding: '10px 16px 14px' }}>
-          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: 1.5, marginBottom: 8 }}>
-            KEY METRICS
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {Object.entries(node.metrics).map(([key, val]) => (
-              <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: 0.5 }}>{key}</span>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.88)', fontWeight: 600, letterSpacing: 0.5, textAlign: 'right', maxWidth: 180 }}>
-                  {typeof val === 'number' ? val.toLocaleString() : val}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </ScrollBody>
-    </div>
+        </ScrollBody>
+      </div>
+    </ResizablePanel>
   )
 }
 

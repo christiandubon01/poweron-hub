@@ -26,6 +26,7 @@ import {
 import { CameraMode } from './CameraController'
 import { ColorModeSelector, type ColorMode } from './AdaptiveColorEngine'
 import { AudioSettingsSection } from './SonicLandscape'
+import { ResizablePanel } from './ResizablePanel'
 
 interface SettingsPanelProps {
   cameraMode: CameraMode
@@ -175,24 +176,32 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
         ⚙
       </button>
 
-      {/* Settings panel */}
+      {/* Settings panel — B73: resizable */}
       {open && (
+        <ResizablePanel
+          panelKey="nw-settings-panel"
+          defaultWidth={290}
+          defaultHeight={520}
+          titleBarHeight={40}
+          zIndex={28}
+        >
         <div style={{
           background: 'rgba(5,5,15,0.92)',
           border: '1px solid rgba(0,229,204,0.25)',
           borderRadius: 8,
           padding: '12px 14px',
-          width: PANEL_W,
+          width: '100%',
           backdropFilter: 'blur(10px)',
           fontFamily: 'monospace',
           display: 'flex',
           flexDirection: 'column',
           gap: 10,
+          boxSizing: 'border-box',
         }}>
-          {/* Header */}
+          {/* Header — B73: min 14px from 9 */}
           <div style={{
             color: '#00e5cc',
-            fontSize: 9,
+            fontSize: 14,
             letterSpacing: 2,
             marginBottom: 2,
             fontWeight: 700,
@@ -398,7 +407,7 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
           {/* ── NW40: World Speed Override ── */}
           <div style={{
             color: '#00e5cc',
-            fontSize: 9,
+            fontSize: 14,
             letterSpacing: 2,
             marginBottom: 4,
             fontWeight: 700,
@@ -415,7 +424,7 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
                   style={{
                     width: '100%',
                     padding: '4px 8px',
-                    fontSize: 9,
+                    fontSize: 14,
                     letterSpacing: 1,
                     borderRadius: 4,
                     border: `1px solid ${active ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.12)'}`,
@@ -432,7 +441,7 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
               )
             })}
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: 7.5, letterSpacing: 0.8, marginTop: 2, lineHeight: 1.5 }}>
+          <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: 14, letterSpacing: 0.8, marginTop: 2, lineHeight: 1.5 }}>
             Theta: slow observation · Beta: active work · Gamma: max intensity
           </div>
 
@@ -441,7 +450,7 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
           {/* ── NW42: Color Mode Override ── */}
           <div style={{
             color:         '#00e5cc',
-            fontSize:      9,
+            fontSize:      14,
             letterSpacing: 2,
             marginBottom:  4,
             fontWeight:    700,
@@ -457,8 +466,8 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
 
           <Divider />
 
-          {/* Hint */}
-          <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 8, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>
+          {/* Hint — B73: min 14px from 8 */}
+          <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 14, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>
             1P/3P: Scroll = speed · Shift = toggle sprint<br/>
             3P: 1/2/3 = distance preset · Max speed: 15
             {isTouchDevice && (
@@ -466,6 +475,7 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
             )}
           </div>
         </div>
+        </ResizablePanel>
       )}
     </div>
   )
@@ -488,8 +498,10 @@ function SliderRow({
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>{label}</span>
-        <span style={{ color: '#00e5cc', fontSize: 9, letterSpacing: 1 }}>{display}</span>
+        {/* B73: label min 14px */}
+        <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 14, letterSpacing: 1 }}>{label}</span>
+        {/* B73: value +30% min 14px */}
+        <span style={{ color: '#00e5cc', fontSize: 14, letterSpacing: 1 }}>{display}</span>
       </div>
       <input
         type="range"
@@ -518,7 +530,7 @@ function ToggleRow({
 }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>{label}</span>
+      <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 14, letterSpacing: 1 }}>{label}</span>
       <button
         onClick={() => onChange(!value)}
         style={{

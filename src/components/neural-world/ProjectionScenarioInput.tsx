@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useCallback } from 'react'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ function Section({
           borderRadius: 6,
           color: expanded ? `rgb(${color})` : 'rgba(255,255,255,0.6)',
           cursor: 'pointer',
-          fontSize: 11,
+          fontSize: 14,
           fontFamily: 'monospace',
           letterSpacing: 1.5,
           fontWeight: 700,
@@ -117,9 +118,9 @@ function Section({
           transition: 'all 0.18s',
         }}
       >
-        <span style={{ fontSize: 14 }}>{icon}</span>
+        <span style={{ fontSize: 16 }}>{icon}</span>
         <span style={{ flex: 1 }}>{title}</span>
-        <span style={{ opacity: 0.6, fontSize: 10 }}>{expanded ? '▾' : '▸'}</span>
+        <span style={{ opacity: 0.6, fontSize: 14 }}>{expanded ? '▾' : '▸'}</span>
       </button>
       {expanded && (
         <div style={{
@@ -146,7 +147,7 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{
         color: 'rgba(255,255,255,0.55)',
-        fontSize: 10,
+        fontSize: 14,
         fontFamily: 'monospace',
         letterSpacing: 1,
       }}>
@@ -163,7 +164,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 4,
   color: '#fff',
   fontFamily: 'monospace',
-  fontSize: 12,
+  fontSize: 14,
   padding: '5px 8px',
   outline: 'none',
   width: '100%',
@@ -180,7 +181,7 @@ const toggleStyle = (on: boolean): React.CSSProperties => ({
   borderRadius: 4,
   color: on ? '#00ff88' : 'rgba(255,255,255,0.45)',
   cursor: 'pointer',
-  fontSize: 11,
+  fontSize: 14,
   fontFamily: 'monospace',
   letterSpacing: 0.8,
   transition: 'all 0.15s',
@@ -238,18 +239,28 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
         pointerEvents: 'auto',
         transform: animIn ? 'translateX(0)' : 'translateX(100%)',
         transition: 'transform 0.3s cubic-bezier(0.22,0.61,0.36,1)',
+        overflow: 'visible',
       }}
     >
+      <ResizablePanel
+        panelKey="projection-guide"
+        defaultWidth={380}
+        defaultHeight={700}
+        titleBarHeight={54}
+        zIndex={41}
+        initialPos={{ x: 0, y: 0 }}
+      >
       {/* Glass panel */}
       <div style={{
-        position: 'absolute',
-        inset: 0,
+        width: '100%',
+        boxSizing: 'border-box',
         background: 'rgba(4,8,16,0.88)',
         backdropFilter: 'blur(18px)',
         borderLeft: '1px solid rgba(255,180,50,0.25)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        minHeight: 700,
       }}>
         {/* Header */}
         <div style={{
@@ -260,12 +271,12 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
           alignItems: 'center',
           gap: 8,
         }}>
-          <span style={{ fontSize: 16 }}>🧭</span>
+          <span style={{ fontSize: 20 }}>🧭</span>
           <div style={{ flex: 1 }}>
             <div style={{
               color: '#ffb432',
               fontFamily: 'monospace',
-              fontSize: 13,
+              fontSize: 16,
               fontWeight: 700,
               letterSpacing: 2,
             }}>
@@ -274,7 +285,7 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
             <div style={{
               color: 'rgba(255,255,255,0.35)',
               fontFamily: 'monospace',
-              fontSize: 9,
+              fontSize: 14,
               letterSpacing: 1,
               marginTop: 2,
             }}>
@@ -289,9 +300,11 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
               borderRadius: 4,
               color: 'rgba(255,255,255,0.5)',
               cursor: 'pointer',
-              fontSize: 12,
+              fontSize: 14,
               padding: '3px 8px',
               fontFamily: 'monospace',
+              position: 'relative',
+              zIndex: 46,
             }}
           >
             ✕
@@ -415,7 +428,7 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
                             borderRadius: 4,
                             color: on ? '#50b4ff' : 'rgba(255,255,255,0.4)',
                             cursor: 'pointer',
-                            fontSize: 10,
+                            fontSize: 14,
                             fontFamily: 'monospace',
                             letterSpacing: 0.5,
                             transition: 'all 0.15s',
@@ -526,7 +539,7 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
                         borderRadius: 4,
                         color: on ? '#00ff88' : 'rgba(255,255,255,0.4)',
                         cursor: 'pointer',
-                        fontSize: 9,
+                        fontSize: 14,
                         fontFamily: 'monospace',
                         letterSpacing: 0.8,
                         transition: 'all 0.15s',
@@ -624,7 +637,7 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
               color: isCalculating ? 'rgba(255,180,50,0.45)' : '#ffb432',
               cursor: isCalculating ? 'not-allowed' : 'pointer',
               fontFamily: 'monospace',
-              fontSize: 13,
+              fontSize: 16,
               fontWeight: 700,
               letterSpacing: 2,
               transition: 'all 0.2s',
@@ -647,6 +660,7 @@ export default function ProjectionScenarioInput({ open, onClose, hasResults, isC
           </button>
         </div>
       </div>
+      </ResizablePanel>
     </div>
   )
 }

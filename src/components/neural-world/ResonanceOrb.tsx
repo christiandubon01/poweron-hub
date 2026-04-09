@@ -41,6 +41,7 @@ import {
   ResonanceEffectAnimator,
   ResonanceTuningForkLayer,
 } from './ResonancePredictor'
+import { ResizablePanel } from './ResizablePanel'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -525,6 +526,10 @@ function HUDStateIndicator({
 }
 
 // ── Resonance Breakdown Panel ─────────────────────────────────────────────────
+// B73: Wrapped with ResizablePanel — resizable from any edge/corner, proportional zoom
+
+const RESONANCE_PANEL_DEFAULT_W = 420
+const RESONANCE_PANEL_DEFAULT_H = 520
 
 function ResonanceBreakdownPanel({
   result,
@@ -538,144 +543,157 @@ function ResonanceBreakdownPanel({
   const stateIcon  = RESONANCE_STATE_ICON[state]
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        zIndex: 60,
-        width: 400,
-        background: 'rgba(4,4,14,0.97)',
-        border: `1px solid ${stateColor}55`,
-        borderRadius: 10,
-        padding: '18px 20px',
-        fontFamily: 'monospace',
-        backdropFilter: 'blur(16px)',
-        boxShadow: `0 0 40px ${stateColor}22`,
-      }}
+    <ResizablePanel
+      panelKey="resonance-breakdown"
+      defaultWidth={RESONANCE_PANEL_DEFAULT_W}
+      defaultHeight={RESONANCE_PANEL_DEFAULT_H}
+      titleBarHeight={52}
+      zIndex={60}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-            <span style={{ color: stateColor, fontSize: 16 }}>{stateIcon}</span>
-            <span style={{ color: stateColor, fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>
-              {state}
-            </span>
-            <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
-              RESONANCE {(score * 100).toFixed(0)}%
-            </span>
-          </div>
-          <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 8, letterSpacing: 1.5 }}>
-            FOUNDERS VALLEY · ALIGNMENT BREAKDOWN
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none',
-            border: '1px solid rgba(255,255,255,0.15)',
-            color: 'rgba(255,255,255,0.45)',
-            borderRadius: 4,
-            padding: '3px 8px',
-            cursor: 'pointer',
-            fontSize: 10,
-            fontFamily: 'monospace',
-          }}
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* Master score bar */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{
-          height: 4,
-          borderRadius: 2,
-          background: 'rgba(255,255,255,0.1)',
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            height: '100%',
-            width: `${score * 100}%`,
-            background: `linear-gradient(90deg, ${stateColor}88, ${stateColor})`,
-            borderRadius: 2,
-            transition: 'width 0.5s ease',
-          }} />
-        </div>
-      </div>
-
-      {/* Factor list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {factors.map(f => {
-          const barColor = f.score >= 0.7 ? '#00cc66' : f.score >= 0.4 ? '#ffd700' : '#ff4444'
-          return (
-            <div key={f.id}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 9, letterSpacing: 1.2 }}>
-                  {f.label.toUpperCase()}
-                </span>
-                <span style={{ color: barColor, fontSize: 9, letterSpacing: 1, fontWeight: 700 }}>
-                  {(f.score * 100).toFixed(0)}
-                </span>
-              </div>
-              {/* Score bar */}
-              <div style={{
-                height: 3,
-                borderRadius: 2,
-                background: 'rgba(255,255,255,0.07)',
-                overflow: 'hidden',
-                marginBottom: 4,
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${f.score * 100}%`,
-                  background: barColor,
-                  borderRadius: 2,
-                }} />
-              </div>
-              {/* Explanation */}
-              <div style={{
-                color: 'rgba(255,255,255,0.38)',
-                fontSize: 8,
-                letterSpacing: 0.5,
-                lineHeight: 1.5,
-              }}>
-                {f.explanation}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Footer row: world speed + heat map toggle */}
-      <div style={{
-        marginTop: 14,
-        paddingTop: 10,
-        borderTop: '1px solid rgba(255,255,255,0.07)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-      }}>
-        <div style={{
-          color: 'rgba(255,255,255,0.2)',
-          fontSize: 7.5,
-          letterSpacing: 0.8,
+      <div
+        style={{
+          width: '100%',
+          background: 'rgba(4,4,14,0.97)',
+          border: `1px solid ${stateColor}55`,
+          borderRadius: 10,
+          padding: '18px 20px',
           fontFamily: 'monospace',
-        }}>
-          WORLD SPEED · {state === 'DISSONANT' ? '0.7×' : state === 'COHERENT' ? '1.0×' : '1.3×'}
-          &nbsp;·&nbsp;
-          CLICK ORB TO REFRESH
+          backdropFilter: 'blur(16px)',
+          boxShadow: `0 0 40px ${stateColor}22`,
+          boxSizing: 'border-box',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              {/* B73: heading icon +20% from 16 → 20 */}
+              <span style={{ color: stateColor, fontSize: 20 }}>{stateIcon}</span>
+              {/* B73: heading text +20% from 11 → 14 (min) */}
+              <span style={{ color: stateColor, fontSize: 14, letterSpacing: 2, fontWeight: 700 }}>
+                {state}
+              </span>
+              {/* B73: data value +30% from 10 → 14 (min) */}
+              <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14 }}>
+                RESONANCE {(score * 100).toFixed(0)}%
+              </span>
+            </div>
+            {/* B73: label text min 14px from 8 */}
+            <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, letterSpacing: 1.5 }}>
+              FOUNDERS VALLEY · ALIGNMENT BREAKDOWN
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: '1px solid rgba(255,255,255,0.15)',
+              color: 'rgba(255,255,255,0.45)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              cursor: 'pointer',
+              fontSize: 14,
+              fontFamily: 'monospace',
+              zIndex: 65,
+              position: 'relative',
+            }}
+          >
+            ✕
+          </button>
         </div>
 
-        {/* NW41: Heat map toggle */}
-        <ResonanceHeatMapToggle result={result} stateColor={stateColor} />
-      </div>
+        {/* Master score bar */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            height: 5,
+            borderRadius: 2,
+            background: 'rgba(255,255,255,0.1)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%',
+              width: `${score * 100}%`,
+              background: `linear-gradient(90deg, ${stateColor}88, ${stateColor})`,
+              borderRadius: 2,
+              transition: 'width 0.5s ease',
+            }} />
+          </div>
+        </div>
 
-      {/* NW41: AI optimization predictor */}
-      <ResonancePredictor result={result} stateColor={stateColor} />
-    </div>
+        {/* Factor list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {factors.map(f => {
+            const barColor = f.score >= 0.7 ? '#00cc66' : f.score >= 0.4 ? '#ffd700' : '#ff4444'
+            return (
+              <div key={f.id}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  {/* B73: label +25% body → min 14px */}
+                  <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, letterSpacing: 1.2 }}>
+                    {f.label.toUpperCase()}
+                  </span>
+                  {/* B73: data value +30% from 9 → 14 (min) */}
+                  <span style={{ color: barColor, fontSize: 14, letterSpacing: 1, fontWeight: 700 }}>
+                    {(f.score * 100).toFixed(0)}
+                  </span>
+                </div>
+                {/* Score bar */}
+                <div style={{
+                  height: 4,
+                  borderRadius: 2,
+                  background: 'rgba(255,255,255,0.07)',
+                  overflow: 'hidden',
+                  marginBottom: 5,
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${f.score * 100}%`,
+                    background: barColor,
+                    borderRadius: 2,
+                  }} />
+                </div>
+                {/* B73: explanation body +25% from 8 → 14 (min) */}
+                <div style={{
+                  color: 'rgba(255,255,255,0.38)',
+                  fontSize: 14,
+                  letterSpacing: 0.5,
+                  lineHeight: 1.5,
+                }}>
+                  {f.explanation}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Footer row: world speed + heat map toggle */}
+        <div style={{
+          marginTop: 16,
+          paddingTop: 12,
+          borderTop: '1px solid rgba(255,255,255,0.07)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}>
+          {/* B73: footer label min 14px from 7.5 */}
+          <div style={{
+            color: 'rgba(255,255,255,0.2)',
+            fontSize: 14,
+            letterSpacing: 0.8,
+            fontFamily: 'monospace',
+          }}>
+            WORLD SPEED · {state === 'DISSONANT' ? '0.7×' : state === 'COHERENT' ? '1.0×' : '1.3×'}
+            &nbsp;·&nbsp;
+            CLICK ORB TO REFRESH
+          </div>
+
+          {/* NW41: Heat map toggle */}
+          <ResonanceHeatMapToggle result={result} stateColor={stateColor} />
+        </div>
+
+        {/* NW41: AI optimization predictor */}
+        <ResonancePredictor result={result} stateColor={stateColor} />
+      </div>
+    </ResizablePanel>
   )
 }
