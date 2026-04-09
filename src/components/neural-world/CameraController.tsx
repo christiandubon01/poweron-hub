@@ -67,7 +67,7 @@ const SPRINT_MULT       = 2.5    // Shift multiplier
 
 // Orbit defaults
 const ORBIT_RADIUS_MIN  = 5
-const ORBIT_RADIUS_MAX  = 400
+const ORBIT_RADIUS_MAX  = 500  // NW27: max 500 units for full world overview
 const ORBIT_PAN_SPEED   = 0.5
 
 interface CameraControllerProps {

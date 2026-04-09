@@ -256,6 +256,11 @@ export default function NeuralWorldView() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  // NW27: Ref to outer container div — used to find canvas for wheel capture
+  const outerContainerRef = useRef<HTMLDivElement>(null)
+  // NW27: Track panel open state to gate ESC handler (panel ESC wins over fullscreen ESC)
+  const isPanelOpenRef = useRef(false)
+
   // NW15: Loading screen state
   const [loadStageIdx, setLoadStageIdx] = useState(0)
   const [loadDone, setLoadDone] = useState(false)
@@ -330,9 +335,10 @@ export default function NeuralWorldView() {
   }, [])
 
   // NW7b: ESC key exits fullscreen (but not pointer lock — that's handled by CameraController)
+  // NW27: If a node info panel is open, ESC is handled by NodeClickSystem first — don't exit fullscreen
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.code === 'Escape' && isFullscreen && !document.pointerLockElement) {
+      if (e.code === 'Escape' && isFullscreen && !document.pointerLockElement && !isPanelOpenRef.current) {
         setIsFullscreen(false)
         window.dispatchEvent(new CustomEvent('nw:fullscreen', { detail: { fullscreen: false } }))
       }
@@ -341,15 +347,51 @@ export default function NeuralWorldView() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [isFullscreen])
 
-  // NW7b: Scroll lock at document level
+  // NW27: Attach wheel preventDefault to the actual canvas element (not a parent div).
+  // CameraController also attaches its own wheel handler on canvas; this one ensures
+  // the canvas never propagates scroll to the browser regardless of camera mode.
+  // Uses MutationObserver to find the canvas after WorldEngine appends it.
   useEffect(() => {
-    function preventScroll(e: WheelEvent) {
-      e.preventDefault()
+    const preventOnCanvas = (e: WheelEvent) => e.preventDefault()
+    let attachedCanvas: HTMLCanvasElement | null = null
+
+    function tryAttach() {
+      const canvas = outerContainerRef.current?.querySelector('canvas') as HTMLCanvasElement | null
+      if (canvas && canvas !== attachedCanvas) {
+        if (attachedCanvas) {
+          attachedCanvas.removeEventListener('wheel', preventOnCanvas)
+        }
+        canvas.addEventListener('wheel', preventOnCanvas, { passive: false })
+        attachedCanvas = canvas
+      }
     }
-    document.addEventListener('wheel', preventScroll, { passive: false })
+
+    // Try immediately (WorldEngine effects run before parent effects in React)
+    tryAttach()
+
+    // Observer fallback in case canvas is added after this effect runs
+    const observer = new MutationObserver(tryAttach)
+    if (outerContainerRef.current) {
+      observer.observe(outerContainerRef.current, { childList: true, subtree: true })
+    }
+
     return () => {
-      document.removeEventListener('wheel', preventScroll)
+      observer.disconnect()
+      if (attachedCanvas) {
+        attachedCanvas.removeEventListener('wheel', preventOnCanvas)
+      }
     }
+  }, [])
+
+  // NW27: Track info panel open state from NodeClickSystem
+  // Ensures ESC closes panel before exiting fullscreen
+  useEffect(() => {
+    function onPanelState(e: Event) {
+      const ev = e as CustomEvent<{ open: boolean }>
+      isPanelOpenRef.current = !!ev.detail?.open
+    }
+    window.addEventListener('nw:panel-state', onPanelState)
+    return () => window.removeEventListener('nw:panel-state', onPanelState)
   }, [])
 
   // NW14: V5 badge on first entry into V5_ENTERPRISE mode
@@ -490,6 +532,7 @@ export default function NeuralWorldView() {
 
   return (
     <div
+      ref={outerContainerRef}
       style={{
         width: '100%',
         height: isFullscreen ? '100vh' : 'calc(100vh - 56px)',

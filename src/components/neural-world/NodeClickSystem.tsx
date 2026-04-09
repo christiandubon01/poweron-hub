@@ -202,6 +202,35 @@ function resolveStaticPositions(): Record<string, THREE.Vector3> {
   return result
 }
 
+// ── NW27: Scrollable body — captures wheel events natively to prevent camera zoom ─
+
+function ScrollBody({ children }: { children: React.ReactNode }) {
+  const divRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = divRef.current
+    if (!el) return
+    // NW27: Stop wheel events from bubbling to document/canvas handlers
+    // so panel content scrolls without affecting camera zoom or browser scroll
+    const handler = (e: WheelEvent) => { e.stopPropagation() }
+    el.addEventListener('wheel', handler)
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
+  return (
+    <div
+      ref={divRef}
+      style={{
+        overflowY: 'auto',
+        maxHeight: 340,
+        // Thin scrollbar styling
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(46,232,154,0.35) transparent',
+      } as React.CSSProperties}
+    >
+      {children}
+    </div>
+  )
+}
+
 // ── Info panel component ───────────────────────────────────────────────────────
 
 interface InfoPanelProps {
@@ -209,16 +238,21 @@ interface InfoPanelProps {
   screenX: number
   screenY: number
   onClose: () => void
+  /** NW27: Distance-based scale factor (1.0 near, up to 3.0 far) */
+  scale: number
 }
 
-function InfoPanel({ node, screenX, screenY, onClose }: InfoPanelProps) {
-  const panelWidth = 280
-  const panelHeight = 320
+function InfoPanel({ node, screenX, screenY, onClose, scale }: InfoPanelProps) {
+  // NW27: min 320px, max 450px — 380px fits nicely
+  const panelWidth = 380
   const margin = 12
 
-  // Clamp to viewport
-  const x = Math.min(Math.max(screenX + 18, margin), window.innerWidth  - panelWidth  - margin)
-  const y = Math.min(Math.max(screenY - 80,  margin), window.innerHeight - panelHeight - margin)
+  // Account for scale when clamping to viewport (transform-origin: top left)
+  const scaledW = panelWidth * scale
+  const scaledH = 480 * scale   // approx max panel height × scale
+
+  const x = Math.max(margin, Math.min(window.innerWidth  - scaledW - margin, screenX + 18))
+  const y = Math.max(margin, Math.min(window.innerHeight - scaledH - margin, screenY - 80))
 
   return (
     <div
@@ -229,19 +263,23 @@ function InfoPanel({ node, screenX, screenY, onClose }: InfoPanelProps) {
         top: y,
         width: panelWidth,
         zIndex: 60,
-        background: 'rgba(5, 5, 15, 0.92)',
-        border: `1px solid ${node.accentColor}55`,
-        borderRadius: 8,
-        backdropFilter: 'blur(14px)',
-        boxShadow: `0 0 28px ${node.accentColor}22, 0 4px 24px rgba(0,0,0,0.7)`,
+        // NW27: high-contrast dark background
+        background: 'rgba(10,10,16,0.95)',
+        // NW27: green accent border
+        border: '1px solid rgba(46,232,154,0.3)',
+        borderRadius: 12,
+        backdropFilter: 'blur(16px)',
+        boxShadow: `0 0 32px ${node.accentColor}1a, 0 6px 32px rgba(0,0,0,0.8)`,
         fontFamily: 'monospace',
         animation: 'nw-node-panel-in 0.18s ease',
-        overflow: 'hidden',
+        // NW27: distance-based scale (billboard behavior for 2D overlay)
+        transform: `scale(${scale})`,
+        transformOrigin: 'top left',
       }}
     >
       {/* Header */}
       <div style={{
-        padding: '10px 12px 8px',
+        padding: '14px 16px 10px',
         borderBottom: `1px solid ${node.accentColor}33`,
         display: 'flex',
         alignItems: 'flex-start',
@@ -249,12 +287,13 @@ function InfoPanel({ node, screenX, screenY, onClose }: InfoPanelProps) {
         gap: 8,
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* NW27: title font 16px */}
           <div style={{
-            fontSize: 14,
+            fontSize: 16,
             fontWeight: 700,
             color: node.accentColor,
             letterSpacing: 1.5,
-            textShadow: `0 0 8px ${node.accentColor}60`,
+            textShadow: `0 0 10px ${node.accentColor}60`,
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -262,10 +301,10 @@ function InfoPanel({ node, screenX, screenY, onClose }: InfoPanelProps) {
             {node.name}
           </div>
           <div style={{
-            fontSize: 9,
-            color: 'rgba(255,255,255,0.45)',
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.55)',
             letterSpacing: 1,
-            marginTop: 2,
+            marginTop: 3,
           }}>
             {node.type}
           </div>
@@ -274,72 +313,76 @@ function InfoPanel({ node, screenX, screenY, onClose }: InfoPanelProps) {
           onClick={onClose}
           style={{
             background: 'none',
-            border: `1px solid rgba(255,255,255,0.15)`,
-            color: 'rgba(255,255,255,0.5)',
-            fontSize: 13,
+            border: '1px solid rgba(255,255,255,0.2)',
+            color: 'rgba(255,255,255,0.65)',
+            fontSize: 14,
             cursor: 'pointer',
-            borderRadius: 3,
-            padding: '1px 6px',
+            borderRadius: 4,
+            padding: '2px 8px',
             lineHeight: 1.4,
             flexShrink: 0,
+            transition: 'all 0.12s',
           }}
         >
           ✕
         </button>
       </div>
 
-      {/* Description */}
-      <div style={{ padding: '8px 12px', borderBottom: `1px solid rgba(255,255,255,0.06)` }}>
-        <div style={{
-          fontSize: 10,
-          color: 'rgba(255,255,255,0.68)',
-          lineHeight: 1.55,
-          letterSpacing: 0.3,
-        }}>
-          {node.description}
-        </div>
-      </div>
-
-      {/* Connections */}
-      {node.connections.length > 0 && (
-        <div style={{ padding: '6px 12px', borderBottom: `1px solid rgba(255,255,255,0.06)` }}>
-          <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.5, marginBottom: 5 }}>
-            CONNECTIONS
+      {/* Scrollable body — NW27: scroll captures here, doesn't propagate to camera */}
+      <ScrollBody>
+        {/* Description — NW27: body font 13px minimum */}
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
+          <div style={{
+            fontSize: 13,
+            color: 'rgba(255,255,255,0.82)',
+            lineHeight: 1.65,
+            letterSpacing: 0.3,
+          }}>
+            {node.description}
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {node.connections.map((c, i) => (
-              <span key={i} style={{
-                fontSize: 9,
-                color: node.accentColor,
-                background: `${node.accentColor}18`,
-                border: `1px solid ${node.accentColor}44`,
-                borderRadius: 3,
-                padding: '1px 6px',
-                letterSpacing: 0.5,
-              }}>
-                {c}
-              </span>
+        </div>
+
+        {/* Connections */}
+        {node.connections.length > 0 && (
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
+            <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: 1.5, marginBottom: 6 }}>
+              CONNECTIONS
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {node.connections.map((c, i) => (
+                <span key={i} style={{
+                  fontSize: 11,
+                  color: node.accentColor,
+                  background: `${node.accentColor}18`,
+                  border: `1px solid ${node.accentColor}44`,
+                  borderRadius: 3,
+                  padding: '2px 7px',
+                  letterSpacing: 0.5,
+                }}>
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Metrics */}
+        <div style={{ padding: '10px 16px 14px' }}>
+          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: 1.5, marginBottom: 8 }}>
+            KEY METRICS
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {Object.entries(node.metrics).map(([key, val]) => (
+              <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: 0.5 }}>{key}</span>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.88)', fontWeight: 600, letterSpacing: 0.5, textAlign: 'right', maxWidth: 180 }}>
+                  {typeof val === 'number' ? val.toLocaleString() : val}
+                </span>
+              </div>
             ))}
           </div>
         </div>
-      )}
-
-      {/* Metrics */}
-      <div style={{ padding: '6px 12px 10px' }}>
-        <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.5, marginBottom: 6 }}>
-          KEY METRICS
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {Object.entries(node.metrics).map(([key, val]) => (
-            <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.38)', letterSpacing: 0.5 }}>{key}</span>
-              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.75)', fontWeight: 600, letterSpacing: 0.5, textAlign: 'right', maxWidth: 150 }}>
-                {typeof val === 'number' ? val.toLocaleString() : val}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+      </ScrollBody>
     </div>
   )
 }
@@ -379,6 +422,9 @@ export function NodeClickSystem() {
   // Info panel state
   const [selectedNode, setSelectedNode] = useState<ClickableNode | null>(null)
   const [panelScreenPos, setPanelScreenPos] = useState({ x: 0, y: 0 })
+  // NW27: Distance-based panel scale (1.0 near → 3.0 far)
+  const [panelScale, setPanelScale] = useState(1.0)
+  const panelScaleRef = useRef(1.0)
 
   // All node metadata by id
   const nodesRef = useRef<Map<string, ClickableNode>>(new Map())
@@ -687,7 +733,49 @@ export function NodeClickSystem() {
       selectedIdRef.current = null
     }
     setSelectedNode(null)
+    setPanelScale(1.0)
+    panelScaleRef.current = 1.0
   }, [])
+
+  // NW27: Broadcast panel open/close state so NeuralWorldView can gate its ESC handler
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('nw:panel-state', { detail: { open: !!selectedNode } }))
+  }, [selectedNode])
+
+  // NW27: ESC key closes panel (priority over fullscreen exit)
+  useEffect(() => {
+    if (!selectedNode) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code === 'Escape') {
+        handleClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectedNode, handleClose])
+
+  // NW27: Dynamic panel scale — updates each frame based on camera-to-node distance
+  // distance < 10  → scale 1.0 (1:1 screen size)
+  // distance 10-150 → linear interpolation 1.0 → 3.0
+  // distance > 150  → scale 3.0 (maximum)
+  useEffect(() => {
+    if (!selectedNode) return
+    function onFrame() {
+      const dist = camera.position.distanceTo(selectedNode!.worldPos)
+      let raw: number
+      if (dist < 10)       raw = 1.0
+      else if (dist > 150) raw = 3.0
+      else                 raw = 1.0 + ((dist - 10) / 140) * 2.0
+      // Round to 1dp to avoid excessive re-renders
+      const rounded = Math.round(raw * 10) / 10
+      if (Math.abs(rounded - panelScaleRef.current) >= 0.1) {
+        panelScaleRef.current = rounded
+        setPanelScale(rounded)
+      }
+    }
+    window.addEventListener('nw:frame', onFrame)
+    return () => window.removeEventListener('nw:frame', onFrame)
+  }, [selectedNode, camera])
 
   if (!selectedNode) return null
 
@@ -697,6 +785,7 @@ export function NodeClickSystem() {
       screenX={panelScreenPos.x}
       screenY={panelScreenPos.y}
       onClose={handleClose}
+      scale={panelScale}
     />
   )
 }
