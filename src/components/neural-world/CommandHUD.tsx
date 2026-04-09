@@ -184,6 +184,15 @@ export default function CommandHUD({
     return () => window.removeEventListener('nw:sprint-state', onSprintState)
   }, [])
 
+  // NW24: Edit layout toggle state
+  const [editLayoutActive, setEditLayoutActive] = useState(false)
+
+  const handleEditLayoutToggle = useCallback(() => {
+    const next = !editLayoutActive
+    setEditLayoutActive(next)
+    window.dispatchEvent(new CustomEvent('nw:edit-layout-active', { detail: { active: next } }))
+  }, [editLayoutActive])
+
   // ── FPS counter via nw:frame events ────────────────────────────────────────
   useEffect(() => {
     function onFrame() {
@@ -849,6 +858,32 @@ export default function CommandHUD({
             ? 'WASD move · Space/Q up/down · Shift = toggle sprint · 1/2/3 distance · scroll speed'
             : 'Auto-pilot cinematic'}
         </div>
+
+        {/* NW24: EDIT LAYOUT toggle */}
+        <button
+          onClick={handleEditLayoutToggle}
+          style={{
+            padding: '4px 14px',
+            fontSize: 9,
+            fontWeight: editLayoutActive ? 700 : 400,
+            letterSpacing: 1.5,
+            borderRadius: 14,
+            border: editLayoutActive
+              ? '1px solid rgba(255,165,0,0.8)'
+              : '1px solid rgba(255,255,255,0.15)',
+            background: editLayoutActive
+              ? 'rgba(255,165,0,0.2)'
+              : 'rgba(0,0,0,0.5)',
+            color: editLayoutActive ? '#ffaa33' : 'rgba(255,255,255,0.4)',
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            fontFamily: 'monospace',
+            backdropFilter: 'blur(6px)',
+            boxShadow: editLayoutActive ? '0 0 12px rgba(255,165,0,0.25)' : 'none',
+          }}
+        >
+          {editLayoutActive ? '✕ EXIT EDIT' : '✎ EDIT LAYOUT'}
+        </button>
       </div>
 
       {/* ── NW16: SETTINGS PANEL (gear icon, bottom-right) ────────────────── */}

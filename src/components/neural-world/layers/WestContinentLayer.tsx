@@ -29,6 +29,7 @@ import {
   type NWRFI,
   type NWWorldData,
 } from '../DataBridge'
+import { getNodePosition } from '../NodePositionStore'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -158,12 +159,22 @@ export function WestContinentLayer() {
   // Admin structures (built once)
   const adminBuiltRef = useRef(false)
   const adminMeshesRef = useRef<THREE.Object3D[]>([])
+  // NW24: Admin structure groups keyed by struct ID for repositioning
+  const adminGroupsRef = useRef<Map<string, THREE.Group>>(new Map())
+  // NW24: Last received world data (for rebuild on node move)
+  const lastWorldDataRef = useRef<NWWorldData | null>(null)
 
   const frameHandlerRef = useRef<(() => void) | null>(null)
   const elapsedRef      = useRef(0)
 
   // Track last known invoice states for paid/unpaid transitions
   const invoiceStatusRef = useRef<Map<string, string>>(new Map())
+
+  // NW24: Wrapper to get project position (seeded default + NodePositionStore override)
+  function projectPos(id: string): { x: number; z: number } {
+    const seed = seededPosition(id)
+    return getNodePosition(`P_${id}`, seed.x, seed.z)
+  }
 
   // ── Build job site markers ─────────────────────────────────────────────────
 
@@ -183,7 +194,7 @@ export function WestContinentLayer() {
     )
 
     for (const project of activeProjects) {
-      const { x, z } = seededPosition(project.id)
+      const { x, z } = projectPos(project.id)
       // Only west continent
       if (x < WEST_X_MIN || x > WEST_X_MAX) continue
 
@@ -223,7 +234,7 @@ export function WestContinentLayer() {
     for (const project of projects) {
       if (project.contract_value <= 0 || project.material_cost <= 0) continue
 
-      const { x, z } = seededPosition(project.id)
+      const { x, z } = projectPos(project.id)
       if (x < WEST_X_MIN || x > WEST_X_MAX) continue
 
       const ratio     = Math.min(1, project.material_cost / project.contract_value)
@@ -267,7 +278,7 @@ export function WestContinentLayer() {
     // Project position lookup
     const projPos = new Map<string, { x: number; z: number; y: number }>()
     for (const p of projects) {
-      const { x, z } = seededPosition(p.id)
+      const { x, z } = projectPos(p.id)
       if (x < WEST_X_MIN || x > WEST_X_MAX) continue
       const h = contractValueToHeight(p.contract_value)
       projPos.set(p.id, { x, z, y: h + 0.5 })
@@ -322,7 +333,7 @@ export function WestContinentLayer() {
     // Project position lookup
     const projPos = new Map<string, { x: number; z: number }>()
     for (const p of projects) {
-      const pos = seededPosition(p.id)
+      const pos = projectPos(p.id)
       projPos.set(p.id, pos)
     }
 
@@ -417,7 +428,7 @@ export function WestContinentLayer() {
   function buildFaultLines(rfis: NWRFI[], projects: NWProject[]) {
     const projPos = new Map<string, { x: number; z: number }>()
     for (const p of projects) {
-      const pos = seededPosition(p.id)
+      const pos = projectPos(p.id)
       projPos.set(p.id, pos)
     }
 
@@ -520,9 +531,10 @@ export function WestContinentLayer() {
     const side = PLATEAU_BASE_SIDE + solarIncome * PLATEAU_SCALE
     const cappedSide = Math.min(side, 80)   // cap at 80 units
 
-    // Southwest edge of west continent
-    const px = -160
-    const pz = -130
+    // Southwest edge of west continent — NW24: NodePositionStore override
+    const mtzOverride = getNodePosition('MTZ_PLATEAU', -160, -130)
+    const px = mtzOverride.x
+    const pz = mtzOverride.z
 
     const geo = new THREE.BoxGeometry(cappedSide, 1.5, cappedSide)
     const mat = new THREE.MeshLambertMaterial({
@@ -582,19 +594,35 @@ export function WestContinentLayer() {
     adminBuiltRef.current = true
 
     for (const struct of ADMIN_STRUCTURES) {
-      const meshes = createAdminStructure(struct.id, struct.x, struct.z, struct.color)
-      for (const m of meshes) {
-        scene.add(m)
-        adminMeshesRef.current.push(m)
+      // NW24: Use NodePositionStore overrides for initial position
+      const pos = getNodePosition(struct.id, struct.x, struct.z)
+      const group = new THREE.Group()
+      group.position.set(pos.x, 0, pos.z)
+      scene.add(group)
+      adminGroupsRef.current.set(struct.id, group)
+
+      // Objects built at group-local origin (0, 0)
+      const objects = createAdminStructure(struct.id, 0, 0, struct.color)
+      for (const obj of objects) {
+        group.add(obj)
+        adminMeshesRef.current.push(obj)
       }
 
       // Floating text sprite label
       const labelY = getStructureLabelY(struct.id)
       const sprite = makeTextSprite(struct.label, { fontSize: 20, color: '#aaffdd' })
-      sprite.position.set(struct.x, labelY, struct.z)
-      scene.add(sprite)
+      sprite.position.set(0, labelY, 0)
+      group.add(sprite)
       adminMeshesRef.current.push(sprite)
     }
+  }
+
+  // NW24: Reposition a single admin structure group
+  function repositionAdminStruct(id: string, x: number, z: number) {
+    const group = adminGroupsRef.current.get(id)
+    if (!group) return
+    group.position.x = x
+    group.position.z = z
   }
 
   function getStructureLabelY(id: string): number {
@@ -608,14 +636,18 @@ export function WestContinentLayer() {
   /**
    * Creates a distinctive structure for each admin tool using
    * BoxGeometry / CylinderGeometry compositions.
+   * NW24: All objects built at x=0,z=0 (relative to their parent Group).
+   *       Returns THREE.Object3D[] so lights are included.
    */
   function createAdminStructure(
     id: string,
-    x: number,
-    z: number,
+    _x: number,
+    _z: number,
     baseColor: number,
-  ): THREE.Mesh[] {
-    const meshes: THREE.Mesh[] = []
+  ): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = []
+    const x = 0  // NW24: build at group-local origin
+    const z = 0
 
     const addMesh = (geo: THREE.BufferGeometry, color: number, y: number) => {
       const mat  = new THREE.MeshLambertMaterial({
@@ -625,7 +657,7 @@ export function WestContinentLayer() {
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.set(x, y, z)
       mesh.castShadow = true
-      meshes.push(mesh)
+      objects.push(mesh)
     }
 
     switch (id) {
@@ -640,7 +672,7 @@ export function WestContinentLayer() {
           const pmat = new THREE.MeshLambertMaterial({ color: 0x4a2000 })
           const pm   = new THREE.Mesh(pgeo, pmat)
           pm.position.set(x + ox, 3, z)
-          meshes.push(pm)
+          objects.push(pm)
         }
         // Ghost estimates: small translucent cones
         for (let i = 0; i < 4; i++) {
@@ -652,8 +684,7 @@ export function WestContinentLayer() {
           })
           const gm = new THREE.Mesh(gGeo, gMat)
           gm.position.set(x + (i - 1.5) * 4, 1.5, z + 8)
-          scene.add(gm)
-          meshes.push(gm)
+          objects.push(gm)
         }
         break
       }
@@ -669,18 +700,15 @@ export function WestContinentLayer() {
           const lMat = new THREE.MeshLambertMaterial({ color: 0x00aacc })
           const lm   = new THREE.Mesh(lGeo, lMat)
           lm.position.set(x, 1 + i * 1.5, z + 3)
-          meshes.push(lm)
+          objects.push(lm)
         }
         break
       }
 
       case 'OHM': {
         // Tall OHM tower (northwest)
-        // Base
         addMesh(new THREE.CylinderGeometry(3, 4, 4, 8), baseColor, 2)
-        // Shaft
         addMesh(new THREE.CylinderGeometry(1.5, 2.5, 10, 8), 0x002a18, 9)
-        // Top sphere emitter
         addMesh(new THREE.CylinderGeometry(2, 2, 2, 12), 0x00ff88, 15)
         // Glow ring
         const ringGeo = new THREE.TorusGeometry(2.8, 0.22, 6, 32)
@@ -688,33 +716,24 @@ export function WestContinentLayer() {
         const ring    = new THREE.Mesh(ringGeo, ringMat)
         ring.position.set(x, 15, z)
         ring.rotation.x = Math.PI / 2
-        meshes.push(ring)
-        // OHM point light
+        objects.push(ring)
+        // OHM point light — NW24: add to group (not scene directly)
         const ohl = new THREE.PointLight(0x00ff88, 1.4, 40)
         ohl.position.set(x, 16, z)
-        scene.add(ohl)
-        adminMeshesRef.current.push(ohl)
+        objects.push(ohl)
         break
       }
 
       case 'CHRONO': {
-        // Clock tower (center west)
-        // Base pedestal
         addMesh(new THREE.BoxGeometry(6, 3, 6), baseColor, 1.5)
-        // Tower shaft
         addMesh(new THREE.BoxGeometry(4, 10, 4), 0x1a0030, 8)
-        // Clock face (disc on front)
         addMesh(new THREE.CylinderGeometry(2, 2, 0.3, 32), 0x220044, 13.5)
-        // Spire
         addMesh(new THREE.ConeGeometry(0.6, 3, 6), 0x4400aa, 16)
         break
       }
 
       case 'BLUEPRINT': {
-        // Flat elevated mesa / drafting platform
-        // Main platform
         addMesh(new THREE.BoxGeometry(18, 1, 14), baseColor, 2.0)
-        // Low side walls
         for (const [ox, oz, w, d] of [
           [-9, 0, 1, 14] as [number, number, number, number],
           [ 9, 0, 1, 14] as [number, number, number, number],
@@ -725,22 +744,21 @@ export function WestContinentLayer() {
           const wMat = new THREE.MeshLambertMaterial({ color: 0x002020 })
           const wm   = new THREE.Mesh(wGeo, wMat)
           wm.position.set(x + ox, 3.0, z + oz)
-          meshes.push(wm)
+          objects.push(wm)
         }
-        // Blueprint grid lines on surface
         for (let i = -3; i <= 3; i++) {
           const lgeo = new THREE.BoxGeometry(18, 0.05, 0.1)
           const lmat = new THREE.MeshBasicMaterial({ color: 0x004488, transparent: true, opacity: 0.6 })
           const lm   = new THREE.Mesh(lgeo, lmat)
           lm.position.set(x, 2.55, z + i * 2)
-          meshes.push(lm)
+          objects.push(lm)
         }
         for (let i = -4; i <= 4; i++) {
           const lgeo = new THREE.BoxGeometry(0.1, 0.05, 14)
           const lmat = new THREE.MeshBasicMaterial({ color: 0x004488, transparent: true, opacity: 0.6 })
           const lm   = new THREE.Mesh(lgeo, lmat)
           lm.position.set(x + i * 2, 2.55, z)
-          meshes.push(lm)
+          objects.push(lm)
         }
         break
       }
@@ -750,7 +768,7 @@ export function WestContinentLayer() {
         break
     }
 
-    return meshes
+    return objects
   }
 
   // ── Frame handler ─────────────────────────────────────────────────────────
@@ -841,6 +859,7 @@ export function WestContinentLayer() {
     setupFrameHandler()
 
     const unsub = subscribeWorldData((data: NWWorldData) => {
+      lastWorldDataRef.current = data
       buildJobMarkers(data.projects, data.fieldLogs)
       buildCanyons(data.projects)
       buildRidgeLines(data.projects, data.fieldLogs)
@@ -849,8 +868,54 @@ export function WestContinentLayer() {
       buildMTZPlateau(data.solarIncome)
     })
 
+    // NW24: Reposition admin structures on node move, rebuild project visuals
+    function onNodeMoved(e: Event) {
+      const ev = e as CustomEvent<{ id: string; x: number; z: number }>
+      if (!ev.detail) return
+      const { id, x, z } = ev.detail
+
+      if (adminGroupsRef.current.has(id)) {
+        repositionAdminStruct(id, x, z)
+        return
+      }
+
+      if (id === 'MTZ_PLATEAU') {
+        const data = lastWorldDataRef.current
+        if (data) buildMTZPlateau(data.solarIncome)
+        return
+      }
+
+      if (id.startsWith('P_')) {
+        const data = lastWorldDataRef.current
+        if (!data) return
+        buildJobMarkers(data.projects, data.fieldLogs)
+        buildCanyons(data.projects)
+        buildRidgeLines(data.projects, data.fieldLogs)
+        buildStalactites(data.invoices, data.projects)
+        buildFaultLines(data.rfis, data.projects)
+      }
+    }
+    function onPositionsReset() {
+      for (const struct of ADMIN_STRUCTURES) {
+        repositionAdminStruct(struct.id, struct.x, struct.z)
+      }
+      const data = lastWorldDataRef.current
+      if (data) {
+        buildJobMarkers(data.projects, data.fieldLogs)
+        buildCanyons(data.projects)
+        buildRidgeLines(data.projects, data.fieldLogs)
+        buildStalactites(data.invoices, data.projects)
+        buildFaultLines(data.rfis, data.projects)
+        buildMTZPlateau(data.solarIncome)
+      }
+    }
+    window.addEventListener('nw:node-moved', onNodeMoved)
+    window.addEventListener('nw:positions-reset', onPositionsReset)
+
     return () => {
       unsub()
+      window.removeEventListener('nw:node-moved', onNodeMoved)
+      window.removeEventListener('nw:positions-reset', onPositionsReset)
 
       // Job markers
       for (const [, m] of jobMarkersRef.current) {
@@ -893,14 +958,19 @@ export function WestContinentLayer() {
         plateauLightRef.current = null
       }
 
-      // Admin structures
-      for (const obj of adminMeshesRef.current) {
-        if (obj instanceof THREE.Light) {
-          scene.remove(obj)
-        } else {
-          disposeObj(scene, obj)
-        }
+      // Admin structures — NW24: groups contain all objects now
+      for (const [, group] of adminGroupsRef.current) {
+        scene.remove(group)
+        group.traverse(child => {
+          if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose()
+          const mat = (child as THREE.Mesh).material
+          if (mat) {
+            if (Array.isArray(mat)) mat.forEach(m => m.dispose())
+            else mat.dispose()
+          }
+        })
       }
+      adminGroupsRef.current.clear()
       adminMeshesRef.current = []
       adminBuiltRef.current  = false
 

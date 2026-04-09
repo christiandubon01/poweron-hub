@@ -22,6 +22,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from './WorldContext'
+import { getNodePosition } from './NodePositionStore'
 import {
   subscribeWorldData,
   seededPosition,
@@ -174,21 +175,31 @@ const STATIC_NODES: Omit<ClickableNode, 'worldPos'>[] = [
   },
 ]
 
-const STATIC_POSITIONS: Record<string, THREE.Vector3> = {
-  VAULT:        new THREE.Vector3(-172, 6,   80),
-  LEDGER:       new THREE.Vector3(-30,  6,   25),
-  OHM:          new THREE.Vector3(-165, 6,  -110),
-  CHRONO:       new THREE.Vector3(-105, 6,    0),
-  BLUEPRINT:    new THREE.Vector3(-130, 6,  -70),
-  SPARK:        new THREE.Vector3( 60,  10, -120),
-  SCOUT:        new THREE.Vector3( 160, 6,    0),
-  ECHO:         new THREE.Vector3( 110, 6,  130),
-  ATLAS:        new THREE.Vector3( 75,  6,   80),
-  NEXUS:        new THREE.Vector3( 110, 6,  -60),
-  MTZ_PLATEAU:  new THREE.Vector3(-175, 5,  160),
-  NDA_GATE:     new THREE.Vector3( 25,  5,    0),
-  IP_FORTRESS:  new THREE.Vector3( 190, 8,    0),
-  MRR_MOUNTAIN: new THREE.Vector3( 100, 8,    0),
+// NW24: default positions — actual positions resolved at runtime via NodePositionStore
+const STATIC_POSITION_DEFAULTS: Record<string, { x: number; y: number; z: number }> = {
+  VAULT:        { x: -172, y: 6,  z:   80 },
+  LEDGER:       { x:  -30, y: 6,  z:   25 },
+  OHM:          { x: -165, y: 6,  z: -110 },
+  CHRONO:       { x: -105, y: 6,  z:    0 },
+  BLUEPRINT:    { x: -130, y: 6,  z:  -70 },
+  SPARK:        { x:   60, y: 10, z: -120 },
+  SCOUT:        { x:  160, y: 6,  z:    0 },
+  ECHO:         { x:  110, y: 6,  z:  130 },
+  ATLAS:        { x:   75, y: 6,  z:   80 },
+  NEXUS:        { x:  110, y: 6,  z:  -60 },
+  MTZ_PLATEAU:  { x: -175, y: 5,  z:  160 },
+  NDA_GATE:     { x:   25, y: 5,  z:    0 },
+  IP_FORTRESS:  { x:  190, y: 8,  z:    0 },
+  MRR_MOUNTAIN: { x:  100, y: 8,  z:    0 },
+}
+
+function resolveStaticPositions(): Record<string, THREE.Vector3> {
+  const result: Record<string, THREE.Vector3> = {}
+  for (const [id, def] of Object.entries(STATIC_POSITION_DEFAULTS)) {
+    const pos = getNodePosition(id, def.x, def.z)
+    result[id] = new THREE.Vector3(pos.x, def.y, pos.z)
+  }
+  return result
 }
 
 // ── Info panel component ───────────────────────────────────────────────────────
@@ -433,7 +444,13 @@ export function NodeClickSystem() {
 
   // ── Register static nodes ───────────────────────────────────────────────────
 
+  // NW24: suppress click handling when EDIT LAYOUT is active
+  const isEditModeRef = useRef(false)
+
   useEffect(() => {
+    // NW24: resolve positions (with overrides) and register static nodes
+    const STATIC_POSITIONS = resolveStaticPositions()
+
     STATIC_NODES.forEach(nodeDef => {
       const pos = STATIC_POSITIONS[nodeDef.id]
       if (!pos) return
@@ -441,7 +458,44 @@ export function NodeClickSystem() {
       registerNode(node)
     })
 
+    // NW24: Edit layout mode toggle — suppress clicks during drag
+    function onEditLayout(e: Event) {
+      const ev = e as CustomEvent<{ active: boolean }>
+      isEditModeRef.current = !!ev.detail?.active
+    }
+
+    // NW24: Update hit mesh position when a node is moved
+    function onNodeMoved(e: Event) {
+      const ev = e as CustomEvent<{ id: string; x: number; z: number }>
+      if (!ev.detail) return
+      const { id, x, z } = ev.detail
+      const hitMesh = hitMeshesRef.current.get(id)
+      const glowMesh = glowMeshesRef.current.get(id)
+      if (hitMesh) { hitMesh.position.x = x; hitMesh.position.z = z }
+      if (glowMesh) { glowMesh.position.x = x; glowMesh.position.z = z }
+      const nodeData = nodesRef.current.get(id)
+      if (nodeData) { nodeData.worldPos.x = x; nodeData.worldPos.z = z }
+    }
+
+    // NW24: Reset hit meshes to default positions
+    function onPositionsReset() {
+      const defaults = resolveStaticPositions()
+      for (const [id, vec] of Object.entries(defaults)) {
+        const hitMesh = hitMeshesRef.current.get(id)
+        const glowMesh = glowMeshesRef.current.get(id)
+        if (hitMesh) { hitMesh.position.x = vec.x; hitMesh.position.z = vec.z }
+        if (glowMesh) { glowMesh.position.x = vec.x; glowMesh.position.z = vec.z }
+      }
+    }
+
+    window.addEventListener('nw:edit-layout-active', onEditLayout)
+    window.addEventListener('nw:node-moved', onNodeMoved)
+    window.addEventListener('nw:positions-reset', onPositionsReset)
+
     return () => {
+      window.removeEventListener('nw:edit-layout-active', onEditLayout)
+      window.removeEventListener('nw:node-moved', onNodeMoved)
+      window.removeEventListener('nw:positions-reset', onPositionsReset)
       hitMeshesRef.current.forEach(m => {
         scene.remove(m)
         m.geometry.dispose()
@@ -464,9 +518,10 @@ export function NodeClickSystem() {
     const unsub = subscribeWorldData((data: NWWorldData) => {
       // Register project mountains
       data.projects.forEach((p: NWProject) => {
-        const pos2d = seededPosition(p.id)
+        const seed = seededPosition(p.id)
+        const overridePos = getNodePosition(`P_${p.id}`, seed.x, seed.z)
         const height = contractValueToHeight(p.contract_value)
-        const pos = new THREE.Vector3(pos2d.x, height + 2, pos2d.z)
+        const pos = new THREE.Vector3(overridePos.x, height + 2, overridePos.z)
 
         const unpaidInvoices = data.invoices.filter(
           inv => inv.project_id === p.id && inv.status !== 'paid'
@@ -567,6 +622,9 @@ export function NodeClickSystem() {
     const canvas = renderer.domElement
 
     function onClick(event: MouseEvent) {
+      // NW24: Suppress node clicks in edit layout mode
+      if (isEditModeRef.current || window.__nwEditLayoutActive) return
+
       const rect = canvas.getBoundingClientRect()
       const mouse = new THREE.Vector2(
         ((event.clientX - rect.left) / rect.width)  * 2 - 1,

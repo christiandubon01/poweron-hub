@@ -34,6 +34,7 @@ import * as THREE from 'three'
 import { useWorldContext } from '../WorldContext'
 import { subscribeWorldData, type NWWorldData } from '../DataBridge'
 import { MeshPool } from '../ObjectPool'
+import { getNodePosition } from '../NodePositionStore'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -219,6 +220,9 @@ export function EastContinentLayer() {
   const nexusPulseRef  = useRef<THREE.Mesh | null>(null)
   const guardianPostsRef = useRef<THREE.Mesh[]>([])
   const sparkRingsRef  = useRef<Array<{ ring: THREE.Mesh; phase: number }>>([])
+  // NW24: Admin struct objects per ID (for repositioning)
+  const adminStructObjsRef = useRef<Map<string, THREE.Object3D[]>>(new Map())
+  const adminStructCurPosRef = useRef<Map<string, { x: number; z: number }>>(new Map())
 
   const frameHandlerRef = useRef<(() => void) | null>(null)
   const elapsedRef      = useRef(0)
@@ -429,8 +433,9 @@ export function EastContinentLayer() {
       color:    0x0a1a2a,
       emissive: new THREE.Color(0x0066ff).multiplyScalar(0.2),
     })
+    const mrrPos = getNodePosition('MRR_MOUNTAIN', 100, 0)
     const mountain = new THREE.Mesh(mrrGeo, mrrMat)
-    mountain.position.set(110, 0, 0)  // center of east continent
+    mountain.position.set(mrrPos.x, 0, mrrPos.z)
     mountain.castShadow = true
     mountain.receiveShadow = true
     scene.add(mountain)
@@ -441,13 +446,13 @@ export function EastContinentLayer() {
       fontSize: 18,
       color:    '#4488ff',
     })
-    label.position.set(110, height + radius * 0.5 + 2, 0)
+    label.position.set(mrrPos.x, height + radius * 0.5 + 2, mrrPos.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
 
     // Summit glow
     const glow = new THREE.PointLight(0x4488ff, 1.2, radius * 2.5)
-    glow.position.set(110, radius * 0.6, 0)
+    glow.position.set(mrrPos.x, radius * 0.6, mrrPos.z)
     scene.add(glow)
     mrrGlowRef.current = glow
   }
@@ -536,8 +541,9 @@ export function EastContinentLayer() {
     gateLabel.position.set(0, 7.0, 0)
     gateGroup.add(gateLabel)
 
-    // Gate position: eastern entry at x≈25, z=0
-    gateGroup.position.set(25, 0, 0)
+    // Gate position: eastern entry — NW24: NodePositionStore override
+    const ndaPos = getNodePosition('NDA_GATE', 25, 0)
+    gateGroup.position.set(ndaPos.x, 0, ndaPos.z)
     scene.add(gateGroup)
     ndaGateRef.current = gateGroup
 
@@ -585,12 +591,13 @@ export function EastContinentLayer() {
     const segmentCount   = 10
     const zSpan          = 340 // z from -170 to 170
     const segmentLength  = zSpan / segmentCount
+    const ipPos = getNodePosition('IP_FORTRESS', 190, 0)  // NW24: override support
 
     for (let i = 0; i < segmentCount; i++) {
       const z = -170 + i * segmentLength + segmentLength / 2
       const wallGeo = new THREE.BoxGeometry(2.5, wallHeight, segmentLength * 0.85)
       const wall    = new THREE.Mesh(wallGeo, wallMat)
-      wall.position.set(192, wallHeight / 2, z)
+      wall.position.set(ipPos.x + 2, wallHeight / 2, z)
       wall.castShadow = true
       wall.receiveShadow = true
       scene.add(wall)
@@ -602,7 +609,7 @@ export function EastContinentLayer() {
       fontSize: 14,
       color:    '#6688ff',
     })
-    ipLabel.position.set(192, wallHeight + 2.5, 0)
+    ipLabel.position.set(ipPos.x + 2, wallHeight + 2.5, 0)
     scene.add(ipLabel)
     adminMeshesRef.current.push(ipLabel)
   }
@@ -612,6 +619,8 @@ export function EastContinentLayer() {
   function buildAdminStructures() {
     for (const obj of adminMeshesRef.current) disposeObj(scene, obj)
     adminMeshesRef.current = []
+    adminStructObjsRef.current.clear()
+    adminStructCurPosRef.current.clear()
     for (const post of guardianPostsRef.current) disposeObj(scene, post)
     guardianPostsRef.current = []
     for (const r of sparkRingsRef.current) disposeObj(scene, r.ring)
@@ -619,18 +628,51 @@ export function EastContinentLayer() {
     if (nexusPulseRef.current) { disposeObj(scene, nexusPulseRef.current); nexusPulseRef.current = null }
 
     for (const def of ADMIN_STRUCTURES) {
-      switch (def.type) {
-        case 'spark':   buildSPARK(def);   break
-        case 'scout':   buildSCOUT(def);   break
-        case 'echo':    buildECHO(def);    break
-        case 'atlas':   buildATLAS(def);   break
-        case 'nexus':   buildNEXUS(def);   break
+      // NW24: Apply NodePositionStore override to def position
+      const overridePos = getNodePosition(def.id, def.x, def.z)
+      const defWithOverride: AdminStructureDef = { ...def, x: overridePos.x, z: overridePos.z }
+
+      // Track adminMeshesRef length before build to capture which objects belong to this struct
+      const beforeLen = adminMeshesRef.current.length
+      const beforeSparkLen = sparkRingsRef.current.length
+
+      switch (defWithOverride.type) {
+        case 'spark':   buildSPARK(defWithOverride);   break
+        case 'scout':   buildSCOUT(defWithOverride);   break
+        case 'echo':    buildECHO(defWithOverride);    break
+        case 'atlas':   buildATLAS(defWithOverride);   break
+        case 'nexus':   buildNEXUS(defWithOverride);   break
         default: break
       }
+
+      // Store all objects added by this build call
+      const addedObjs = adminMeshesRef.current.slice(beforeLen)
+      const addedSparkRings = sparkRingsRef.current.slice(beforeSparkLen).map(r => r.ring)
+      adminStructObjsRef.current.set(def.id, [...addedObjs, ...addedSparkRings])
+      adminStructCurPosRef.current.set(def.id, { x: overridePos.x, z: overridePos.z })
     }
 
     // GUARDIAN perimeter posts
     buildGUARDIANPerimeter()
+  }
+
+  // NW24: Reposition all objects of an admin struct by delta
+  function repositionAdminStructEast(id: string, newX: number, newZ: number) {
+    const curPos = adminStructCurPosRef.current.get(id)
+    if (!curPos) return
+    const dx = newX - curPos.x
+    const dz = newZ - curPos.z
+    const objs = adminStructObjsRef.current.get(id) ?? []
+    for (const obj of objs) {
+      obj.position.x += dx
+      obj.position.z += dz
+    }
+    // Also handle nexusPulseRef if this is NEXUS
+    if (id === 'NEXUS' && nexusPulseRef.current) {
+      nexusPulseRef.current.position.x += dx
+      nexusPulseRef.current.position.z += dz
+    }
+    adminStructCurPosRef.current.set(id, { x: newX, z: newZ })
   }
 
   function buildSPARK(def: AdminStructureDef) {
@@ -991,6 +1033,31 @@ export function EastContinentLayer() {
     }
     window.addEventListener('nw:hub-data', onHubData)
 
+    // NW24: Reposition admin structures on node-moved
+    function onNodeMoved(e: Event) {
+      const ev = e as CustomEvent<{ id: string; x: number; z: number }>
+      if (!ev.detail) return
+      const { id, x, z } = ev.detail
+      if (adminStructObjsRef.current.has(id)) {
+        repositionAdminStructEast(id, x, z)
+      } else if (id === 'MRR_MOUNTAIN' || id === 'NDA_GATE' || id === 'IP_FORTRESS') {
+        // Rebuild the specific object
+        const hs = hubStateRef.current
+        if (id === 'MRR_MOUNTAIN') buildMRRMountain(hs.mrr)
+        if (id === 'NDA_GATE') buildNDAGate(hs.ndaSignedCount, hs.ndaTotalCount)
+        if (id === 'IP_FORTRESS') buildIPFortress(hs.ipFilings)
+      }
+    }
+    function onPositionsReset() {
+      buildAdminStructures()
+      const hs = hubStateRef.current
+      buildMRRMountain(hs.mrr)
+      buildNDAGate(hs.ndaSignedCount, hs.ndaTotalCount)
+      buildIPFortress(hs.ipFilings)
+    }
+    window.addEventListener('nw:node-moved', onNodeMoved)
+    window.addEventListener('nw:positions-reset', onPositionsReset)
+
     return () => {
       // Towers
       for (const grp of towerGroupsRef.current) {
@@ -1057,6 +1124,8 @@ export function EastContinentLayer() {
         frameHandlerRef.current = null
       }
       window.removeEventListener('nw:hub-data', onHubData)
+      window.removeEventListener('nw:node-moved', onNodeMoved)
+      window.removeEventListener('nw:positions-reset', onPositionsReset)
       unsub()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
