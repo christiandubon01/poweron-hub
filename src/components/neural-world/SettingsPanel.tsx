@@ -27,6 +27,7 @@ import { CameraMode } from './CameraController'
 import { ColorModeSelector, type ColorMode } from './AdaptiveColorEngine'
 import { AudioSettingsSection } from './SonicLandscape'
 import { ResizablePanel } from './ResizablePanel'
+import { triggerIncomeTutorial, INCOME_TUTORIAL_COMPLETED_KEY } from './IncomeTutorial'
 
 interface SettingsPanelProps {
   cameraMode: CameraMode
@@ -51,6 +52,11 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
     } catch { return 'auto' }
   })
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // NW44: Income Tutorial completed badge
+  const [incomeTutorialDone, setIncomeTutorialDone] = useState(() => {
+    try { return !!localStorage.getItem(INCOME_TUTORIAL_COMPLETED_KEY) } catch { return false }
+  })
 
   // NW40: World speed override
   const WORLD_SPEED_OPTIONS = [
@@ -120,6 +126,13 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
       window.removeEventListener('nw:tp-distance', onTpDist)
       window.removeEventListener('nw:frame', onFrame)
     }
+  }, [])
+
+  // NW44: Listen for income tutorial completion to show badge
+  useEffect(() => {
+    function onComplete() { setIncomeTutorialDone(true) }
+    window.addEventListener('nw:income-tutorial-complete', onComplete)
+    return () => window.removeEventListener('nw:income-tutorial-complete', onComplete)
   }, [])
 
   const applyChange = useCallback((patch: Partial<NWCameraSettings>) => {
@@ -463,6 +476,68 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
 
           {/* ── NW43: Audio Settings ── */}
           <AudioSettingsSection />
+
+          <Divider />
+
+          {/* ── NW44: Income Tutorial ── */}
+          <div style={{
+            color:         '#f59e0b',
+            fontSize:      14,
+            letterSpacing: 2,
+            marginBottom:  4,
+            fontWeight:    700,
+          }}>
+            ◈ INCOME WALKTHROUGH
+          </div>
+          <button
+            onClick={() => { setOpen(false); triggerIncomeTutorial() }}
+            style={{
+              width:         '100%',
+              padding:       '8px 10px',
+              borderRadius:  5,
+              border:        '1px solid rgba(245,158,11,0.5)',
+              background:    'rgba(245,158,11,0.08)',
+              color:         '#f59e0b',
+              fontSize:      14,
+              fontFamily:    'monospace',
+              fontWeight:    700,
+              letterSpacing: 1.5,
+              cursor:        'pointer',
+              display:       'flex',
+              alignItems:    'center',
+              justifyContent:'center',
+              gap:           8,
+              transition:    'all 0.15s',
+              position:      'relative',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.18)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.08)' }}
+            title="8-step income target walkthrough · NEXUS narrated · repeatable"
+          >
+            <span style={{ fontSize: 14 }}>▶</span>
+            INCOME TUTORIAL
+            {incomeTutorialDone && (
+              <span style={{
+                position:       'absolute',
+                top:            -5,
+                right:          -5,
+                background:     '#f59e0b',
+                color:          '#000',
+                fontSize:       9,
+                fontWeight:     700,
+                borderRadius:   '50%',
+                width:          16,
+                height:         16,
+                display:        'flex',
+                alignItems:     'center',
+                justifyContent: 'center',
+                letterSpacing:  0,
+              }}>✓</span>
+            )}
+          </button>
+          <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 14, letterSpacing: 0.8, lineHeight: 1.4 }}>
+            8 steps · NEXUS narrated · repeatable anytime
+          </div>
 
           <Divider />
 
