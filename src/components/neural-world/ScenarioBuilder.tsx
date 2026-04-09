@@ -1,5 +1,13 @@
 /**
- * ScenarioBuilder.tsx — NW6: Interactive scenario panel for Neural World.
+ * ScenarioBuilder.tsx — NW6/NW22: Interactive scenario panel for Neural World.
+ *
+ * NW22 additions:
+ * - 5 operation types: SERVICE | PROJECT | SOLAR | COMMERCIAL | BALANCED
+ * - 5 size presets: SOLO | TEAM_5 | TEAM_20 | TEAM_50 | TEAM_100
+ * - Multiplier table drives terrain overrides — no hardcoded per-combination values
+ * - 2-second animated transitions when switching scenarios
+ * - Badge label: "SCENARIO: SOLAR x TEAM_20"
+ * - onSelectionChange callback for parent badge updates
  *
  * - Collapsible panel on the left side of the canvas.
  * - Toggle button to open/close panel.
@@ -33,6 +41,157 @@ export interface ScenarioBuildingProps {
   onScenarioModeChange: (active: boolean) => void
   /** Called when compare mode activates/deactivates */
   onCompareModeChange: (active: boolean) => void
+  /** NW22: Called when op type or size changes — provides badge label */
+  onSelectionChange?: (label: string) => void
+}
+
+// ── NW22: Operation type definitions ──────────────────────────────────────────
+
+export type OpType = 'SERVICE' | 'PROJECT' | 'SOLAR' | 'COMMERCIAL' | 'BALANCED'
+export type SizePreset = 'SOLO' | 'TEAM_5' | 'TEAM_20' | 'TEAM_50' | 'TEAM_100'
+
+interface OpTypeProfile {
+  id: OpType
+  label: string
+  icon: string
+  description: string
+  /** Multiplier applied to service-category projects */
+  serviceM: number
+  /** Multiplier applied to project-category projects */
+  projectM: number
+  /** Multiplier applied to solar-category projects */
+  solarM: number
+  /** Extra metadata dispatched via event (informational) */
+  invoiceFreqFactor: number
+  materialDepthFactor: number
+  crewRidgeFactor: number
+}
+
+const OP_PROFILES: Record<OpType, OpTypeProfile> = {
+  SERVICE: {
+    id: 'SERVICE',
+    label: 'SERVICE',
+    icon: '⚙',
+    description: '70% service / 30% projects — fast cycles, low material',
+    serviceM: 1.3,
+    projectM: 0.65,
+    solarM: 0.5,
+    invoiceFreqFactor: 1.8,
+    materialDepthFactor: 0.4,
+    crewRidgeFactor: 0.7,
+  },
+  PROJECT: {
+    id: 'PROJECT',
+    label: 'PROJECT',
+    icon: '▲',
+    description: '30% service / 70% projects — tall peaks, deep materials',
+    serviceM: 0.55,
+    projectM: 1.6,
+    solarM: 0.85,
+    invoiceFreqFactor: 0.6,
+    materialDepthFactor: 1.7,
+    crewRidgeFactor: 1.4,
+  },
+  SOLAR: {
+    id: 'SOLAR',
+    label: 'SOLAR',
+    icon: '☀',
+    description: 'Solar specialist — MTZ expands, Enphase/RMO income',
+    serviceM: 0.7,
+    projectM: 0.9,
+    solarM: 2.3,
+    invoiceFreqFactor: 0.9,
+    materialDepthFactor: 1.2,
+    crewRidgeFactor: 1.0,
+  },
+  COMMERCIAL: {
+    id: 'COMMERCIAL',
+    label: 'COMMERCIAL',
+    icon: '🏢',
+    description: 'Commercial TI — massive peaks, deep compliance, long timeline',
+    serviceM: 0.35,
+    projectM: 2.6,
+    solarM: 0.3,
+    invoiceFreqFactor: 0.35,
+    materialDepthFactor: 2.2,
+    crewRidgeFactor: 1.9,
+  },
+  BALANCED: {
+    id: 'BALANCED',
+    label: 'BALANCED',
+    icon: '◈',
+    description: 'Balanced — reflects actual data ratios',
+    serviceM: 1.0,
+    projectM: 1.0,
+    solarM: 1.0,
+    invoiceFreqFactor: 1.0,
+    materialDepthFactor: 1.0,
+    crewRidgeFactor: 1.0,
+  },
+}
+
+interface SizePresetDef {
+  id: SizePreset
+  label: string
+  scale: number  // overall height scale multiplier
+}
+
+const SIZE_PRESETS: SizePresetDef[] = [
+  { id: 'SOLO',     label: 'SOLO', scale: 0.55 },
+  { id: 'TEAM_5',   label: '5',    scale: 0.82 },
+  { id: 'TEAM_20',  label: '20',   scale: 1.15 },
+  { id: 'TEAM_50',  label: '50',   scale: 1.70 },
+  { id: 'TEAM_100', label: '100',  scale: 2.50 },
+]
+
+/** Derive project "kind" from NWProject.type field for multiplier selection */
+function getProjectKind(p: NWProject): 'service' | 'project' | 'solar' {
+  const t = (p.type ?? '').toLowerCase()
+  const name = p.name.toLowerCase()
+  if (
+    t.includes('solar') || t.includes('pv') || t.includes('photovoltaic') ||
+    name.includes('solar') || name.includes('enphase') || name.includes('rmo')
+  ) return 'solar'
+  if (
+    t.includes('service') || t.includes('maintenance') || t.includes('repair') ||
+    t.includes('troubleshoot') || t.includes('callback') ||
+    name.includes('service') || name.includes('cb ') || name.includes('maint')
+  ) return 'service'
+  return 'project'
+}
+
+/**
+ * Compute target overrides for a given op type + size + project list.
+ * Uses multiplier tables — NOT hardcoded per combination.
+ */
+function computeTargetOverrides(
+  projects: NWProject[],
+  opType: OpType,
+  sizePreset: SizePreset,
+): ScenarioOverrides {
+  const profile = OP_PROFILES[opType]
+  const sizeDef  = SIZE_PRESETS.find(s => s.id === sizePreset) ?? SIZE_PRESETS[2]
+  const result: ScenarioOverrides = {}
+
+  for (const p of projects) {
+    const kind = getProjectKind(p)
+    let kindM: number
+    if (kind === 'solar')   kindM = profile.solarM
+    else if (kind === 'service') kindM = profile.serviceM
+    else                    kindM = profile.projectM
+
+    // Clamp to valid range [0.05, 3.0]
+    const raw = kindM * sizeDef.scale
+    result[p.id] = Math.max(0.05, Math.min(3.0, raw))
+  }
+  return result
+}
+
+/** Build the badge label string */
+function buildSelectionLabel(opType: OpType, sizePreset: SizePreset): string {
+  const sizeDef = SIZE_PRESETS.find(s => s.id === sizePreset)
+  return `${opType} × ${sizeDef ? 'TEAM_' + sizeDef.label : sizePreset}`
+    .replace('TEAM_SOLO', 'SOLO')
 }
 
 // ── Event helpers ──────────────────────────────────────────────────────────────
@@ -55,14 +214,26 @@ export function dispatchScenarioActivate(active: boolean) {
   )
 }
 
+/** NW22: Dispatch operation-type metadata for layers that want to react */
+function dispatchOpTypeSignal(profile: OpTypeProfile, sizeDef: SizePresetDef) {
+  window.dispatchEvent(
+    new CustomEvent('nw:scenario-op-type', {
+      detail: {
+        opType: profile.id,
+        sizePreset: sizeDef.id,
+        invoiceFreqFactor: profile.invoiceFreqFactor,
+        materialDepthFactor: profile.materialDepthFactor,
+        crewRidgeFactor: profile.crewRidgeFactor,
+        sizeScale: sizeDef.scale,
+      },
+    })
+  )
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function multiplierToPercent(m: number): number {
   return Math.round((m - 1.0) * 100)
-}
-
-function percentToMultiplier(p: number): number {
-  return 1.0 + p / 100
 }
 
 /** Compute average health delta from overrides (used for sky shift signal) */
@@ -71,6 +242,22 @@ function computeHealthDelta(overrides: ScenarioOverrides): number {
   if (values.length === 0) return 0
   const avg = values.reduce((s, v) => s + v, 0) / values.length
   return avg - 1.0   // 0 = no change, + = healthier, - = unhealthier
+}
+
+/** Linearly interpolate between two override maps over t ∈ [0, 1] */
+function lerpOverrides(
+  from: ScenarioOverrides,
+  to: ScenarioOverrides,
+  t: number,
+): ScenarioOverrides {
+  const result: ScenarioOverrides = {}
+  const keys = new Set([...Object.keys(from), ...Object.keys(to)])
+  for (const k of keys) {
+    const a = from[k] ?? 1.0
+    const b = to[k]   ?? 1.0
+    result[k] = a + (b - a) * t
+  }
+  return result
 }
 
 // ── Style helpers ──────────────────────────────────────────────────────────────
@@ -97,9 +284,16 @@ function btnStyle(active: boolean, accent: string): React.CSSProperties {
   }
 }
 
+// ── Transition duration (ms) ──────────────────────────────────────────────────
+const TRANSITION_MS = 2000
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: ScenarioBuildingProps) {
+export function ScenarioBuilder({
+  onScenarioModeChange,
+  onCompareModeChange,
+  onSelectionChange,
+}: ScenarioBuildingProps) {
   const [panelOpen,      setPanelOpen]      = useState(false)
   const [scenarioActive, setScenarioActive] = useState(false)
   const [compareMode,    setCompareMode]    = useState(false)
@@ -112,8 +306,66 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
   const [orgId,          setOrgId]          = useState<string | null>(null)
   const [loadError,      setLoadError]      = useState('')
 
-  const overridesRef = useRef<ScenarioOverrides>(overrides)
+  // NW22: operation type + size preset state
+  const [opType,      setOpType]      = useState<OpType>('BALANCED')
+  const [sizePreset,  setSizePreset]  = useState<SizePreset>('TEAM_20')
+  const [transitioning, setTransitioning] = useState(false)
+
+  const overridesRef       = useRef<ScenarioOverrides>(overrides)
+  const projectsRef        = useRef<NWProject[]>(projects)
+  const animFrameRef       = useRef<number>(0)
+  const animStartRef       = useRef<number>(0)
+  const animFromRef        = useRef<ScenarioOverrides>({})
+  const animToRef          = useRef<ScenarioOverrides>({})
+
   overridesRef.current = overrides
+  projectsRef.current  = projects
+
+  // ── NW22: Animate overrides from current → target over TRANSITION_MS ──────
+
+  const startTransition = useCallback((targetOverrides: ScenarioOverrides) => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+
+    animFromRef.current = { ...overridesRef.current }
+    animToRef.current   = targetOverrides
+    animStartRef.current = performance.now()
+    setTransitioning(true)
+
+    function step(now: number) {
+      const elapsed = now - animStartRef.current
+      const t = Math.min(elapsed / TRANSITION_MS, 1.0)
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - t, 3)
+      const interpolated = lerpOverrides(animFromRef.current, animToRef.current, eased)
+      setOverrides(interpolated)
+      dispatchScenarioOverride(interpolated)
+      const delta = computeHealthDelta(interpolated)
+      window.dispatchEvent(new CustomEvent('nw:scenario-health', { detail: { delta } }))
+
+      if (t < 1.0) {
+        animFrameRef.current = requestAnimationFrame(step)
+      } else {
+        setTransitioning(false)
+        animFrameRef.current = 0
+      }
+    }
+    animFrameRef.current = requestAnimationFrame(step)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Cleanup animation on unmount ─────────────────────────────────────────
+
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+    }
+  }, [])
+
+  // ── NW22: Notify parent of selection label ────────────────────────────────
+
+  useEffect(() => {
+    const label = buildSelectionLabel(opType, sizePreset)
+    onSelectionChange?.(label)
+  }, [opType, sizePreset, onSelectionChange])
 
   // ── Load org + saved scenarios from Supabase ────────────────────────────────
 
@@ -173,9 +425,9 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
   // ── Dispatch override events whenever overrides change (in scenario mode) ──
 
   useEffect(() => {
-    if (scenarioActive) {
+    if (scenarioActive && !transitioning) {
+      // Already dispatched during animation; only dispatch here for manual slider changes
       dispatchScenarioOverride(overrides)
-      // Dispatch health delta for sky shift
       const delta = computeHealthDelta(overrides)
       window.dispatchEvent(
         new CustomEvent('nw:scenario-health', { detail: { delta } })
@@ -183,6 +435,33 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrides, scenarioActive])
+
+  // ── NW22: Apply preset when op type or size changes (if scenario active) ──
+
+  const applyPreset = useCallback((newOpType: OpType, newSizePreset: SizePreset) => {
+    if (!scenarioActive) return
+    const targetOverrides = computeTargetOverrides(
+      projectsRef.current,
+      newOpType,
+      newSizePreset,
+    )
+    startTransition(targetOverrides)
+
+    // Dispatch op-type signal for layers
+    const profile  = OP_PROFILES[newOpType]
+    const sizeDef  = SIZE_PRESETS.find(s => s.id === newSizePreset) ?? SIZE_PRESETS[2]
+    dispatchOpTypeSignal(profile, sizeDef)
+  }, [scenarioActive, startTransition])
+
+  function handleOpTypeChange(type: OpType) {
+    setOpType(type)
+    applyPreset(type, sizePreset)
+  }
+
+  function handleSizePresetChange(size: SizePreset) {
+    setSizePreset(size)
+    applyPreset(opType, size)
+  }
 
   // ── Toggle scenario mode ───────────────────────────────────────────────────
 
@@ -192,13 +471,19 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
     onScenarioModeChange(next)
     dispatchScenarioActivate(next)
 
-    if (!next) {
-      // Reset all overrides to 1.0 when deactivating
+    if (next) {
+      // Activate: compute and animate to current preset
+      const targetOverrides = computeTargetOverrides(projects, opType, sizePreset)
+      startTransition(targetOverrides)
+      const profile = OP_PROFILES[opType]
+      const sizeDef = SIZE_PRESETS.find(s => s.id === sizePreset) ?? SIZE_PRESETS[2]
+      dispatchOpTypeSignal(profile, sizeDef)
+    } else {
+      // Deactivate: animate back to 1.0 baseline
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
       const reset: ScenarioOverrides = {}
       for (const p of projects) reset[p.id] = 1.0
-      setOverrides(reset)
-      dispatchScenarioOverride(reset)
-      // If compare mode was on, turn it off
+      startTransition(reset)
       if (compareMode) {
         setCompareMode(false)
         onCompareModeChange(false)
@@ -215,9 +500,14 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
     onCompareModeChange(next)
   }
 
-  // ── Update single override ─────────────────────────────────────────────────
+  // ── Update single override (manual slider) ─────────────────────────────────
 
   function updateOverride(projectId: string, multiplier: number) {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current)
+      animFrameRef.current = 0
+      setTransitioning(false)
+    }
     setOverrides(prev => ({ ...prev, [projectId]: Math.max(0.05, Math.min(3.0, multiplier)) }))
   }
 
@@ -226,7 +516,7 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
   function resetAllOverrides() {
     const reset: ScenarioOverrides = {}
     for (const p of projects) reset[p.id] = 1.0
-    setOverrides(reset)
+    startTransition(reset)
   }
 
   // ── Save scenario to Supabase ──────────────────────────────────────────────
@@ -270,13 +560,13 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
     // Merge overrides, keeping 1.0 for any projects not in snapshot
     const merged: ScenarioOverrides = {}
     for (const p of projects) merged[p.id] = snap.overrides[p.id] ?? 1.0
-    setOverrides(merged)
 
     if (!scenarioActive) {
       setScenarioActive(true)
       onScenarioModeChange(true)
       dispatchScenarioActivate(true)
     }
+    startTransition(merged)
   }
 
   // ── Delete scenario ────────────────────────────────────────────────────────
@@ -397,7 +687,110 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
               fontFamily: 'monospace',
               letterSpacing: 0.5,
             }}>
-              {healthLabel}
+              {transitioning ? '⟳ TRANSITIONING…' : healthLabel}
+            </div>
+          )}
+        </div>
+
+        {/* NW22: Operation Type + Size Selectors */}
+        <div style={{
+          padding: '10px 14px 8px',
+          borderBottom: `1px solid rgba(245,158,11,0.15)`,
+        }}>
+          {/* Operation Type row */}
+          <div style={{
+            fontSize: 8,
+            color: 'rgba(255,255,255,0.35)',
+            letterSpacing: 1.5,
+            fontFamily: 'monospace',
+            marginBottom: 5,
+          }}>
+            OPERATION TYPE
+          </div>
+          <div style={{ display: 'flex', gap: 3, marginBottom: 8 }}>
+            {(Object.keys(OP_PROFILES) as OpType[]).map(ot => {
+              const p = OP_PROFILES[ot]
+              const active = opType === ot
+              return (
+                <button
+                  key={ot}
+                  onClick={() => handleOpTypeChange(ot)}
+                  title={p.description}
+                  style={{
+                    flex: 1,
+                    padding: '4px 2px',
+                    fontSize: 7.5,
+                    letterSpacing: 0.3,
+                    fontFamily: 'monospace',
+                    borderRadius: 3,
+                    border: `1px solid ${active ? AMBER : 'rgba(255,255,255,0.1)'}`,
+                    background: active ? `${AMBER}22` : 'rgba(255,255,255,0.03)',
+                    color: active ? AMBER : 'rgba(255,255,255,0.45)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                    textAlign: 'center' as const,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <div style={{ fontSize: 10 }}>{p.icon}</div>
+                  <div>{p.label}</div>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Size Preset row */}
+          <div style={{
+            fontSize: 8,
+            color: 'rgba(255,255,255,0.35)',
+            letterSpacing: 1.5,
+            fontFamily: 'monospace',
+            marginBottom: 5,
+          }}>
+            TEAM SIZE
+          </div>
+          <div style={{ display: 'flex', gap: 3 }}>
+            {SIZE_PRESETS.map(sp => {
+              const active = sizePreset === sp.id
+              return (
+                <button
+                  key={sp.id}
+                  onClick={() => handleSizePresetChange(sp.id)}
+                  style={{
+                    flex: 1,
+                    padding: '4px 2px',
+                    fontSize: 8,
+                    letterSpacing: 0.3,
+                    fontFamily: 'monospace',
+                    borderRadius: 3,
+                    border: `1px solid ${active ? TEAL : 'rgba(255,255,255,0.1)'}`,
+                    background: active ? `${TEAL}22` : 'rgba(255,255,255,0.03)',
+                    color: active ? TEAL : 'rgba(255,255,255,0.45)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                    textAlign: 'center' as const,
+                  }}
+                >
+                  {sp.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Current selection display */}
+          {scenarioActive && (
+            <div style={{
+              marginTop: 6,
+              fontSize: 9,
+              color: AMBER,
+              fontFamily: 'monospace',
+              letterSpacing: 0.8,
+              textAlign: 'center',
+              background: `${AMBER}11`,
+              borderRadius: 3,
+              padding: '3px 0',
+            }}>
+              {OP_PROFILES[opType].description}
             </div>
           )}
         </div>
@@ -417,10 +810,23 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
             </div>
           )}
 
+          {projects.length > 0 && (
+            <div style={{
+              fontSize: 8,
+              color: 'rgba(255,255,255,0.25)',
+              fontFamily: 'monospace',
+              letterSpacing: 0.5,
+            }}>
+              FINE TUNE — drag to override
+            </div>
+          )}
+
           {projects.map(p => {
             const m = overrides[p.id] ?? 1.0
             const pct = multiplierToPercent(m)
             const changed = Math.abs(m - 1.0) > 0.02
+            const kind = getProjectKind(p)
+            const kindColor = kind === 'solar' ? '#ffe060' : kind === 'service' ? TEAL : '#60a5fa'
 
             return (
               <div key={p.id} style={{
@@ -454,24 +860,35 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
                       accentColor: changed ? AMBER : TEAL,
                       background: 'transparent',
                     }}
-                    disabled={!scenarioActive}
+                    disabled={!scenarioActive || transitioning}
                     title={`${p.name}: ${pct >= 0 ? '+' : ''}${pct}%`}
                   />
                 </div>
 
                 {/* Project info + value */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 9,
-                    color: changed ? AMBER : 'rgba(255,255,255,0.55)',
-                    fontFamily: 'monospace',
-                    letterSpacing: 0.5,
-                    textOverflow: 'ellipsis',
-                    overflow: 'hidden',
-                    whiteSpace: 'nowrap',
-                    maxWidth: 160,
-                  }}>
-                    {p.name}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
+                    <span style={{
+                      fontSize: 7,
+                      color: kindColor,
+                      fontFamily: 'monospace',
+                      letterSpacing: 0.3,
+                      flexShrink: 0,
+                    }}>
+                      {kind === 'solar' ? '☀' : kind === 'service' ? '⚙' : '▲'}
+                    </span>
+                    <div style={{
+                      fontSize: 9,
+                      color: changed ? AMBER : 'rgba(255,255,255,0.55)',
+                      fontFamily: 'monospace',
+                      letterSpacing: 0.5,
+                      textOverflow: 'ellipsis',
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
+                      maxWidth: 140,
+                    }}>
+                      {p.name}
+                    </div>
                   </div>
                   <div style={{
                     fontSize: 10,
@@ -495,6 +912,7 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
           {scenarioActive && projects.length > 0 && (
             <button
               onClick={resetAllOverrides}
+              disabled={transitioning}
               style={{
                 marginTop: 4,
                 background: 'rgba(255,255,255,0.04)',
@@ -504,8 +922,9 @@ export function ScenarioBuilder({ onScenarioModeChange, onCompareModeChange }: S
                 borderRadius: 3,
                 fontSize: 9,
                 letterSpacing: 1.2,
-                cursor: 'pointer',
+                cursor: transitioning ? 'not-allowed' : 'pointer',
                 fontFamily: 'monospace',
+                opacity: transitioning ? 0.4 : 1,
               }}
             >
               ↺ RESET ALL TO BASELINE

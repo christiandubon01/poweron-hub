@@ -273,8 +273,10 @@ export default function NeuralWorldView() {
   const [cameraMode, setCameraMode] = useState<HUDCameraMode>(HUDCameraMode.ORBIT)
 
   // NW6: scenario + compare mode state
-  const [scenarioActive, setScenarioActive] = useState(false)
-  const [compareMode,    setCompareMode]    = useState(false)
+  const [scenarioActive,  setScenarioActive]  = useState(false)
+  const [compareMode,     setCompareMode]     = useState(false)
+  // NW22: scenario selection label for badge
+  const [scenarioLabel,   setScenarioLabel]   = useState('BALANCED × TEAM_20')
 
   // NW7b: Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -562,9 +564,10 @@ export default function NeuralWorldView() {
       <ScenarioBuilder
         onScenarioModeChange={handleScenarioModeChange}
         onCompareModeChange={handleCompareModeChange}
+        onSelectionChange={setScenarioLabel}
       />
 
-      {/* ── NW6: Mode badge ── */}
+      {/* ── NW6/NW22: Mode badge ── */}
       {scenarioActive && (
         <div
           style={{
@@ -586,8 +589,9 @@ export default function NeuralWorldView() {
             letterSpacing: 2,
             fontFamily: 'monospace',
             fontWeight: 600,
+            whiteSpace: 'nowrap',
           }}>
-            ⬛ SCENARIO MODE
+            ◈ SCENARIO: {scenarioLabel}
           </div>
         </div>
       )}
