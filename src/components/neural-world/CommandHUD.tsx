@@ -31,6 +31,7 @@ import { subscribeWorldData, type NWWorldData, type NWProject } from './DataBrid
 import { SettingsPanel } from './SettingsPanel'
 import { MinimapRenderer } from './MinimapRenderer'
 import { SimulationHUD } from './SimulationHUD'
+import { InstructionalOverlay } from './InstructionalOverlay'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -485,12 +486,15 @@ export default function CommandHUD({
         </div>
       )}
 
+      {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
+      <InstructionalOverlay />
+
       {/* ── TOP-LEFT: TITLE + LIVE BADGE + FULLSCREEN TOGGLE ──────────── */}
       <div
         style={{
           position: 'absolute',
           top: 14,
-          left: 14,
+          left: 50,
           zIndex: 25,
           display: 'flex',
           flexDirection: 'column',
