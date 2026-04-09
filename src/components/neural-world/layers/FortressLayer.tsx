@@ -34,6 +34,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from '../WorldContext'
 import { subscribeWorldData, type NWWorldData } from '../DataBridge'
+import { makeLabel, type NWLabel } from '../utils/makeLabel'
 
 // ── Fortress constants ────────────────────────────────────────────────────────
 
@@ -92,42 +93,7 @@ function getMockHubState(): HubState {
   return { ipFilings: 2, ndaSignedCount: 7, ndaTotalCount: 9 }
 }
 
-// ── Text sprite helper ─────────────────────────────────────────────────────────
-
-function makeTextSprite(
-  text: string,
-  opts?: { fontSize?: number; color?: string; bgColor?: string },
-): THREE.Sprite {
-  const fontSize = Math.max(20, opts?.fontSize ?? 20)
-  const color    = opts?.color    ?? '#ffffff'
-  const bgColor  = opts?.bgColor  ?? 'rgba(8,8,18,0.92)'
-  const padding  = 10
-
-  const canvas = document.createElement('canvas')
-  const ctx    = canvas.getContext('2d')!
-  ctx.font     = `bold ${fontSize}px monospace`
-  const m      = ctx.measureText(text)
-  const tw     = Math.max(512, Math.ceil(m.width) + padding * 2)
-  const th     = fontSize + padding * 2
-  canvas.width  = tw
-  canvas.height = th
-
-  ctx.font         = `bold ${fontSize}px monospace`
-  ctx.fillStyle    = bgColor
-  ctx.fillRect(0, 0, tw, th)
-  ctx.strokeStyle  = 'rgba(0,229,204,0.3)'
-  ctx.lineWidth    = 1
-  ctx.strokeRect(0.5, 0.5, tw - 1, th - 1)
-  ctx.fillStyle    = color
-  ctx.textBaseline = 'middle'
-  ctx.fillText(text, padding, th / 2)
-
-  const tex = new THREE.CanvasTexture(canvas)
-  const mat = new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true, opacity: 0.95 })
-  const spr = new THREE.Sprite(mat)
-  spr.scale.set((tw / th) * 3.5, 3.5, 1)
-  return spr
-}
+// NW31b: makeTextSprite replaced by shared makeLabel utility (see utils/makeLabel.ts)
 
 // ── Dispose helper ─────────────────────────────────────────────────────────────
 
@@ -148,7 +114,10 @@ function disposeObj(scene: THREE.Scene, obj: THREE.Object3D | null): void {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function FortressLayer() {
-  const { scene, playerPosition } = useWorldContext()
+  const { scene, camera, playerPosition } = useWorldContext()
+
+  // NW31b: all label sprites for per-frame visibility updates
+  const labelSpritesRef = useRef<THREE.Sprite[]>([])
 
   // ── All Three.js object refs ─────────────────────────────────────────────
   const fortressGroupRef  = useRef<THREE.Group | null>(null)
@@ -207,6 +176,8 @@ export function FortressLayer() {
     }
     for (const s of ndaSpheresRef.current) disposeObj(scene, s)
     ndaSpheresRef.current = []
+    // NW31b: clear label sprites before rebuild
+    labelSpritesRef.current = []
 
     const group = new THREE.Group()
     group.position.set(0, 0, 0)  // world origin; all children use absolute coords
@@ -259,12 +230,11 @@ export function FortressLayer() {
       FX_MAX, ipHeight / 2, FORTRESS_CZ,
       WALL_THICK, ipHeight, FORTRESS_D,
     )
-    // IP label on east wall
-    const ipLabel = makeTextSprite(`IP FORTRESS · ${hub.ipFilings} FILINGS`, {
-      fontSize: 14, color: '#6688ff',
-    })
+    // IP label on east wall — NW31b
+    const ipLabel = makeLabel(`IP FORTRESS · ${hub.ipFilings} FILINGS`, '#6688ff')
     ipLabel.position.set(FX_MAX + 0.5, ipHeight + 1.5, FORTRESS_CZ)
     group.add(ipLabel)
+    labelSpritesRef.current.push(ipLabel)
 
     // Teal emissive edge lines along wall tops (thin flat boxes)
     const edgeMat = new THREE.MeshLambertMaterial({
@@ -403,10 +373,11 @@ export function FortressLayer() {
     platformEdge.position.set(FORTRESS_CX, OVERLOOK_Y + 0.56, FZ_MAX - 0.5)
     group.add(platformEdge)
 
-    // Overlook label
-    const overlookLabel = makeTextSprite('⬆ OVERLOOK PLATFORM', { fontSize: 13, color: '#00e5cc' })
+    // Overlook label — NW31b
+    const overlookLabel = makeLabel('⬆ OVERLOOK PLATFORM', '#00e5cc')
     overlookLabel.position.set(FORTRESS_CX, OVERLOOK_Y + 2.5, FZ_MAX - 2)
     group.add(overlookLabel)
+    labelSpritesRef.current.push(overlookLabel)
 
     // ── HOLOGRAPHIC TACTICAL TABLE ────────────────────────────────────────
 
@@ -445,10 +416,11 @@ export function FortressLayer() {
     scene.add(tableLight)
     tableLightRef.current = tableLight
 
-    // Table label
-    const tableLabel = makeTextSprite('TACTICAL WAR ROOM', { fontSize: 14, color: '#00e5cc' })
+    // Table label — NW31b
+    const tableLabel = makeLabel('TACTICAL WAR ROOM', '#00e5cc')
     tableLabel.position.set(FORTRESS_CX, 4.2, FORTRESS_CZ)
     group.add(tableLabel)
+    labelSpritesRef.current.push(tableLabel)
 
     // ── OPERATOR MONUMENT (center courtyard) ─────────────────────────────
 
@@ -460,9 +432,11 @@ export function FortressLayer() {
 
     // ── FORTRESS LABEL ────────────────────────────────────────────────────
 
-    const fortressLabel = makeTextSprite('◈ FORTRESS COMMAND CENTER', { fontSize: 16, color: '#00e5cc' })
+    // NW31b: fortress label
+    const fortressLabel = makeLabel('◈ FORTRESS COMMAND CENTER', '#00e5cc')
     fortressLabel.position.set(FORTRESS_CX, WALL_H + 3.5, FZ_MIN - 2)
     group.add(fortressLabel)
+    labelSpritesRef.current.push(fortressLabel)
 
     scene.add(group)
     fortressGroupRef.current = group
@@ -538,10 +512,11 @@ export function FortressLayer() {
     opLight.position.set(FORTRESS_CX, 7, FORTRESS_CZ)
     scene.add(opLight)
 
-    // Label
-    const opLabel = makeTextSprite('◈ OPERATOR', { fontSize: 14, color: '#ffcc00' })
+    // Label — NW31b: spec color gold #FFD24A
+    const opLabel = makeLabel('◈ OPERATOR', '#FFD24A')
     opLabel.position.set(FORTRESS_CX, 8.0, FORTRESS_CZ)
     group.add(opLabel)
+    labelSpritesRef.current.push(opLabel)
   }
 
   // ── NDA gate arch ────────────────────────────────────────────────────────
@@ -581,20 +556,20 @@ export function FortressLayer() {
     beamR.position.x = FORTRESS_CX + GATE_W / 2 - 0.4
     group.add(beamR)
 
-    // Gate label
-    const gateLabel = makeTextSprite('NDA GATE', { fontSize: 15, color: '#00ff44' })
+    // Gate label — NW31b: spec color #2EE89A
+    const gateLabel = makeLabel('NDA GATE', '#2EE89A')
     gateLabel.position.set(FORTRESS_CX, WALL_H + 1.2, FZ_MIN)
     group.add(gateLabel)
+    labelSpritesRef.current.push(gateLabel)
 
-    // NDA status
+    // NDA status — NW31b
     const pct    = hub.ndaTotalCount > 0
       ? Math.round(hub.ndaSignedCount / hub.ndaTotalCount * 100)
       : 0
-    const statusLabel = makeTextSprite(`${hub.ndaSignedCount}/${hub.ndaTotalCount} SIGNED (${pct}%)`, {
-      fontSize: 12, color: '#00cc44',
-    })
+    const statusLabel = makeLabel(`${hub.ndaSignedCount}/${hub.ndaTotalCount} SIGNED (${pct}%)`, '#2EE89A')
     statusLabel.position.set(FORTRESS_CX, WALL_H - 0.5, FZ_MIN)
     group.add(statusLabel)
+    labelSpritesRef.current.push(statusLabel)
   }
 
   // ── NDA spheres (unsigned queue outside, signed inside) ──────────────────
@@ -726,6 +701,13 @@ export function FortressLayer() {
       if (!onPlat && nexusComment !== '') {
         setNexusComment('')
         lastCommentYRef.current = -999
+      }
+
+      // NW31b: Frustum cull + distance fade all label sprites
+      const _wp = new THREE.Vector3()
+      for (const s of labelSpritesRef.current) {
+        s.getWorldPosition(_wp)
+        ;(s as NWLabel).updateVisibility(camera, _wp)
       }
     }
 

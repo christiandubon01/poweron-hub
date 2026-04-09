@@ -30,6 +30,7 @@ import {
   type NWWorldData,
 } from '../DataBridge'
 import { getNodePosition } from '../NodePositionStore'
+import { makeLabel, type NWLabel } from '../utils/makeLabel'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -53,62 +54,16 @@ const ADMIN_STRUCTURES = [
   { id: 'BLUEPRINT', x: -130, z: -70,  label: 'BLUEPRINT', color: 0x001a1a },
 ]
 
-// ── Text sprite helper ─────────────────────────────────────────────────────────
-
-// NW27b: Text sprite with minimum 512px wide texture and high-contrast styling.
-// Sprites use billboard rendering (always face camera) and scale up with distance
-// so labels remain readable from far away.
-function makeTextSprite(text: string, options?: {
-  fontSize?: number
-  color?: string
-  bgColor?: string
-  padding?: number
-}): THREE.Sprite {
-  // NW27b: minimum 24px font for readability (was 22)
-  const fontSize  = Math.max(24, options?.fontSize ?? 24)
-  const color     = options?.color   ?? '#ffffff'
-  const bgColor   = options?.bgColor ?? 'rgba(8,8,12,0.95)'
-  const padding   = options?.padding ?? 12
-
-  // Measure text at target font size
-  const canvas  = document.createElement('canvas')
-  const ctx     = canvas.getContext('2d')!
-  ctx.font      = `bold ${fontSize}px monospace`
-  const metrics = ctx.measureText(text)
-  // NW27b: enforce minimum 512px canvas width
-  const tw      = Math.max(512, Math.ceil(metrics.width) + padding * 2)
-  const th      = fontSize + padding * 2
-
-  canvas.width  = tw
-  canvas.height = th
-
-  // Repaint after resize
-  ctx.font      = `bold ${fontSize}px monospace`
-  // NW27b: high-contrast dark background
-  ctx.fillStyle = bgColor
-  ctx.fillRect(0, 0, tw, th)
-  // NW27b: green accent border
-  ctx.strokeStyle = 'rgba(46,232,154,0.3)'
-  ctx.lineWidth = 1
-  ctx.strokeRect(0.5, 0.5, tw - 1, th - 1)
-  ctx.fillStyle = color
-  ctx.textBaseline = 'middle'
-  ctx.fillText(text, padding, th / 2)
-
-  const texture = new THREE.CanvasTexture(canvas)
-  const mat     = new THREE.SpriteMaterial({
-    map: texture,
-    depthWrite: false,
-    transparent: true,
-    opacity: 0.95,
-  })
-  const sprite  = new THREE.Sprite(mat)
-  // NW27b: Scale sprite proportional in world space.
-  // Base size gives 16px equivalent at 10 units distance.
-  const aspect  = tw / th
-  sprite.scale.set(aspect * 4.0, 4.0, 1)
-  return sprite
+// NW31b: Themed accent colors for admin structure labels
+const ADMIN_STRUCT_COLORS: Record<string, string> = {
+  VAULT:     '#ffaa44',  // warm gold
+  LEDGER:    '#44aaff',  // blue
+  OHM:       '#00ff88',  // green
+  CHRONO:    '#aa66ff',  // purple
+  BLUEPRINT: '#00e5cc',  // teal
 }
+
+// NW31b: makeTextSprite replaced by shared makeLabel utility (see utils/makeLabel.ts)
 
 // ── Dispose helpers ────────────────────────────────────────────────────────────
 
@@ -133,7 +88,10 @@ function disposeObj(scene: THREE.Scene, obj: THREE.Object3D | null): void {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function WestContinentLayer() {
-  const { scene } = useWorldContext()
+  const { scene, camera } = useWorldContext()
+
+  // NW31b: all label sprites for per-frame visibility updates
+  const labelSpritesRef = useRef<THREE.Sprite[]>([])
 
   // Job site marker objects: map projectId → { light, sprite }
   const jobMarkersRef = useRef<Map<string, { light: THREE.PointLight; sprite: THREE.Sprite }>>(new Map())
@@ -200,6 +158,8 @@ export function WestContinentLayer() {
       smat.dispose()
     }
     jobMarkersRef.current.clear()
+    // NW31b: clear label sprites list (rebuilt below)
+    labelSpritesRef.current = []
 
     const activeProjects = projects.filter(p =>
       p.status === 'in_progress' || p.status === 'approved'
@@ -227,9 +187,10 @@ export function WestContinentLayer() {
 
       // Floating label: "CREW:2 HRS:48 ▓78%"
       const label = `${project.name.slice(0, 10)} | C:${crewCount} H:${Math.round(totalHours)} ${phase}%`
-      const sprite = makeTextSprite(label, { fontSize: 18, color: '#00ffcc' })
-      sprite.position.set(x, mountainTip + 1.4, z)
+      const sprite = makeLabel(label, '#00ffcc')
+      sprite.position.set(x, mountainTip + 1.5, z)
       scene.add(sprite)
+      labelSpritesRef.current.push(sprite)
 
       jobMarkersRef.current.set(project.id, { light, sprite })
     }
@@ -590,13 +551,11 @@ export function WestContinentLayer() {
     plateauLightRef.current = light
 
     // Floating label
-    const label = makeTextSprite(
-      `MTZ SOLAR  $${Math.round(solarIncome / 1000)}k`,
-      { fontSize: 20, color: '#ffcc44' }
-    )
+    const label = makeLabel(`MTZ SOLAR  $${Math.round(solarIncome / 1000)}k`, '#ffcc44')
     label.position.set(px, PLATEAU_Y + 4.5, pz)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
   }
 
   // ── Build admin structures ─────────────────────────────────────────────────
@@ -620,12 +579,14 @@ export function WestContinentLayer() {
         adminMeshesRef.current.push(obj)
       }
 
-      // Floating text sprite label
+      // Floating text sprite label — NW31b: themed color per struct
       const labelY = getStructureLabelY(struct.id)
-      const sprite = makeTextSprite(struct.label, { fontSize: 20, color: '#aaffdd' })
+      const structColor = ADMIN_STRUCT_COLORS[struct.id] ?? '#aaffdd'
+      const sprite = makeLabel(struct.label, structColor)
       sprite.position.set(0, labelY, 0)
       group.add(sprite)
       adminMeshesRef.current.push(sprite)
+      labelSpritesRef.current.push(sprite)
     }
   }
 
@@ -857,6 +818,13 @@ export function WestContinentLayer() {
       // Pulse MTZ plateau light
       if (plateauLightRef.current) {
         plateauLightRef.current.intensity = 0.6 + Math.sin(t * 1.2) * 0.2
+      }
+
+      // NW31b: Frustum cull + distance fade all label sprites
+      const _wp = new THREE.Vector3()
+      for (const s of labelSpritesRef.current) {
+        s.getWorldPosition(_wp)
+        ;(s as NWLabel).updateVisibility(camera, _wp)
       }
     }
 

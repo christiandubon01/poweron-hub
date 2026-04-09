@@ -34,6 +34,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from '../WorldContext'
+import { makeLabel, type NWLabel } from '../utils/makeLabel'
 import {
   subscribeWorldData,
   type NWWorldData,
@@ -97,40 +98,7 @@ function disposeObj(scene: THREE.Scene, obj: THREE.Object3D | null): void {
   })
 }
 
-// ── Text sprite helper ────────────────────────────────────────────────────────
-
-function makeTextSprite(text: string, opts?: {
-  fontSize?: number
-  color?: string
-  bgColor?: string
-}): THREE.Sprite {
-  const fontSize = opts?.fontSize  ?? 20
-  const color    = opts?.color     ?? '#aaeedd'
-  const bgColor  = opts?.bgColor   ?? 'rgba(0,0,0,0.5)'
-  const padding  = 6
-
-  const canvas  = document.createElement('canvas')
-  const ctx     = canvas.getContext('2d')!
-  ctx.font      = `bold ${fontSize}px monospace`
-  const metrics = ctx.measureText(text)
-  const tw      = Math.ceil(metrics.width) + padding * 2
-  const th      = fontSize + padding * 2
-  canvas.width  = tw
-  canvas.height = th
-
-  ctx.font           = `bold ${fontSize}px monospace`
-  ctx.fillStyle      = bgColor
-  ctx.fillRect(0, 0, tw, th)
-  ctx.fillStyle      = color
-  ctx.textBaseline   = 'middle'
-  ctx.fillText(text, padding, th / 2)
-
-  const tex = new THREE.CanvasTexture(canvas)
-  const mat = new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true, opacity: 0.88 })
-  const spr = new THREE.Sprite(mat)
-  spr.scale.set((tw / th) * 2, 2, 1)
-  return spr
-}
+// NW31b: makeTextSprite replaced by shared makeLabel utility (see utils/makeLabel.ts)
 
 // ── Per-territory mesh group ──────────────────────────────────────────────────
 
@@ -151,7 +119,7 @@ interface TerritoryEntry {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function CustomerTerritoryLayer() {
-  const { scene, playerPosition } = useWorldContext()
+  const { scene, camera, playerPosition } = useWorldContext()
 
   const territoriesRef  = useRef<Map<string, TerritoryEntry>>(new Map())
   const frameHandlerRef = useRef<((e: Event) => void) | null>(null)
@@ -414,8 +382,8 @@ export function CustomerTerritoryLayer() {
       const structure = buildStructure(t)
       group.add(structure)
 
-      // 3. Label sprite
-      const label = makeTextSprite(t.clientName.toUpperCase(), { fontSize: 18, color: '#aaffd8' })
+      // 3. Label sprite — NW31b: teal accent, sized to content
+      const label = makeLabel(t.clientName.toUpperCase(), '#aaffd8')
       label.position.set(0, LABEL_Y_OFFSET, 0)
       group.add(label)
 
@@ -559,6 +527,13 @@ export function CustomerTerritoryLayer() {
             }))
           }
         }
+      }
+
+      // NW31b: Frustum cull + distance fade territory labels
+      const _wp = new THREE.Vector3()
+      for (const [, entry] of territoriesRef.current) {
+        entry.label.getWorldPosition(_wp)
+        ;(entry.label as NWLabel).updateVisibility(camera, _wp)
       }
     }
 

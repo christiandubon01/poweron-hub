@@ -23,6 +23,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { useWorldContext } from '../WorldContext'
+import { makeLabel, type NWLabel } from '../utils/makeLabel'
 import {
   subscribeWorldData,
   seededPosition,
@@ -127,37 +128,7 @@ function fmtDollars(v: number): string {
   return `$${Math.round(v)}`
 }
 
-// ── Text sprite ────────────────────────────────────────────────────────────────
-
-function makeTextSprite(
-  text: string,
-  opts?: { fontSize?: number; color?: string; bgColor?: string }
-): THREE.Sprite {
-  const fontSize = opts?.fontSize ?? 24
-  const color    = opts?.color    ?? '#00e5cc'
-  const bgColor  = opts?.bgColor  ?? 'rgba(0,0,0,0.65)'
-
-  const canvas = document.createElement('canvas')
-  const ctx    = canvas.getContext('2d')!
-  ctx.font     = `bold ${fontSize}px monospace`
-  const tw     = Math.ceil(ctx.measureText(text).width) + 16
-  const th     = fontSize + 12
-  canvas.width  = tw
-  canvas.height = th
-
-  ctx.font      = `bold ${fontSize}px monospace`
-  ctx.fillStyle = bgColor
-  ctx.fillRect(0, 0, tw, th)
-  ctx.fillStyle = color
-  ctx.textBaseline = 'middle'
-  ctx.fillText(text, 8, th / 2)
-
-  const tex  = new THREE.CanvasTexture(canvas)
-  const mat  = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.95, depthWrite: false })
-  const sp   = new THREE.Sprite(mat)
-  sp.scale.set((tw / th) * 2.5, 2.5, 1)
-  return sp
-}
+// NW31b: makeTextSprite replaced by shared makeLabel utility (see utils/makeLabel.ts)
 
 // ── River click summary panel ──────────────────────────────────────────────────
 
@@ -662,11 +633,12 @@ export function RiverSystemLayer() {
     netFlowSpriteRef.current = null
 
     const arrow   = fin.netCashFlow >= 0 ? '▲' : '▼'
+    // NW31b: green if positive, red if negative (spec)
     const color   = fin.netCashFlow >= 0 ? '#00ff88' : '#ff4444'
     const amount  = fmtDollars(Math.abs(fin.netCashFlow))
     const label   = `NET ${arrow} ${amount}/mo`
 
-    const sprite  = makeTextSprite(label, { fontSize: 20, color, bgColor: 'rgba(0,0,0,0.7)' })
+    const sprite  = makeLabel(label, color)
     sprite.position.set(RIVER_X, 7.0, 0)   // floating above river center
     scene.add(sprite)
     netFlowSpriteRef.current = sprite
@@ -806,6 +778,10 @@ export function RiverSystemLayer() {
       // ── Pulse net flow sprite (gentle bob) ────────────────────────────────
       if (netFlowSpriteRef.current) {
         netFlowSpriteRef.current.position.y = 7.0 + Math.sin(t * 1.1) * 0.18
+        // NW31b: frustum cull + distance fade
+        const _wp = new THREE.Vector3()
+        netFlowSpriteRef.current.getWorldPosition(_wp)
+        ;(netFlowSpriteRef.current as NWLabel).updateVisibility(camera, _wp)
       }
     }
 

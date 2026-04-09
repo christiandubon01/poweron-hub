@@ -35,6 +35,7 @@ import { useWorldContext } from '../WorldContext'
 import { subscribeWorldData, type NWWorldData } from '../DataBridge'
 import { MeshPool } from '../ObjectPool'
 import { getNodePosition } from '../NodePositionStore'
+import { makeLabel, type NWLabel } from '../utils/makeLabel'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -149,48 +150,7 @@ function getMockHubState(): HubState {
   }
 }
 
-// ── Text sprite helper ─────────────────────────────────────────────────────────
-// NW27b: minimum 512px wide texture, high-contrast, larger base scale
-
-function makeTextSprite(text: string, opts?: {
-  fontSize?: number
-  color?: string
-  bgColor?: string
-  padding?: number
-}): THREE.Sprite {
-  const fontSize = Math.max(24, opts?.fontSize ?? 24)
-  const color    = opts?.color    ?? '#ffffff'
-  const bgColor  = opts?.bgColor  ?? 'rgba(8,8,12,0.95)'
-  const padding  = opts?.padding  ?? 12
-
-  const canvas = document.createElement('canvas')
-  const ctx    = canvas.getContext('2d')!
-  ctx.font     = `bold ${fontSize}px monospace`
-  const m      = ctx.measureText(text)
-  // NW27b: enforce minimum 512px width
-  const tw     = Math.max(512, Math.ceil(m.width) + padding * 2)
-  const th     = fontSize + padding * 2
-  canvas.width  = tw
-  canvas.height = th
-
-  ctx.font         = `bold ${fontSize}px monospace`
-  ctx.fillStyle    = bgColor
-  ctx.fillRect(0, 0, tw, th)
-  // NW27b: green accent border
-  ctx.strokeStyle = 'rgba(46,232,154,0.3)'
-  ctx.lineWidth = 1
-  ctx.strokeRect(0.5, 0.5, tw - 1, th - 1)
-  ctx.fillStyle    = color
-  ctx.textBaseline = 'middle'
-  ctx.fillText(text, padding, th / 2)
-
-  const tex  = new THREE.CanvasTexture(canvas)
-  const mat  = new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true, opacity: 0.95 })
-  const spr  = new THREE.Sprite(mat)
-  // NW27b: scale up so text is readable from further distances
-  spr.scale.set((tw / th) * 4.0, 4.0, 1)
-  return spr
-}
+// NW31b: makeTextSprite replaced by shared makeLabel utility (see utils/makeLabel.ts)
 
 // ── Dispose helper ─────────────────────────────────────────────────────────────
 
@@ -210,7 +170,10 @@ function disposeObj(scene: THREE.Scene, obj: THREE.Object3D | null): void {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function EastContinentLayer() {
-  const { scene } = useWorldContext()
+  const { scene, camera } = useWorldContext()
+
+  // NW31b: all label sprites for per-frame visibility updates
+  const labelSpritesRef = useRef<THREE.Sprite[]>([])
 
   // ── Refs for all Three.js objects ─────────────────────────────────────────
   const towerGroupsRef = useRef<THREE.Group[]>([])
@@ -340,13 +303,12 @@ export function EastContinentLayer() {
     light.position.y = tier.height + 0.5
     group.add(light)
 
-    // Label sprite
-    const sprite = makeTextSprite(tier.label, {
-      fontSize: 14,
-      color: `#${new THREE.Color(tier.emissive).getHexString()}`,
-    })
+    // Label sprite — NW31b: tier accent color, sized to content
+    const tierColor = `#${new THREE.Color(tier.emissive).getHexString()}`
+    const sprite = makeLabel(tier.label, tierColor)
     sprite.position.set(0, tier.height + 2.2, 0)
     group.add(sprite)
+    labelSpritesRef.current.push(sprite)
 
     return group
   }
@@ -448,14 +410,12 @@ export function EastContinentLayer() {
     scene.add(mountain)
     mrrMountainRef.current = mountain
 
-    // MRR label
-    const label = makeTextSprite(`MRR $${mrr.toLocaleString()}`, {
-      fontSize: 18,
-      color:    '#4488ff',
-    })
+    // MRR label — NW31b: blue accent
+    const label = makeLabel(`MRR $${mrr.toLocaleString()}`, '#4488ff')
     label.position.set(mrrPos.x, height + radius * 0.5 + 2, mrrPos.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
 
     // Summit glow
     const glow = new THREE.PointLight(0x4488ff, 1.2, radius * 2.5)
@@ -543,10 +503,11 @@ export function EastContinentLayer() {
     topBar.castShadow = true
     gateGroup.add(topBar)
 
-    // NDA label
-    const gateLabel = makeTextSprite('NDA GATE', { fontSize: 16, color: '#00ff44' })
+    // NDA label — NW31b: spec color #2EE89A
+    const gateLabel = makeLabel('NDA GATE', '#2EE89A')
     gateLabel.position.set(0, 7.0, 0)
     gateGroup.add(gateLabel)
+    labelSpritesRef.current.push(gateLabel)
 
     // Gate position: eastern entry — NW24: NodePositionStore override
     const ndaPos = getNodePosition('NDA_GATE', 25, 0)
@@ -611,14 +572,12 @@ export function EastContinentLayer() {
       ipWallsRef.current.push(wall)
     }
 
-    // IP label
-    const ipLabel = makeTextSprite(`IP FORTRESS · ${ipFilings} FILINGS`, {
-      fontSize: 14,
-      color:    '#6688ff',
-    })
+    // IP label — NW31b: blue accent
+    const ipLabel = makeLabel(`IP FORTRESS · ${ipFilings} FILINGS`, '#6688ff')
     ipLabel.position.set(ipPos.x + 2, wallHeight + 2.5, 0)
     scene.add(ipLabel)
     adminMeshesRef.current.push(ipLabel)
+    labelSpritesRef.current.push(ipLabel)
   }
 
   // ── Build admin structures ────────────────────────────────────────────────
@@ -626,6 +585,8 @@ export function EastContinentLayer() {
   function buildAdminStructures() {
     for (const obj of adminMeshesRef.current) disposeObj(scene, obj)
     adminMeshesRef.current = []
+    // NW31b: clear label sprites before rebuild
+    labelSpritesRef.current = []
     adminStructObjsRef.current.clear()
     adminStructCurPosRef.current.clear()
     for (const post of guardianPostsRef.current) disposeObj(scene, post)
@@ -720,10 +681,11 @@ export function EastContinentLayer() {
       sparkRingsRef.current.push({ ring, phase: r * (Math.PI * 2 / 3) })
     }
 
-    const label = makeTextSprite(def.label, { fontSize: 16, color: `#${new THREE.Color(def.emissive).getHexString()}` })
+    const label = makeLabel(def.label, `#${new THREE.Color(def.emissive).getHexString()}`)
     label.position.set(def.x, 13, def.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
   }
 
   function buildSCOUT(def: AdminStructureDef) {
@@ -760,10 +722,11 @@ export function EastContinentLayer() {
     scene.add(obsLight)
     adminMeshesRef.current.push(obsLight)
 
-    const label = makeTextSprite(def.label, { fontSize: 16, color: `#${new THREE.Color(def.emissive).getHexString()}` })
+    const label = makeLabel(def.label, `#${new THREE.Color(def.emissive).getHexString()}`)
     label.position.set(def.x, 21, def.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
   }
 
   function buildECHO(def: AdminStructureDef) {
@@ -808,10 +771,11 @@ export function EastContinentLayer() {
     scene.add(echoLight)
     adminMeshesRef.current.push(echoLight)
 
-    const label = makeTextSprite(def.label, { fontSize: 16, color: `#${new THREE.Color(def.emissive).getHexString()}` })
+    const label = makeLabel(def.label, `#${new THREE.Color(def.emissive).getHexString()}`)
     label.position.set(def.x, 8, def.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
   }
 
   function buildATLAS(def: AdminStructureDef) {
@@ -848,10 +812,11 @@ export function EastContinentLayer() {
     scene.add(atlasLight)
     adminMeshesRef.current.push(atlasLight)
 
-    const label = makeTextSprite(def.label, { fontSize: 16, color: `#${new THREE.Color(def.emissive).getHexString()}` })
+    const label = makeLabel(def.label, `#${new THREE.Color(def.emissive).getHexString()}`)
     label.position.set(def.x, 9, def.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
   }
 
   function buildNEXUS(def: AdminStructureDef) {
@@ -877,10 +842,11 @@ export function EastContinentLayer() {
     scene.add(nexusLight)
     adminMeshesRef.current.push(nexusLight)
 
-    const label = makeTextSprite(def.label, { fontSize: 16, color: `#${new THREE.Color(def.emissive).getHexString()}` })
+    const label = makeLabel(def.label, `#${new THREE.Color(def.emissive).getHexString()}`)
     label.position.set(def.x, 8.5, def.z)
     scene.add(label)
     adminMeshesRef.current.push(label)
+    labelSpritesRef.current.push(label)
   }
 
   function buildGUARDIANPerimeter() {
@@ -904,11 +870,12 @@ export function EastContinentLayer() {
       guardianPostsRef.current.push(pLight as unknown as THREE.Mesh)
     }
 
-    // GUARDIAN label at perimeter entry
-    const guardLabel = makeTextSprite('GUARDIAN PERIMETER', { fontSize: 14, color: '#4466ff' })
+    // GUARDIAN label at perimeter entry — NW31b: spec color #FF5060
+    const guardLabel = makeLabel('GUARDIAN PERIMETER', '#FF5060')
     guardLabel.position.set(25, 9, 0)
     scene.add(guardLabel)
     adminMeshesRef.current.push(guardLabel)
+    labelSpritesRef.current.push(guardLabel)
   }
 
   // ── Animation frame handler ───────────────────────────────────────────────
@@ -997,6 +964,13 @@ export function EastContinentLayer() {
         const mat = (pool.mesh as THREE.Mesh).material as THREE.MeshLambertMaterial
         mat.opacity = Math.max(0, 1.0 - age / thirtyDays)
         mat.needsUpdate = true
+      }
+
+      // NW31b: Frustum cull + distance fade all label sprites
+      const _wp = new THREE.Vector3()
+      for (const s of labelSpritesRef.current) {
+        s.getWorldPosition(_wp)
+        ;(s as NWLabel).updateVisibility(camera, _wp)
       }
     }
 
