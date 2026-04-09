@@ -304,6 +304,275 @@ export default function CommandHUD({
   // NW37: Layer tooltip hover state
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null)
 
+  // B74: Collapsible layer sidebar state
+  const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => {
+    try { return localStorage.getItem('nw-layer-sidebar-expanded') !== 'false' } catch { return true }
+  })
+  const [flyoutOpen, setFlyoutOpen] = useState(false)
+  const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem('nw-layer-group-expanded')
+      if (stored) return JSON.parse(stored)
+    } catch { /* ignore */ }
+    return {
+      terrain: true,
+      fog: false,
+      agents: true,
+      dataflows: false,
+      audionav: false,
+      overlays: false,
+    }
+  })
+
+  const toggleGroup = useCallback((gid: string) => {
+    setGroupExpanded(prev => {
+      const next = { ...prev, [gid]: !prev[gid] }
+      try { localStorage.setItem('nw-layer-group-expanded', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarExpanded(prev => {
+      const next = !prev
+      try { localStorage.setItem('nw-layer-sidebar-expanded', String(next)) } catch { /* ignore */ }
+      if (next) setFlyoutOpen(false)
+      return next
+    })
+  }, [])
+
+  // Close flyout on Escape
+  useEffect(() => {
+    if (!flyoutOpen) return
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setFlyoutOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [flyoutOpen])
+
+  // B74: Layer group definitions
+  const LAYER_GROUPS = [
+    {
+      id: 'terrain', label: 'TERRAIN', color: '#00e5cc',
+      layerIds: ['pulse', 'pressure', 'critical-path', 'decision-gravity', 'risk-surface', 'velocity', 'forecast'],
+    },
+    {
+      id: 'fog', label: 'FOG LAYERS', color: '#aa66ee',
+      layerIds: ['fog-revenue', 'fog-security', 'fog-bandwidth', 'fog-improvement'],
+    },
+    {
+      id: 'agents', label: 'AGENTS & WORKERS', color: '#ffd700',
+      layerIds: ['agents', 'agent-flight', 'human-workers'],
+    },
+    {
+      id: 'dataflows', label: 'DATA FLOWS', color: '#00dcb4',
+      layerIds: ['data-flow', 'automation-flows', 'signal', 'simulation'],
+    },
+    {
+      id: 'audionav', label: 'AUDIO & NAVIGATION', color: '#44aaff',
+      layerIds: ['sound', 'time-navigation', 'resonance-orb'],
+    },
+    {
+      id: 'overlays', label: 'OVERLAYS', color: '#ff7744',
+      layerIds: ['command', 'katsuro-bridge', 'proximity-info'],
+    },
+  ] as const
+
+  // B74: Bulk layer toggle helper
+  const setGroupAll = useCallback((layerIds: readonly string[], value: boolean) => {
+    layerIds.forEach(id => onLayerToggle(id, value))
+  }, [onLayerToggle])
+
+  // B74: Master toggle
+  const allLayersOn = LAYERS.every(l => !!layerStates[l.id])
+  const setAllLayers = useCallback((value: boolean) => {
+    LAYERS.forEach(l => onLayerToggle(l.id, value))
+  }, [onLayerToggle])
+
+  // B74: Render a single layer toggle row
+  const renderLayerRow = (layer: LayerDef, indented = true) => {
+    const isOn = !!layerStates[layer.id]
+    const { r, g, b } = layer
+    const isHovered = hoveredLayerId === layer.id
+    const desc = LAYER_DESCRIPTIONS[layer.id]
+    return (
+      <div key={layer.id} style={{ position: 'relative' }}>
+        <button
+          onClick={() => onLayerToggle(layer.id, !isOn)}
+          onMouseEnter={() => setHoveredLayerId(layer.id)}
+          onMouseLeave={() => setHoveredLayerId(null)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            padding: '5px 8px',
+            paddingLeft: indented ? 20 : 8,
+            borderRadius: 4,
+            border: `1px solid ${isOn ? `rgba(${r},${g},${b},0.7)` : 'rgba(255,255,255,0.07)'}`,
+            background: isOn ? `rgba(${r},${g},${b},0.12)` : 'rgba(255,255,255,0.02)',
+            color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.28)',
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            fontFamily: 'monospace',
+            fontSize: 14,
+            textAlign: 'left',
+            width: '100%',
+            letterSpacing: 0.3,
+            minHeight: 36,
+          }}
+        >
+          <span style={{ fontSize: 13, lineHeight: 1, minWidth: 16 }}>{layer.icon}</span>
+          <span style={{ flex: 1 }}>{layer.label}</span>
+          {desc && (
+            <span style={{
+              fontSize: 9,
+              color: isOn ? `rgba(${r},${g},${b},0.55)` : 'rgba(255,255,255,0.18)',
+              marginRight: 2,
+              lineHeight: 1,
+              fontWeight: 700,
+              userSelect: 'none',
+            }}>ⓘ</span>
+          )}
+          <span style={{
+            fontSize: 9,
+            letterSpacing: 0.5,
+            opacity: 0.7,
+            color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.2)',
+          }}>{isOn ? 'ON' : 'OFF'}</span>
+        </button>
+        {isHovered && desc && (
+          <div style={{
+            position: 'absolute',
+            left: '100%',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            marginLeft: 8,
+            zIndex: 60,
+            maxWidth: 200,
+            minWidth: 140,
+            padding: '7px 10px',
+            background: 'rgba(8,8,12,0.95)',
+            border: '1px solid rgba(0,229,204,0.35)',
+            borderRadius: 5,
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 4px 18px rgba(0,0,0,0.7)',
+            pointerEvents: 'none',
+          }}>
+            <div style={{ color: `rgb(${r},${g},${b})`, fontSize: 9, fontFamily: 'monospace', fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>
+              {layer.label}
+            </div>
+            <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontFamily: 'monospace', lineHeight: 1.5, letterSpacing: 0.2 }}>
+              {desc}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // B74: Render collapsible group list (used in both sidebar and flyout)
+  const renderLayerGroups = (width: number) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, width }}>
+      {/* Master toggle */}
+      <div style={{ padding: '6px 8px 8px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <button
+          onClick={() => setAllLayers(!allLayersOn)}
+          style={{
+            width: '100%',
+            padding: '5px 8px',
+            borderRadius: 4,
+            border: `1px solid ${allLayersOn ? 'rgba(0,229,204,0.5)' : 'rgba(255,255,255,0.1)'}`,
+            background: allLayersOn ? 'rgba(0,229,204,0.12)' : 'rgba(255,255,255,0.04)',
+            color: allLayersOn ? '#00e5cc' : 'rgba(255,255,255,0.4)',
+            fontFamily: 'monospace',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+          }}
+        >
+          {allLayersOn ? 'ALL LAYERS OFF' : 'ALL LAYERS ON'}
+        </button>
+      </div>
+      {/* Groups */}
+      {LAYER_GROUPS.map(group => {
+        const isExp = !!groupExpanded[group.id]
+        const groupLayers = LAYERS.filter(l => (group.layerIds as readonly string[]).includes(l.id))
+        const allOn = groupLayers.every(l => !!layerStates[l.id])
+        return (
+          <div key={group.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            {/* Group header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+              <button
+                onClick={() => toggleGroup(group.id)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  padding: '7px 8px',
+                  background: 'rgba(0,0,0,0.0)',
+                  border: 'none',
+                  borderLeft: `3px solid ${group.color}`,
+                  cursor: 'pointer',
+                  fontFamily: 'monospace',
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: group.color,
+                  letterSpacing: 0.8,
+                  textAlign: 'left',
+                  backdropFilter: 'none',
+                }}
+              >
+                <span style={{
+                  display: 'inline-block',
+                  transition: 'transform 0.2s',
+                  transform: isExp ? 'rotate(90deg)' : 'rotate(0deg)',
+                  fontSize: 12,
+                  lineHeight: 1,
+                  color: group.color,
+                }}>›</span>
+                {group.label}
+              </button>
+              <button
+                onClick={() => setGroupAll(group.layerIds, !allOn)}
+                style={{
+                  padding: '3px 7px',
+                  margin: '0 6px',
+                  borderRadius: 3,
+                  border: `1px solid ${allOn ? group.color + '66' : 'rgba(255,255,255,0.12)'}`,
+                  background: allOn ? group.color + '22' : 'rgba(255,255,255,0.04)',
+                  color: allOn ? group.color : 'rgba(255,255,255,0.35)',
+                  fontFamily: 'monospace',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {allOn ? 'ALL OFF' : 'ALL ON'}
+              </button>
+            </div>
+            {/* Animated layer list */}
+            <div style={{
+              overflow: 'hidden',
+              maxHeight: isExp ? 600 : 0,
+              transition: 'max-height 0.2s ease',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              padding: isExp ? '2px 4px 6px' : '0 4px',
+            }}>
+              {groupLayers.map(layer => renderLayerRow(layer, true))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+
   // NW33: Listen for what-if apply/exit events
   useEffect(() => {
     function onWhatIfApply() { setWhatIfActive(true) }
@@ -910,139 +1179,205 @@ export default function CommandHUD({
         </div>
       </div>
 
-      {/* ── LEFT-SIDE: LAYER TOGGLE PANEL ─────────────────────────────────── */}
+      {/* ── B74: LEFT SIDEBAR — COLLAPSIBLE LAYER GROUPS + FLYOUT ────────── */}
       <div
         style={{
           position: 'absolute',
           top: '50%',
-          left: 12,
+          left: 0,
           transform: 'translateY(-50%)',
           zIndex: 25,
           display: 'flex',
-          flexDirection: 'column',
-          gap: 3,
-          background: 'rgba(0,0,0,0.6)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 8,
-          padding: '10px 8px',
-          backdropFilter: 'blur(8px)',
-          minWidth: 148,
+          flexDirection: 'row',
+          alignItems: 'flex-start',
         }}
       >
-        <div style={{
-          color: 'rgba(255,255,255,0.35)',
-          fontSize: 8,
-          letterSpacing: 1.5,
-          fontFamily: 'monospace',
-          marginBottom: 4,
-          textAlign: 'center',
-        }}>
-          LAYERS
-        </div>
-
-        {LAYERS.map(layer => {
-          const isOn = !!layerStates[layer.id]
-          const { r, g, b } = layer
-          const desc = LAYER_DESCRIPTIONS[layer.id]
-          const isHovered = hoveredLayerId === layer.id
-          return (
-            <div key={layer.id} style={{ position: 'relative' }}>
+        {/* Sidebar strip */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            background: 'rgba(0,0,0,0.72)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderLeft: 'none',
+            borderRadius: '0 8px 8px 0',
+            backdropFilter: 'blur(10px)',
+            overflow: 'hidden',
+            transition: 'width 0.2s ease',
+            width: sidebarExpanded ? 280 : 38,
+            maxHeight: '85vh',
+          }}
+        >
+          {/* Sidebar header row */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: sidebarExpanded ? 'space-between' : 'center',
+            padding: sidebarExpanded ? '8px 10px 6px' : '10px 0',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            gap: 6,
+            flexShrink: 0,
+          }}>
+            {sidebarExpanded && (
+              <span style={{
+                fontFamily: 'monospace',
+                fontSize: 10,
+                letterSpacing: 1.5,
+                color: 'rgba(255,255,255,0.35)',
+                userSelect: 'none',
+              }}>
+                LAYERS · {activeLayerCount}/{LAYERS.length}
+              </span>
+            )}
+            <button
+              onClick={() => {
+                if (!sidebarExpanded) { setFlyoutOpen(prev => !prev) }
+                else { toggleSidebar() }
+              }}
+              title={sidebarExpanded ? 'Collapse sidebar' : 'Open layer flyout'}
+              style={{
+                width: 28,
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 4,
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(255,255,255,0.05)',
+                color: 'rgba(0,229,204,0.8)',
+                cursor: 'pointer',
+                fontSize: 14,
+                flexShrink: 0,
+                transition: 'all 0.15s',
+              }}
+            >
+              {sidebarExpanded ? '‹' : '☰'}
+            </button>
+            {sidebarExpanded && (
               <button
-                onClick={() => onLayerToggle(layer.id, !isOn)}
-                onMouseEnter={() => setHoveredLayerId(layer.id)}
-                onMouseLeave={() => setHoveredLayerId(null)}
+                onClick={toggleSidebar}
+                title="Collapse sidebar"
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 7,
-                  padding: '5px 8px',
-                  borderRadius: 4,
-                  border: `1px solid ${isOn ? `rgba(${r},${g},${b},0.7)` : 'rgba(255,255,255,0.07)'}`,
-                  background: isOn
-                    ? `rgba(${r},${g},${b},0.12)`
-                    : 'rgba(255,255,255,0.02)',
-                  color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.28)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
+                  padding: '2px 8px',
+                  borderRadius: 3,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'transparent',
+                  color: 'rgba(255,255,255,0.3)',
                   fontFamily: 'monospace',
                   fontSize: 10,
-                  textAlign: 'left',
-                  width: '100%',
-                  letterSpacing: 0.3,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
                 }}
               >
-                <span style={{ fontSize: 12, lineHeight: 1, minWidth: 14 }}>{layer.icon}</span>
-                <span style={{ flex: 1 }}>{layer.label}</span>
-                {/* NW37: info icon */}
-                {desc && (
-                  <span style={{
-                    fontSize: 9,
-                    color: isOn ? `rgba(${r},${g},${b},0.55)` : 'rgba(255,255,255,0.18)',
-                    marginRight: 2,
-                    lineHeight: 1,
-                    fontWeight: 700,
-                    userSelect: 'none',
-                  }}>
-                    ⓘ
-                  </span>
-                )}
-                <span style={{
-                  fontSize: 8,
-                  letterSpacing: 0.5,
-                  opacity: 0.7,
-                  color: isOn ? `rgb(${r},${g},${b})` : 'rgba(255,255,255,0.2)',
-                }}>
-                  {isOn ? 'ON' : 'OFF'}
-                </span>
+                ‹ HIDE
               </button>
+            )}
+          </div>
 
-              {/* NW37: tooltip on hover */}
-              {isHovered && desc && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: '100%',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    marginLeft: 8,
-                    zIndex: 60,
-                    maxWidth: 200,
-                    minWidth: 140,
-                    padding: '7px 10px',
-                    background: 'rgba(8,8,12,0.95)',
-                    border: '1px solid rgba(0,229,204,0.35)',
-                    borderRadius: 5,
-                    backdropFilter: 'blur(10px)',
-                    boxShadow: '0 4px 18px rgba(0,0,0,0.7)',
-                    pointerEvents: 'none',
-                    animation: 'nw-layer-tooltip-in 0.2s ease both',
-                  }}
-                >
-                  <div style={{
-                    color: `rgb(${r},${g},${b})`,
-                    fontSize: 9,
-                    fontFamily: 'monospace',
-                    fontWeight: 700,
-                    letterSpacing: 0.8,
-                    marginBottom: 4,
-                  }}>
-                    {layer.label}
-                  </div>
-                  <div style={{
-                    color: 'rgba(255,255,255,0.55)',
-                    fontSize: 10,
-                    fontFamily: 'monospace',
-                    lineHeight: 1.5,
-                    letterSpacing: 0.2,
-                  }}>
-                    {desc}
-                  </div>
-                </div>
-              )}
+          {/* Expanded: render grouped layers inline */}
+          {sidebarExpanded && (
+            <div style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1 }}>
+              {renderLayerGroups(280)}
             </div>
-          )
-        })}
+          )}
+        </div>
+
+        {/* Flyout panel (when sidebar is collapsed) */}
+        {!sidebarExpanded && flyoutOpen && (
+          <>
+            {/* Click-outside backdrop */}
+            <div
+              onClick={() => setFlyoutOpen(false)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 24,
+              }}
+            />
+            <div
+              style={{
+                position: 'relative',
+                zIndex: 26,
+                width: 'min(35vw, 320px)',
+                maxHeight: '85vh',
+                background: 'rgba(0,0,0,0.85)',
+                border: '1px solid rgba(0,229,204,0.2)',
+                borderRadius: '0 8px 8px 0',
+                backdropFilter: 'blur(14px)',
+                boxShadow: '4px 0 24px rgba(0,0,0,0.7)',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                animation: 'nw-flyout-in 0.15s ease both',
+              }}
+            >
+              {/* Flyout header */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 10px 6px',
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                flexShrink: 0,
+              }}>
+                <span style={{
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  letterSpacing: 1.5,
+                  color: '#00e5cc',
+                  fontWeight: 700,
+                }}>LAYERS</span>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button
+                    onClick={toggleSidebar}
+                    title="Expand sidebar"
+                    style={{
+                      padding: '2px 8px',
+                      borderRadius: 3,
+                      border: '1px solid rgba(0,229,204,0.3)',
+                      background: 'rgba(0,229,204,0.08)',
+                      color: '#00e5cc',
+                      fontFamily: 'monospace',
+                      fontSize: 9,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    PIN ›
+                  </button>
+                  <button
+                    onClick={() => setFlyoutOpen(false)}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: 3,
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'transparent',
+                      color: 'rgba(255,255,255,0.4)',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                    }}
+                  >✕</button>
+                </div>
+              </div>
+              {/* Flyout layer groups */}
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                {renderLayerGroups(Math.min(window.innerWidth * 0.35, 320))}
+              </div>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* B74: Flyout + sidebar CSS animations */}
+      <style>{`
+        @keyframes nw-flyout-in {
+          from { transform: translateX(-100%); opacity: 0; }
+          to   { transform: translateX(0);     opacity: 1; }
+        }
+      `}</style>
 
       {/* ── BOTTOM-CENTER: CAMERA MODE + SPEED + SPEED MODE ──────────────── */}
       {/* NW27b: Raised from bottom:14 to bottom:150 to clear the Business   */}
