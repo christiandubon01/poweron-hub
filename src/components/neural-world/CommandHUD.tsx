@@ -36,6 +36,7 @@ import { StrategyPanel, StrategyBrainButton } from './StrategyPanel'
 import { FogInterviewPanel, FogCalibrateButton } from './FogInterviewPanel'
 import ActionableInsightPanel, { InsightTriggerButton, type CubeInsightPayload } from './ActionableInsightPanel'
 import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
+import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -246,6 +247,10 @@ export default function CommandHUD({
   const [whatIfOpen, setWhatIfOpen]       = useState(false)
   const [whatIfActive, setWhatIfActive]   = useState(false)
 
+  // NW34: Projection Guide state
+  const [projectionGuideOpen, setProjectionGuideOpen]     = useState(false)
+  const [projectionGuideActive, setProjectionGuideActive] = useState(false)
+
   // NW33: Listen for what-if apply/exit events
   useEffect(() => {
     function onWhatIfApply() { setWhatIfActive(true) }
@@ -255,6 +260,18 @@ export default function CommandHUD({
     return () => {
       window.removeEventListener('nw:what-if-apply', onWhatIfApply)
       window.removeEventListener('nw:what-if-exit',  onWhatIfExit)
+    }
+  }, [])
+
+  // NW34: Listen for projection-calculate to track active state
+  useEffect(() => {
+    function onProjCalculate() { setProjectionGuideActive(true) }
+    function onProjExit()      { setProjectionGuideActive(false) }
+    window.addEventListener('nw:projection-calculate', onProjCalculate)
+    window.addEventListener('nw:what-if-exit',         onProjExit)
+    return () => {
+      window.removeEventListener('nw:projection-calculate', onProjCalculate)
+      window.removeEventListener('nw:what-if-exit',         onProjExit)
     }
   }, [])
 
@@ -585,6 +602,12 @@ export default function CommandHUD({
         onClose={() => setWhatIfOpen(false)}
       />
 
+      {/* ── NW34: PROJECTION GUIDE ──────────────────────────────────────── */}
+      <ProjectionGuide
+        open={projectionGuideOpen}
+        onClose={() => setProjectionGuideOpen(false)}
+      />
+
       {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
       <InstructionalOverlay />
 
@@ -668,6 +691,13 @@ export default function CommandHUD({
           open={whatIfOpen}
           active={whatIfActive}
           onClick={() => setWhatIfOpen(prev => !prev)}
+        />
+
+        {/* NW34: Projection Guide button */}
+        <ProjectionGuideButton
+          open={projectionGuideOpen}
+          active={projectionGuideActive}
+          onClick={() => setProjectionGuideOpen(prev => !prev)}
         />
 
         {/* Fullscreen toggle button */}
