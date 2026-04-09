@@ -43,7 +43,7 @@ export const OPP_STAGE_COLORS: Record<string, number> = {
 
 // ── Domain Definitions ────────────────────────────────────────────────────────
 
-const DOMAIN_DEFS: DomainZoneConfig[] = [
+export const DOMAIN_DEFS: DomainZoneConfig[] = [
   // ── West Continent ──────────────────────────────────────────────────────
   {
     id: 'lead-acquisition',

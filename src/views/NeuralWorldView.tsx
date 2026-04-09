@@ -62,6 +62,7 @@ import { TemporalProvider } from '@/components/neural-world/TemporalDataEngine'
 import TemporalNavigator from '@/components/neural-world/TemporalNavigator'
 import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/DataBridge'
 import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
+import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -93,6 +94,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'time-navigation':  false,
   // NW40: Resonance orb — operational harmony indicator + world speed
   'resonance-orb':    true,
+  // NW-PROX: Proximity info cards — domain awareness HUD, on by default
+  'proximity-info':   true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -159,6 +162,8 @@ function WorldLayers({
       <AutomationFlowLayer visible={!!layerStates['automation-flows']} />
       {/* NW40: Resonance orb — central harmony indicator at Founders Valley y=12 */}
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
+      {/* NW-PROX: Proximity info cards — domain awareness HUD */}
+      <ProximityInfoCard visible={!!layerStates['proximity-info']} />
     </>
   )
 }
