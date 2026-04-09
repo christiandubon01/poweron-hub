@@ -454,6 +454,16 @@ export function AutomationFlowLayer({ visible }: AutomationFlowLayerProps) {
   const beamsRef     = useRef<VerticalBeam[]>([])
   const rafRef       = useRef<number>(0)
   const lastTimeRef  = useRef<number>(performance.now())
+  // NW40: World speed factor from ResonanceOrb
+  const worldSpeedRef = useRef<number>(1.0)
+  useEffect(() => {
+    function onSpeedFactor(e: Event) {
+      const ev = e as CustomEvent<{ factor: number }>
+      if (ev.detail?.factor !== undefined) worldSpeedRef.current = ev.detail.factor
+    }
+    window.addEventListener('nw:world-speed-factor', onSpeedFactor)
+    return () => window.removeEventListener('nw:world-speed-factor', onSpeedFactor)
+  }, [])
 
   // ── Build Three.js objects for all flows ────────────────────────────────
 
@@ -774,7 +784,7 @@ export function AutomationFlowLayer({ visible }: AutomationFlowLayerProps) {
       if (!from || !to) { scene.remove(p.mesh); continue }
 
       const segLen = from.distanceTo(to)
-      const dT = segLen > 0 ? (PARTICLE_SPEED * dt) / segLen : 1
+      const dT = segLen > 0 ? (PARTICLE_SPEED * dt * worldSpeedRef.current) / segLen : 1
       p.t += dT
 
       if (p.t >= 1) {

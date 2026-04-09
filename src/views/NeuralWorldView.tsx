@@ -61,6 +61,7 @@ import CommandHUD, {
 import { TemporalProvider } from '@/components/neural-world/TemporalDataEngine'
 import TemporalNavigator from '@/components/neural-world/TemporalNavigator'
 import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/DataBridge'
+import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -90,6 +91,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'automation-flows': false,
   // NW39: Time navigation slider — scrub past/future world states
   'time-navigation':  false,
+  // NW40: Resonance orb — operational harmony indicator + world speed
+  'resonance-orb':    true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -154,6 +157,8 @@ function WorldLayers({
       <KatsuroBridgeLayer visible={!!layerStates['katsuro-bridge']} />
       {/* NW36: Automation flow layer — ground-level trigger→condition→action→result paths */}
       <AutomationFlowLayer visible={!!layerStates['automation-flows']} />
+      {/* NW40: Resonance orb — central harmony indicator at Founders Valley y=12 */}
+      <ResonanceOrb visible={!!layerStates['resonance-orb']} />
     </>
   )
 }

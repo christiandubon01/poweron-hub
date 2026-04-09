@@ -43,6 +43,32 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
   const [liveFps, setLiveFps] = useState(60)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // NW40: World speed override
+  const WORLD_SPEED_OPTIONS = [
+    { value: 'auto',  label: 'Auto (Resonance)',   factor: null   },
+    { value: 'theta', label: 'Θ Theta 0.5×',       factor: 0.5   },
+    { value: 'alpha', label: 'α Alpha 1.0×',        factor: 1.0   },
+    { value: 'beta',  label: 'β Beta 2.0×',         factor: 2.0   },
+    { value: 'gamma', label: 'γ Gamma 3.0×',        factor: 3.0   },
+  ] as const
+  type WorldSpeedMode = (typeof WORLD_SPEED_OPTIONS)[number]['value']
+
+  const [worldSpeedMode, setWorldSpeedMode] = useState<WorldSpeedMode>(() => {
+    try {
+      return (localStorage.getItem('nw_world_speed_mode') as WorldSpeedMode) ?? 'auto'
+    } catch { return 'auto' }
+  })
+
+  const applyWorldSpeed = useCallback((mode: WorldSpeedMode) => {
+    setWorldSpeedMode(mode)
+    try { localStorage.setItem('nw_world_speed_mode', mode) } catch { /* ignore */ }
+    const opt = WORLD_SPEED_OPTIONS.find(o => o.value === mode)
+    window.dispatchEvent(new CustomEvent('nw:world-speed-override', {
+      detail: { mode, factor: opt?.factor ?? null },
+    }))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Track live travel speed from CameraController scroll events
   useEffect(() => {
     function onTravelSpeed(e: Event) {
@@ -351,6 +377,51 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
               <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 7, letterSpacing: 0.5 }}>500 (full world)</span>
             </div>
           </div>
+
+          <Divider />
+
+          {/* ── NW40: World Speed Override ── */}
+          <div style={{
+            color: '#00e5cc',
+            fontSize: 9,
+            letterSpacing: 2,
+            marginBottom: 4,
+            fontWeight: 700,
+          }}>
+            ◈ WORLD SPEED
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {WORLD_SPEED_OPTIONS.map(opt => {
+              const active = worldSpeedMode === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => applyWorldSpeed(opt.value)}
+                  style={{
+                    width: '100%',
+                    padding: '4px 8px',
+                    fontSize: 9,
+                    letterSpacing: 1,
+                    borderRadius: 4,
+                    border: `1px solid ${active ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                    background: active ? 'rgba(0,229,204,0.12)' : 'transparent',
+                    color: active ? '#00e5cc' : 'rgba(255,255,255,0.4)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.12s',
+                    fontFamily: 'monospace',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: 7.5, letterSpacing: 0.8, marginTop: 2, lineHeight: 1.5 }}>
+            Theta: slow observation · Beta: active work · Gamma: max intensity
+          </div>
+
+          <Divider />
 
           {/* Hint */}
           <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 8, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>

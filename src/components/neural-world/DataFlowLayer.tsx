@@ -115,6 +115,17 @@ interface DataFlowLayerProps {
 export function DataFlowLayer({ visible }: DataFlowLayerProps) {
   const { scene } = useWorldContext()
 
+  // NW40: World speed factor from ResonanceOrb
+  const worldSpeedRef = useRef<number>(1.0)
+  useEffect(() => {
+    function onSpeedFactor(e: Event) {
+      const ev = e as CustomEvent<{ factor: number }>
+      if (ev.detail?.factor !== undefined) worldSpeedRef.current = ev.detail.factor
+    }
+    window.addEventListener('nw:world-speed-factor', onSpeedFactor)
+    return () => window.removeEventListener('nw:world-speed-factor', onSpeedFactor)
+  }, [])
+
   // Connection tube meshes
   const tubesRef = useRef<THREE.Mesh[]>([])
 
@@ -439,7 +450,7 @@ export function DataFlowLayer({ visible }: DataFlowLayerProps) {
       // Advance flow particles
       particlesRef.current.forEach(fp => {
         if (!fp.active) return
-        fp.t += fp.speed
+        fp.t += fp.speed * worldSpeedRef.current
         if (fp.t >= 1) {
           fp.t = 0
           fp.mesh.visible = false

@@ -97,10 +97,12 @@ const LAYERS: LayerDef[] = [
   { id: 'automation-flows', label: 'Automation Flows', icon: '⚙', r: 64,  g: 212, b: 255 },
   /** NW39: Time navigation — scrub past/future world states via time slider */
   { id: 'time-navigation', label: 'Time Navigation', icon: '⏱', r: 0, g: 229, b: 204 },
+  /** NW40: Resonance Orb — central harmony indicator + world speed driver */
+  { id: 'resonance-orb',   label: 'Resonance Orb',   icon: '◉', r: 255, g: 200, b: 64  },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation'])
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -127,6 +129,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'katsuro-bridge':  'Katsuro Raijin tower with read lines, life block overlays, and handoff animations.',
   'automation-flows':'Ground-level n8n-style trigger → condition → action → result paths with active flow glow.',
   'time-navigation': 'Scrub through past and future world states. Drag slider to walk your business timeline.',
+  'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {

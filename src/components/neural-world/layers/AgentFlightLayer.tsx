@@ -380,6 +380,16 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
   const domainCubesRef = useRef<Map<string, THREE.Mesh[]>>(new Map())
   const clockRef      = useRef(0)
   const demoTimerRef  = useRef(0)
+  // NW40: World speed factor from ResonanceOrb
+  const worldSpeedRef = useRef<number>(1.0)
+  useEffect(() => {
+    function onSpeedFactor(e: Event) {
+      const ev = e as CustomEvent<{ factor: number }>
+      if (ev.detail?.factor !== undefined) worldSpeedRef.current = ev.detail.factor
+    }
+    window.addEventListener('nw:world-speed-factor', onSpeedFactor)
+    return () => window.removeEventListener('nw:world-speed-factor', onSpeedFactor)
+  }, [])
   const agentTimersRef = useRef<Map<string, number>>(new Map())
   // NW31: track per-orb fog opacity for smooth fade
   const orbFogOpacityRef = useRef<Map<string, number>>(new Map())
@@ -510,7 +520,7 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
 
     function onFrame() {
       const now   = performance.now() / 1000
-      const dt    = Math.min(0.05, now - lastFrameTime)
+      const dt    = Math.min(0.05, now - lastFrameTime) * worldSpeedRef.current
       lastFrameTime = now
       clockRef.current += dt
 

@@ -276,6 +276,16 @@ export function FogDomainLayer({
   const zonesRef      = useRef<Map<FogType, FogZone>>(new Map())
   const rippleTimers  = useRef<Map<string, number>>(new Map())  // agentId → remaining ripple time
   const [infoPanel, setInfoPanel] = useState<FogInfoData | null>(null)
+  // NW40: World speed factor from ResonanceOrb
+  const worldSpeedRef = useRef<number>(1.0)
+  useEffect(() => {
+    function onSpeedFactor(e: Event) {
+      const ev = e as CustomEvent<{ factor: number }>
+      if (ev.detail?.factor !== undefined) worldSpeedRef.current = ev.detail.factor
+    }
+    window.addEventListener('nw:world-speed-factor', onSpeedFactor)
+    return () => window.removeEventListener('nw:world-speed-factor', onSpeedFactor)
+  }, [])
 
   // ── Build fog zones from world data ──────────────────────────────────────
   useEffect(() => {
@@ -459,13 +469,13 @@ export function FogDomainLayer({
         if (!zone.group.visible) continue
 
         for (const p of zone.particles) {
-          // Random walk drift
+          // Random walk drift (NW40: scaled by world speed)
           p.vx += (Math.random() - 0.5) * DRIFT_ACCEL
           p.vz += (Math.random() - 0.5) * DRIFT_ACCEL
           p.vx = Math.max(-DRIFT_SPEED, Math.min(DRIFT_SPEED, p.vx))
           p.vz = Math.max(-DRIFT_SPEED, Math.min(DRIFT_SPEED, p.vz))
-          p.offX += p.vx
-          p.offZ += p.vz
+          p.offX += p.vx * worldSpeedRef.current
+          p.offZ += p.vz * worldSpeedRef.current
 
           // Elastic return if drifted too far
           if (Math.abs(p.offX) > MAX_OFFSET) p.offX *= 0.92

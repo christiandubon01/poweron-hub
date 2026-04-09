@@ -320,6 +320,17 @@ function RiverPanel({ fin, screenX, screenY, onClose }: RiverPanelProps) {
 export function RiverSystemLayer() {
   const { scene, camera, renderer } = useWorldContext()
 
+  // NW40: World speed factor from ResonanceOrb
+  const worldSpeedRef = useRef<number>(1.0)
+  useEffect(() => {
+    function onSpeedFactor(e: Event) {
+      const ev = e as CustomEvent<{ factor: number }>
+      if (ev.detail?.factor !== undefined) worldSpeedRef.current = ev.detail.factor
+    }
+    window.addEventListener('nw:world-speed-factor', onSpeedFactor)
+    return () => window.removeEventListener('nw:world-speed-factor', onSpeedFactor)
+  }, [])
+
   // ── Refs for Three.js objects ──────────────────────────────────────────────
   const riverMeshRef       = useRef<THREE.Mesh | null>(null)
   const riverSurfaceRef    = useRef<THREE.Mesh | null>(null)   // animated overlay
@@ -728,7 +739,7 @@ export function RiverSystemLayer() {
 
         // Move toward z=0 (Founders Valley)
         const dir = fp.mesh.position.z > 0 ? -1 : fp.mesh.position.z < -10 ? 1 : 0
-        fp.mesh.position.z += dir * fp.speed * 60   // scale to per-frame
+        fp.mesh.position.z += dir * fp.speed * 60 * worldSpeedRef.current   // NW40: scale by world speed
 
         // Check arrival near center
         if (Math.abs(fp.mesh.position.z) < 8 && !fp.dropTriggered) {
