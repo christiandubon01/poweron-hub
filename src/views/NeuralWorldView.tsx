@@ -63,6 +63,7 @@ import TemporalNavigator from '@/components/neural-world/TemporalNavigator'
 import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/DataBridge'
 import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
+import { GuidedTour } from '@/components/neural-world/GuidedTour'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -164,6 +165,8 @@ function WorldLayers({
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
       {/* NW-PROX: Proximity info cards — domain awareness HUD */}
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
+      {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
+      <GuidedTour />
     </>
   )
 }
