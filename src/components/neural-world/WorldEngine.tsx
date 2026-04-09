@@ -459,6 +459,61 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     scene.add(valleyGlow)
     valleyGlowRef.current = valleyGlow
 
+    // NW23: OPERATOR monument — the human at the center connecting both continents
+    // Central obelisk: tall cylinder + sphere cap at Founders Valley center
+    const operatorBaseGeo = new THREE.CylinderGeometry(0.9, 1.2, 0.6, 8)
+    const operatorBaseMat = new THREE.MeshLambertMaterial({ color: 0xc8a028, emissive: new THREE.Color(0xc8a028).multiplyScalar(0.08) })
+    const operatorBase = new THREE.Mesh(operatorBaseGeo, operatorBaseMat)
+    operatorBase.position.set(0, 0.3, 0)
+    operatorBase.castShadow = false
+    scene.add(operatorBase)
+
+    const operatorShaftGeo = new THREE.CylinderGeometry(0.35, 0.5, 6.5, 8)
+    const operatorShaftMat = new THREE.MeshLambertMaterial({ color: 0x1a1208, emissive: new THREE.Color(0xc8a028).multiplyScalar(0.12) })
+    const operatorShaft = new THREE.Mesh(operatorShaftGeo, operatorShaftMat)
+    operatorShaft.position.set(0, 3.85, 0)
+    operatorShaft.castShadow = false
+    scene.add(operatorShaft)
+
+    const operatorCapGeo = new THREE.SphereGeometry(0.65, 10, 8)
+    const operatorCapMat = new THREE.MeshLambertMaterial({ color: 0xffd700, emissive: new THREE.Color(0xffd700).multiplyScalar(0.25) })
+    const operatorCap = new THREE.Mesh(operatorCapGeo, operatorCapMat)
+    operatorCap.position.set(0, 7.45, 0)
+    scene.add(operatorCap)
+
+    // OPERATOR glow light
+    const operatorLight = new THREE.PointLight(0xffd700, 1.2, 55)
+    operatorLight.position.set(0, 7.5, 0)
+    scene.add(operatorLight)
+
+    // Operator label sprite
+    const opCanvas = document.createElement('canvas')
+    opCanvas.width = 220
+    opCanvas.height = 44
+    const opCtx = opCanvas.getContext('2d')!
+    opCtx.font = 'bold 22px monospace'
+    opCtx.fillStyle = 'rgba(0,0,0,0.72)'
+    opCtx.fillRect(0, 0, 220, 44)
+    opCtx.fillStyle = '#ffd700'
+    opCtx.textBaseline = 'middle'
+    opCtx.fillText('◈ OPERATOR', 10, 22)
+    const opTex = new THREE.CanvasTexture(opCanvas)
+    const opSpriteMat = new THREE.SpriteMaterial({ map: opTex, transparent: true, opacity: 0.95, depthWrite: false })
+    const opSprite = new THREE.Sprite(opSpriteMat)
+    opSprite.scale.set(7.5, 1.6, 1)
+    opSprite.position.set(0, 9.8, 0)
+    scene.add(opSprite)
+
+    // Connection lines to west continent (Power On Solutions LLC) and east continent (PowerOn Hub)
+    const connMat = new THREE.LineBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.35 })
+    const westPts = [new THREE.Vector3(0, 1.0, 0), new THREE.Vector3(-65, 1.0, 0)]
+    const westConnGeo = new THREE.BufferGeometry().setFromPoints(westPts)
+    scene.add(new THREE.Line(westConnGeo, connMat.clone()))
+
+    const eastPts = [new THREE.Vector3(0, 1.0, 0), new THREE.Vector3(65, 1.0, 0)]
+    const eastConnGeo = new THREE.BufferGeometry().setFromPoints(eastPts)
+    scene.add(new THREE.Line(eastConnGeo, connMat.clone()))
+
     // East continent: x=20 to 200 (width 180), dark crystal #0a0a1a
     const eastGeo = new THREE.PlaneGeometry(180, 400, 90, 200)
     const eastMat = new THREE.MeshLambertMaterial({ color: 0x0a0a1a })

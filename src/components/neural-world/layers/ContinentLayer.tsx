@@ -3,15 +3,16 @@
  *
  * Handles:
  * 1. Central river plasma flow particles (x=-20..20, z=-200..200)
- * 2. MTZ Solar island — floating platform at z=-150, x=0, y=0
- * 3. Bridge (GeometryBox) connecting island to founders valley — toggles
- *    on/off matching Solar Income panel state via shared Supabase flag
- *    (listens to 'nw:solar-income-toggle' window event and Supabase poll)
- * 4. Revenue health dispatch — reads invoice/project data and fires
+ * 2. MTZ Solar island — floating platform on west side of river (toggle-controlled)
+ *    NW23: MTZ is an ADDITIONAL REVENUE SOURCE ONLY — not a bridge between continents.
+ *    Toggle controls visibility of the MTZ island platform itself. No east-west bridge.
+ *    MTZ feeds into the central river as a tributary (handled by RiverSystemLayer).
+ * 3. Revenue health dispatch — reads invoice/project data and fires
  *    'nw:revenue-health' so WorldEngine can modulate dual sun intensities
  *
  * NW8 scope: West continent x=-200..-20, East x=20..200,
- * Central channel x=-20..20, MTZ island at z=-150 x=0 offshore south.
+ * Central channel x=-20..20, MTZ island on west river bank.
+ * NW23: Removed east-west bridge geometry. Solar toggle = island visibility only.
  */
 
 import { useEffect, useRef } from 'react'
@@ -165,29 +166,29 @@ export function ContinentLayer() {
     islandGlowRef.current = glow
   }
 
-  // ── Build / remove bridge ─────────────────────────────────────────────────
+  // ── NW23: Toggle MTZ island visibility (no east-west bridge) ────────────────
+  // Solar toggle controls only the MTZ island platform itself.
+  // MTZ is a revenue source that feeds into the west river as a tributary —
+  // it is NOT a bridge between PowerOn Hub (east) and Power On Solutions (west).
 
   function setBridgeVisible(visible: boolean) {
     bridgeActiveRef.current = visible
 
-    if (visible && !bridgeRef.current) {
-      // Create bridge — elongated box from z=-25 to island
-      const bridgeGeo = new THREE.BoxGeometry(4, 0.4, BRIDGE_LENGTH)
-      const bridgeMat = new THREE.MeshLambertMaterial({
-        color: 0x2a1800,
-        emissive: new THREE.Color(0xff8800).multiplyScalar(0.06),
-      })
-      const bridge = new THREE.Mesh(bridgeGeo, bridgeMat)
-      bridge.position.set(ISLAND_X, ISLAND_Y + 0.2, BRIDGE_Z_CENTER)
-      bridge.castShadow = true
-      bridge.receiveShadow = true
-      scene.add(bridge)
-      bridgeRef.current = bridge
-    } else if (!visible && bridgeRef.current) {
+    // NW23: Only toggle the island visibility — do NOT create any bridge geometry.
+    // Any previously-built bridge mesh should be removed.
+    if (bridgeRef.current) {
       scene.remove(bridgeRef.current)
       bridgeRef.current.geometry.dispose()
       ;(bridgeRef.current.material as THREE.Material).dispose()
       bridgeRef.current = null
+    }
+
+    // Toggle island and its glow visibility
+    if (islandRef.current) {
+      islandRef.current.visible = visible
+    }
+    if (islandGlowRef.current) {
+      islandGlowRef.current.visible = visible
     }
   }
 

@@ -39,6 +39,7 @@ import { NodeClickSystem } from '@/components/neural-world/NodeClickSystem'
 import { DataFlowLayer } from '@/components/neural-world/DataFlowLayer'
 import { SimulationLayer } from '@/components/neural-world/layers/SimulationLayer'
 import { SimDotTravelerController } from '@/components/neural-world/SimulationDotTraveler'
+import { RiverSystemLayer } from '@/components/neural-world/layers/RiverSystemLayer'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -99,6 +100,8 @@ function WorldLayers({
       <SimulationLayer visible={!!layerStates['simulation']} />
       {/* NW19: Business cycle dot traveler (renders Three.js + React summary panel) */}
       <SimDotTravelerController />
+      {/* NW23: River system — cash flow visualization, tributaries, MTZ correction */}
+      <RiverSystemLayer />
     </>
   )
 }
