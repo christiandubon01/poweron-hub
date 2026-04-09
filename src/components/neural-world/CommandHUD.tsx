@@ -95,6 +95,8 @@ const LAYERS: LayerDef[] = [
   { id: 'katsuro-bridge',  label: 'Katsuro Bridge',  icon: '⚡', r: 255, g: 48,  b: 48  },
   /** NW36: Automation flows — n8n-style ground-level trigger→condition→action→result paths */
   { id: 'automation-flows', label: 'Automation Flows', icon: '⚙', r: 64,  g: 212, b: 255 },
+  /** NW39: Time navigation — scrub past/future world states via time slider */
+  { id: 'time-navigation', label: 'Time Navigation', icon: '⏱', r: 0, g: 229, b: 204 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -124,6 +126,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'fog-improvement': 'Teal fog highlighting optimization opportunities and underperforming process areas.',
   'katsuro-bridge':  'Katsuro Raijin tower with read lines, life block overlays, and handoff animations.',
   'automation-flows':'Ground-level n8n-style trigger → condition → action → result paths with active flow glow.',
+  'time-navigation': 'Scrub through past and future world states. Drag slider to walk your business timeline.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {

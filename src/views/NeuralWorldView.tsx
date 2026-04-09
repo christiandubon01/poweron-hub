@@ -58,6 +58,9 @@ import CommandHUD, {
   CameraMode as HUDCameraMode,
   type LayerStates,
 } from '@/components/neural-world/CommandHUD'
+import { TemporalProvider } from '@/components/neural-world/TemporalDataEngine'
+import TemporalNavigator from '@/components/neural-world/TemporalNavigator'
+import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/DataBridge'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -85,6 +88,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'katsuro-bridge':   false,
   // NW36: Automation flow layer — ground-level n8n-style paths
   'automation-flows': false,
+  // NW39: Time navigation slider — scrub past/future world states
+  'time-navigation':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -342,6 +347,13 @@ export default function NeuralWorldView() {
   // NW36: Automation Flow Builder panel
   const [flowBuilderOpen, setFlowBuilderOpen] = useState(false)
 
+  // NW39: World data subscription for TemporalDataEngine
+  const [nwWorldData, setNwWorldData] = useState<NWWorldData | null>(null)
+  useEffect(() => {
+    const unsub = subscribeWorldData(data => setNwWorldData(data))
+    return unsub
+  }, [])
+
   // NW14: V5 Enterprise badge — shows on first V5 entry
   const [showV5Badge, setShowV5Badge] = useState(false)
   const v5BadgeDismissedRef = useRef(false)
@@ -585,6 +597,7 @@ export default function NeuralWorldView() {
   }
 
   return (
+    <TemporalProvider worldData={nwWorldData}>
     <div
       ref={outerContainerRef}
       style={{
@@ -875,6 +888,9 @@ export default function NeuralWorldView() {
         </div>
       )}
 
+      {/* ── NW39: Temporal Navigator — time scrub slider (visible when time-navigation layer ON) ── */}
+      <TemporalNavigator visible={!!layerStates['time-navigation']} />
+
       {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD
         layerStates={layerStates}
@@ -888,5 +904,6 @@ export default function NeuralWorldView() {
         onOpenRoster={() => setRosterOpen(true)}
       />
     </div>
+    </TemporalProvider>
   )
 }
