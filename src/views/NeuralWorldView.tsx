@@ -870,8 +870,8 @@ export default function NeuralWorldView() {
         </div>
       )}
 
-      {/* ── NW29: NEXUS sweep briefing sphere DOM overlay ── */}
-      <NexusSweepController />
+      {/* ── NW29/B76: NEXUS Master Briefing premium panel ── */}
+      <NexusSweepController soundLayerEnabled={!!layerStates['sound']} />
 
       {/* ── NW29: Flight analytics panel + chart icon toggle ── */}
       <FlightAnalyticsPanel />
