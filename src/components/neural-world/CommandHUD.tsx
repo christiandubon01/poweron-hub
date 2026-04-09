@@ -77,6 +77,8 @@ const LAYERS: LayerDef[] = [
   { id: 'data-flow',       label: 'Data Flow',       icon: '⟳',  r: 0,   g: 220, b: 180 },
   /** NW19: Enterprise simulation — org pyramids, AI agent placement */
   { id: 'simulation',      label: 'Simulation',      icon: '⬡',  r: 255, g: 200, b: 40  },
+  /** NW28: Agent flight system — domain zones, flying orbs, task cycles, data cubes */
+  { id: 'agent-flight',    label: 'Agent Flight',    icon: '◉',  r: 0,   g: 229, b: 204 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(

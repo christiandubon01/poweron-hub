@@ -42,6 +42,7 @@ import { SimDotTravelerController } from '@/components/neural-world/SimulationDo
 import { RiverSystemLayer } from '@/components/neural-world/layers/RiverSystemLayer'
 import { DragDropSystem } from '@/components/neural-world/DragDropSystem'
 import { NexusCompanion } from '@/components/neural-world/NexusCompanion'
+import { AgentFlightLayer } from '@/components/neural-world/layers/AgentFlightLayer'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -63,6 +64,7 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'command':          false,
   'data-flow':        true,   // NW18: data flow on by default
   'simulation':       false,  // NW19: enterprise simulation
+  'agent-flight':     false,  // NW28: agent flight system — domains, orbs, task cycles
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -102,6 +104,8 @@ function WorldLayers({
       <SimulationLayer visible={!!layerStates['simulation']} />
       {/* NW19: Business cycle dot traveler (renders Three.js + React summary panel) */}
       <SimDotTravelerController />
+      {/* NW28: Agent flight system — domain zones, flying orbs, task cycles, data cubes */}
+      <AgentFlightLayer visible={!!layerStates['agent-flight']} />
       {/* NW23: River system — cash flow visualization, tributaries, MTZ correction */}
       <RiverSystemLayer />
       {/* NW24: Drag-and-drop node repositioning */}
