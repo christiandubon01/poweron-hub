@@ -1,5 +1,5 @@
 /**
- * ResonanceOrb.tsx — NW40: Central resonance orb at Founders Valley.
+ * ResonanceOrb.tsx — NW40/NW41: Central resonance orb at Founders Valley.
  *
  * Position: x=0, y=12, z=0 (above OPERATOR monument).
  * Geometry: SphereGeometry radius 2.0 + IcosahedronGeometry wireframe overlay.
@@ -20,6 +20,8 @@
  * HUD: Renders a fixed bottom-center indicator bar showing state name + score.
  *
  * NW40: Layers panel toggle key = 'resonance-orb'.
+ * NW41: Added OPTIMIZE RESONANCE button, heat map toggle, show-effect animation,
+ *       tuning fork markers, and effect animator layers.
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
@@ -32,6 +34,13 @@ import {
   RESONANCE_STATE_COLOR,
   RESONANCE_STATE_ICON,
 } from './ResonanceEngine'
+import {
+  ResonancePredictor,
+  ResonanceHeatMapToggle,
+  ResonanceHeatMapLayer,
+  ResonanceEffectAnimator,
+  ResonanceTuningForkLayer,
+} from './ResonancePredictor'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -446,6 +455,15 @@ export function ResonanceOrb({ visible }: ResonanceOrbProps) {
           onClose={() => setPanelOpen(false)}
         />
       )}
+
+      {/* NW41: Heat map Three.js layer */}
+      <ResonanceHeatMapLayer visible={visible} />
+
+      {/* NW41: Effect animator (handles show-effect + state transform events) */}
+      <ResonanceEffectAnimator />
+
+      {/* NW41: Tuning fork markers for applied optimizations */}
+      <ResonanceTuningForkLayer visible={visible} />
     </>
   )
 }
@@ -631,19 +649,33 @@ function ResonanceBreakdownPanel({
         })}
       </div>
 
-      {/* Footer hint */}
+      {/* Footer row: world speed + heat map toggle */}
       <div style={{
         marginTop: 14,
         paddingTop: 10,
         borderTop: '1px solid rgba(255,255,255,0.07)',
-        color: 'rgba(255,255,255,0.2)',
-        fontSize: 7.5,
-        letterSpacing: 0.8,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
       }}>
-        WORLD SPEED · {state === 'DISSONANT' ? '0.7×' : state === 'COHERENT' ? '1.0×' : '1.3×'}
-        &nbsp;·&nbsp;
-        CLICK ORB TO REFRESH
+        <div style={{
+          color: 'rgba(255,255,255,0.2)',
+          fontSize: 7.5,
+          letterSpacing: 0.8,
+          fontFamily: 'monospace',
+        }}>
+          WORLD SPEED · {state === 'DISSONANT' ? '0.7×' : state === 'COHERENT' ? '1.0×' : '1.3×'}
+          &nbsp;·&nbsp;
+          CLICK ORB TO REFRESH
+        </div>
+
+        {/* NW41: Heat map toggle */}
+        <ResonanceHeatMapToggle result={result} stateColor={stateColor} />
       </div>
+
+      {/* NW41: AI optimization predictor */}
+      <ResonancePredictor result={result} stateColor={stateColor} />
     </div>
   )
 }
