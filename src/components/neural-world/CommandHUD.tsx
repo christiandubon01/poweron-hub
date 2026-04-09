@@ -34,6 +34,8 @@ import { SimulationHUD } from './SimulationHUD'
 import { InstructionalOverlay } from './InstructionalOverlay'
 import { StrategyPanel, StrategyBrainButton } from './StrategyPanel'
 import { FogInterviewPanel, FogCalibrateButton } from './FogInterviewPanel'
+import ActionableInsightPanel, { InsightTriggerButton, type CubeInsightPayload } from './ActionableInsightPanel'
+import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -208,6 +210,50 @@ export default function CommandHUD({
     function onCalibrated() { setFogCalibrated(true) }
     window.addEventListener('nw:fog-calibrated', onCalibrated)
     return () => window.removeEventListener('nw:fog-calibrated', onCalibrated)
+  }, [])
+
+  // NW33: Actionable insight panel state
+  const [insightOpen, setInsightOpen]           = useState(false)
+  const [insightPayload, setInsightPayload]     = useState<CubeInsightPayload | null>(null)
+  const [insightHasNew, setInsightHasNew]       = useState(false)
+
+  // NW33: Listen for cube-clicked events from agent orbs
+  useEffect(() => {
+    function onCubeClicked(e: Event) {
+      const ev = e as CustomEvent<CubeInsightPayload>
+      if (!ev.detail) return
+      setInsightPayload(ev.detail)
+      setInsightOpen(true)
+      setInsightHasNew(false)
+    }
+    function onAgentComplete(e: Event) {
+      const ev = e as CustomEvent<CubeInsightPayload>
+      if (!ev.detail) return
+      setInsightPayload(ev.detail)
+      setInsightHasNew(true)
+    }
+    window.addEventListener('nw:cube-clicked', onCubeClicked)
+    window.addEventListener('nw:agent-complete', onAgentComplete)
+    return () => {
+      window.removeEventListener('nw:cube-clicked', onCubeClicked)
+      window.removeEventListener('nw:agent-complete', onAgentComplete)
+    }
+  }, [])
+
+  // NW33: What-if simulator state
+  const [whatIfOpen, setWhatIfOpen]       = useState(false)
+  const [whatIfActive, setWhatIfActive]   = useState(false)
+
+  // NW33: Listen for what-if apply/exit events
+  useEffect(() => {
+    function onWhatIfApply() { setWhatIfActive(true) }
+    function onWhatIfExit()  { setWhatIfActive(false) }
+    window.addEventListener('nw:what-if-apply', onWhatIfApply)
+    window.addEventListener('nw:what-if-exit',  onWhatIfExit)
+    return () => {
+      window.removeEventListener('nw:what-if-apply', onWhatIfApply)
+      window.removeEventListener('nw:what-if-exit',  onWhatIfExit)
+    }
   }, [])
 
   const handleEditLayoutToggle = useCallback(() => {
@@ -524,6 +570,19 @@ export default function CommandHUD({
       {/* ── NW32: FOG INTERVIEW PANEL ───────────────────────────────────── */}
       <FogInterviewPanel open={fogInterviewOpen} onClose={() => setFogInterviewOpen(false)} />
 
+      {/* ── NW33: ACTIONABLE INSIGHT PANEL ─────────────────────────────── */}
+      <ActionableInsightPanel
+        open={insightOpen}
+        payload={insightPayload}
+        onClose={() => { setInsightOpen(false); setInsightHasNew(false) }}
+      />
+
+      {/* ── NW33: WHAT-IF SIMULATOR ─────────────────────────────────────── */}
+      <WhatIfSimulator
+        open={whatIfOpen}
+        onClose={() => setWhatIfOpen(false)}
+      />
+
       {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
       <InstructionalOverlay />
 
@@ -593,6 +652,20 @@ export default function CommandHUD({
           open={fogInterviewOpen}
           onClick={() => setFogInterviewOpen(prev => !prev)}
           calibrated={fogCalibrated}
+        />
+
+        {/* NW33: Agent insight trigger button */}
+        <InsightTriggerButton
+          active={insightOpen}
+          hasNew={insightHasNew}
+          onClick={() => { setInsightOpen(prev => !prev); setInsightHasNew(false) }}
+        />
+
+        {/* NW33: What-if simulator button */}
+        <WhatIfButton
+          open={whatIfOpen}
+          active={whatIfActive}
+          onClick={() => setWhatIfOpen(prev => !prev)}
         />
 
         {/* Fullscreen toggle button */}
