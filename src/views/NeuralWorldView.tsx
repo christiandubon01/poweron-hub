@@ -41,6 +41,7 @@ import { SimulationLayer } from '@/components/neural-world/layers/SimulationLaye
 import { SimDotTravelerController } from '@/components/neural-world/SimulationDotTraveler'
 import { RiverSystemLayer } from '@/components/neural-world/layers/RiverSystemLayer'
 import { DragDropSystem } from '@/components/neural-world/DragDropSystem'
+import { NexusCompanion } from '@/components/neural-world/NexusCompanion'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -105,6 +106,8 @@ function WorldLayers({
       <RiverSystemLayer />
       {/* NW24: Drag-and-drop node repositioning */}
       <DragDropSystem />
+      {/* NW26: NEXUS walk-along companion — avatar + voice + vision system */}
+      <NexusCompanion />
     </>
   )
 }
