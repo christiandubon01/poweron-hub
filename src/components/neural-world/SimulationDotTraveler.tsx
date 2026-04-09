@@ -103,7 +103,7 @@ const STAGES: CycleStage[] = [
   },
 ]
 
-// ── Canvas text sprite helper ─────────────────────────────────────────────────
+// ── Canvas text sprite helper — B72: 40% size reduction ──────────────────────
 
 function makeTextSprite(text: string, color = '#00e5cc'): THREE.Sprite {
   const canvas = document.createElement('canvas')
@@ -111,14 +111,14 @@ function makeTextSprite(text: string, color = '#00e5cc'): THREE.Sprite {
   canvas.height = 64
   const ctx = canvas.getContext('2d')!
   ctx.clearRect(0, 0, 256, 64)
-  ctx.font = 'bold 22px monospace'
+  ctx.font = 'bold 13px monospace'  // B72: reduced from 22 → 13 (40% smaller)
   ctx.fillStyle = color
   ctx.textAlign = 'center'
   ctx.fillText(text, 128, 40)
   const texture = new THREE.CanvasTexture(canvas)
   const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
   const sprite = new THREE.Sprite(mat)
-  sprite.scale.set(6, 1.5, 1)
+  sprite.scale.set(3.6, 0.9, 1)  // B72: reduced from (6, 1.5) → (3.6, 0.9) — 40% smaller
   return sprite
 }
 

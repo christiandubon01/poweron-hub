@@ -372,7 +372,7 @@ interface NexusSweepState {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
-  const { scene } = useWorldContext()
+  const { scene, camera } = useWorldContext()
 
   const visibleRef    = useRef(visible)
   const domainsRef    = useRef<Map<string, DomainZoneInstance>>(new Map())
@@ -531,6 +531,7 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
     handlers.push({ event: 'nw:reduce-particles', fn: reduceHandler })
 
     // ── 5. Animation frame ──────────────────────────────────────────────────
+    const _domLabelWp = new THREE.Vector3()  // B72: reusable temp for domain label positions
     let lastFrameTime = performance.now() / 1000
 
     function onFrame() {
@@ -541,9 +542,14 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
 
       const vis = visibleRef.current
 
-      // Toggle all domain zones
+      // Toggle all domain zones + B72: update label frustum culling
       for (const zone of domainsRef.current.values()) {
         zone.group.visible = vis
+        if (vis) {
+          // Update domain label visibility (frustum cull + fade)
+          zone.labelSprite.getWorldPosition(_domLabelWp)
+          zone.labelSprite.updateVisibility(camera, _domLabelWp)
+        }
       }
 
       if (!vis) {

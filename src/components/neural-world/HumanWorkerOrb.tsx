@@ -189,7 +189,8 @@ export class HumanWorkerOrbInstance {
     })
 
     // ── Name label ────────────────────────────────────────────────────────
-    this.label = makeLabel(cfg.name || cfg.role, '#FF9040', { fontSize: 14 })
+    // B72: agent labels — 0.8em (1.28 world units), name only
+    this.label = makeLabel(cfg.name || cfg.role, '#FF9040', { fontSize: 14, labelType: 'agent' })
     this.label.position.set(0, cfg.radius + 1.2, 0)
     this.group.add(this.label)
 

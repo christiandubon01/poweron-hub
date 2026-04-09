@@ -185,9 +185,8 @@ export function WestContinentLayer() {
       light.position.set(x, mountainTip, z)
       scene.add(light)
 
-      // Floating label: "CREW:2 HRS:48 ▓78%"
-      const label = `${project.name.slice(0, 10)} | C:${crewCount} H:${Math.round(totalHours)} ${phase}%`
-      const sprite = makeLabel(label, '#00ffcc')
+      // B72: project mountain labels — 0.9em (1.44 world units), project name only
+      const sprite = makeLabel(project.name.slice(0, 20), '#00ffcc', { labelType: 'project' })
       sprite.position.set(x, mountainTip + 1.5, z)
       scene.add(sprite)
       labelSpritesRef.current.push(sprite)
@@ -580,9 +579,10 @@ export function WestContinentLayer() {
       }
 
       // Floating text sprite label — NW31b: themed color per struct
+      // B72: domain labels — bold, max 1.2em (1.92 world units)
       const labelY = getStructureLabelY(struct.id)
       const structColor = ADMIN_STRUCT_COLORS[struct.id] ?? '#aaffdd'
-      const sprite = makeLabel(struct.label, structColor)
+      const sprite = makeLabel(struct.label, structColor, { labelType: 'domain' })
       sprite.position.set(0, labelY, 0)
       group.add(sprite)
       adminMeshesRef.current.push(sprite)
