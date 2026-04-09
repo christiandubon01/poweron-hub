@@ -25,6 +25,7 @@ import {
 } from './NWSettings'
 import { CameraMode } from './CameraController'
 import { ColorModeSelector, type ColorMode } from './AdaptiveColorEngine'
+import { AudioSettingsSection } from './SonicLandscape'
 
 interface SettingsPanelProps {
   cameraMode: CameraMode
@@ -448,6 +449,11 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
             ◈ COLOR MODE
           </div>
           <ColorModeSelector value={colorMode} onChange={applyColorMode} />
+
+          <Divider />
+
+          {/* ── NW43: Audio Settings ── */}
+          <AudioSettingsSection />
 
           <Divider />
 

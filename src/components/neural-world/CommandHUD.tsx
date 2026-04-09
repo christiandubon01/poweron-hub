@@ -39,6 +39,7 @@ import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 import LegendPanel, { LegendButton } from './LegendPanel'
 import { AdaptiveColorEngine, CognitiveStateHUD } from './AdaptiveColorEngine'
+import { SonicLandscape, MuteButton } from './SonicLandscape'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -100,6 +101,8 @@ const LAYERS: LayerDef[] = [
   { id: 'time-navigation', label: 'Time Navigation', icon: '⏱', r: 0, g: 229, b: 204 },
   /** NW40: Resonance Orb — central harmony indicator + world speed driver */
   { id: 'resonance-orb',   label: 'Resonance Orb',   icon: '◉', r: 255, g: 200, b: 64  },
+  /** NW43: Sonic Landscape — procedural audio layer. Off by default. */
+  { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -131,6 +134,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'automation-flows':'Ground-level n8n-style trigger → condition → action → result paths with active flow glow.',
   'time-navigation': 'Scrub through past and future world states. Drag slider to walk your business timeline.',
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
+  'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -1181,6 +1185,21 @@ export default function CommandHUD({
         >
           {editLayoutActive ? '✕ EXIT EDIT' : '✎ EDIT LAYOUT'}
         </button>
+      </div>
+
+      {/* ── NW43: SONIC LANDSCAPE ────────────────────────────────────────── */}
+      <SonicLandscape enabled={!!layerStates['sound']} />
+
+      {/* ── NW43: MUTE BUTTON (bottom-right near settings gear) ──────────── */}
+      <div style={{
+        position: 'absolute',
+        bottom: 60,
+        right: 58,
+        zIndex: 28,
+        display: 'flex',
+        alignItems: 'flex-end',
+      }}>
+        <MuteButton soundLayerEnabled={!!layerStates['sound']} />
       </div>
 
       {/* ── NW16: SETTINGS PANEL (gear icon, bottom-right) ────────────────── */}
