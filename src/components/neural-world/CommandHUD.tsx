@@ -32,6 +32,7 @@ import { SettingsPanel } from './SettingsPanel'
 import { MinimapRenderer } from './MinimapRenderer'
 import { SimulationHUD } from './SimulationHUD'
 import { InstructionalOverlay } from './InstructionalOverlay'
+import { StrategyPanel, StrategyBrainButton } from './StrategyPanel'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -186,6 +187,9 @@ export default function CommandHUD({
 
   // NW24: Edit layout toggle state
   const [editLayoutActive, setEditLayoutActive] = useState(false)
+
+  // NW25: Strategy panel open state
+  const [strategyPanelOpen, setStrategyPanelOpen] = useState(false)
 
   const handleEditLayoutToggle = useCallback(() => {
     const next = !editLayoutActive
@@ -495,6 +499,9 @@ export default function CommandHUD({
         </div>
       )}
 
+      {/* ── NW25: AI STRATEGY PANEL ─────────────────────────────────────── */}
+      <StrategyPanel open={strategyPanelOpen} onClose={() => setStrategyPanelOpen(false)} />
+
       {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
       <InstructionalOverlay />
 
@@ -552,6 +559,12 @@ export default function CommandHUD({
             )}
           </div>
         </div>
+
+        {/* NW25: Brain button — AI Strategy Panel */}
+        <StrategyBrainButton
+          open={strategyPanelOpen}
+          onClick={() => setStrategyPanelOpen(prev => !prev)}
+        />
 
         {/* Fullscreen toggle button */}
         {onToggleFullscreen && (
