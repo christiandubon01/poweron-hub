@@ -92,6 +92,8 @@ const LAYERS: LayerDef[] = [
   { id: 'fog-improvement', label: 'Improvement Fog', icon: '🌱', r: 0,   g: 204, b: 187 },
   /** NW35: Katsuro Bridge Tower — read lines, life blocks, handoff animations */
   { id: 'katsuro-bridge',  label: 'Katsuro Bridge',  icon: '⚡', r: 255, g: 48,  b: 48  },
+  /** NW36: Automation flows — n8n-style ground-level trigger→condition→action→result paths */
+  { id: 'automation-flows', label: 'Automation Flows', icon: '⚙', r: 64,  g: 212, b: 255 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(

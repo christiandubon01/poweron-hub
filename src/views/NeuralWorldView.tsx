@@ -48,6 +48,8 @@ import { HandoffChain } from '@/components/neural-world/HandoffChain'
 import { FortressLayer } from '@/components/neural-world/layers/FortressLayer'
 import { FogDomainLayer } from '@/components/neural-world/layers/FogDomainLayer'
 import { KatsuroBridgeLayer } from '@/components/neural-world/layers/KatsuroBridgeLayer'
+import { AutomationFlowLayer } from '@/components/neural-world/layers/AutomationFlowLayer'
+import { AutomationFlowBuilder, FlowsButton } from '@/components/neural-world/AutomationFlowBuilder'
 import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
 import { FlightAnalyticsPanel } from '@/components/neural-world/FlightAnalyticsPanel'
 import { AgentRosterPanel, KatsuroSubtitleOverlay } from '@/components/neural-world/AgentRosterPanel'
@@ -81,6 +83,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'fog-improvement':  false,
   // NW35: Katsuro Bridge Tower
   'katsuro-bridge':   false,
+  // NW36: Automation flow layer — ground-level n8n-style paths
+  'automation-flows': false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -143,6 +147,8 @@ function WorldLayers({
       />
       {/* NW35: Katsuro Bridge Tower + planned agent wireframes + life blocks */}
       <KatsuroBridgeLayer visible={!!layerStates['katsuro-bridge']} />
+      {/* NW36: Automation flow layer — ground-level trigger→condition→action→result paths */}
+      <AutomationFlowLayer visible={!!layerStates['automation-flows']} />
     </>
   )
 }
@@ -332,6 +338,9 @@ export default function NeuralWorldView() {
 
   // NW35: Agent Roster panel
   const [rosterOpen, setRosterOpen] = useState(false)
+
+  // NW36: Automation Flow Builder panel
+  const [flowBuilderOpen, setFlowBuilderOpen] = useState(false)
 
   // NW14: V5 Enterprise badge — shows on first V5 entry
   const [showV5Badge, setShowV5Badge] = useState(false)
@@ -846,6 +855,25 @@ export default function NeuralWorldView() {
 
       {/* ── NW35: Agent Roster panel (20-agent command center) ── */}
       <AgentRosterPanel open={rosterOpen} onClose={() => setRosterOpen(false)} />
+
+      {/* ── NW36: Automation Flow Builder panel ── */}
+      <AutomationFlowBuilder
+        open={flowBuilderOpen}
+        onClose={() => setFlowBuilderOpen(false)}
+      />
+
+      {/* ── NW36: Flows trigger button — near Agent Flight toggle in left panel ── */}
+      {layerStates['automation-flows'] && !flowBuilderOpen && (
+        <div style={{
+          position:  'absolute',
+          left:      14,
+          bottom:    160,
+          zIndex:    35,
+          width:     130,
+        }}>
+          <FlowsButton onClick={() => setFlowBuilderOpen(true)} />
+        </div>
+      )}
 
       {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD
