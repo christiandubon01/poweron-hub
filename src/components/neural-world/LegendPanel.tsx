@@ -765,41 +765,82 @@ export default function LegendPanel({ open, onClose }: LegendPanelProps) {
           padding: '10px 16px',
           borderTop: '1px solid rgba(255,215,0,0.1)',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
+          flexDirection: 'column',
+          gap: 8,
           flexShrink: 0,
         }}>
-          <span style={{
-            color: 'rgba(255,255,255,0.2)',
-            fontSize: 9,
-            fontFamily: 'monospace',
-            letterSpacing: 0.8,
-          }}>
-            {LEGEND_SECTIONS.reduce((a, s) => a + s.items.length, 0)} OBJECTS DOCUMENTED
-          </span>
+          {/* NW-TUTORIAL: REPLAY TOUR button */}
           <button
-            onClick={onClose}
+            onClick={() => {
+              onClose()
+              window.dispatchEvent(new CustomEvent('nw:tour-start'))
+            }}
             style={{
-              padding: '5px 14px',
-              borderRadius: 4,
-              border: '1px solid rgba(255,215,0,0.35)',
-              background: 'rgba(255,215,0,0.08)',
-              color: '#FFD700',
+              width: '100%',
+              padding: '7px 14px',
+              borderRadius: 5,
+              border: '1px solid rgba(0,220,200,0.3)',
+              background: 'rgba(0,220,200,0.07)',
+              color: '#00ddcc',
               cursor: 'pointer',
-              fontSize: 9,
+              fontSize: 10,
               fontFamily: 'monospace',
               letterSpacing: 1.5,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
               transition: 'all 0.15s',
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = 'rgba(255,215,0,0.18)'
+              e.currentTarget.style.background = 'rgba(0,220,200,0.15)'
+              e.currentTarget.style.borderColor = 'rgba(0,220,200,0.55)'
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.background = 'rgba(255,215,0,0.08)'
+              e.currentTarget.style.background = 'rgba(0,220,200,0.07)'
+              e.currentTarget.style.borderColor = 'rgba(0,220,200,0.3)'
             }}
           >
-            RETURN TO WORLD
+            <span>▶</span> REPLAY TOUR
           </button>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span style={{
+              color: 'rgba(255,255,255,0.2)',
+              fontSize: 9,
+              fontFamily: 'monospace',
+              letterSpacing: 0.8,
+            }}>
+              {LEGEND_SECTIONS.reduce((a, s) => a + s.items.length, 0)} OBJECTS DOCUMENTED
+            </span>
+            <button
+              onClick={onClose}
+              style={{
+                padding: '5px 14px',
+                borderRadius: 4,
+                border: '1px solid rgba(255,215,0,0.35)',
+                background: 'rgba(255,215,0,0.08)',
+                color: '#FFD700',
+                cursor: 'pointer',
+                fontSize: 9,
+                fontFamily: 'monospace',
+                letterSpacing: 1.5,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(255,215,0,0.18)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255,215,0,0.08)'
+              }}
+            >
+              RETURN TO WORLD
+            </button>
+          </div>
         </div>
       </div>
     </>

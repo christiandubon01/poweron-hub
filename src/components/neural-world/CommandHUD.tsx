@@ -38,6 +38,7 @@ import ActionableInsightPanel, { InsightTriggerButton, type CubeInsightPayload }
 import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 import LegendPanel, { LegendButton } from './LegendPanel'
+import { GuidedTour } from './GuidedTour'
 import { AdaptiveColorEngine, CognitiveStateHUD } from './AdaptiveColorEngine'
 import { SonicLandscape, MuteButton } from './SonicLandscape'
 
@@ -663,6 +664,9 @@ export default function CommandHUD({
 
       {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
       <InstructionalOverlay />
+
+      {/* ── NW-TUTORIAL: GUIDED TOUR ────────────────────────────────────── */}
+      <GuidedTour />
 
       {/* ── TOP-LEFT: TITLE + LIVE BADGE + FULLSCREEN TOGGLE ──────────── */}
       <div

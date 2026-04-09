@@ -145,6 +145,9 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
   // NW20: Keyboard sprint toggle (Shift = toggle, not hold)
   const shiftSprintToggle = useRef(false)
 
+  // NW-TUTORIAL: Tour camera lock — when true, camera controller yields to GuidedTour
+  const tourLockedRef = useRef(false)
+
   // ── Persist speed when changed ────────────────────────────────────────────
   const persistSpeed = useCallback((speed: number) => {
     const s = { ...settingsRef.current, travelSpeed: speed }
@@ -523,11 +526,26 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     return () => window.removeEventListener('nw:settings-change', onSettingsChange)
   }, [])
 
+  // NW-TUTORIAL: Tour lock/unlock listeners
+  useEffect(() => {
+    const onLock   = () => { tourLockedRef.current = true  }
+    const onUnlock = () => { tourLockedRef.current = false }
+    window.addEventListener('nw:tour-lock-camera',   onLock)
+    window.addEventListener('nw:tour-unlock-camera', onUnlock)
+    return () => {
+      window.removeEventListener('nw:tour-lock-camera',   onLock)
+      window.removeEventListener('nw:tour-unlock-camera', onUnlock)
+    }
+  }, [])
+
   // ── Per-frame update ──────────────────────────────────────────────────────
   useEffect(() => {
     const prevPos = pos.current.clone()
 
     function onFrame() {
+      // NW-TUTORIAL: Yield to GuidedTour camera control when tour is active
+      if (tourLockedRef.current) return
+
       switch (mode) {
         case CameraMode.ORBIT:       updateOrbit();       break
         case CameraMode.FIRST_PERSON: updateFirstPerson(); break

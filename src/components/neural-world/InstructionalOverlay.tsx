@@ -688,35 +688,76 @@ export function InstructionalOverlay() {
               padding: '10px 16px',
               borderTop: '1px solid rgba(0,255,136,0.1)',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
+              flexDirection: 'column',
+              gap: 8,
               flexShrink: 0,
             }}>
-              <span style={{
-                color: 'rgba(255,255,255,0.25)',
-                fontSize: 9,
-                fontFamily: 'monospace',
-                letterSpacing: 1,
-              }}>
-                7 SECTIONS · NEURAL WORLD v3
-              </span>
+              {/* REPLAY TOUR button — NW-TUTORIAL */}
               <button
-                onClick={handleClose}
+                onClick={() => {
+                  handleClose()
+                  window.dispatchEvent(new CustomEvent('nw:tour-start'))
+                }}
                 style={{
-                  padding: '4px 14px',
-                  borderRadius: 4,
-                  border: '1px solid rgba(0,255,136,0.3)',
-                  background: 'rgba(0,255,136,0.08)',
-                  color: '#00ff88',
+                  width: '100%',
+                  padding: '7px 14px',
+                  borderRadius: 5,
+                  border: '1px solid rgba(0,220,200,0.3)',
+                  background: 'rgba(0,220,200,0.07)',
+                  color: '#00ddcc',
                   cursor: 'pointer',
-                  fontSize: 9,
+                  fontSize: 10,
                   fontFamily: 'monospace',
                   letterSpacing: 1.5,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
                   transition: 'all 0.15s',
                 }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(0,220,200,0.15)'
+                  e.currentTarget.style.borderColor = 'rgba(0,220,200,0.55)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(0,220,200,0.07)'
+                  e.currentTarget.style.borderColor = 'rgba(0,220,200,0.3)'
+                }}
               >
-                RETURN TO WORLD
+                <span>▶</span> REPLAY TOUR
               </button>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}>
+                <span style={{
+                  color: 'rgba(255,255,255,0.25)',
+                  fontSize: 9,
+                  fontFamily: 'monospace',
+                  letterSpacing: 1,
+                }}>
+                  7 SECTIONS · NEURAL WORLD v3
+                </span>
+                <button
+                  onClick={handleClose}
+                  style={{
+                    padding: '4px 14px',
+                    borderRadius: 4,
+                    border: '1px solid rgba(0,255,136,0.3)',
+                    background: 'rgba(0,255,136,0.08)',
+                    color: '#00ff88',
+                    cursor: 'pointer',
+                    fontSize: 9,
+                    fontFamily: 'monospace',
+                    letterSpacing: 1.5,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  RETURN TO WORLD
+                </button>
+              </div>
             </div>
           )}
         </div>
