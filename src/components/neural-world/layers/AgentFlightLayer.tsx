@@ -1,18 +1,18 @@
 /**
- * AgentFlightLayer.tsx — NW28: Domain zones + flying agent orbs + task cycles + data cubes.
+ * AgentFlightLayer.tsx — NW29: NEXUS orchestration sweep, GUARDIAN perimeter patrol,
+ *   flight analytics log.
  *
- * Replaces static admin buildings with:
- *   - Flat domain platform zones (PlaneGeometry 20×20, border glow, floating name)
- *   - Agent orbs (SphereGeometry, PointLight glow, unique color per agent)
- *   - Three-state flight machine: IDLE → TASKED → RETURNING
- *   - CatmullRomCurve3 parabolic arc flight at 8 u/s, cruising altitude y=25
- *   - Particle trails (50 particles, 3s fade) per agent
- *   - Data cubes (BoxGeometry 0.5) materialized at target, dropped into domain on return
- *   - Collision avoidance: second agent holds at y+5 if node busy
- *   - Event triggers via window DataBridge events
- *   - Demo simulation: agents fire every 15–20s if no real events
- *   - OPP stage mountain colors (dispatches nw:opp-color-change event)
- *   - LAYERS toggle: "agent-flight" — when OFF, all objects hidden
+ * NW28 base: Domain zones + flying agent orbs + task cycles + data cubes.
+ * NW29 additions:
+ *   - NEXUS sweep state machine (every 45 seconds):
+ *       OPERATOR → OHM → VAULT → LEDGER → SPARK → BLUEPRINT → SCOUT → OPERATOR
+ *       Collects a ring of domain cubes; on landing merges into briefing sphere
+ *   - Brighter + wider NEXUS trail during sweep
+ *   - Golden tether line: NEXUS ↔ OPERATOR monument at all times
+ *   - Cube ring on NEXUS rotates; red warning cubes orbit faster + flash
+ *   - GUARDIAN perimeter patrol (full rectangle around both continents, y=15)
+ *       On nw:security-event: sprint to NDA gate, flash red 5s, resume patrol
+ *   - In-memory flight log (appendFlightLog) for analytics
  *
  * West Continent domains: Lead Acquisition, Closing, Project Installation,
  *   Compliance, Material Takeoff, Progress Tracking, Revenue
@@ -26,6 +26,8 @@ import { useWorldContext } from '../WorldContext'
 import { registerParticles, unregisterParticles } from '../ParticleManager'
 import { createDomainZone, type DomainZoneInstance, type DomainZoneConfig } from '../DomainZone'
 import { AgentOrbInstance, type AgentOrbConfig } from '../AgentOrb'
+import { appendFlightLog } from '../flightLog'
+import type { SweepBriefingData } from '../NexusSweepController'
 
 // ── OPP Stage Mountain Colors ─────────────────────────────────────────────────
 
@@ -277,14 +279,93 @@ const DEMO_NODES: THREE.Vector3[] = [
 
 const NDA_GATE = new THREE.Vector3(30, 3, -170)
 
-// ── Max cubes per domain ──────────────────────────────────────────────────────
+// ── OPERATOR monument position (NEXUS home) ───────────────────────────────────
 
-const MAX_DOMAIN_CUBES = 10
+const OPERATOR_POS = new THREE.Vector3(0, 0, 0)
+
+// ── NEXUS sweep domain sequence ───────────────────────────────────────────────
+
+interface SweepStop {
+  domainId:  string
+  cubeColor: number   // color for collected cube
+  isWarning: boolean  // red warning cube (payment overdue / compliance alert)
+  label:     string
+}
+
+const SWEEP_SEQUENCE: SweepStop[] = [
+  { domainId: 'compliance',       cubeColor: 0xFF9040, isWarning: false, label: 'OHM' },
+  { domainId: 'material-takeoff', cubeColor: 0xFFD24A, isWarning: false, label: 'VAULT' },
+  { domainId: 'revenue',          cubeColor: 0x2EE89A, isWarning: true,  label: 'LEDGER' },  // payment warning
+  { domainId: 'lead-acquisition', cubeColor: 0xFFE040, isWarning: false, label: 'SPARK' },
+  { domainId: 'project-installation', cubeColor: 0x3A8EFF, isWarning: false, label: 'BLUEPRINT' },
+  { domainId: 'analysis',         cubeColor: 0x40D4FF, isWarning: false, label: 'SCOUT' },
+]
+
+const NEXUS_SWEEP_INTERVAL = 45    // seconds between sweeps
+const NEXUS_SWEEP_CRUISE_Y = 30    // altitude during sweep
+const NEXUS_HOVER_DWELL    = 2     // seconds hover at each domain
+const RING_ORBIT_RADIUS    = 3.5   // radius of cube ring around NEXUS
+const RING_ORBIT_SPEED     = 1.2   // rad/s — normal cubes
+const RING_ORBIT_FAST      = 3.5   // rad/s — warning cubes (faster)
+const NEXUS_SWEEP_SPEED    = 12    // u/s during sweep (faster than normal 8)
+const MAX_DOMAIN_CUBES     = 10
+
+// ── GUARDIAN rectangle perimeter waypoints ────────────────────────────────────
+// Rectangle enclosing both continents with rounded corner approach
+
+const GUARDIAN_Y          = 15     // patrol altitude
+const GUARDIAN_SPEED      = 3      // u/s normal patrol
+const GUARDIAN_SPRINT_SPD = 15     // u/s during security event
+
+// Perimeter waypoints (rounded rectangle approximation via extra corner points)
+const GUARDIAN_PATH: THREE.Vector3[] = (() => {
+  // Rectangle: X[-210, 210] Z[-195, 165]
+  const x0 = -210, x1 = 210
+  const z0 = -195, z1 = 165
+  const cr = 25   // corner rounding offset
+  const y  = GUARDIAN_Y
+  return [
+    new THREE.Vector3(x0 + cr, y, z0),
+    new THREE.Vector3(x1 - cr, y, z0),
+    new THREE.Vector3(x1,      y, z0 + cr),
+    new THREE.Vector3(x1,      y, z1 - cr),
+    new THREE.Vector3(x1 - cr, y, z1),
+    new THREE.Vector3(x0 + cr, y, z1),
+    new THREE.Vector3(x0,      y, z1 - cr),
+    new THREE.Vector3(x0,      y, z0 + cr),
+  ]
+})()
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface AgentFlightLayerProps {
   visible: boolean
+}
+
+// ── Internal sweep state ──────────────────────────────────────────────────────
+
+type NexusSweepPhase =
+  | 'IDLE'
+  | 'LIFTING'
+  | 'FLYING_TO_STOP'
+  | 'HOVERING'
+  | 'RETURNING_HOME'
+  | 'MERGING'
+  | 'BRIEFING'
+
+interface NexusSweepState {
+  phase:        NexusSweepPhase
+  timer:        number           // countdown to next sweep (IDLE) or phase dwell (HOVERING)
+  stopIndex:    number           // current index in SWEEP_SEQUENCE
+  ringCubes:    THREE.Mesh[]     // cubes orbiting NEXUS
+  ringAngles:   number[]         // current angle per cube in the ring
+  flightCurve:  THREE.CatmullRomCurve3 | null
+  flightDur:    number
+  flightElapsed:number
+  briefSphere:  THREE.Mesh | null
+  briefTimer:   number
+  sweepCount:   number           // increments on each completed sweep
+  liftTimer:    number
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -298,8 +379,35 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
   const domainCubesRef = useRef<Map<string, THREE.Mesh[]>>(new Map())
   const clockRef      = useRef(0)
   const demoTimerRef  = useRef(0)
-  const guardianAngleRef = useRef(0)
   const agentTimersRef = useRef<Map<string, number>>(new Map())
+
+  // NEXUS sweep state
+  const nexusSweepRef = useRef<NexusSweepState>({
+    phase:         'IDLE',
+    timer:         NEXUS_SWEEP_INTERVAL * 0.5,  // first sweep half-interval in
+    stopIndex:     0,
+    ringCubes:     [],
+    ringAngles:    [],
+    flightCurve:   null,
+    flightDur:     0,
+    flightElapsed: 0,
+    briefSphere:   null,
+    briefTimer:    0,
+    sweepCount:    0,
+    liftTimer:     0,
+  })
+
+  // Tether line: NEXUS ↔ OPERATOR
+  const tetherLineRef = useRef<THREE.Line | null>(null)
+
+  // GUARDIAN perimeter patrol
+  const guardianPatrolRef = useRef({
+    waypointIdx: 0,
+    flashing:    false,
+    flashTimer:  0,
+    sprinting:   false,
+    sprintTarget: NDA_GATE.clone(),
+  })
 
   // Sync visible ref
   useEffect(() => {
@@ -328,7 +436,22 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
       console.info(`[AgentFlightLayer] Trail budget capped at ${allowed}/${TRAIL_BUDGET}`)
     }
 
-    // ── 3. Event listeners ──────────────────────────────────────────────────
+    // ── 3. Create NEXUS tether line ─────────────────────────────────────────
+    const tetherGeo = new THREE.BufferGeometry()
+    // Two points: NEXUS pos + OPERATOR pos (updated each frame)
+    const tetherPositions = new Float32Array(6)
+    tetherGeo.setAttribute('position', new THREE.BufferAttribute(tetherPositions, 3))
+    const tetherMat = new THREE.LineBasicMaterial({
+      color:       0xFFD24A,
+      transparent: true,
+      opacity:     0.35,
+      linewidth:   1,  // note: linewidth >1 only works with LineMaterial (WebGL limitation)
+    })
+    const tetherLine = new THREE.Line(tetherGeo, tetherMat)
+    scene.add(tetherLine)
+    tetherLineRef.current = tetherLine
+
+    // ── 4. Event listeners ──────────────────────────────────────────────────
     const handlers: Array<{ event: string; fn: EventListener }> = []
 
     function addHandler(event: string, agentId: string) {
@@ -363,9 +486,11 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
 
     // GUARDIAN: security event → sprint to NDA gate
     const guardianSecHandler: EventListener = () => {
-      const guardian = orbsRef.current.get('GUARDIAN')
-      if (!guardian || !visibleRef.current) return
-      if (guardian.state === 'IDLE') guardian.dispatchTo(NDA_GATE.clone())
+      if (!visibleRef.current) return
+      const patrol = guardianPatrolRef.current
+      patrol.sprinting  = true
+      patrol.flashing   = true
+      patrol.flashTimer = 5
     }
     window.addEventListener('nw:security-event', guardianSecHandler)
     handlers.push({ event: 'nw:security-event', fn: guardianSecHandler })
@@ -377,7 +502,7 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
     window.addEventListener('nw:reduce-particles', reduceHandler)
     handlers.push({ event: 'nw:reduce-particles', fn: reduceHandler })
 
-    // ── 4. Animation frame ──────────────────────────────────────────────────
+    // ── 5. Animation frame ──────────────────────────────────────────────────
     let lastFrameTime = performance.now() / 1000
 
     function onFrame() {
@@ -394,15 +519,20 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
       }
 
       if (!vis) {
-        // Hide orbs but don't tick
         for (const orb of orbsRef.current.values()) {
           orb.visible = false
         }
+        if (tetherLineRef.current) tetherLineRef.current.visible = false
         return
       }
 
-      // ── GUARDIAN continuous patrol ──────────────────────────────────────
-      guardianPatrol(dt, now)
+      if (tetherLineRef.current) tetherLineRef.current.visible = true
+
+      // ── GUARDIAN continuous perimeter patrol ────────────────────────────
+      tickGuardianPatrol(dt, now)
+
+      // ── NEXUS sweep state machine ────────────────────────────────────────
+      tickNexusSweep(dt, now)
 
       // ── Demo simulation ─────────────────────────────────────────────────
       demoTimerRef.current += dt
@@ -427,12 +557,26 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
         }
       }
 
-      // ── Tick all orbs ────────────────────────────────────────────────────
+      // ── Tick all orbs (except GUARDIAN — patrolled separately) ───────────
       for (const [agentId, orb] of orbsRef.current.entries()) {
-        if (agentId === 'GUARDIAN') continue  // GUARDIAN patrolled separately
+        if (agentId === 'GUARDIAN') continue
+        if (agentId === 'NEXUS') continue  // NEXUS managed by sweep machine
         orb.visible = vis
         const prevState = orb.state
         orb.tick(dt, now)
+
+        // Record state transitions to flight log
+        if (prevState !== orb.state) {
+          appendFlightLog({
+            agent:     agentId,
+            state:     orb.state,
+            target:    orb.state === 'TASKED'
+              ? AGENT_DEFS.find(d => d.id === agentId)?.primaryDomainId ?? null
+              : null,
+            timestamp: now,
+          })
+        }
+
         // When orb transitions RETURNING→IDLE, collect the dropped cube
         if (prevState === 'RETURNING' && orb.state === 'IDLE') {
           collectDroppedCubes(agentId)
@@ -445,7 +589,6 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
         if (!zone) continue
         cubes.forEach((cube, idx) => {
           cube.position.y = 0.5 + idx * 0.6
-          // Gentle rotation
           cube.rotation.y += dt * 0.4
           cube.rotation.x += dt * 0.2
         })
@@ -455,31 +598,392 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
     window.addEventListener('nw:frame', onFrame)
     handlers.push({ event: 'nw:frame', fn: onFrame as EventListener })
 
-    // ── GUARDIAN patrol helper ──────────────────────────────────────────────
-    function guardianPatrol(dt: number, _now: number) {
+    // ── GUARDIAN perimeter patrol ─────────────────────────────────────────
+    function tickGuardianPatrol(dt: number, _now: number) {
       const guardian = orbsRef.current.get('GUARDIAN')
       if (!guardian) return
       guardian.visible = visibleRef.current
 
-      if (guardian.state === 'IDLE') {
-        // Orbit founders valley perimeter
-        guardianAngleRef.current += (2 * Math.PI / 40) * dt  // 40s patrol
-        const radius = 18
-        const x = Math.cos(guardianAngleRef.current) * radius
-        const z = Math.sin(guardianAngleRef.current) * radius
-        guardian.group.position.set(x, 3.5, z)
-        guardian.light.intensity = 1.2
+      const patrol = guardianPatrolRef.current
+
+      // Flash logic (security event)
+      if (patrol.flashing && patrol.flashTimer > 0) {
+        patrol.flashTimer -= dt
+        // Alternate red intensity
+        const flash = Math.sin(_now * 20) > 0
+        guardian.light.color.setHex(flash ? 0xFF2020 : 0xFF8080)
+        guardian.light.intensity = flash ? 4.0 : 1.5
+
+        if (patrol.flashTimer <= 0) {
+          patrol.flashing    = false
+          patrol.sprinting   = false
+          guardian.light.color.setHex(0xFF5060)
+        }
       } else {
-        guardian.tick(dt, _now)
+        // Normal intensity pulse
+        guardian.light.intensity = 1.2 + Math.sin(_now * 1.5) * 0.3
+        guardian.light.color.setHex(0xFF5060)
+      }
+
+      // Sprint to NDA gate during security event
+      if (patrol.sprinting) {
+        const pos   = guardian.group.position
+        const target = patrol.sprintTarget
+        const dir   = target.clone().sub(pos)
+        const dist  = dir.length()
+        if (dist < 1) {
+          // Arrived at NDA gate — stay and flash
+        } else {
+          dir.normalize()
+          const step = GUARDIAN_SPRINT_SPD * dt
+          guardian.group.position.addScaledVector(dir, Math.min(step, dist))
+        }
+        return
+      }
+
+      // Normal rectangle perimeter walk
+      const currentWP = GUARDIAN_PATH[patrol.waypointIdx]
+      const pos       = guardian.group.position
+      const dir       = currentWP.clone().sub(pos)
+      const dist      = dir.length()
+
+      // Illuminate perimeter as GUARDIAN passes (PointLight already on group)
+      // The PointLight radius is 20, so nearby scene objects get lit automatically.
+
+      if (dist < 2) {
+        // Advance to next waypoint
+        patrol.waypointIdx = (patrol.waypointIdx + 1) % GUARDIAN_PATH.length
+      } else {
+        dir.normalize()
+        const step = GUARDIAN_SPEED * dt
+        guardian.group.position.addScaledVector(dir, step)
+      }
+
+      // Ensure y stays at patrol altitude
+      guardian.group.position.y = GUARDIAN_Y
+    }
+
+    // ── NEXUS sweep state machine ─────────────────────────────────────────
+    function tickNexusSweep(dt: number, now: number) {
+      const nexus = orbsRef.current.get('NEXUS')
+      if (!nexus) return
+      nexus.visible = visibleRef.current
+
+      const sw = nexusSweepRef.current
+
+      // Update tether line: NEXUS ↔ OPERATOR
+      if (tetherLineRef.current) {
+        const positions = (tetherLineRef.current.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array
+        positions[0] = nexus.group.position.x
+        positions[1] = nexus.group.position.y
+        positions[2] = nexus.group.position.z
+        positions[3] = OPERATOR_POS.x
+        positions[4] = OPERATOR_POS.y + 2
+        positions[5] = OPERATOR_POS.z
+        tetherLineRef.current.geometry.attributes.position.needsUpdate = true
+
+        // Pulse tether opacity
+        const tetherMat = tetherLineRef.current.material as THREE.LineBasicMaterial
+        tetherMat.opacity = 0.2 + Math.sin(now * 2) * 0.15
+      }
+
+      // Tick ring cubes (orbit around NEXUS)
+      tickRingCubes(dt, now, nexus)
+
+      // Tick briefing sphere
+      if (sw.briefSphere) {
+        sw.briefTimer -= dt
+        const scale = 1 + Math.sin(now * 3) * 0.08
+        sw.briefSphere.scale.setScalar(scale)
+        ;(sw.briefSphere.material as THREE.MeshStandardMaterial).emissiveIntensity =
+          0.8 + Math.sin(now * 4) * 0.4
+        sw.briefSphere.position.copy(nexus.group.position)
+        sw.briefSphere.position.y += 2
+        if (sw.briefTimer <= 0) {
+          scene.remove(sw.briefSphere)
+          ;(sw.briefSphere.material as THREE.MeshStandardMaterial).dispose()
+          sw.briefSphere.geometry.dispose()
+          sw.briefSphere = null
+          sw.phase = 'IDLE'
+          // Record NEXUS returning to IDLE
+          appendFlightLog({ agent: 'NEXUS', state: 'IDLE', target: null, timestamp: now })
+        }
+        return
+      }
+
+      switch (sw.phase) {
+        case 'IDLE': {
+          // Normal NEXUS idle tick
+          nexus.tick(dt, now)
+          // Dim trail (same as other agents in IDLE)
+
+          sw.timer -= dt
+          if (sw.timer <= 0) {
+            // Begin sweep: lift from OPERATOR monument to NEXUS_SWEEP_CRUISE_Y
+            sw.phase       = 'LIFTING'
+            sw.liftTimer   = 0
+            sw.stopIndex   = 0
+            appendFlightLog({ agent: 'NEXUS', state: 'TASKED', target: 'sweep', timestamp: now })
+          }
+          break
+        }
+
+        case 'LIFTING': {
+          // NEXUS lifts from current position to y=30
+          sw.liftTimer += dt
+          const targetY = NEXUS_SWEEP_CRUISE_Y
+          const liftDur = 1.5
+          const t       = Math.min(1, sw.liftTimer / liftDur)
+          const startY  = nexus.group.position.y
+          nexus.group.position.y = startY + (targetY - startY) * t * 0.15  // eased
+          nexus.light.intensity  = 2.0 + Math.sin(now * 5) * 0.5
+
+          if (nexus.group.position.y >= targetY - 1 || sw.liftTimer > liftDur) {
+            nexus.group.position.y = targetY
+            // Start flying to first stop
+            beginNexusFlight(nexus, sw, 0)
+            sw.phase = 'FLYING_TO_STOP'
+          }
+          break
+        }
+
+        case 'FLYING_TO_STOP': {
+          if (!sw.flightCurve) break
+          sw.flightElapsed += dt
+          const t = Math.min(1, sw.flightElapsed / sw.flightDur)
+          nexus.group.position.copy(sw.flightCurve.getPoint(t))
+
+          // Bright, wide trail during sweep
+          nexus.light.intensity = 3.5 + Math.sin(now * 6) * 0.8
+          // Emit extra trail particles via light pulse (visual effect via brighter glow)
+
+          if (t >= 1) {
+            sw.phase     = 'HOVERING'
+            sw.timer     = NEXUS_HOVER_DWELL
+            // Collect cube from this domain
+            collectSweepCube(nexus, sw)
+          }
+          break
+        }
+
+        case 'HOVERING': {
+          // Hover at domain position, bob gently
+          const stop    = SWEEP_SEQUENCE[sw.stopIndex]
+          const domDef  = DOMAIN_DEFS.find(d => d.id === stop.domainId)
+          if (domDef) {
+            nexus.group.position.x = domDef.worldX
+            nexus.group.position.z = domDef.worldZ
+            nexus.group.position.y = NEXUS_SWEEP_CRUISE_Y + Math.sin(now * 2) * 0.5
+          }
+          nexus.light.intensity = 2.5
+
+          sw.timer -= dt
+          if (sw.timer <= 0) {
+            sw.stopIndex++
+            if (sw.stopIndex >= SWEEP_SEQUENCE.length) {
+              // All stops collected — return home
+              beginNexusReturn(nexus, sw)
+              sw.phase = 'RETURNING_HOME'
+            } else {
+              beginNexusFlight(nexus, sw, sw.stopIndex)
+              sw.phase = 'FLYING_TO_STOP'
+            }
+          }
+          break
+        }
+
+        case 'RETURNING_HOME': {
+          if (!sw.flightCurve) break
+          sw.flightElapsed += dt
+          const t = Math.min(1, sw.flightElapsed / sw.flightDur)
+          nexus.group.position.copy(sw.flightCurve.getPoint(t))
+          nexus.light.intensity = 3.0
+
+          if (t >= 1) {
+            sw.phase = 'MERGING'
+            sw.timer = 1.2  // brief merge animation
+            sw.sweepCount++
+            // Log sweep return
+            appendFlightLog({ agent: 'NEXUS', state: 'RETURNING', target: 'OPERATOR', timestamp: now })
+          }
+          break
+        }
+
+        case 'MERGING': {
+          sw.timer -= dt
+          // Scale ring cubes inward toward NEXUS center
+          const mergeProgress = 1 - Math.max(0, sw.timer / 1.2)
+          for (let i = 0; i < sw.ringCubes.length; i++) {
+            const angle  = sw.ringAngles[i]
+            const radius = RING_ORBIT_RADIUS * (1 - mergeProgress)
+            sw.ringCubes[i].position.set(
+              Math.cos(angle) * radius,
+              0,
+              Math.sin(angle) * radius,
+            )
+            // Fade cubes out as they merge
+            const mat = sw.ringCubes[i].material as THREE.MeshStandardMaterial
+            mat.opacity = 1 - mergeProgress * 0.8
+          }
+
+          nexus.light.intensity = 4.0 + Math.sin(now * 15) * 1.5
+
+          if (sw.timer <= 0) {
+            // Destroy ring cubes
+            clearRingCubes(nexus, sw)
+            // Create briefing sphere
+            createBriefingSphere(nexus, sw, now)
+            sw.phase     = 'BRIEFING'
+            sw.briefTimer = 10
+          }
+          break
+        }
+
+        case 'BRIEFING': {
+          // Briefing sphere is ticked above (breaks early)
+          // This case handled by briefSphere check at top
+          break
+        }
       }
     }
 
-    // ── Pick a target for an agent ──────────────────────────────────────────
+    // ── Helper: begin flight segment to a sweep stop ──────────────────────
+    function beginNexusFlight(nexus: AgentOrbInstance, sw: NexusSweepState, stopIdx: number) {
+      const stop   = SWEEP_SEQUENCE[stopIdx]
+      const domDef = DOMAIN_DEFS.find(d => d.id === stop.domainId)
+      if (!domDef) return
+
+      const from  = nexus.group.position.clone()
+      const to    = new THREE.Vector3(domDef.worldX, NEXUS_SWEEP_CRUISE_Y, domDef.worldZ)
+      const midPt = new THREE.Vector3(
+        (from.x + to.x) / 2,
+        NEXUS_SWEEP_CRUISE_Y + 8,
+        (from.z + to.z) / 2,
+      )
+      sw.flightCurve   = new THREE.CatmullRomCurve3([from, midPt, to])
+      sw.flightDur     = Math.max(1.5, from.distanceTo(to) / NEXUS_SWEEP_SPEED)
+      sw.flightElapsed = 0
+    }
+
+    // ── Helper: begin return flight to OPERATOR ───────────────────────────
+    function beginNexusReturn(nexus: AgentOrbInstance, sw: NexusSweepState) {
+      const from  = nexus.group.position.clone()
+      const to    = new THREE.Vector3(OPERATOR_POS.x, NEXUS_SWEEP_CRUISE_Y * 0.5, OPERATOR_POS.z)
+      const midPt = new THREE.Vector3(
+        (from.x + to.x) / 2,
+        NEXUS_SWEEP_CRUISE_Y + 8,
+        (from.z + to.z) / 2,
+      )
+      sw.flightCurve   = new THREE.CatmullRomCurve3([from, midPt, to])
+      sw.flightDur     = Math.max(2.0, from.distanceTo(to) / NEXUS_SWEEP_SPEED)
+      sw.flightElapsed = 0
+    }
+
+    // ── Helper: add a cube to NEXUS ring when hovering a domain ──────────
+    function collectSweepCube(nexus: AgentOrbInstance, sw: NexusSweepState) {
+      const stop = SWEEP_SEQUENCE[sw.stopIndex]
+      const cubeGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6)
+      const cubeMat = new THREE.MeshStandardMaterial({
+        color:             new THREE.Color(stop.cubeColor),
+        emissive:          new THREE.Color(stop.cubeColor),
+        emissiveIntensity: stop.isWarning ? 2.0 : 1.0,
+        transparent:       true,
+        opacity:           0.85,
+      })
+      const cube = new THREE.Mesh(cubeGeo, cubeMat)
+
+      // Assign angle slot in ring
+      const angle = (sw.ringCubes.length / Math.max(1, SWEEP_SEQUENCE.length)) * Math.PI * 2
+      sw.ringAngles.push(angle)
+      sw.ringCubes.push(cube)
+      nexus.group.add(cube)
+      cube.position.set(
+        Math.cos(angle) * RING_ORBIT_RADIUS,
+        0,
+        Math.sin(angle) * RING_ORBIT_RADIUS,
+      )
+    }
+
+    // ── Helper: tick ring cubes orbiting NEXUS ────────────────────────────
+    function tickRingCubes(dt: number, now: number, nexus: AgentOrbInstance) {
+      const sw = nexusSweepRef.current
+      for (let i = 0; i < sw.ringCubes.length; i++) {
+        const stop    = SWEEP_SEQUENCE[i] ?? SWEEP_SEQUENCE[0]
+        const speed   = stop.isWarning ? RING_ORBIT_FAST : RING_ORBIT_SPEED
+        sw.ringAngles[i] += speed * dt
+        const angle = sw.ringAngles[i]
+
+        // Warning cubes: elevate slightly, flash emissive
+        const yOffset = stop.isWarning
+          ? Math.sin(now * 8) * 0.4
+          : Math.sin(now * 2 + i) * 0.15
+
+        const cube = sw.ringCubes[i]
+        cube.position.set(
+          Math.cos(angle) * RING_ORBIT_RADIUS,
+          yOffset,
+          Math.sin(angle) * RING_ORBIT_RADIUS,
+        )
+        cube.rotation.y += dt * (stop.isWarning ? 3 : 0.8)
+        cube.rotation.x += dt * 0.3
+
+        if (stop.isWarning) {
+          const mat = cube.material as THREE.MeshStandardMaterial
+          mat.emissiveIntensity = 1.5 + Math.sin(now * 10) * 1.0
+        }
+
+        void nexus  // keep nexus in scope; ring cubes are children of nexus.group
+      }
+    }
+
+    // ── Helper: clear all ring cubes from NEXUS ───────────────────────────
+    function clearRingCubes(nexus: AgentOrbInstance, sw: NexusSweepState) {
+      for (const cube of sw.ringCubes) {
+        nexus.group.remove(cube)
+        ;(cube.material as THREE.MeshStandardMaterial).dispose()
+        cube.geometry.dispose()
+      }
+      sw.ringCubes  = []
+      sw.ringAngles = []
+    }
+
+    // ── Helper: create briefing sphere at OPERATOR ────────────────────────
+    function createBriefingSphere(nexus: AgentOrbInstance, sw: NexusSweepState, _now: number) {
+      const geo = new THREE.SphereGeometry(2.2, 24, 18)
+      const mat = new THREE.MeshStandardMaterial({
+        color:             0xFFFFFF,
+        emissive:          new THREE.Color(0x00E5CC),
+        emissiveIntensity: 1.2,
+        transparent:       true,
+        opacity:           0.80,
+      })
+      const sphere = new THREE.Mesh(geo, mat)
+      sphere.position.copy(nexus.group.position)
+      sphere.position.y += 2
+      scene.add(sphere)
+      sw.briefSphere = sphere
+
+      // Dispatch event to NexusSweepController DOM overlay
+      const data: SweepBriefingData = {
+        compliance: 3 + Math.floor(Math.random() * 5),
+        pricing:    2 + Math.floor(Math.random() * 4),
+        payments:   4 + Math.floor(Math.random() * 6),
+        leads:      5 + Math.floor(Math.random() * 8),
+        progress:   2 + Math.floor(Math.random() * 5),
+        insights:   3 + Math.floor(Math.random() * 4),
+        warnings:   1 + Math.floor(Math.random() * 3),
+        sweepIndex: sw.sweepCount,
+      }
+      window.dispatchEvent(new CustomEvent('nw:nexus-sweep-complete', { detail: data }))
+
+      // Reset sweep timer
+      sw.timer = NEXUS_SWEEP_INTERVAL
+    }
+
+    // ── Helper: pick a target for an agent ───────────────────────────────
     function pickTarget(agentId: string): THREE.Vector3 | null {
-      // Pick a random demo node weighted by distance from home
       const def = AGENT_DEFS.find(d => d.id === agentId)
       if (!def) return null
-
       const shuffled = [...DEMO_NODES].sort(() => Math.random() - 0.5)
       for (const node of shuffled) {
         return node.clone()
@@ -493,7 +997,6 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
         .filter(d => d.id !== 'GUARDIAN' && d.id !== 'NEXUS')
       const def = eligibleAgents[Math.floor(Math.random() * eligibleAgents.length)]
       if (!def) return
-
       const orb = orbsRef.current.get(def.id)
       if (!orb || orb.state !== 'IDLE') return
       const target = pickTarget(def.id)
@@ -502,15 +1005,12 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
 
     // ── Collect cubes dropped by returning orbs ───────────────────────────
     function collectDroppedCubes(agentId: string) {
-      // Look for any loose cubes near home position (scene children)
       const def = AGENT_DEFS.find(d => d.id === agentId)
       if (!def || !def.primaryDomainId) return
       const zone = domainsRef.current.get(def.primaryDomainId)
       if (!zone) return
       const cubes = domainCubesRef.current.get(def.primaryDomainId) ?? []
 
-      // The orb dropped its cube into the scene at world position — find scene objects
-      // that are BoxGeometry meshes near the domain and adopt them
       scene.children
         .filter(obj => {
           if (!(obj instanceof THREE.Mesh)) return false
@@ -522,14 +1022,12 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
         })
         .forEach(obj => {
           const mesh = obj as THREE.Mesh
-          // Reparent to domain zone cubeDropGroup
           scene.remove(mesh)
           zone.cubeDropGroup.add(mesh)
-          mesh.position.set(0, 0, 0)  // reset local pos — will be sorted in tick
+          mesh.position.set(0, 0, 0)
           cubes.push(mesh)
         })
 
-      // Trim to MAX_DOMAIN_CUBES
       while (cubes.length > MAX_DOMAIN_CUBES) {
         const oldest = cubes.shift()!
         if (oldest.parent) oldest.parent.remove(oldest)
@@ -548,6 +1046,32 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
       }
       for (const orb of orbsRef.current.values()) {
         orb.dispose()
+      }
+      // Clean up tether line
+      if (tetherLineRef.current) {
+        scene.remove(tetherLineRef.current)
+        tetherLineRef.current.geometry.dispose()
+        ;(tetherLineRef.current.material as THREE.LineBasicMaterial).dispose()
+        tetherLineRef.current = null
+      }
+      // Clean up briefing sphere
+      const sw = nexusSweepRef.current
+      if (sw.briefSphere) {
+        scene.remove(sw.briefSphere)
+        ;(sw.briefSphere.material as THREE.MeshStandardMaterial).dispose()
+        sw.briefSphere.geometry.dispose()
+        sw.briefSphere = null
+      }
+      // Clean up ring cubes
+      const nexus = orbsRef.current.get('NEXUS')
+      if (nexus) {
+        for (const cube of sw.ringCubes) {
+          nexus.group.remove(cube)
+          ;(cube.material as THREE.MeshStandardMaterial).dispose()
+          cube.geometry.dispose()
+        }
+        sw.ringCubes  = []
+        sw.ringAngles = []
       }
       domainsRef.current.clear()
       orbsRef.current.clear()

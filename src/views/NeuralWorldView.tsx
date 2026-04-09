@@ -43,6 +43,8 @@ import { RiverSystemLayer } from '@/components/neural-world/layers/RiverSystemLa
 import { DragDropSystem } from '@/components/neural-world/DragDropSystem'
 import { NexusCompanion } from '@/components/neural-world/NexusCompanion'
 import { AgentFlightLayer } from '@/components/neural-world/layers/AgentFlightLayer'
+import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
+import { FlightAnalyticsPanel } from '@/components/neural-world/FlightAnalyticsPanel'
 import CommandHUD, {
   AtmosphereMode as HUDAtmosphereMode,
   CameraMode as HUDCameraMode,
@@ -793,6 +795,12 @@ export default function NeuralWorldView() {
           </div>
         </div>
       )}
+
+      {/* ── NW29: NEXUS sweep briefing sphere DOM overlay ── */}
+      <NexusSweepController />
+
+      {/* ── NW29: Flight analytics panel + chart icon toggle ── */}
+      <FlightAnalyticsPanel />
 
       {/* ── NW7b: CommandHUD — full command surface with fullscreen toggle ── */}
       <CommandHUD
