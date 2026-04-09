@@ -20,6 +20,7 @@ import React, {
 } from 'react'
 import { ResizablePanel } from './ResizablePanel'
 import { getAudioEngine } from './AudioEngine'
+import { triggerIncomeTutorial } from './IncomeTutorial'
 
 // ── Briefing data emitted by AgentFlightLayer ────────────────────────────────
 
@@ -169,6 +170,38 @@ function ActionBtn({ label, onClick }: { label: string; onClick: () => void }) {
         boxShadow:    hovered ? '0 0 12px rgba(0, 255, 200, 0.18)' : 'none',
         whiteSpace:   'nowrap',
         minWidth:     0,
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
+// ── NW44: Amber action button for Income Tutorial ─────────────────────────────
+
+function AmberActionBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        flex:         '1 1 0',
+        background:   hovered ? 'rgba(245,158,11,0.18)' : 'rgba(10, 7, 0, 0.7)',
+        border:       `1px solid rgba(245,158,11,${hovered ? 0.6 : 0.28})`,
+        borderRadius: 8,
+        color:        hovered ? '#fbbf24' : '#b07020',
+        fontSize:     11,
+        fontFamily:   'monospace',
+        letterSpacing:1,
+        padding:      '8px 6px',
+        cursor:       'pointer',
+        transition:   'all 0.2s ease',
+        boxShadow:    hovered ? '0 0 12px rgba(245,158,11,0.22)' : 'none',
+        whiteSpace:   'nowrap',
+        minWidth:     0,
+        fontWeight:   700,
       }}
     >
       {label}
@@ -634,6 +667,11 @@ export function NexusSweepController({ soundLayerEnabled = false }: NexusSweepCo
           }} />
           <ActionBtn label="CALL NEXUS" onClick={() => {
             window.dispatchEvent(new CustomEvent('nexus:open-panel', { detail: { panel: 'nexus-chat' } }))
+          }} />
+          {/* NW44: Income Walkthrough quick action */}
+          <AmberActionBtn label="▶ INCOME WALKTHROUGH" onClick={() => {
+            dismiss()
+            setTimeout(() => triggerIncomeTutorial(), 300)
           }} />
           <ActionBtn label="DISMISS" onClick={dismiss} />
         </div>

@@ -64,6 +64,7 @@ import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/
 import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
+import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -167,6 +168,8 @@ function WorldLayers({
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
+      {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
+      <IncomeTutorial />
     </>
   )
 }
