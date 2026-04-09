@@ -43,6 +43,7 @@ import { supabase } from '@/lib/supabase'
 import { startParticleWatchdog, stopParticleWatchdog } from './ParticleManager'
 import { applyOverrides, getNodePosition, type NodePos } from './NodePositionStore'
 import { loadNWCameraSettings, type NWCameraSettings } from './NWSettings'
+import type { ColorTemperaturePayload } from './AdaptiveColorEngine'
 
 // ── Day/Night cycle config ────────────────────────────────────────────────────
 
@@ -183,6 +184,15 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
   const sun2Ref = useRef<THREE.DirectionalLight | null>(null)   // blue-white, east/Hub
   const sun1HealthRef = useRef<number>(0.75)   // revenue health 0–1
   const sun2HealthRef = useRef<number>(0.75)
+
+  // NW42: Adaptive color temperature — updated by nw:color-temperature events
+  const colorTempRef = useRef<ColorTemperaturePayload>({
+    state:             'STRATEGIC',
+    warm_factor:       0.5,
+    cool_factor:       0.5,
+    saturation_factor: 1.0,
+    brightness_factor: 1.0,
+  })
 
   // Ground
   const groundMeshRef = useRef<THREE.Mesh | null>(null)
@@ -711,13 +721,34 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
 
     // Apply sky colour + lighting from keyframes (always active)
     const frame = lerpKeyframes(t)
+
+    // NW42: Apply adaptive color temperature modulation
+    const ct = colorTempRef.current
+    const ctBright = ct.brightness_factor   // 0.8–1.2
+    const ctWarm   = ct.warm_factor         // 0–1 → gold tint
+    const ctCool   = ct.cool_factor         // 0–1 → blue tint
+
     scene.background = frame.sky
     if (ambientLightRef.current) {
-      ambientLightRef.current.intensity = frame.ambIntensity
+      ambientLightRef.current.intensity = frame.ambIntensity * ctBright
+      // Shift ambient color toward warm (gold) or cool (blue) based on dominant factor
+      const warmColor = new THREE.Color(0xffd080)
+      const coolColor = new THREE.Color(0x60b0ff)
+      if (ctWarm > ctCool + 0.15) {
+        // Warm shift: blend ambient toward gold
+        const blend = Math.min(1, (ctWarm - ctCool) * 0.4)
+        ambientLightRef.current.color.set(0x00e5cc).lerp(warmColor, blend)
+      } else if (ctCool > ctWarm + 0.15) {
+        // Cool shift: blend ambient toward blue
+        const blend = Math.min(1, (ctCool - ctWarm) * 0.4)
+        ambientLightRef.current.color.set(0x00e5cc).lerp(coolColor, blend)
+      } else {
+        ambientLightRef.current.color.set(0x00e5cc)
+      }
     }
     if (dirLightRef.current) {
       dirLightRef.current.color.copy(frame.dirColor)
-      dirLightRef.current.intensity = frame.dirIntensity
+      dirLightRef.current.intensity = frame.dirIntensity * ctBright
     }
 
     // Stars: visible ONLY during night phase (t 0.75–1.0 + brief wrap at dawn)
@@ -915,6 +946,16 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
     }
     window.addEventListener('nw:revenue-health', onRevenueHealth)
     return () => window.removeEventListener('nw:revenue-health', onRevenueHealth)
+  }, [])
+
+  // ── NW42: Color temperature listener ─────────────────────────────────────
+  useEffect(() => {
+    function onColorTemp(e: Event) {
+      const ev = e as CustomEvent<ColorTemperaturePayload>
+      if (ev.detail) colorTempRef.current = ev.detail
+    }
+    window.addEventListener('nw:color-temperature', onColorTemp)
+    return () => window.removeEventListener('nw:color-temperature', onColorTemp)
   }, [])
 
   // ── NW18: Camera fly-to for Business Cycle tour ───────────────────────────

@@ -382,6 +382,10 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
   const demoTimerRef  = useRef(0)
   // NW40: World speed factor from ResonanceOrb
   const worldSpeedRef = useRef<number>(1.0)
+  // NW42: adaptive color temperature — brightness + warm/cool factors
+  const colorTempBrightRef = useRef<number>(1.0)
+  const colorTempWarmRef   = useRef<number>(0.5)
+  const colorTempCoolRef   = useRef<number>(0.5)
   useEffect(() => {
     function onSpeedFactor(e: Event) {
       const ev = e as CustomEvent<{ factor: number }>
@@ -389,6 +393,17 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
     }
     window.addEventListener('nw:world-speed-factor', onSpeedFactor)
     return () => window.removeEventListener('nw:world-speed-factor', onSpeedFactor)
+  }, [])
+  // NW42: listen for color temperature events
+  useEffect(() => {
+    function onColorTemp(e: Event) {
+      const ev = e as CustomEvent<{ brightness_factor?: number; warm_factor?: number; cool_factor?: number }>
+      if (typeof ev.detail?.brightness_factor === 'number') colorTempBrightRef.current = ev.detail.brightness_factor
+      if (typeof ev.detail?.warm_factor  === 'number') colorTempWarmRef.current  = ev.detail.warm_factor
+      if (typeof ev.detail?.cool_factor  === 'number') colorTempCoolRef.current  = ev.detail.cool_factor
+    }
+    window.addEventListener('nw:color-temperature', onColorTemp)
+    return () => window.removeEventListener('nw:color-temperature', onColorTemp)
   }, [])
   const agentTimersRef = useRef<Map<string, number>>(new Map())
   // NW31: track per-orb fog opacity for smooth fade
@@ -756,8 +771,9 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
         sw.briefTimer -= dt
         const scale = 1 + Math.sin(now * 3) * 0.08
         sw.briefSphere.scale.setScalar(scale)
+        // NW42: apply brightness factor from color temperature
         ;(sw.briefSphere.material as THREE.MeshStandardMaterial).emissiveIntensity =
-          0.8 + Math.sin(now * 4) * 0.4
+          (0.8 + Math.sin(now * 4) * 0.4) * colorTempBrightRef.current
         sw.briefSphere.position.copy(nexus.group.position)
         sw.briefSphere.position.y += 2
         if (sw.briefTimer <= 0) {

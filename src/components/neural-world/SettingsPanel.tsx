@@ -24,6 +24,7 @@ import {
   saveNWCameraSettings,
 } from './NWSettings'
 import { CameraMode } from './CameraController'
+import { ColorModeSelector, type ColorMode } from './AdaptiveColorEngine'
 
 interface SettingsPanelProps {
   cameraMode: CameraMode
@@ -41,6 +42,12 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
   const [liveSpeed, setLiveSpeed] = useState(settings.travelSpeed)
   // NW27b: Live FPS for render distance tuning
   const [liveFps, setLiveFps] = useState(60)
+  // NW42: Color mode override
+  const [colorMode, setColorMode] = useState<ColorMode>(() => {
+    try {
+      return (localStorage.getItem('nw_color_mode') as ColorMode) ?? 'auto'
+    } catch { return 'auto' }
+  })
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // NW40: World speed override
@@ -58,6 +65,13 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
       return (localStorage.getItem('nw_world_speed_mode') as WorldSpeedMode) ?? 'auto'
     } catch { return 'auto' }
   })
+
+  // NW42: Apply color mode override
+  const applyColorMode = useCallback((mode: ColorMode) => {
+    setColorMode(mode)
+    try { localStorage.setItem('nw_color_mode', mode) } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('nw:color-mode-override', { detail: { mode } }))
+  }, [])
 
   const applyWorldSpeed = useCallback((mode: WorldSpeedMode) => {
     setWorldSpeedMode(mode)
@@ -420,6 +434,20 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
           <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: 7.5, letterSpacing: 0.8, marginTop: 2, lineHeight: 1.5 }}>
             Theta: slow observation · Beta: active work · Gamma: max intensity
           </div>
+
+          <Divider />
+
+          {/* ── NW42: Color Mode Override ── */}
+          <div style={{
+            color:         '#00e5cc',
+            fontSize:      9,
+            letterSpacing: 2,
+            marginBottom:  4,
+            fontWeight:    700,
+          }}>
+            ◈ COLOR MODE
+          </div>
+          <ColorModeSelector value={colorMode} onChange={applyColorMode} />
 
           <Divider />
 

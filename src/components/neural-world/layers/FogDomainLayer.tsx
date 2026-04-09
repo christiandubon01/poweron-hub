@@ -277,7 +277,19 @@ export function FogDomainLayer({
   const rippleTimers  = useRef<Map<string, number>>(new Map())  // agentId → remaining ripple time
   const [infoPanel, setInfoPanel] = useState<FogInfoData | null>(null)
   // NW40: World speed factor from ResonanceOrb
-  const worldSpeedRef = useRef<number>(1.0)
+  const worldSpeedRef   = useRef<number>(1.0)
+  // NW42: color temperature saturation factor from AdaptiveColorEngine
+  const fogSatRef       = useRef<number>(1.0)
+  useEffect(() => {
+    function onColorTemp(e: Event) {
+      const ev = e as CustomEvent<{ saturation_factor?: number }>
+      if (typeof ev.detail?.saturation_factor === 'number') {
+        fogSatRef.current = ev.detail.saturation_factor
+      }
+    }
+    window.addEventListener('nw:color-temperature', onColorTemp)
+    return () => window.removeEventListener('nw:color-temperature', onColorTemp)
+  }, [])
   useEffect(() => {
     function onSpeedFactor(e: Event) {
       const ev = e as CustomEvent<{ factor: number }>
@@ -487,10 +499,10 @@ export function FogDomainLayer({
           // Gentle vertical bob
           p.mesh.position.y = p.baseY + Math.sin(t * 0.4 + p.phaseOffset) * 0.3
 
-          // Opacity pulse
+          // Opacity pulse — NW42: modulated by color temperature saturation
           const mat = p.mesh.material as THREE.MeshLambertMaterial
           const baseOp = 0.09 + p.density * 0.16
-          mat.opacity = baseOp + Math.sin(t * 0.6 + p.phaseOffset) * 0.04
+          mat.opacity = (baseOp + Math.sin(t * 0.6 + p.phaseOffset) * 0.04) * fogSatRef.current
           mat.needsUpdate = false
         }
       }

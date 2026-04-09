@@ -38,6 +38,7 @@ import ActionableInsightPanel, { InsightTriggerButton, type CubeInsightPayload }
 import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 import LegendPanel, { LegendButton } from './LegendPanel'
+import { AdaptiveColorEngine, CognitiveStateHUD } from './AdaptiveColorEngine'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -1775,6 +1776,10 @@ export default function CommandHUD({
           </div>
         )
       })()}
+
+      {/* ── NW42: Adaptive Color Engine (no DOM) + Cognitive State HUD ──── */}
+      <AdaptiveColorEngine />
+      <CognitiveStateHUD />
 
       {/* ── Canvas hover capture for data shadow ──────────────────────────── */}
       <div
