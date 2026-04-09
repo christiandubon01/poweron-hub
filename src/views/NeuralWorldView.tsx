@@ -43,6 +43,7 @@ import { RiverSystemLayer } from '@/components/neural-world/layers/RiverSystemLa
 import { DragDropSystem } from '@/components/neural-world/DragDropSystem'
 import { NexusCompanion } from '@/components/neural-world/NexusCompanion'
 import { AgentFlightLayer } from '@/components/neural-world/layers/AgentFlightLayer'
+import { FortressLayer } from '@/components/neural-world/layers/FortressLayer'
 import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
 import { FlightAnalyticsPanel } from '@/components/neural-world/FlightAnalyticsPanel'
 import CommandHUD, {
@@ -114,6 +115,8 @@ function WorldLayers({
       <DragDropSystem />
       {/* NW26: NEXUS walk-along companion — avatar + voice + vision system */}
       <NexusCompanion />
+      {/* NW30: Fortress Command Center — walkable compound at east boundary */}
+      <FortressLayer />
     </>
   )
 }
