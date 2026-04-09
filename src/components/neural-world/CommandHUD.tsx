@@ -33,6 +33,7 @@ import { MinimapRenderer } from './MinimapRenderer'
 import { SimulationHUD } from './SimulationHUD'
 import { InstructionalOverlay } from './InstructionalOverlay'
 import { StrategyPanel, StrategyBrainButton } from './StrategyPanel'
+import { FogInterviewPanel, FogCalibrateButton } from './FogInterviewPanel'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -197,6 +198,17 @@ export default function CommandHUD({
 
   // NW25: Strategy panel open state
   const [strategyPanelOpen, setStrategyPanelOpen] = useState(false)
+
+  // NW32: Fog interview panel open state + calibrated badge
+  const [fogInterviewOpen, setFogInterviewOpen]   = useState(false)
+  const [fogCalibrated, setFogCalibrated]         = useState(false)
+
+  // NW32: listen for fog-calibrated event to show badge
+  useEffect(() => {
+    function onCalibrated() { setFogCalibrated(true) }
+    window.addEventListener('nw:fog-calibrated', onCalibrated)
+    return () => window.removeEventListener('nw:fog-calibrated', onCalibrated)
+  }, [])
 
   const handleEditLayoutToggle = useCallback(() => {
     const next = !editLayoutActive
@@ -509,6 +521,9 @@ export default function CommandHUD({
       {/* ── NW25: AI STRATEGY PANEL ─────────────────────────────────────── */}
       <StrategyPanel open={strategyPanelOpen} onClose={() => setStrategyPanelOpen(false)} />
 
+      {/* ── NW32: FOG INTERVIEW PANEL ───────────────────────────────────── */}
+      <FogInterviewPanel open={fogInterviewOpen} onClose={() => setFogInterviewOpen(false)} />
+
       {/* ── NW21: INSTRUCTIONAL OVERLAY + ? BUTTON ─────────────────────── */}
       <InstructionalOverlay />
 
@@ -571,6 +586,13 @@ export default function CommandHUD({
         <StrategyBrainButton
           open={strategyPanelOpen}
           onClick={() => setStrategyPanelOpen(prev => !prev)}
+        />
+
+        {/* NW32: Calibrate Fog button — fog data interview */}
+        <FogCalibrateButton
+          open={fogInterviewOpen}
+          onClick={() => setFogInterviewOpen(prev => !prev)}
+          calibrated={fogCalibrated}
         />
 
         {/* Fullscreen toggle button */}
