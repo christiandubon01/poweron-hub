@@ -871,8 +871,10 @@ export function EastContinentLayer() {
     }
 
     // GUARDIAN label at perimeter entry — NW31b: spec color #FF5060
+    // NW38b: Y raised from 9→10 so GUARDIAN PERIMETER sits exactly 2 units above
+    // OPERATOR (Y=8.0 in FortressLayer), giving a clean 2-unit stack.
     const guardLabel = makeLabel('GUARDIAN PERIMETER', '#FF5060')
-    guardLabel.position.set(25, 9, 0)
+    guardLabel.position.set(25, 10, 0)
     scene.add(guardLabel)
     adminMeshesRef.current.push(guardLabel)
     labelSpritesRef.current.push(guardLabel)

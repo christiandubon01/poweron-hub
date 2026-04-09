@@ -25,7 +25,7 @@ import * as THREE from 'three'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface LabelOptions {
-  /** Canvas font size in px (default 18) */
+  /** Canvas font size in px (default 36) */
   fontSize?: number
   /** Y offset added to sprite.position.y — float above the node (default 0) */
   yOffset?: number
@@ -106,9 +106,9 @@ export function makeLabel(
   color = '#ffffff',
   options?: LabelOptions
 ): NWLabel {
-  const fontSize   = options?.fontSize ?? 18
-  const hPad       = 8    // horizontal padding px each side (spec: 8px)
-  const vPad       = 6    // vertical padding px top/bottom (spec: 6px)
+  const fontSize   = options?.fontSize ?? 36
+  const hPad       = 16   // horizontal padding px each side (spec: 16px, NW38b 2x)
+  const vPad       = 12   // vertical padding px top/bottom (spec: 12px, NW38b 2x)
   const borderR    = 4    // border-radius equivalent on canvas
 
   // ── 1. Measure text to size canvas exactly to content ─────────────────────
@@ -151,9 +151,9 @@ export function makeLabel(
   })
   const sprite  = new THREE.Sprite(mat)
 
-  // Fixed world height of 1.6 units; width proportional to canvas aspect.
+  // Fixed world height of 3.2 units (NW38b: 2× from 1.6); width proportional to canvas aspect.
   // This prevents giant labels — close = readable, far = faded out.
-  const worldH = 1.6
+  const worldH = 3.2
   const worldW = (tw / th) * worldH
   sprite.scale.set(worldW, worldH, 1)
 

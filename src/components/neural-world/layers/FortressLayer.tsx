@@ -571,8 +571,10 @@ export function FortressLayer() {
     group.add(beamR)
 
     // Gate label — NW31b: spec color #2EE89A
+    // NW38b: Y offset adjusted to WALL_H+1.5 so NDA GATE sits exactly 2 units above
+    // statusLabel (WALL_H-0.5=7.5), giving a clean 2-unit stack.
     const gateLabel = makeLabel('NDA GATE', '#2EE89A')
-    gateLabel.position.set(FORTRESS_CX, WALL_H + 1.2, FZ_MIN)
+    gateLabel.position.set(FORTRESS_CX, WALL_H + 1.5, FZ_MIN)
     group.add(gateLabel)
     labelSpritesRef.current.push(gateLabel)
 
