@@ -82,6 +82,8 @@ const LAYERS: LayerDef[] = [
   { id: 'simulation',      label: 'Simulation',      icon: '⬡',  r: 255, g: 200, b: 40  },
   /** NW28: Agent flight system — domain zones, flying orbs, task cycles, data cubes */
   { id: 'agent-flight',    label: 'Agent Flight',    icon: '◉',  r: 0,   g: 229, b: 204 },
+  /** NW28b: Human worker amber orbs — ground movement, shift coverage, handoff chain */
+  { id: 'human-workers',   label: 'Human Workers',   icon: '◎',  r: 255, g: 144, b: 64  },
   /** NW31: Fog domain layers — revenue, security, bandwidth, improvement */
   { id: 'fog-revenue',     label: 'Revenue Fog',     icon: '💰', r: 255, g: 153, b: 0   },
   { id: 'fog-security',    label: 'Security Fog',    icon: '🔒', r: 255, g: 179, b: 71  },

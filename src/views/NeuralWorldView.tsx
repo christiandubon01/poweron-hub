@@ -43,6 +43,8 @@ import { RiverSystemLayer } from '@/components/neural-world/layers/RiverSystemLa
 import { DragDropSystem } from '@/components/neural-world/DragDropSystem'
 import { NexusCompanion } from '@/components/neural-world/NexusCompanion'
 import { AgentFlightLayer } from '@/components/neural-world/layers/AgentFlightLayer'
+import { HumanWorkerLayer } from '@/components/neural-world/layers/HumanWorkerLayer'
+import { HandoffChain } from '@/components/neural-world/HandoffChain'
 import { FortressLayer } from '@/components/neural-world/layers/FortressLayer'
 import { FogDomainLayer } from '@/components/neural-world/layers/FogDomainLayer'
 import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
@@ -69,6 +71,7 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'data-flow':        true,   // NW18: data flow on by default
   'simulation':       false,  // NW19: enterprise simulation
   'agent-flight':     false,  // NW28: agent flight system — domains, orbs, task cycles
+  'human-workers':    false,  // NW28b: human worker amber orbs
   // NW31: fog domain layers — all off by default (opt-in visualization)
   'fog-revenue':      false,
   'fog-security':     false,
@@ -115,6 +118,10 @@ function WorldLayers({
       <SimDotTravelerController />
       {/* NW28: Agent flight system — domain zones, flying orbs, task cycles, data cubes */}
       <AgentFlightLayer visible={!!layerStates['agent-flight']} />
+      {/* NW28b: Human worker amber orbs — ground movement, shift coverage, handoff chain */}
+      <HumanWorkerLayer visible={!!layerStates['human-workers']} />
+      {/* NW28b: Handoff chain visualization — gold flashes at AI↔Human handoff points */}
+      <HandoffChain />
       {/* NW23: River system — cash flow visualization, tributaries, MTZ correction */}
       <RiverSystemLayer />
       {/* NW24: Drag-and-drop node repositioning */}
