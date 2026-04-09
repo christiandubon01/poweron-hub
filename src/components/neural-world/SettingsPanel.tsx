@@ -39,6 +39,8 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
   const [open, setOpen]       = useState(false)
   const [settings, setSettings] = useState<NWCameraSettings>(() => loadNWCameraSettings())
   const [liveSpeed, setLiveSpeed] = useState(settings.travelSpeed)
+  // NW27b: Live FPS for render distance tuning
+  const [liveFps, setLiveFps] = useState(60)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Track live travel speed from CameraController scroll events
@@ -56,11 +58,25 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
         setSettings(prev => ({ ...prev, tpDistance: ev.detail.key }))
       }
     }
+    // NW27b: Track FPS from nw:frame events for render distance display
+    let fpsCount = 0
+    let fpsLast = performance.now()
+    function onFrame() {
+      fpsCount++
+      const now = performance.now()
+      if (now - fpsLast >= 1000) {
+        setLiveFps(Math.round(fpsCount * 1000 / (now - fpsLast)))
+        fpsCount = 0
+        fpsLast = now
+      }
+    }
     window.addEventListener('nw:travel-speed', onTravelSpeed)
     window.addEventListener('nw:tp-distance', onTpDist)
+    window.addEventListener('nw:frame', onFrame)
     return () => {
       window.removeEventListener('nw:travel-speed', onTravelSpeed)
       window.removeEventListener('nw:tp-distance', onTpDist)
+      window.removeEventListener('nw:frame', onFrame)
     }
   }, [])
 
@@ -292,6 +308,49 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
               />
             </>
           )}
+
+          <Divider />
+
+          {/* ── NW27b: Render Distance ── */}
+          <div style={{
+            color: '#00e5cc',
+            fontSize: 9,
+            letterSpacing: 2,
+            marginBottom: 2,
+            fontWeight: 700,
+          }}>
+            ◈ RENDER DISTANCE
+          </div>
+
+          {/* Render Distance slider */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>RENDER DIST</span>
+              <span style={{ color: '#00e5cc', fontSize: 9, letterSpacing: 1 }}>
+                {(s.renderDistance ?? 300).toFixed(0)} u
+                <span style={{
+                  marginLeft: 6,
+                  color: liveFps < 30 ? '#ff4444' : liveFps < 50 ? '#ffaa00' : 'rgba(255,255,255,0.35)',
+                  fontSize: 8,
+                }}>
+                  {liveFps} FPS
+                </span>
+              </span>
+            </div>
+            <input
+              type="range"
+              min={50}
+              max={500}
+              step={25}
+              value={s.renderDistance ?? 300}
+              onChange={e => applyChange({ renderDistance: parseFloat(e.target.value) })}
+              style={{ width: '100%', accentColor: '#00e5cc', cursor: 'pointer' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
+              <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 7, letterSpacing: 0.5 }}>50 (fast)</span>
+              <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 7, letterSpacing: 0.5 }}>500 (full world)</span>
+            </div>
+          </div>
 
           {/* Hint */}
           <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 8, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>

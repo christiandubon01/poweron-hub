@@ -150,6 +150,7 @@ function getMockHubState(): HubState {
 }
 
 // ── Text sprite helper ─────────────────────────────────────────────────────────
+// NW27b: minimum 512px wide texture, high-contrast, larger base scale
 
 function makeTextSprite(text: string, opts?: {
   fontSize?: number
@@ -157,16 +158,17 @@ function makeTextSprite(text: string, opts?: {
   bgColor?: string
   padding?: number
 }): THREE.Sprite {
-  const fontSize = opts?.fontSize ?? 20
-  const color    = opts?.color    ?? '#00e5cc'
-  const bgColor  = opts?.bgColor  ?? 'rgba(0,0,0,0.55)'
-  const padding  = opts?.padding  ?? 6
+  const fontSize = Math.max(24, opts?.fontSize ?? 24)
+  const color    = opts?.color    ?? '#ffffff'
+  const bgColor  = opts?.bgColor  ?? 'rgba(8,8,12,0.95)'
+  const padding  = opts?.padding  ?? 12
 
   const canvas = document.createElement('canvas')
   const ctx    = canvas.getContext('2d')!
   ctx.font     = `bold ${fontSize}px monospace`
   const m      = ctx.measureText(text)
-  const tw     = Math.ceil(m.width) + padding * 2
+  // NW27b: enforce minimum 512px width
+  const tw     = Math.max(512, Math.ceil(m.width) + padding * 2)
   const th     = fontSize + padding * 2
   canvas.width  = tw
   canvas.height = th
@@ -174,14 +176,19 @@ function makeTextSprite(text: string, opts?: {
   ctx.font         = `bold ${fontSize}px monospace`
   ctx.fillStyle    = bgColor
   ctx.fillRect(0, 0, tw, th)
+  // NW27b: green accent border
+  ctx.strokeStyle = 'rgba(46,232,154,0.3)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(0.5, 0.5, tw - 1, th - 1)
   ctx.fillStyle    = color
   ctx.textBaseline = 'middle'
   ctx.fillText(text, padding, th / 2)
 
   const tex  = new THREE.CanvasTexture(canvas)
-  const mat  = new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true, opacity: 0.9 })
+  const mat  = new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true, opacity: 0.95 })
   const spr  = new THREE.Sprite(mat)
-  spr.scale.set((tw / th) * 2.0, 2.0, 1)
+  // NW27b: scale up so text is readable from further distances
+  spr.scale.set((tw / th) * 4.0, 4.0, 1)
   return spr
 }
 

@@ -758,10 +758,13 @@ export default function CommandHUD({
       </div>
 
       {/* ── BOTTOM-CENTER: CAMERA MODE + SPEED + SPEED MODE ──────────────── */}
+      {/* NW27b: Raised from bottom:14 to bottom:150 to clear the Business   */}
+      {/* Dominance meter (bottom:90) and speed display with no overlap at   */}
+      {/* 1920x1080 and 1366x768.                                            */}
       <div
         style={{
           position: 'absolute',
-          bottom: 14,
+          bottom: 150,
           left: '50%',
           transform: 'translateX(-50%)',
           zIndex: 25,
@@ -805,7 +808,8 @@ export default function CommandHUD({
           )}
           {speed > 0.01 && (
             <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 9, letterSpacing: 1.5 }}>
-              {speed > 0.05 ? 'MOVING' : 'IDLE'} · {(speed * 10).toFixed(1)} U/S
+              {/* NW27b: multiply frame-distance by 60 to get actual u/s (camera calc divides by 60) */}
+              {speed > 0.05 ? 'MOVING' : 'IDLE'} · {(speed * 60).toFixed(1)} U/S
             </span>
           )}
         </div>

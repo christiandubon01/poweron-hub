@@ -287,9 +287,9 @@ function InfoPanel({ node, screenX, screenY, onClose, scale }: InfoPanelProps) {
         gap: 8,
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* NW27: title font 16px */}
+          {/* NW27b: title font 18px minimum */}
           <div style={{
-            fontSize: 16,
+            fontSize: 18,
             fontWeight: 700,
             color: node.accentColor,
             letterSpacing: 1.5,
@@ -330,10 +330,10 @@ function InfoPanel({ node, screenX, screenY, onClose, scale }: InfoPanelProps) {
 
       {/* Scrollable body — NW27: scroll captures here, doesn't propagate to camera */}
       <ScrollBody>
-        {/* Description — NW27: body font 13px minimum */}
+        {/* Description — NW27b: body font 14px minimum */}
         <div style={{ padding: '12px 16px', borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
           <div style={{
-            fontSize: 13,
+            fontSize: 14,
             color: 'rgba(255,255,255,0.82)',
             lineHeight: 1.65,
             letterSpacing: 0.3,
@@ -742,11 +742,13 @@ export function NodeClickSystem() {
     window.dispatchEvent(new CustomEvent('nw:panel-state', { detail: { open: !!selectedNode } }))
   }, [selectedNode])
 
-  // NW27: ESC key closes panel (priority over fullscreen exit)
+  // NW27b: Tab key closes panel (quick dismiss without moving mouse).
+  // ESC is reserved for pause/settings — do NOT use ESC to close info panels.
   useEffect(() => {
     if (!selectedNode) return
     function onKeyDown(e: KeyboardEvent) {
-      if (e.code === 'Escape') {
+      if (e.code === 'Tab') {
+        e.preventDefault() // prevent focus shift while panel is open
         handleClose()
       }
     }

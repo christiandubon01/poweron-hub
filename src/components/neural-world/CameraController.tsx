@@ -578,18 +578,28 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       const forward = new THREE.Vector3(-Math.sin(yaw.current), 0, -Math.cos(yaw.current))
       const right   = new THREE.Vector3( Math.cos(yaw.current), 0, -Math.sin(yaw.current))
 
-      if (keys.current['KeyW'] || keys.current['ArrowUp'])    pos.current.addScaledVector(forward,  speed)
-      if (keys.current['KeyS'] || keys.current['ArrowDown'])  pos.current.addScaledVector(forward, -speed)
-      if (keys.current['KeyA'] || keys.current['ArrowLeft'])  pos.current.addScaledVector(right,   -speed)
-      if (keys.current['KeyD'] || keys.current['ArrowRight']) pos.current.addScaledVector(right,    speed)
+      // NW27b: Collect movement direction, normalize to prevent diagonal speed boost
+      const moveDir = new THREE.Vector3(0, 0, 0)
+      if (keys.current['KeyW'] || keys.current['ArrowUp'])    moveDir.addScaledVector(forward,  1)
+      if (keys.current['KeyS'] || keys.current['ArrowDown'])  moveDir.addScaledVector(forward, -1)
+      if (keys.current['KeyA'] || keys.current['ArrowLeft'])  moveDir.addScaledVector(right,   -1)
+      if (keys.current['KeyD'] || keys.current['ArrowRight']) moveDir.addScaledVector(right,    1)
+      if (moveDir.lengthSq() > 0) {
+        moveDir.normalize()
+        pos.current.addScaledVector(moveDir, speed)
+      }
+
       if (keys.current['Space'] || touchAscendActive.current)  pos.current.y += speed
       if (keys.current['KeyQ']  || touchDescendActive.current) pos.current.y -= speed
 
       // NW17: Mobile joystick with touch sensitivity multiplier
       if (leftJoystick.current.active) {
         const touchMult = settings.touchSensitivity ?? 1.5
-        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed * touchMult)
-        pos.current.addScaledVector(right,    leftJoystick.current.dx * speed * touchMult)
+        const joyDir = new THREE.Vector3(0, 0, 0)
+        joyDir.addScaledVector(forward, -leftJoystick.current.dy)
+        joyDir.addScaledVector(right,    leftJoystick.current.dx)
+        if (joyDir.lengthSq() > 0) joyDir.normalize()
+        pos.current.addScaledVector(joyDir, speed * touchMult)
       }
       if (rightJoystick.current.active) {
         const touchMult = settings.touchSensitivity ?? 1.5
@@ -613,18 +623,28 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       const forward = new THREE.Vector3(-Math.sin(yaw.current), 0, -Math.cos(yaw.current))
       const right   = new THREE.Vector3( Math.cos(yaw.current), 0, -Math.sin(yaw.current))
 
-      if (keys.current['KeyW'] || keys.current['ArrowUp'])    pos.current.addScaledVector(forward,  speed)
-      if (keys.current['KeyS'] || keys.current['ArrowDown'])  pos.current.addScaledVector(forward, -speed)
-      if (keys.current['KeyA'] || keys.current['ArrowLeft'])  pos.current.addScaledVector(right,   -speed)
-      if (keys.current['KeyD'] || keys.current['ArrowRight']) pos.current.addScaledVector(right,    speed)
+      // NW27b: Normalize direction vector — no diagonal speed boost
+      const moveDir = new THREE.Vector3(0, 0, 0)
+      if (keys.current['KeyW'] || keys.current['ArrowUp'])    moveDir.addScaledVector(forward,  1)
+      if (keys.current['KeyS'] || keys.current['ArrowDown'])  moveDir.addScaledVector(forward, -1)
+      if (keys.current['KeyA'] || keys.current['ArrowLeft'])  moveDir.addScaledVector(right,   -1)
+      if (keys.current['KeyD'] || keys.current['ArrowRight']) moveDir.addScaledVector(right,    1)
+      if (moveDir.lengthSq() > 0) {
+        moveDir.normalize()
+        pos.current.addScaledVector(moveDir, speed)
+      }
+
       if (keys.current['Space'] || touchAscendActive.current)  pos.current.y += speed
       if (keys.current['KeyQ']  || touchDescendActive.current) pos.current.y -= speed
 
       // NW17: Mobile joystick with touch sensitivity multiplier
       if (leftJoystick.current.active) {
         const touchMult = settings.touchSensitivity ?? 1.5
-        pos.current.addScaledVector(forward, -leftJoystick.current.dy * speed * touchMult)
-        pos.current.addScaledVector(right,    leftJoystick.current.dx * speed * touchMult)
+        const joyDir = new THREE.Vector3(0, 0, 0)
+        joyDir.addScaledVector(forward, -leftJoystick.current.dy)
+        joyDir.addScaledVector(right,    leftJoystick.current.dx)
+        if (joyDir.lengthSq() > 0) joyDir.normalize()
+        pos.current.addScaledVector(joyDir, speed * touchMult)
       }
       if (rightJoystick.current.active) {
         const touchMult = settings.touchSensitivity ?? 1.5

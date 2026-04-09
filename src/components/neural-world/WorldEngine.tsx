@@ -42,6 +42,7 @@ import { TerrainGenerator } from './TerrainGenerator'
 import { supabase } from '@/lib/supabase'
 import { startParticleWatchdog, stopParticleWatchdog } from './ParticleManager'
 import { applyOverrides, getNodePosition, type NodePos } from './NodePositionStore'
+import { loadNWCameraSettings, type NWCameraSettings } from './NWSettings'
 
 // ── Day/Night cycle config ────────────────────────────────────────────────────
 
@@ -357,6 +358,36 @@ export function WorldEngine({ children, applyScenario = false, hideBuiltinHUD = 
       window.removeEventListener('nw:positions-reset', onPositionsReset)
     }
   }, [])
+
+  // NW27b: Apply renderDistance from settings on mount + listen for changes
+  useEffect(() => {
+    function applyRenderDistance(dist: number) {
+      const camera = cameraRef.current
+      const scene  = sceneRef.current
+      if (!camera || !scene) return
+      camera.far = dist
+      camera.updateProjectionMatrix()
+      // Adjust fog to match render distance:
+      // FogExp2 density ≈ -ln(0.01) / dist so fog reaches near-zero at dist
+      if (scene.fog instanceof THREE.FogExp2) {
+        scene.fog.density = 4.6 / dist
+      }
+    }
+
+    // Apply stored setting on mount (once cameraRef/sceneRef are ready)
+    const stored = loadNWCameraSettings()
+    applyRenderDistance(stored.renderDistance ?? 300)
+
+    // Listen for live changes from SettingsPanel
+    function onSettingsChange(e: Event) {
+      const ev = e as CustomEvent<Partial<NWCameraSettings>>
+      if (ev.detail?.renderDistance !== undefined) {
+        applyRenderDistance(ev.detail.renderDistance)
+      }
+    }
+    window.addEventListener('nw:settings-change', onSettingsChange)
+    return () => window.removeEventListener('nw:settings-change', onSettingsChange)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wrap atmosphere/camera mode change handlers to also persist
   const handleAtmosphereModeChange = useCallback((mode: AtmosphereMode) => {

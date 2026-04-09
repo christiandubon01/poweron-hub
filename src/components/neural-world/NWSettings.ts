@@ -24,6 +24,8 @@ export interface NWCameraSettings {
   touchSensitivity: number
   /** NW17: Inner dead zone fraction of joystick radius — no movement within this zone (0.05–0.25, default 0.15) */
   touchDeadZone: number
+  /** NW27b: Render distance — camera far plane and fog distance (50–500 units, default 300) */
+  renderDistance: number
 }
 
 /** NW20: Maximum travel speed — used by slider and scroll wheel clamping */
@@ -47,6 +49,7 @@ const DEFAULTS: NWCameraSettings = {
   tpDistance:      'MEDIUM',
   touchSensitivity: 1.5,
   touchDeadZone:    0.15,
+  renderDistance:   300,
 }
 
 export function loadNWCameraSettings(): NWCameraSettings {
@@ -66,6 +69,7 @@ export function loadNWCameraSettings(): NWCameraSettings {
         : DEFAULTS.tpDistance,
       touchSensitivity: clamp(parsed.touchSensitivity ?? DEFAULTS.touchSensitivity, 0.1,  3.0),
       touchDeadZone:    clamp(parsed.touchDeadZone    ?? DEFAULTS.touchDeadZone,    0.05, 0.25),
+      renderDistance:   clamp(parsed.renderDistance   ?? DEFAULTS.renderDistance,   50,   500),
     }
   } catch {
     return { ...DEFAULTS }

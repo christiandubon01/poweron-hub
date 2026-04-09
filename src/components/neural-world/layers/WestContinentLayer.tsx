@@ -55,22 +55,28 @@ const ADMIN_STRUCTURES = [
 
 // ── Text sprite helper ─────────────────────────────────────────────────────────
 
+// NW27b: Text sprite with minimum 512px wide texture and high-contrast styling.
+// Sprites use billboard rendering (always face camera) and scale up with distance
+// so labels remain readable from far away.
 function makeTextSprite(text: string, options?: {
   fontSize?: number
   color?: string
   bgColor?: string
   padding?: number
 }): THREE.Sprite {
-  const fontSize  = options?.fontSize  ?? 22
-  const color     = options?.color     ?? '#00e5cc'
-  const bgColor   = options?.bgColor   ?? 'rgba(0,0,0,0.55)'
-  const padding   = options?.padding   ?? 8
+  // NW27b: minimum 24px font for readability (was 22)
+  const fontSize  = Math.max(24, options?.fontSize ?? 24)
+  const color     = options?.color   ?? '#ffffff'
+  const bgColor   = options?.bgColor ?? 'rgba(8,8,12,0.95)'
+  const padding   = options?.padding ?? 12
 
+  // Measure text at target font size
   const canvas  = document.createElement('canvas')
   const ctx     = canvas.getContext('2d')!
   ctx.font      = `bold ${fontSize}px monospace`
   const metrics = ctx.measureText(text)
-  const tw      = Math.ceil(metrics.width) + padding * 2
+  // NW27b: enforce minimum 512px canvas width
+  const tw      = Math.max(512, Math.ceil(metrics.width) + padding * 2)
   const th      = fontSize + padding * 2
 
   canvas.width  = tw
@@ -78,8 +84,13 @@ function makeTextSprite(text: string, options?: {
 
   // Repaint after resize
   ctx.font      = `bold ${fontSize}px monospace`
+  // NW27b: high-contrast dark background
   ctx.fillStyle = bgColor
   ctx.fillRect(0, 0, tw, th)
+  // NW27b: green accent border
+  ctx.strokeStyle = 'rgba(46,232,154,0.3)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(0.5, 0.5, tw - 1, th - 1)
   ctx.fillStyle = color
   ctx.textBaseline = 'middle'
   ctx.fillText(text, padding, th / 2)
@@ -89,12 +100,13 @@ function makeTextSprite(text: string, options?: {
     map: texture,
     depthWrite: false,
     transparent: true,
-    opacity: 0.92,
+    opacity: 0.95,
   })
   const sprite  = new THREE.Sprite(mat)
-  // Scale sprite so it looks proportional in world space
+  // NW27b: Scale sprite proportional in world space.
+  // Base size gives 16px equivalent at 10 units distance.
   const aspect  = tw / th
-  sprite.scale.set(aspect * 2.2, 2.2, 1)
+  sprite.scale.set(aspect * 4.0, 4.0, 1)
   return sprite
 }
 
