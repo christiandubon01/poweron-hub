@@ -35,6 +35,7 @@ import { useWorldContext } from './WorldContext'
 import {
   NWCameraSettings,
   TP_DISTANCES,
+  MAX_SPEED,
   loadNWCameraSettings,
   saveNWCameraSettings,
 } from './NWSettings'
@@ -141,6 +142,9 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
   const touchAscendActive  = useRef(false)
   const touchDescendActive = useRef(false)
 
+  // NW20: Keyboard sprint toggle (Shift = toggle, not hold)
+  const shiftSprintToggle = useRef(false)
+
   // ── Persist speed when changed ────────────────────────────────────────────
   const persistSpeed = useCallback((speed: number) => {
     const s = { ...settingsRef.current, travelSpeed: speed }
@@ -194,6 +198,16 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
         if (e.code === 'Digit3') cycleTpDist('FAR')
       }
 
+      // NW20: Shift toggles sprint ON/OFF (not hold) — only in FP/TP
+      if (!e.repeat && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) {
+        if (mode === CameraMode.FIRST_PERSON || mode === CameraMode.THIRD_PERSON) {
+          shiftSprintToggle.current = !shiftSprintToggle.current
+          window.dispatchEvent(new CustomEvent('nw:sprint-state', {
+            detail: { active: shiftSprintToggle.current }
+          }))
+        }
+      }
+
       if (e.code === 'Escape' && document.pointerLockElement) {
         document.exitPointerLock()
       }
@@ -210,6 +224,12 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       window.removeEventListener('keyup', onKeyUp)
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // NW20: Reset sprint toggle when camera mode changes
+  useEffect(() => {
+    shiftSprintToggle.current = false
+    window.dispatchEvent(new CustomEvent('nw:sprint-state', { detail: { active: false } }))
+  }, [mode])
 
   function cycleTpDist(key: 'CLOSE' | 'MEDIUM' | 'FAR') {
     tpDistKey.current = key
@@ -256,7 +276,7 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       if (mode === CameraMode.THIRD_PERSON) {
         // NW19: TP scroll adjusts speed (like FP), not distance
         const delta = e.deltaY > 0 ? -SPEED_STEP : SPEED_STEP
-        const newSpeed = Math.max(0.5, Math.min(15.0, travelSpeedRef.current + delta))
+        const newSpeed = Math.max(0.5, Math.min(MAX_SPEED, travelSpeedRef.current + delta))
         travelSpeedRef.current = newSpeed
         setTravelSpeedState(newSpeed)
         persistSpeed(newSpeed)
@@ -265,9 +285,9 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       }
 
       if (mode === CameraMode.FIRST_PERSON) {
-        // FP: adjust travel speed in 0.5 increments (NW19: cap 15.0)
+        // FP: adjust travel speed in 0.5 increments (NW20: capped to MAX_SPEED)
         const delta = e.deltaY > 0 ? -SPEED_STEP : SPEED_STEP
-        const newSpeed = Math.max(0.5, Math.min(15.0, travelSpeedRef.current + delta))
+        const newSpeed = Math.max(0.5, Math.min(MAX_SPEED, travelSpeedRef.current + delta))
         travelSpeedRef.current = newSpeed
         setTravelSpeedState(newSpeed)
         persistSpeed(newSpeed)
@@ -276,7 +296,14 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
       }
     }
 
+    // NW20: Prevent browser page zoom (ctrl+scroll / trackpad pinch) when NW is active.
+    // Also block any scroll on the canvas container from bubbling to the browser.
     const onDocWheel = (e: WheelEvent) => {
+      // Always block ctrl+scroll to prevent browser zoom while NW canvas is in the DOM
+      if (e.ctrlKey) {
+        e.preventDefault()
+        return
+      }
       const container = canvas.parentElement
       if (container && (container.contains(e.target as Node) || e.target === canvas)) {
         e.preventDefault()
@@ -543,7 +570,8 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     // ── First Person ──────────────────────────────────────────────────────
     function updateFirstPerson() {
       const settings = settingsRef.current
-      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight'] || touchSprintActive.current
+      // NW20: Shift is a toggle — use shiftSprintToggle or touch sprint
+      const isSprint = shiftSprintToggle.current || touchSprintActive.current
       const speed = (travelSpeedRef.current / 60) * settings.moveSensitivity * (isSprint ? SPRINT_MULT : 1)
 
       // Build forward / right vectors from yaw
@@ -578,7 +606,8 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     // ── Third Person ──────────────────────────────────────────────────────
     function updateThirdPerson() {
       const settings = settingsRef.current
-      const isSprint = keys.current['ShiftLeft'] || keys.current['ShiftRight'] || touchSprintActive.current
+      // NW20: Shift is a toggle — use shiftSprintToggle or touch sprint
+      const isSprint = shiftSprintToggle.current || touchSprintActive.current
       const speed = (travelSpeedRef.current / 60) * settings.moveSensitivity * (isSprint ? SPRINT_MULT : 1)
 
       const forward = new THREE.Vector3(-Math.sin(yaw.current), 0, -Math.cos(yaw.current))
@@ -633,8 +662,11 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     }
 
     function applyYawPitch(cam: THREE.PerspectiveCamera) {
-      // NW19: single inversion point — invertY=true flips pitch sign
-      const effectivePitch = settingsRef.current.invertY ? -pitch.current : pitch.current
+      // NW19: single inversion point — invertY flips pitch for movement feel
+      // NW20: invertViewY additionally flips view direction (independent of movement)
+      let effectivePitch = pitch.current
+      if (settingsRef.current.invertY) effectivePitch = -effectivePitch
+      if (settingsRef.current.invertViewY) effectivePitch = -effectivePitch
       const euler = new THREE.Euler(effectivePitch, yaw.current, 0, 'YXZ')
       cam.quaternion.setFromEuler(euler)
     }

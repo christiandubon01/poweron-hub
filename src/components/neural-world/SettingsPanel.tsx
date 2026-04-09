@@ -168,6 +168,13 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
             onChange={v => applyChange({ invertY: v })}
           />
 
+          {/* NW20: Invert View Y — separate from movement invert */}
+          <ToggleRow
+            label="INVERT VIEW (VERTICAL)"
+            value={s.invertViewY ?? false}
+            onChange={v => applyChange({ invertViewY: v })}
+          />
+
           {/* Travel Speed (NW19: max raised to 15.0) */}
           <SliderRow
             label="TRAVEL SPEED"
@@ -288,8 +295,8 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
 
           {/* Hint */}
           <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 8, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>
-            1P: Scroll = speed · Shift = sprint<br/>
-            3P: Scroll = distance · 1/2/3 = preset
+            1P/3P: Scroll = speed · Shift = toggle sprint<br/>
+            3P: 1/2/3 = distance preset · Max speed: 15
             {isTouchDevice && (
               <><br/>Touch: ↑↓ ascend/descend · SPRINT toggle</>
             )}

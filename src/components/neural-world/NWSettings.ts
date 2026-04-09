@@ -10,9 +10,11 @@ export interface NWCameraSettings {
   moveSensitivity: number
   /** Mouse / look sensitivity multiplier (0.1–3.0, default 1.0) */
   lookSensitivity: number
-  /** Invert mouse Y axis (default false) */
+  /** Invert mouse Y axis for movement (default false) */
   invertY: boolean
-  /** Base travel speed — scroll wheel adjusts within this range (0.5–10.0, default 2.0) */
+  /** NW20: Invert vertical view axis — flips WHERE you look, not how you move (default false) */
+  invertViewY: boolean
+  /** Base travel speed — scroll wheel adjusts within this range (0.5–MAX_SPEED, default 2.0) */
   travelSpeed: number
   /** Camera mode (ORBIT | FIRST_PERSON | THIRD_PERSON) */
   cameraMode: string
@@ -23,6 +25,9 @@ export interface NWCameraSettings {
   /** NW17: Inner dead zone fraction of joystick radius — no movement within this zone (0.05–0.25, default 0.15) */
   touchDeadZone: number
 }
+
+/** NW20: Maximum travel speed — used by slider and scroll wheel clamping */
+export const MAX_SPEED = 15.0
 
 export const TP_DISTANCES: Record<'CLOSE' | 'MEDIUM' | 'FAR', number> = {
   CLOSE:  10,
@@ -36,6 +41,7 @@ const DEFAULTS: NWCameraSettings = {
   moveSensitivity: 1.0,
   lookSensitivity: 1.0,
   invertY:         false,
+  invertViewY:     false,
   travelSpeed:     2.0,
   cameraMode:      'ORBIT',
   tpDistance:      'MEDIUM',
@@ -52,7 +58,8 @@ export function loadNWCameraSettings(): NWCameraSettings {
       moveSensitivity:  clamp(parsed.moveSensitivity  ?? DEFAULTS.moveSensitivity,  0.1,  3.0),
       lookSensitivity:  clamp(parsed.lookSensitivity  ?? DEFAULTS.lookSensitivity,  0.1,  3.0),
       invertY:          parsed.invertY ?? DEFAULTS.invertY,
-      travelSpeed:      clamp(parsed.travelSpeed      ?? DEFAULTS.travelSpeed,      0.5, 15.0),
+      invertViewY:      parsed.invertViewY ?? DEFAULTS.invertViewY,
+      travelSpeed:      clamp(parsed.travelSpeed      ?? DEFAULTS.travelSpeed,      0.5, MAX_SPEED),
       cameraMode:       parsed.cameraMode ?? DEFAULTS.cameraMode,
       tpDistance:       (parsed.tpDistance && ['CLOSE','MEDIUM','FAR'].includes(parsed.tpDistance))
         ? parsed.tpDistance

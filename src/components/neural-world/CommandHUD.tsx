@@ -170,8 +170,18 @@ export default function CommandHUD({
   const [leftJoy, setLeftJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
   const [rightJoy, setRightJoy] = useState<{ active: boolean; cx: number; cy: number; tx: number; ty: number }>({ active: false, cx: 0, cy: 0, tx: 0, ty: 0 })
 
-  // NW17: Touch button states
+  // NW17: Touch button states / NW20: also tracks keyboard sprint toggle
   const [sprintActive, setSprintActive] = useState(false)
+
+  // NW20: Listen for keyboard sprint toggle from CameraController
+  useEffect(() => {
+    function onSprintState(e: Event) {
+      const ev = e as CustomEvent<{ active: boolean }>
+      if (ev.detail !== undefined) setSprintActive(ev.detail.active)
+    }
+    window.addEventListener('nw:sprint-state', onSprintState)
+    return () => window.removeEventListener('nw:sprint-state', onSprintState)
+  }, [])
 
   // ── FPS counter via nw:frame events ────────────────────────────────────────
   useEffect(() => {
@@ -751,9 +761,25 @@ export default function CommandHUD({
           }}>
             {speedModeLabel}
           </span>
+          {/* NW20: Sprint toggle indicator (keyboard + touch) */}
+          {sprintActive && (
+            <span style={{
+              color: '#ff6644',
+              fontWeight: 700,
+              fontSize: 9,
+              letterSpacing: 1.5,
+              textShadow: '0 0 6px rgba(255,102,68,0.6)',
+              background: 'rgba(255,102,68,0.15)',
+              border: '1px solid rgba(255,102,68,0.4)',
+              borderRadius: 4,
+              padding: '1px 5px',
+            }}>
+              SPRINT ×2.5
+            </span>
+          )}
           {speed > 0.01 && (
             <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 9, letterSpacing: 1.5 }}>
-              {speed > 0.4 ? 'SPRINT' : speed > 0.05 ? 'WALK' : 'CREEP'} · {(speed * 10).toFixed(1)} U/S
+              {speed > 0.05 ? 'MOVING' : 'IDLE'} · {(speed * 10).toFixed(1)} U/S
             </span>
           )}
         </div>
@@ -814,9 +840,9 @@ export default function CommandHUD({
           {cameraMode === CameraMode.ORBIT
             ? 'Drag to orbit · scroll zoom · right-drag pan'
             : cameraMode === CameraMode.FIRST_PERSON
-            ? 'WASD move · Space/Q up/down · click lock · Shift sprint · scroll speed'
+            ? 'WASD move · Space/Q up/down · click lock · Shift = toggle sprint · scroll speed'
             : cameraMode === CameraMode.THIRD_PERSON
-            ? 'WASD move · Space/Q up/down · 1/2/3 distance · scroll distance'
+            ? 'WASD move · Space/Q up/down · Shift = toggle sprint · 1/2/3 distance · scroll speed'
             : 'Auto-pilot cinematic'}
         </div>
       </div>
