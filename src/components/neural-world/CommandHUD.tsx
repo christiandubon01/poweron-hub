@@ -79,6 +79,11 @@ const LAYERS: LayerDef[] = [
   { id: 'simulation',      label: 'Simulation',      icon: '⬡',  r: 255, g: 200, b: 40  },
   /** NW28: Agent flight system — domain zones, flying orbs, task cycles, data cubes */
   { id: 'agent-flight',    label: 'Agent Flight',    icon: '◉',  r: 0,   g: 229, b: 204 },
+  /** NW31: Fog domain layers — revenue, security, bandwidth, improvement */
+  { id: 'fog-revenue',     label: 'Revenue Fog',     icon: '💰', r: 255, g: 153, b: 0   },
+  { id: 'fog-security',    label: 'Security Fog',    icon: '🔒', r: 255, g: 179, b: 71  },
+  { id: 'fog-bandwidth',   label: 'Bandwidth Fog',   icon: '🧠', r: 170, g: 102, b: 238 },
+  { id: 'fog-improvement', label: 'Improvement Fog', icon: '🌱', r: 0,   g: 204, b: 187 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(

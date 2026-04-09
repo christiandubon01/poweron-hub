@@ -44,6 +44,7 @@ import { DragDropSystem } from '@/components/neural-world/DragDropSystem'
 import { NexusCompanion } from '@/components/neural-world/NexusCompanion'
 import { AgentFlightLayer } from '@/components/neural-world/layers/AgentFlightLayer'
 import { FortressLayer } from '@/components/neural-world/layers/FortressLayer'
+import { FogDomainLayer } from '@/components/neural-world/layers/FogDomainLayer'
 import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
 import { FlightAnalyticsPanel } from '@/components/neural-world/FlightAnalyticsPanel'
 import CommandHUD, {
@@ -68,6 +69,11 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'data-flow':        true,   // NW18: data flow on by default
   'simulation':       false,  // NW19: enterprise simulation
   'agent-flight':     false,  // NW28: agent flight system — domains, orbs, task cycles
+  // NW31: fog domain layers — all off by default (opt-in visualization)
+  'fog-revenue':      false,
+  'fog-security':     false,
+  'fog-bandwidth':    false,
+  'fog-improvement':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -117,6 +123,13 @@ function WorldLayers({
       <NexusCompanion />
       {/* NW30: Fortress Command Center — walkable compound at east boundary */}
       <FortressLayer />
+      {/* NW31: Fog domain layers — revenue, security, bandwidth, improvement */}
+      <FogDomainLayer
+        revenueFogVisible={!!layerStates['fog-revenue']}
+        securityFogVisible={!!layerStates['fog-security']}
+        bandwidthFogVisible={!!layerStates['fog-bandwidth']}
+        improvementFogVisible={!!layerStates['fog-improvement']}
+      />
     </>
   )
 }

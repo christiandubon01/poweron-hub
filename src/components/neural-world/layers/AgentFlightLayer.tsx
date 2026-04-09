@@ -28,6 +28,7 @@ import { createDomainZone, type DomainZoneInstance, type DomainZoneConfig } from
 import { AgentOrbInstance, type AgentOrbConfig } from '../AgentOrb'
 import { appendFlightLog } from '../flightLog'
 import type { SweepBriefingData } from '../NexusSweepController'
+import { queryFogDensityAt } from './FogDomainLayer'
 
 // ── OPP Stage Mountain Colors ─────────────────────────────────────────────────
 
@@ -380,6 +381,8 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
   const clockRef      = useRef(0)
   const demoTimerRef  = useRef(0)
   const agentTimersRef = useRef<Map<string, number>>(new Map())
+  // NW31: track per-orb fog opacity for smooth fade
+  const orbFogOpacityRef = useRef<Map<string, number>>(new Map())
 
   // NEXUS sweep state
   const nexusSweepRef = useRef<NexusSweepState>({
@@ -580,6 +583,54 @@ export function AgentFlightLayer({ visible }: AgentFlightLayerProps) {
         // When orb transitions RETURNING→IDLE, collect the dropped cube
         if (prevState === 'RETURNING' && orb.state === 'IDLE') {
           collectDroppedCubes(agentId)
+        }
+
+        // NW31: Fog interaction — fade orb when passing through dense fog
+        if (orb.state === 'TASKED' || orb.state === 'RETURNING') {
+          const pos = orb.group.position
+          const fogDensity = queryFogDensityAt(pos.x, pos.z)
+          const prevFogOp = orbFogOpacityRef.current.get(agentId) ?? 1.0
+          // Target opacity: 1.0 at no fog, 0.3 at full fog
+          const targetOp = 1.0 - fogDensity * 0.7
+          // Smooth transition: approach target at ~0.5 per second
+          const newOp = prevFogOp + (targetOp - prevFogOp) * Math.min(1, dt * 0.5)
+          orbFogOpacityRef.current.set(agentId, newOp)
+
+          // Apply opacity to orb group children
+          orb.group.traverse(child => {
+            const mesh = child as THREE.Mesh
+            if (mesh.material) {
+              const mat = mesh.material as THREE.MeshBasicMaterial | THREE.MeshLambertMaterial
+              if ('opacity' in mat) {
+                mat.transparent = true
+                const baseOp = (mat as unknown as Record<string, number | undefined>)._baseOp
+                mat.opacity = Math.max(0.08, newOp * (baseOp !== undefined ? baseOp : 1.0))
+              }
+            }
+          })
+
+          // Dispatch fog passthrough event for ripple effect (only when entering dense fog)
+          if (fogDensity > 0.3 && prevFogOp > 0.6) {
+            window.dispatchEvent(new CustomEvent('nw:fog-agent-passthrough', {
+              detail: { agentId, x: pos.x, z: pos.z },
+            }))
+          }
+        } else {
+          // IDLE: restore full opacity
+          const prevOp = orbFogOpacityRef.current.get(agentId) ?? 1.0
+          if (prevOp < 0.99) {
+            const restoredOp = prevOp + (1.0 - prevOp) * Math.min(1, dt * 0.5)
+            orbFogOpacityRef.current.set(agentId, restoredOp)
+            orb.group.traverse(child => {
+              const mesh = child as THREE.Mesh
+              if (mesh.material) {
+                const mat = mesh.material as THREE.MeshBasicMaterial | THREE.MeshLambertMaterial
+                if ('opacity' in mat && mat.transparent) {
+                  mat.opacity = Math.min(1, restoredOp)
+                }
+              }
+            })
+          }
         }
       }
 
