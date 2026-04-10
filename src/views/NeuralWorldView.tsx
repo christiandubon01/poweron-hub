@@ -78,6 +78,7 @@ import { TectonicPlatesLayer } from '@/components/neural-world/TectonicPlatesLay
 import { TidalForcesLayer } from '@/components/neural-world/TidalForcesLayer'
 import { MyceliumNetworkLayer } from '@/components/neural-world/MyceliumNetworkLayer'
 import { AuroraEventsLayer } from '@/components/neural-world/AuroraEventsLayer'
+import { FossilRecordLayer } from '@/components/neural-world/FossilRecordLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -133,6 +134,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'mycelium':         false,
   // NW59: Aurora events — milestone celebration sky effects, on by default
   'aurora':           true,
+  // NW60: Fossil Record — archaeological layer for completed projects, off by default
+  'fossil-record':    false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -232,6 +235,8 @@ function WorldLayers({
       <TectonicPlatesLayer visible={!!layerStates['tectonic-plates']} />
       {/* NW59: Aurora Events — milestone celebration sky effects */}
       <AuroraEventsLayer visible={!!layerStates['aurora']} soundEnabled={!!layerStates['sound']} />
+      {/* NW60: Fossil Record — archaeological layer for completed/archived projects */}
+      <FossilRecordLayer visible={!!layerStates['fossil-record']} />
     </>
   )
 }
