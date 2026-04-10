@@ -70,6 +70,7 @@ import GoalModeController from '@/components/neural-world/GoalModePanel'
 import { GoldenPathLayer } from '@/components/neural-world/layers/GoldenPathLayer'
 import { NetworkEffectsLayer } from '@/components/neural-world/NetworkEffectsLayer'
 import { ThreatMovementLayer } from '@/components/neural-world/ThreatMovementLayer'
+import { GhostUniverseLayer } from '@/components/neural-world/GhostUniverseLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -109,6 +110,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'network-effects':  false,
   // NW48: Threat movement layer — negative indicators drift toward camera, on by default
   'threats':          true,
+  // NW49: Ghost Universe — parallel timeline / declined leads. Off by default.
+  'ghost-universe':   false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -192,6 +195,8 @@ function WorldLayers({
         visible={!!layerStates['threats']}
         soundEnabled={!!layerStates['sound']}
       />
+      {/* NW49: Ghost Universe — parallel timeline, declined leads as ghost mountains */}
+      <GhostUniverseLayer visible={!!layerStates['ghost-universe']} />
     </>
   )
 }

@@ -110,6 +110,8 @@ const LAYERS: LayerDef[] = [
   { id: 'bioluminescence',  label: 'Bioluminescence',  icon: '✦', r: 0,   g: 255, b: 153 },
   /** NW47: Network Effects — second-order influence radiation + downstream connection web. Off by default. */
   { id: 'network-effects',  label: 'Network Effects',  icon: '⟴', r: 0,   g: 229, b: 180 },
+  /** NW49: Ghost Universe — parallel timeline overlay. Declined leads as ghost mountains. Off by default. */
+  { id: 'ghost-universe',   label: 'Ghost Universe',   icon: '◌', r: 170, g: 200, b: 255 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -152,6 +154,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'bioluminescence': 'Organic data-driven ground glow. Active project zones pulse teal-green, dormant areas go dark. Brightness follows time of day and business hours.',
   'network-effects': 'Visualizes second-order ripple effects across business nodes. Radial pulse waves show revenue, progress, workforce, and risk events. Glowing lines show downstream connections — crew sharing, cash-to-materials flow, and resource tension. Click any connection line for the full cause → effect chain with estimated dollar impact.',
   'threats':         'Negative indicators (overdue invoices, stalled projects, expiring contracts, cold leads) drift toward you as threat markers. Click to see details and dismiss.',
+  'ghost-universe':  'Parallel timeline overlay. Declined leads appear as ghost mountains showing the revenue that never materialized. Comparison HUD shows reality vs. potential. Click any ghost mountain to revive the lead.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
