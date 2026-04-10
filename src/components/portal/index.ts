@@ -7,3 +7,5 @@ export { PortalEducation } from './PortalEducation';
 export { PortalConfirmation } from './PortalConfirmation';
 export { PortalLeadInbox } from './PortalLeadInbox'
 export type { default as PortalLeadInboxType } from './PortalLeadInbox'
+export { PortalHead, usePortalHead } from './PortalHead';
+export type { PortalHeadProps } from './PortalHead';
