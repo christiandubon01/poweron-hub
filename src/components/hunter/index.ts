@@ -7,7 +7,7 @@
  * - HunterScoreBadge: Circular lead score display with tier coloring
  * - HunterDebriefPanel: Debrief UI after outcome logging with lesson approval flow
  * - HunterRuleSetPanel: Display and manage permanent learned rules
- * - HunterStudyQueue: Study queue sub-panel for deferred lessons review
+ * - HunterSignalInbox: Digital signal intake from Nextdoor/Facebook/LinkedIn/etc
  */
 
 export { HunterPanel, type HunterPanelProps } from './HunterPanel'
@@ -15,4 +15,5 @@ export { HunterLeadCard, type HunterLeadCardProps, type HunterLead } from './Hun
 export { HunterScoreBadge, type HunterScoreBadgeProps, type ScoreFactor } from './HunterScoreBadge'
 export { HunterDebriefPanel, type HunterDebriefPanelProps } from './HunterDebriefPanel'
 export { HunterRuleSetPanel, type HunterRuleSetPanelProps } from './HunterRuleSetPanel'
-export { HunterStudyQueue, type HunterStudyQueueProps } from './HunterStudyQueue'
+export { HunterSignalInbox } from './HunterSignalInbox'
+export type { HunterSignalInboxProps } from './HunterSignalInbox'
