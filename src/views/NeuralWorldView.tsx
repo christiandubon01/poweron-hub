@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { TidalForcesLayer } from '@/components/neural-world/TidalForcesLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW57: Tidal forces — cash flow ocean tide simulation, off by default
+  'tides':            false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -166,6 +169,8 @@ function WorldLayers({
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
       {/* NW-PROX: Proximity info cards — domain awareness HUD */}
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
+      {/* NW57: Tidal Forces — cash flow ocean tide simulation */}
+      <TidalForcesLayer visible={!!layerStates['tides']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
