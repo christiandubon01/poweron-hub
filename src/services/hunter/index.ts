@@ -4,6 +4,16 @@
  * Lead hunting and pipeline intelligence services
  */
 
+// Digital Signals (HT13)
+export {
+  SignalProcessor,
+  SignalSource,
+  SignalIntent,
+  type RawSignal,
+  type ProcessedSignal,
+  type SignalIntentResult,
+} from './HunterDigitalSignals'
+
 // Outcome Tracker (HT6)
 export {
   markLeadWon,
