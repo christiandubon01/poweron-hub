@@ -24,6 +24,22 @@ export {
   type OutcomeTrend,
 } from './HunterOutcomeTracker'
 
+// Study Service (HT9)
+export {
+  fetchStudyQueue,
+  deferLesson,
+  completeStudyTopic,
+  bundleStudySession,
+  getStudyStats,
+  getPendingCount,
+  getStudyTopicWithContext,
+  getStudyTopicsFiltered,
+  StudyPriority,
+  type StudyTopicDetail,
+  type StudyBundle,
+  type StudyStats,
+} from './HunterStudyService'
+
 // Scoring Engine
 export * from './HunterScoringEngine'
 
@@ -43,8 +59,10 @@ export {
   ScoreTier as LeadScoreTier,
   PitchAngle,
   DebriefsOutcome,
+  StudyQueueStatus,
   type HunterLead,
   type HunterDebrief,
   type HunterRule,
   type LeadFilter,
+  type StudyTopic,
 } from './HunterTypes'
