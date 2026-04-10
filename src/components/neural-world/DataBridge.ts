@@ -722,6 +722,16 @@ export function disposeDataBridge(): void {
   _fetchInProgress = false
 }
 
+/**
+ * Trigger an immediate data refresh outside the normal 60-second loop.
+ * Safe to call at any time — ignored if a fetch is already in progress.
+ * Called by SonarPulseLayer (NW64) on each sonar scan to ensure fresh data
+ * arrives as the ring expands across the world.
+ */
+export function triggerDataBridgeRefresh(): void {
+  _fetchAll()
+}
+
 // ── Position seeding ──────────────────────────────────────────────────────────
 
 /**
