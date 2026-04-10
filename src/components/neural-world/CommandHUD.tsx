@@ -39,7 +39,7 @@ import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 import LegendPanel, { LegendButton } from './LegendPanel'
 import { AdaptiveColorEngine, CognitiveStateHUD } from './AdaptiveColorEngine'
-import { SonicLandscape, MuteButton } from './SonicLandscape'
+import { SonicLandscape, SoundProfileButton } from './SonicLandscape'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -1537,7 +1537,7 @@ export default function CommandHUD({
         display: 'flex',
         alignItems: 'flex-end',
       }}>
-        <MuteButton soundLayerEnabled={!!layerStates['sound']} />
+        <SoundProfileButton soundLayerEnabled={!!layerStates['sound']} />
       </div>
 
       {/* ── NW16: SETTINGS PANEL (gear icon, bottom-right) ────────────────── */}

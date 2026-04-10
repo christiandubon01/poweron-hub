@@ -1,38 +1,57 @@
 /**
- * AudioEngine.tsx — NW43: Procedural audio engine for Neural World.
+ * AudioEngine.tsx — NW43 + NW46: Procedural audio engine for Neural World.
  *
- * All sounds generated via Web Audio API OscillatorNode / BufferSourceNode.
- * Zero audio file downloads. Procedural synthesis only.
+ * NW46 additions:
+ *   - 5 sound profiles (SILENT / MINIMAL / AMBIENT / FOCUS / IMMERSIVE).
+ *   - MINIMAL is the default for new users (no continuous drone).
+ *   - Per-layer volume controls with 0.5s crossfades on all transitions.
+ *   - Wind noise channel: filtered white noise + slow LFO on filter cutoff.
+ *   - Crystal chime scheduler (AMBIENT mode: every 20–40 s random interval).
+ *   - Drone only active in IMMERSIVE profile.
+ *   - World pulse active only in FOCUS (50%) and IMMERSIVE (100%).
  *
- * Architecture:
- *   AudioContext (created on first user interaction, browser requirement)
- *   └── masterGain (0–1, default 0.30)
- *       ├── ambientGain    — ambient drone channel
- *       ├── nodeGain       — node proximity tones channel
- *       ├── agentGain      — agent sounds channel
- *       ├── eventGain      — event chimes channel
- *       └── pulseGain      — world pulse channel
+ * Audio graph:
+ *   AudioContext
+ *   └── masterGain
+ *       ├── ambientGain   — drone oscillators (IMMERSIVE only)
+ *       ├── windGain      — wind noise (AMBIENT / FOCUS)
+ *       ├── nodeGain      — node proximity tones channel
+ *       ├── agentGain     — agent sounds channel
+ *       ├── eventGain     — event chimes channel
+ *       └── pulseGain     — world pulse channel
  *
  * Max 8 simultaneous OscillatorNodes (closest 8 sources enforced by SonicLandscape).
- * All GainNode transitions use linearRampToValueAtTime to avoid clicks.
+ * All GainNode transitions use linearRampToValueAtTime to avoid clicks/pops.
  *
- * Settings persisted to 'nw_audio_settings_v1' in localStorage.
+ * Settings persisted to:
+ *   nw_sound_profile_v1   — active SoundProfile
+ *   nw_layer_volumes_v1   — LayerVolumes JSON
  */
+
+// Re-export profile types so callers only need one import.
+export type { SoundProfile, LayerVolumes } from './SoundProfileManager'
+import {
+  type SoundProfile,
+  type LayerVolumes,
+  PROFILE_CONFIGS,
+  loadProfile,
+  saveProfile,
+  loadLayerVolumes,
+  saveLayerVolumes,
+  clamp01,
+  DEFAULT_PROFILE,
+} from './SoundProfileManager'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type ResonanceState = 'DISSONANT' | 'COHERENT' | 'GROWTH'
 
-export type AudioChannel = 'ambient' | 'nodes' | 'agents' | 'events' | 'pulse'
+export type AudioChannel = 'ambient' | 'wind' | 'nodes' | 'agents' | 'events' | 'pulse'
 
+/** Legacy settings shape — master volume only. Per-layer now managed via LayerVolumes. */
 export interface AudioSettings {
-  masterVolume: number          // 0–1, default 0.30
+  masterVolume: number
   muted: boolean
-  ambientEnabled: boolean
-  nodesEnabled: boolean
-  agentsEnabled: boolean
-  eventsEnabled: boolean
-  pulseEnabled: boolean
 }
 
 const SETTINGS_KEY = 'nw_audio_settings_v1'
@@ -40,40 +59,43 @@ const SETTINGS_KEY = 'nw_audio_settings_v1'
 const DEFAULT_SETTINGS: AudioSettings = {
   masterVolume: 0.30,
   muted: false,
-  ambientEnabled: true,
-  nodesEnabled: true,
-  agentsEnabled: true,
-  eventsEnabled: true,
-  pulseEnabled: true,
 }
 
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v))
-}
+const FADE_TIME = 0.5   // seconds — crossfade duration for profile transitions
 
 // ── AudioEngine class ─────────────────────────────────────────────────────────
 
 export class AudioEngine {
   private ctx: AudioContext | null = null
-  private masterGain: GainNode | null = null
+  private masterGain:  GainNode | null = null
   private ambientGain: GainNode | null = null
-  private nodeGain: GainNode | null = null
-  private agentGain: GainNode | null = null
-  private eventGain: GainNode | null = null
-  private pulseGain: GainNode | null = null
+  private windGain:    GainNode | null = null
+  private nodeGain:    GainNode | null = null
+  private agentGain:   GainNode | null = null
+  private eventGain:   GainNode | null = null
+  private pulseGain:   GainNode | null = null
 
-  // Ambient drone oscillators
-  private droneOsc1: OscillatorNode | null = null
-  private droneOsc2: OscillatorNode | null = null
-  private droneGain1: GainNode | null = null
-  private droneGain2: GainNode | null = null
-  private droneHarm1: OscillatorNode | null = null
-  private droneHarm2: OscillatorNode | null = null
+  // Ambient drone oscillators (IMMERSIVE only)
+  private droneOsc1:      OscillatorNode | null = null
+  private droneOsc2:      OscillatorNode | null = null
+  private droneGain1:     GainNode | null = null
+  private droneGain2:     GainNode | null = null
+  private droneHarm1:     OscillatorNode | null = null
+  private droneHarm2:     OscillatorNode | null = null
   private droneHarmGain1: GainNode | null = null
   private droneHarmGain2: GainNode | null = null
 
+  // Wind noise (AMBIENT / FOCUS)
+  private windSource:   AudioBufferSourceNode | null = null
+  private windFilter:   BiquadFilterNode | null = null
+  private windLfoOsc:   OscillatorNode | null = null
+  private windLfoGain:  GainNode | null = null
+
+  // Crystal chime scheduler
+  private crystalChimeTimerId: ReturnType<typeof setTimeout> | null = null
+
   // GUARDIAN hum oscillator
-  private guardianOsc: OscillatorNode | null = null
+  private guardianOsc:  OscillatorNode | null = null
   private guardianGain: GainNode | null = null
 
   // Active oscillator count tracking for budget
@@ -81,6 +103,9 @@ export class AudioEngine {
   private readonly MAX_OSC = 8
 
   private settings: AudioSettings
+  private currentProfile: SoundProfile
+  private layerVolumes: LayerVolumes
+
   private currentResonanceState: ResonanceState = 'COHERENT'
   private resonanceScoreVal = 0.5
 
@@ -92,10 +117,16 @@ export class AudioEngine {
   private growthCycleStart = 0
 
   constructor() {
-    this.settings = this.loadSettings()
+    this.settings     = this.loadSettings()
+    this.currentProfile = loadProfile()
+    this.layerVolumes = loadLayerVolumes()
+    // Sync master volume from profile volumes if stored separately
+    if (this.layerVolumes.master !== this.settings.masterVolume) {
+      this.settings.masterVolume = this.layerVolumes.master
+    }
   }
 
-  // ── Settings persistence ──────────────────────────────────────────────────
+  // ── Legacy settings (master vol / mute) ──────────────────────────────────
 
   loadSettings(): AudioSettings {
     try {
@@ -103,13 +134,8 @@ export class AudioEngine {
       if (!raw) return { ...DEFAULT_SETTINGS }
       const parsed = JSON.parse(raw) as Partial<AudioSettings>
       return {
-        masterVolume:    clamp01(parsed.masterVolume    ?? DEFAULT_SETTINGS.masterVolume),
-        muted:           parsed.muted           ?? DEFAULT_SETTINGS.muted,
-        ambientEnabled:  parsed.ambientEnabled  ?? DEFAULT_SETTINGS.ambientEnabled,
-        nodesEnabled:    parsed.nodesEnabled    ?? DEFAULT_SETTINGS.nodesEnabled,
-        agentsEnabled:   parsed.agentsEnabled   ?? DEFAULT_SETTINGS.agentsEnabled,
-        eventsEnabled:   parsed.eventsEnabled   ?? DEFAULT_SETTINGS.eventsEnabled,
-        pulseEnabled:    parsed.pulseEnabled    ?? DEFAULT_SETTINGS.pulseEnabled,
+        masterVolume: clamp01(parsed.masterVolume ?? DEFAULT_SETTINGS.masterVolume),
+        muted:        parsed.muted ?? DEFAULT_SETTINGS.muted,
       }
     } catch {
       return { ...DEFAULT_SETTINGS }
@@ -130,11 +156,82 @@ export class AudioEngine {
     this.settings = { ...this.settings, ...patch }
     this.saveSettings()
     this.applyMasterVolume()
-    if ('ambientEnabled' in patch) this.applyChannelGain('ambient')
-    if ('nodesEnabled'   in patch) this.applyChannelGain('nodes')
-    if ('agentsEnabled'  in patch) this.applyChannelGain('agents')
-    if ('eventsEnabled'  in patch) this.applyChannelGain('events')
-    if ('pulseEnabled'   in patch) this.applyChannelGain('pulse')
+  }
+
+  // ── Profile API ───────────────────────────────────────────────────────────
+
+  getProfile(): SoundProfile {
+    return this.currentProfile
+  }
+
+  getLayerVolumes(): LayerVolumes {
+    return { ...this.layerVolumes }
+  }
+
+  /**
+   * Switch to a new sound profile with a 0.5s crossfade.
+   * Starts/stops wind, drone, proximity, pulse layers as needed.
+   */
+  setProfile(profile: SoundProfile, fade = FADE_TIME): void {
+    const prevProfile = this.currentProfile
+    this.currentProfile = profile
+    saveProfile(profile)
+
+    if (profile === 'SILENT') {
+      this.settings.muted = true
+    } else {
+      this.settings.muted = false
+    }
+    this.saveSettings()
+
+    if (!this.ctx) return
+
+    const cfg    = PROFILE_CONFIGS[profile]
+    const prevCfg = PROFILE_CONFIGS[prevProfile]
+    const t      = this.ctx.currentTime
+
+    // Master gain
+    const masterTarget = profile === 'SILENT'
+      ? 0
+      : this.layerVolumes.master
+    this.masterGain?.gain.linearRampToValueAtTime(masterTarget, t + fade)
+
+    // Drone layer — start/stop
+    if (cfg.droneEnabled && !prevCfg.droneEnabled) {
+      this.startAmbientDrone(this.currentResonanceState, fade)
+    } else if (!cfg.droneEnabled && prevCfg.droneEnabled) {
+      this.fadeOutDrone(fade)
+    }
+
+    // Wind layer
+    if (cfg.windEnabled && !prevCfg.windEnabled) {
+      this.startWindNoise()
+    } else if (!cfg.windEnabled && prevCfg.windEnabled) {
+      this.stopWindNoise()
+    }
+
+    // Crystal chimes
+    if (cfg.crystalChimes && !prevCfg.crystalChimes) {
+      this.startCrystalChimeScheduler()
+    } else if (!cfg.crystalChimes && prevCfg.crystalChimes) {
+      this.stopCrystalChimeScheduler()
+    }
+
+    // Channel gain targets
+    this.applyAllChannelGains(fade)
+  }
+
+  setLayerVolume(key: keyof LayerVolumes, value: number): void {
+    this.layerVolumes[key] = clamp01(value)
+    saveLayerVolumes(this.layerVolumes)
+
+    if (key === 'master') {
+      this.settings.masterVolume = this.layerVolumes.master
+      this.saveSettings()
+      this.applyMasterVolume()
+    } else {
+      this.applyAllChannelGains(0.08)
+    }
   }
 
   // ── AudioContext lifecycle ────────────────────────────────────────────────
@@ -152,24 +249,46 @@ export class AudioEngine {
 
       // Master gain
       this.masterGain = this.ctx.createGain()
-      this.masterGain.gain.value = this.settings.muted ? 0 : this.settings.masterVolume
+      const profile = this.currentProfile
+      this.masterGain.gain.value = (profile === 'SILENT' || this.settings.muted)
+        ? 0
+        : this.layerVolumes.master
       this.masterGain.connect(this.ctx.destination)
 
       // Channel gains
       this.ambientGain = this.createChannelGain('ambient')
+      this.windGain    = this.createChannelGain('wind')
       this.nodeGain    = this.createChannelGain('nodes')
       this.agentGain   = this.createChannelGain('agents')
       this.eventGain   = this.createChannelGain('events')
       this.pulseGain   = this.createChannelGain('pulse')
 
-      // Start ambient drone
-      this.startAmbientDrone(this.currentResonanceState)
+      const cfg = PROFILE_CONFIGS[profile]
 
-      // Start GUARDIAN hum
-      this.startGuardianHum()
+      // Start drone only in IMMERSIVE
+      if (cfg.droneEnabled) {
+        this.startAmbientDrone(this.currentResonanceState, 3)
+      }
 
-      // Start world pulse
-      this.startWorldPulse()
+      // Start GUARDIAN hum only when proximity is active
+      if (cfg.proximityEnabled) {
+        this.startGuardianHum()
+      }
+
+      // Start world pulse only in FOCUS / IMMERSIVE
+      if (cfg.pulseEnabled) {
+        this.startWorldPulse()
+      }
+
+      // Wind noise for AMBIENT / FOCUS
+      if (cfg.windEnabled) {
+        this.startWindNoise()
+      }
+
+      // Crystal chimes for AMBIENT
+      if (cfg.crystalChimes) {
+        this.startCrystalChimeScheduler()
+      }
 
       return true
     } catch {
@@ -185,12 +304,13 @@ export class AudioEngine {
     this.stopWorldPulse()
     this.stopAmbientDrone()
     this.stopGuardianHum()
-    try {
-      this.ctx?.close()
-    } catch { /* ignore */ }
+    this.stopWindNoise()
+    this.stopCrystalChimeScheduler()
+    try { this.ctx?.close() } catch { /* ignore */ }
     this.ctx         = null
     this.masterGain  = null
     this.ambientGain = null
+    this.windGain    = null
     this.nodeGain    = null
     this.agentGain   = null
     this.eventGain   = null
@@ -203,43 +323,48 @@ export class AudioEngine {
   private createChannelGain(channel: AudioChannel): GainNode {
     if (!this.ctx || !this.masterGain) throw new Error('not initialized')
     const g = this.ctx.createGain()
-    g.gain.value = this.channelEnabled(channel) ? 1 : 0
+    g.gain.value = this.channelTargetVolume(channel)
     g.connect(this.masterGain)
     return g
   }
 
-  private channelEnabled(channel: AudioChannel): boolean {
+  /** Target gain for a channel given the current profile + layer volumes. */
+  private channelTargetVolume(channel: AudioChannel): number {
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    const v   = this.layerVolumes
     switch (channel) {
-      case 'ambient': return this.settings.ambientEnabled
-      case 'nodes':   return this.settings.nodesEnabled
-      case 'agents':  return this.settings.agentsEnabled
-      case 'events':  return this.settings.eventsEnabled
-      case 'pulse':   return this.settings.pulseEnabled
+      case 'ambient': return cfg.droneEnabled     ? v.drone     : 0
+      case 'wind':    return cfg.windEnabled       ? v.ambient   : 0
+      case 'nodes':   return cfg.proximityEnabled  ? v.proximity : 0
+      case 'agents':  return cfg.proximityEnabled  ? v.proximity : 0
+      case 'events':  return cfg.eventsEnabled     ? v.events    : 0
+      case 'pulse':   return cfg.pulseEnabled
+        ? (v.pulse * cfg.pulseVolumeScale)
+        : 0
     }
-  }
-
-  private applyMasterVolume(): void {
-    if (!this.ctx || !this.masterGain) return
-    const t = this.ctx.currentTime + 0.05
-    const v = this.settings.muted ? 0 : this.settings.masterVolume
-    this.masterGain.gain.linearRampToValueAtTime(v, t)
-  }
-
-  private applyChannelGain(channel: AudioChannel): void {
-    const node = this.channelGainNode(channel)
-    if (!node || !this.ctx) return
-    const t = this.ctx.currentTime + 0.05
-    node.gain.linearRampToValueAtTime(this.channelEnabled(channel) ? 1 : 0, t)
   }
 
   private channelGainNode(channel: AudioChannel): GainNode | null {
     switch (channel) {
       case 'ambient': return this.ambientGain
+      case 'wind':    return this.windGain
       case 'nodes':   return this.nodeGain
       case 'agents':  return this.agentGain
       case 'events':  return this.eventGain
       case 'pulse':   return this.pulseGain
     }
+  }
+
+  private applyAllChannelGains(fade = FADE_TIME): void {
+    const channels: AudioChannel[] = ['ambient', 'wind', 'nodes', 'agents', 'events', 'pulse']
+    channels.forEach(ch => this.applyChannelGain(ch, fade))
+  }
+
+  private applyChannelGain(channel: AudioChannel, fade = FADE_TIME): void {
+    const node = this.channelGainNode(channel)
+    if (!node || !this.ctx) return
+    const t = this.ctx.currentTime + Math.max(0.01, fade)
+    node.gain.linearRampToValueAtTime(this.channelTargetVolume(channel), t)
   }
 
   private canSpawnOsc(): boolean {
@@ -253,7 +378,7 @@ export class AudioEngine {
     if (!this.ctx) throw new Error('not initialized')
     const osc  = this.ctx.createOscillator()
     const gain = this.ctx.createGain()
-    osc.type      = type
+    osc.type = type
     osc.frequency.value = freq
     osc.connect(gain)
     gain.connect(destination)
@@ -264,8 +389,19 @@ export class AudioEngine {
 
   // ── Master volume / mute ──────────────────────────────────────────────────
 
+  private applyMasterVolume(): void {
+    if (!this.ctx || !this.masterGain) return
+    const t = this.ctx.currentTime + 0.05
+    const v = (this.settings.muted || this.currentProfile === 'SILENT')
+      ? 0
+      : this.layerVolumes.master
+    this.masterGain.gain.linearRampToValueAtTime(v, t)
+  }
+
   setMasterVolume(v: number): void {
-    this.settings.masterVolume = clamp01(v)
+    this.layerVolumes.master    = clamp01(v)
+    this.settings.masterVolume  = this.layerVolumes.master
+    saveLayerVolumes(this.layerVolumes)
     this.saveSettings()
     this.applyMasterVolume()
   }
@@ -282,7 +418,22 @@ export class AudioEngine {
     return next
   }
 
-  // ── Ambient Drone ─────────────────────────────────────────────────────────
+  // ── Ambient Drone (IMMERSIVE only) ────────────────────────────────────────
+
+  private fadeOutDrone(fade = FADE_TIME): void {
+    if (!this.ctx) return
+    const t = this.ctx.currentTime + fade
+    const nodes = [
+      this.droneGain1, this.droneGain2,
+      this.droneHarmGain1, this.droneHarmGain2,
+    ]
+    nodes.forEach(g => {
+      if (g) {
+        g.gain.linearRampToValueAtTime(0, t)
+      }
+    })
+    setTimeout(() => this.stopAmbientDrone(), (fade + 0.1) * 1000)
+  }
 
   private stopAmbientDrone(): void {
     try { this.droneOsc1?.stop(); this.droneOsc2?.stop() } catch { /* ignore */ }
@@ -293,19 +444,18 @@ export class AudioEngine {
     this.droneHarmGain1 = this.droneHarmGain2 = null
   }
 
-  private startAmbientDrone(state: ResonanceState): void {
+  private startAmbientDrone(state: ResonanceState, fadeSecs = FADE_TIME): void {
     if (!this.ctx || !this.ambientGain) return
     this.stopAmbientDrone()
 
     const t = this.ctx.currentTime
 
     if (state === 'DISSONANT') {
-      // Two slightly detuned oscillators → beat frequency 2–4 Hz
-      // Base: 80 Hz, slightly detuned second at 83 Hz → ~3 Hz wobble
+      // Two slightly detuned oscillators → beat frequency ~3 Hz
       if (!this.canSpawnOsc()) return
       const { osc: o1, gain: g1 } = this.createOsc(80, 'sine', this.ambientGain)
       g1.gain.setValueAtTime(0, t)
-      g1.gain.linearRampToValueAtTime(0.35, t + 2)
+      g1.gain.linearRampToValueAtTime(0.35, t + fadeSecs)
       o1.start(t)
       this.droneOsc1 = o1
       this.droneGain1 = g1
@@ -313,7 +463,7 @@ export class AudioEngine {
       if (!this.canSpawnOsc()) return
       const { osc: o2, gain: g2 } = this.createOsc(83, 'sine', this.ambientGain)
       g2.gain.setValueAtTime(0, t)
-      g2.gain.linearRampToValueAtTime(0.30, t + 2.5)
+      g2.gain.linearRampToValueAtTime(0.30, t + fadeSecs + 0.5)
       o2.start(t)
       this.droneOsc2 = o2
       this.droneGain2 = g2
@@ -323,19 +473,18 @@ export class AudioEngine {
       if (!this.canSpawnOsc()) return
       const { osc: o1, gain: g1 } = this.createOsc(110, 'sine', this.ambientGain)
       g1.gain.setValueAtTime(0, t)
-      g1.gain.linearRampToValueAtTime(0.30, t + 3)
+      g1.gain.linearRampToValueAtTime(0.30, t + fadeSecs)
       o1.start(t)
       this.droneOsc1 = o1
       this.droneGain1 = g1
 
     } else {
       // GROWTH: 110 Hz + 220 Hz + 330 Hz harmonics
-      // Volume envelope cycles over 10 seconds (matches orb growth cycle)
       this.growthCycleStart = t
       if (!this.canSpawnOsc()) return
       const { osc: o1, gain: g1 } = this.createOsc(110, 'sine', this.ambientGain)
       g1.gain.setValueAtTime(0, t)
-      g1.gain.linearRampToValueAtTime(0.28, t + 3)
+      g1.gain.linearRampToValueAtTime(0.28, t + fadeSecs)
       o1.start(t)
       this.droneOsc1 = o1
       this.droneGain1 = g1
@@ -343,7 +492,7 @@ export class AudioEngine {
       if (!this.canSpawnOsc()) return
       const { osc: h1, gain: hg1 } = this.createOsc(220, 'sine', this.ambientGain)
       hg1.gain.setValueAtTime(0, t)
-      hg1.gain.linearRampToValueAtTime(0.18, t + 4)
+      hg1.gain.linearRampToValueAtTime(0.18, t + fadeSecs + 1)
       h1.start(t)
       this.droneHarm1 = h1
       this.droneHarmGain1 = hg1
@@ -351,7 +500,7 @@ export class AudioEngine {
       if (!this.canSpawnOsc()) return
       const { osc: h2, gain: hg2 } = this.createOsc(330, 'sine', this.ambientGain)
       hg2.gain.setValueAtTime(0, t)
-      hg2.gain.linearRampToValueAtTime(0.10, t + 5)
+      hg2.gain.linearRampToValueAtTime(0.10, t + fadeSecs + 2)
       h2.start(t)
       this.droneHarm2 = h2
       this.droneHarmGain2 = hg2
@@ -365,11 +514,124 @@ export class AudioEngine {
     this.resonanceScoreVal     = score
 
     if (this.ctx) {
+      const cfg = PROFILE_CONFIGS[this.currentProfile]
       if (state !== prevState) {
-        this.startAmbientDrone(state)
-        this.restartWorldPulse()
+        if (cfg.droneEnabled) {
+          this.startAmbientDrone(state)
+        }
+        if (cfg.pulseEnabled) {
+          this.restartWorldPulse()
+        }
       }
     }
+  }
+
+  // ── Wind Noise (AMBIENT / FOCUS) ──────────────────────────────────────────
+
+  private startWindNoise(): void {
+    if (!this.ctx || !this.windGain) return
+    this.stopWindNoise()
+
+    // Long looping white-noise buffer (10 s)
+    const duration = 10
+    const sampleRate = this.ctx.sampleRate
+    const bufSize = Math.floor(sampleRate * duration)
+    const buffer = this.ctx.createBuffer(1, bufSize, sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < bufSize; i++) {
+      // Brown-ish noise: integrate and normalize
+      data[i] = Math.random() * 2 - 1
+    }
+
+    this.windSource = this.ctx.createBufferSource()
+    this.windSource.buffer = buffer
+    this.windSource.loop   = true
+
+    // Low-pass filter for wind character
+    this.windFilter = this.ctx.createBiquadFilter()
+    this.windFilter.type            = 'lowpass'
+    this.windFilter.frequency.value = 600
+    this.windFilter.Q.value         = 0.5
+
+    // Slow LFO on filter cutoff (0.1 Hz → 10 s period)
+    this.windLfoOsc  = this.ctx.createOscillator()
+    this.windLfoGain = this.ctx.createGain()
+    this.windLfoOsc.type = 'sine'
+    this.windLfoOsc.frequency.value = 0.1   // very slow
+    this.windLfoGain.gain.value     = 300   // ± 300 Hz sweep around 600 Hz base
+
+    this.windLfoOsc.connect(this.windLfoGain)
+    this.windLfoGain.connect(this.windFilter.frequency)
+
+    // Volume envelope — gentle fade in
+    const windVolumeGain = this.ctx.createGain()
+    windVolumeGain.gain.setValueAtTime(0, this.ctx.currentTime)
+    windVolumeGain.gain.linearRampToValueAtTime(0.18, this.ctx.currentTime + 3)
+
+    this.windSource.connect(this.windFilter)
+    this.windFilter.connect(windVolumeGain)
+    windVolumeGain.connect(this.windGain)
+
+    this.windSource.start(this.ctx.currentTime)
+    this.windLfoOsc.start(this.ctx.currentTime)
+  }
+
+  private stopWindNoise(): void {
+    try { this.windSource?.stop() } catch { /* ignore */ }
+    try { this.windLfoOsc?.stop() } catch { /* ignore */ }
+    this.windSource  = null
+    this.windFilter  = null
+    this.windLfoOsc  = null
+    this.windLfoGain = null
+  }
+
+  // ── Crystal Chime Scheduler (AMBIENT mode) ────────────────────────────────
+
+  private startCrystalChimeScheduler(): void {
+    this.stopCrystalChimeScheduler()
+    const scheduleNext = () => {
+      const delayMs = 20000 + Math.random() * 20000  // 20–40 s
+      this.crystalChimeTimerId = setTimeout(() => {
+        if (PROFILE_CONFIGS[this.currentProfile].crystalChimes) {
+          this.playCrystalChime()
+          scheduleNext()
+        }
+      }, delayMs)
+    }
+    // First chime after 5–12 s
+    this.crystalChimeTimerId = setTimeout(() => {
+      if (PROFILE_CONFIGS[this.currentProfile].crystalChimes) {
+        this.playCrystalChime()
+        scheduleNext()
+      }
+    }, 5000 + Math.random() * 7000)
+  }
+
+  private stopCrystalChimeScheduler(): void {
+    if (this.crystalChimeTimerId !== null) {
+      clearTimeout(this.crystalChimeTimerId)
+      this.crystalChimeTimerId = null
+    }
+  }
+
+  /**
+   * Crystal chime: two-tone high-pitched soft chime (1200 Hz + 1800 Hz),
+   * slow attack, long decay.
+   */
+  playCrystalChime(): void {
+    if (!this.ctx || !this.eventGain) return
+    const t = this.ctx.currentTime
+    const chimes = [1200, 1800, 2400]
+    chimes.forEach((freq, i) => {
+      if (!this.ctx || !this.eventGain || !this.canSpawnOsc()) return
+      const { osc, gain } = this.createOsc(freq, 'sine', this.eventGain)
+      const delay = i * 0.15
+      gain.gain.setValueAtTime(0, t + delay)
+      gain.gain.linearRampToValueAtTime(0.06, t + delay + 0.08)
+      gain.gain.exponentialRampToValueAtTime(0.001, t + delay + 2.5)
+      osc.start(t + delay)
+      osc.stop(t + delay + 2.6)
+    })
   }
 
   // ── World Pulse ───────────────────────────────────────────────────────────
@@ -392,15 +654,12 @@ export class AudioEngine {
 
     const scheduleNextPulse = () => {
       if (!this.ctx || !this.pulseGain) return
-      // interval depends on resonance state
       let intervalMs: number
       if (this.currentResonanceState === 'DISSONANT') {
-        // Irregular: random 300–1500 ms
         intervalMs = 300 + Math.random() * 1200
       } else if (this.currentResonanceState === 'COHERENT') {
-        intervalMs = 1000   // steady 1 Hz
+        intervalMs = 1000
       } else {
-        // GROWTH: accelerating — phase-based, 500–800ms
         this.pulsePhase = (this.pulsePhase + 1) % 10
         intervalMs = Math.max(300, 800 - this.pulsePhase * 50)
       }
@@ -432,7 +691,7 @@ export class AudioEngine {
 
   private stopGuardianHum(): void {
     try { this.guardianOsc?.stop() } catch { /* ignore */ }
-    this.guardianOsc = null
+    this.guardianOsc  = null
     this.guardianGain = null
   }
 
@@ -447,20 +706,18 @@ export class AudioEngine {
 
   setGuardianProximity(proximity01: number): void {
     if (!this.ctx || !this.guardianGain) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.proximityEnabled) return
     const t = this.ctx.currentTime + 0.1
     this.guardianGain.gain.linearRampToValueAtTime(proximity01 * 0.12, t)
   }
 
   // ── Node Proximity Sounds ─────────────────────────────────────────────────
 
-  /**
-   * Play a node proximity tone for a project mountain.
-   * value: contract value (higher = higher pitch).
-   * healthy: gold-heavy = clean tone, struggling = filtered/muffled.
-   */
   playProjectTone(value: number, healthy: boolean): void {
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.proximityEnabled) return
     if (!this.ctx || !this.nodeGain || !this.canSpawnOsc()) return
-    // Map contract value $0–$100k → pitch 200–600 Hz
     const freq = 200 + Math.min(value / 100000, 1) * 400
     const t    = this.ctx.currentTime
     const type: OscillatorType = healthy ? 'sine' : 'triangle'
@@ -473,7 +730,6 @@ export class AudioEngine {
     osc.stop(t + 1.6)
 
     if (!healthy) {
-      // Apply low-pass filter (muffled) via BiquadFilterNode
       if (!this.ctx) return
       const filter = this.ctx.createBiquadFilter()
       filter.type            = 'lowpass'
@@ -485,19 +741,15 @@ export class AudioEngine {
     }
   }
 
-  /**
-   * Play revenue river sound (white noise, volume scales with river width).
-   * widthFactor: 0–1 relative width.
-   * smooth: coherent = true, dissonant = false.
-   */
   playRiverSound(widthFactor: number, smooth: boolean): void {
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.proximityEnabled) return
     if (!this.ctx || !this.nodeGain) return
     const duration = 2.0
     const bufSize  = Math.floor(this.ctx.sampleRate * duration)
     const buffer   = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate)
     const data     = buffer.getChannelData(0)
 
-    // White noise
     for (let i = 0; i < bufSize; i++) {
       data[i] = (Math.random() * 2 - 1)
     }
@@ -520,12 +772,10 @@ export class AudioEngine {
     source.stop(this.ctx.currentTime + duration)
   }
 
-  /**
-   * AR stalactite tick — accelerates with age.
-   * ageSeconds: age of the invoice. Older = faster tick rate.
-   */
   playStalactiteTick(): void {
     if (!this.ctx || !this.nodeGain || !this.canSpawnOsc()) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.proximityEnabled) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(1200, 'sine', this.nodeGain)
     gain.gain.setValueAtTime(0, t)
@@ -535,11 +785,9 @@ export class AudioEngine {
     osc.stop(t + 0.06)
   }
 
-  /**
-   * Katsuro Bridge Tower chord: E minor (82 Hz, 123 Hz, 165 Hz).
-   * distance: 0–20 units. Volume fades with distance.
-   */
   playKatsuroBridgeChord(distance: number): void {
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.proximityEnabled) return
     if (!this.ctx || !this.nodeGain) return
     const proximity = Math.max(0, 1 - distance / 20)
     if (proximity < 0.05) return
@@ -559,12 +807,11 @@ export class AudioEngine {
 
   // ── Agent Sounds ──────────────────────────────────────────────────────────
 
-  /**
-   * Agent flyby whoosh — filtered noise burst, 0.3s.
-   * speed: 0–1 relative speed (higher = higher pitch).
-   */
   playAgentFlyby(speed: number): void {
+    // Agent flyby is an event sound — active in MINIMAL+
     if (!this.ctx || !this.agentGain) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled && !cfg.proximityEnabled) return
     const duration = 0.3
     const bufSize  = Math.floor(this.ctx.sampleRate * duration)
     const buffer   = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate)
@@ -591,11 +838,10 @@ export class AudioEngine {
     source.stop(this.ctx.currentTime + duration + 0.05)
   }
 
-  /**
-   * NEXUS sweep deeper whoosh with harmonic overtone.
-   */
   playNexusSweep(): void {
     if (!this.ctx || !this.agentGain) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled && !cfg.proximityEnabled) return
     const duration = 0.6
     const bufSize  = Math.floor(this.ctx.sampleRate * duration)
     const buffer   = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate)
@@ -620,7 +866,6 @@ export class AudioEngine {
     source.start(this.ctx.currentTime)
     source.stop(this.ctx.currentTime + duration + 0.05)
 
-    // Harmonic overtone
     if (this.canSpawnOsc()) {
       const t = this.ctx.currentTime
       const { osc, gain: hg } = this.createOsc(220, 'sine', this.agentGain)
@@ -632,11 +877,10 @@ export class AudioEngine {
     }
   }
 
-  /**
-   * Data cube pickup: crystalline chime 800 Hz, fast decay.
-   */
   playDataCubePickup(): void {
     if (!this.ctx || !this.agentGain || !this.canSpawnOsc()) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled && !cfg.proximityEnabled) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(800, 'sine', this.agentGain)
     gain.gain.setValueAtTime(0, t)
@@ -646,11 +890,10 @@ export class AudioEngine {
     osc.stop(t + 0.45)
   }
 
-  /**
-   * Data cube drop at domain: lower chime 400 Hz, medium decay.
-   */
   playDataCubeDrop(): void {
     if (!this.ctx || !this.agentGain || !this.canSpawnOsc()) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled && !cfg.proximityEnabled) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(400, 'sine', this.agentGain)
     gain.gain.setValueAtTime(0, t)
@@ -660,12 +903,10 @@ export class AudioEngine {
     osc.stop(t + 0.85)
   }
 
-  /**
-   * NEXUS briefing merge at OPERATOR: chord resolution — multiple chimes
-   * resolving to a consonant interval.
-   */
   playNexusMerge(): void {
     if (!this.ctx || !this.agentGain) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled && !cfg.proximityEnabled) return
     const t = this.ctx.currentTime
     const freqs = [300, 400, 500, 600]
     freqs.forEach((freq, i) => {
@@ -682,11 +923,10 @@ export class AudioEngine {
 
   // ── Event Sounds ──────────────────────────────────────────────────────────
 
-  /**
-   * Invoice paid: bright ascending tone 300→600 Hz over 0.5s.
-   */
   playInvoicePaid(): void {
     if (!this.ctx || !this.eventGain || !this.canSpawnOsc()) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(300, 'sine', this.eventGain)
     osc.frequency.setValueAtTime(300, t)
@@ -698,11 +938,10 @@ export class AudioEngine {
     osc.stop(t + 0.55)
   }
 
-  /**
-   * Lead captured by SPARK: short notification ping 500 Hz, 0.1s.
-   */
   playLeadCaptured(): void {
     if (!this.ctx || !this.eventGain || !this.canSpawnOsc()) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(500, 'sine', this.eventGain)
     gain.gain.setValueAtTime(0, t)
@@ -712,15 +951,13 @@ export class AudioEngine {
     osc.stop(t + 0.12)
   }
 
-  /**
-   * Automation failure: low buzz (filtered sawtooth 100 Hz, 0.5s).
-   */
   playAutomationFailure(): void {
     if (!this.ctx || !this.eventGain || !this.canSpawnOsc()) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(100, 'sawtooth', this.eventGain)
 
-    // Apply lowpass filter for muffled buzz
     const filter = this.ctx.createBiquadFilter()
     filter.type = 'lowpass'
     filter.frequency.value = 300
@@ -736,12 +973,10 @@ export class AudioEngine {
     osc.stop(t + 0.55)
   }
 
-  /**
-   * Phase transition (diamond→gold ripple): shimmering sweep.
-   * White noise filtered through resonant bandpass, sweep 200→2000 Hz over 1s.
-   */
   playPhaseTransition(): void {
     if (!this.ctx || !this.eventGain) return
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled) return
     const duration = 1.0
     const bufSize  = Math.floor(this.ctx.sampleRate * duration)
     const buffer   = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate)
@@ -769,18 +1004,15 @@ export class AudioEngine {
     source.stop(this.ctx.currentTime + duration + 0.05)
   }
 
-  /**
-   * Fog entered: ambient pad swell.
-   * fogType: 'revenue' | 'security' | 'bandwidth' | 'improvement'
-   */
   playFogEntered(fogType: 'revenue' | 'security' | 'bandwidth' | 'improvement'): void {
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.eventsEnabled) return
     if (!this.ctx || !this.ambientGain || !this.canSpawnOsc()) return
-    // Different frequencies for different fog types
     const freqMap = {
-      revenue:     55,   // deep
-      security:    880,  // sharp
-      bandwidth:   220,  // hazy mid
-      improvement: 440,  // bright
+      revenue:     55,
+      security:    880,
+      bandwidth:   220,
+      improvement: 440,
     }
     const t    = this.ctx.currentTime
     const freq = freqMap[fogType]
@@ -793,15 +1025,13 @@ export class AudioEngine {
     osc.stop(t + 4.5)
   }
 
-  /**
-   * Fortress resonant hum when inside. Reverb simulated with delay feedback.
-   */
   playFortressHum(): void {
+    const cfg = PROFILE_CONFIGS[this.currentProfile]
+    if (!cfg.proximityEnabled) return
     if (!this.ctx || !this.nodeGain || !this.canSpawnOsc()) return
     const t = this.ctx.currentTime
     const { osc, gain } = this.createOsc(60, 'sine', this.nodeGain)
 
-    // Simple delay-based reverb simulation
     const delay = this.ctx.createDelay(0.5)
     delay.delayTime.value = 0.2
     const feedback = this.ctx.createGain()
@@ -819,20 +1049,25 @@ export class AudioEngine {
     osc.stop(t + 5.5)
   }
 
-  /**
-   * Tick array for AR stalactites — call once per visible stalactite cluster.
-   * count: number of stalactites in cluster.
-   * avgAgeDays: average age for tick rate.
-   */
   scheduleStalactiteTicks(count: number, avgAgeDays: number): void {
     if (!this.ctx || count === 0) return
-    // Older = faster ticks. 30-day invoice → 2s interval; 90+ → 0.5s
     const intervalSec = Math.max(0.5, 2.0 - (avgAgeDays / 60))
-    // Schedule a burst of count ticks spread over 1 second (polyrhythm)
     for (let i = 0; i < Math.min(count, 4); i++) {
       const offset = (i / count) * intervalSec
       setTimeout(() => this.playStalactiteTick(), offset * 1000)
     }
+  }
+
+  // ── Compatibility shim for legacy callers ─────────────────────────────────
+
+  /** @deprecated Use setProfile() instead. */
+  setMasterVolumeCompat(v: number): void {
+    this.setMasterVolume(v)
+  }
+
+  /** Returns the current profile for display in HUD. */
+  get profile(): SoundProfile {
+    return this.currentProfile
   }
 }
 
@@ -851,3 +1086,6 @@ export function resetAudioEngine(): void {
     _engine = null
   }
 }
+
+/** Default profile for new users. */
+export { DEFAULT_PROFILE } from './SoundProfileManager'

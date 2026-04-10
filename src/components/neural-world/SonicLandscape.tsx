@@ -1,26 +1,26 @@
 /**
- * SonicLandscape.tsx — NW43: React component that drives the Neural World audio layer.
+ * SonicLandscape.tsx — NW43 + NW46: React component that drives the Neural World audio layer.
  *
- * Connects world events → AudioEngine:
- *   - nw:resonance-state-transform  → set ambient drone + world pulse
- *   - nw:world-speed-factor         → infer resonance state (0.7 = DISSONANT, 1.0 = COHERENT, 1.3 = GROWTH)
- *   - nw:player-position            → node proximity, spatial positioning
- *   - nw:nexus-sweep-complete       → NEXUS sweep whoosh + merge chime
- *   - nw:automation-failure         → automation failure buzz
- *   - nw:sound-invoice-paid         → invoice paid ascending tone
- *   - nw:sound-lead-captured        → lead captured ping
- *   - nw:sound-phase-transition     → phase transition shimmer
- *   - nw:sound-data-cube-pickup     → data cube crystalline chime
- *   - nw:sound-data-cube-drop       → data cube drop chime
- *   - nw:sound-fog-entered          → fog entered ambient pad
- *   - nw:sound-agent-flyby          → agent flyby whoosh
- *   - nw:sound-katsuro-bridge       → Katsuro bridge chord
+ * NW46 additions:
+ *   - SoundProfileButton: replaces MuteButton. Vertical popup with 5 mode names + icons.
+ *   - AudioSettingsSection: per-layer volume sliders, inactive sliders grayed out.
+ *   - Crystal chime scheduler driven by profile changes.
+ *   - 0.5s crossfade between profiles.
  *
- * Layer toggle: 'sound' — off by default.
- * First enable shows tooltip "Neural World audio enabled. Headphones recommended."
- *
- * The component renders no visible DOM in normal operation;
- * the mute button and settings are rendered by CommandHUD/SettingsPanel.
+ * Event wiring (unchanged from NW43):
+ *   nw:resonance-state-transform  → set ambient drone + world pulse
+ *   nw:world-speed-factor         → infer resonance state
+ *   nw:player-position            → node proximity, spatial positioning
+ *   nw:nexus-sweep-complete       → NEXUS sweep whoosh + merge chime
+ *   nw:automation-failure         → automation failure buzz
+ *   nw:sound-invoice-paid         → invoice paid ascending tone
+ *   nw:sound-lead-captured        → lead captured ping
+ *   nw:sound-phase-transition     → phase transition shimmer
+ *   nw:sound-data-cube-pickup     → data cube crystalline chime
+ *   nw:sound-data-cube-drop       → data cube drop chime
+ *   nw:sound-fog-entered          → fog entered ambient pad
+ *   nw:sound-agent-flyby          → agent flyby whoosh
+ *   nw:sound-katsuro-bridge       → Katsuro bridge chord
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
@@ -29,6 +29,17 @@ import {
   resetAudioEngine,
   type ResonanceState,
 } from './AudioEngine'
+import {
+  type SoundProfile,
+  type LayerVolumes,
+  PROFILE_LABELS,
+  PROFILE_ICONS,
+  PROFILE_DESCRIPTIONS,
+  loadProfile,
+  loadLayerVolumes,
+  getActiveSliders,
+  clamp01,
+} from './SoundProfileManager'
 
 // ── Event detail types ────────────────────────────────────────────────────────
 
@@ -52,8 +63,8 @@ interface AutomationFailureDetail {
 }
 
 interface AgentFlybyDetail {
-  speed?: number       // 0–1 relative speed
-  distance?: number    // units from camera
+  speed?: number
+  distance?: number
 }
 
 interface FogEnteredDetail {
@@ -61,11 +72,7 @@ interface FogEnteredDetail {
 }
 
 interface KatsuroBridgeDetail {
-  distance: number     // units from camera (0–20)
-}
-
-interface DataCubeDetail {
-  value?: number
+  distance: number
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -82,19 +89,14 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
   const hasEnabledOnceRef = useRef(false)
   const enabledRef = useRef(enabled)
 
-  // Track resonance state
   const resonanceStateRef = useRef<ResonanceState>('COHERENT')
   const resonanceScoreRef = useRef(0.5)
-
-  // Track player position for proximity calculations
   const playerPosRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 })
 
-  // Cooldowns to avoid sound spam
-  const katsuroCooldownRef    = useRef(0)
-  const riverCooldownRef      = useRef(0)
-  const fortressCooldownRef   = useRef(0)
+  const katsuroCooldownRef  = useRef(0)
+  const riverCooldownRef    = useRef(0)
+  const fortressCooldownRef = useRef(0)
 
-  // Update enabled ref
   useEffect(() => {
     enabledRef.current = enabled
   }, [enabled])
@@ -111,15 +113,12 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
   useEffect(() => {
     if (!enabled) return
 
-    // First-enable tooltip
     if (!hasEnabledOnceRef.current) {
       hasEnabledOnceRef.current = true
       setShowTooltip(true)
       setTimeout(() => setShowTooltip(false), 5000)
     }
 
-    // Audio context must be created on user gesture.
-    // We hook into any user interaction to init.
     const handleUserGesture = () => {
       initAudio()
       window.removeEventListener('click',      handleUserGesture)
@@ -137,11 +136,8 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
     }
   }, [enabled, initAudio])
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      resetAudioEngine()
-    }
+    return () => { resetAudioEngine() }
   }, [])
 
   // ── Resonance state events ────────────────────────────────────────────────
@@ -155,30 +151,23 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       resonanceStateRef.current = state
       resonanceScoreRef.current = score
       const engine = getAudioEngine()
-      if (engine.isInitialized) {
-        engine.setResonanceState(state, score)
-      }
+      if (engine.isInitialized) engine.setResonanceState(state, score)
     }
 
     function onWorldSpeedFactor(e: Event) {
       if (!enabledRef.current) return
       const ev = e as CustomEvent<WorldSpeedFactorDetail>
       if (!ev.detail) return
-      // Infer state from speed factor
       const f = ev.detail.factor
       const state: ResonanceState =
-        f <= 0.8  ? 'DISSONANT' :
-        f <= 1.1  ? 'COHERENT'  :
-        'GROWTH'
-      // Only update if state changed (score approximated from factor)
-      const score = (f - 0.7) / 0.6  // map 0.7–1.3 → 0–1
+        f <= 0.8 ? 'DISSONANT' :
+        f <= 1.1 ? 'COHERENT'  : 'GROWTH'
+      const score = (f - 0.7) / 0.6
       if (state !== resonanceStateRef.current) {
         resonanceStateRef.current = state
         resonanceScoreRef.current = Math.max(0, Math.min(1, score))
         const engine = getAudioEngine()
-        if (engine.isInitialized) {
-          engine.setResonanceState(state, resonanceScoreRef.current)
-        }
+        if (engine.isInitialized) engine.setResonanceState(state, resonanceScoreRef.current)
       }
     }
 
@@ -203,7 +192,6 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       if (!engine.isInitialized) return
       const now = Date.now()
 
-      // Katsuro Bridge Tower at approximately x=80, z=-40 (east continent)
       const katsuroDist = Math.sqrt(
         Math.pow(ev.detail.x - 80, 2) +
         Math.pow(ev.detail.z - (-40), 2)
@@ -213,7 +201,6 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
         engine.playKatsuroBridgeChord(katsuroDist)
       }
 
-      // Revenue river: x = -20..20 (central channel)
       const inRiver = Math.abs(ev.detail.x) < 20
       if (inRiver && now - riverCooldownRef.current > 4000) {
         riverCooldownRef.current = now
@@ -221,7 +208,6 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
         engine.playRiverSound(widthFactor, resonanceStateRef.current === 'COHERENT')
       }
 
-      // Fortress: center of west continent at approximately x=-100, z=0
       const fortressDist = Math.sqrt(
         Math.pow(ev.detail.x - (-100), 2) +
         Math.pow(ev.detail.z, 2)
@@ -244,7 +230,6 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       const engine = getAudioEngine()
       if (engine.isInitialized) {
         engine.playNexusSweep()
-        // Slight delay for merge chime at OPERATOR
         setTimeout(() => {
           if (enabledRef.current && engine.isInitialized) {
             engine.playNexusMerge()
@@ -260,34 +245,30 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       if (!engine.isInitialized) return
       const speed    = ev.detail?.speed    ?? 0.5
       const distance = ev.detail?.distance ?? 5
-      if (distance < 10) {
-        engine.playAgentFlyby(speed)
-      }
+      if (distance < 10) engine.playAgentFlyby(speed)
     }
 
-    function onDataCubePickup(e: Event) {
+    function onDataCubePickup() {
       if (!enabledRef.current) return
-      void e
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playDataCubePickup()
     }
 
-    function onDataCubeDrop(e: Event) {
+    function onDataCubeDrop() {
       if (!enabledRef.current) return
-      void e
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playDataCubeDrop()
     }
 
-    window.addEventListener('nw:nexus-sweep-complete',    onNexusSweepComplete)
-    window.addEventListener('nw:sound-agent-flyby',       onAgentFlyby)
-    window.addEventListener('nw:sound-data-cube-pickup',  onDataCubePickup)
-    window.addEventListener('nw:sound-data-cube-drop',    onDataCubeDrop)
+    window.addEventListener('nw:nexus-sweep-complete',   onNexusSweepComplete)
+    window.addEventListener('nw:sound-agent-flyby',      onAgentFlyby)
+    window.addEventListener('nw:sound-data-cube-pickup', onDataCubePickup)
+    window.addEventListener('nw:sound-data-cube-drop',   onDataCubeDrop)
     return () => {
-      window.removeEventListener('nw:nexus-sweep-complete',    onNexusSweepComplete)
-      window.removeEventListener('nw:sound-agent-flyby',       onAgentFlyby)
-      window.removeEventListener('nw:sound-data-cube-pickup',  onDataCubePickup)
-      window.removeEventListener('nw:sound-data-cube-drop',    onDataCubeDrop)
+      window.removeEventListener('nw:nexus-sweep-complete',   onNexusSweepComplete)
+      window.removeEventListener('nw:sound-agent-flyby',      onAgentFlyby)
+      window.removeEventListener('nw:sound-data-cube-pickup', onDataCubePickup)
+      window.removeEventListener('nw:sound-data-cube-drop',   onDataCubeDrop)
     }
   }, [])
 
@@ -299,26 +280,22 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playInvoicePaid()
     }
-
     function onLeadCaptured() {
       if (!enabledRef.current) return
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playLeadCaptured()
     }
-
     function onAutomationFailure(e: Event) {
       if (!enabledRef.current) return
       void (e as CustomEvent<AutomationFailureDetail>)
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playAutomationFailure()
     }
-
     function onPhaseTransition() {
       if (!enabledRef.current) return
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playPhaseTransition()
     }
-
     function onFogEntered(e: Event) {
       if (!enabledRef.current) return
       const ev = e as CustomEvent<FogEnteredDetail>
@@ -326,7 +303,6 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       const engine = getAudioEngine()
       if (engine.isInitialized) engine.playFogEntered(ev.detail.type)
     }
-
     function onKatsuroBridge(e: Event) {
       if (!enabledRef.current) return
       const ev = e as CustomEvent<KatsuroBridgeDetail>
@@ -335,13 +311,12 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       if (engine.isInitialized) engine.playKatsuroBridgeChord(ev.detail.distance)
     }
 
-    // Also connect automation-failure from AutomationFlowLayer
-    window.addEventListener('nw:sound-invoice-paid',       onInvoicePaid)
-    window.addEventListener('nw:sound-lead-captured',      onLeadCaptured)
-    window.addEventListener('nw:automation-failure',       onAutomationFailure)
-    window.addEventListener('nw:sound-phase-transition',   onPhaseTransition)
-    window.addEventListener('nw:sound-fog-entered',        onFogEntered)
-    window.addEventListener('nw:sound-katsuro-bridge',     onKatsuroBridge)
+    window.addEventListener('nw:sound-invoice-paid',      onInvoicePaid)
+    window.addEventListener('nw:sound-lead-captured',     onLeadCaptured)
+    window.addEventListener('nw:automation-failure',      onAutomationFailure)
+    window.addEventListener('nw:sound-phase-transition',  onPhaseTransition)
+    window.addEventListener('nw:sound-fog-entered',       onFogEntered)
+    window.addEventListener('nw:sound-katsuro-bridge',    onKatsuroBridge)
     return () => {
       window.removeEventListener('nw:sound-invoice-paid',      onInvoicePaid)
       window.removeEventListener('nw:sound-lead-captured',     onLeadCaptured)
@@ -373,37 +348,258 @@ export function SonicLandscape({ enabled }: SonicLandscapeProps) {
       letterSpacing: 1,
       pointerEvents: 'none',
       backdropFilter: 'blur(8px)',
-      animation: 'nw-fade-in 0.3s ease',
       textAlign: 'center',
       lineHeight: 1.5,
     }}>
-      ♪ Neural World audio enabled. Headphones recommended.
+      ♪ Neural World audio enabled. Click the speaker icon to choose a sound profile.
     </div>
   )
 }
 
-// ── Audio Settings Panel Section ──────────────────────────────────────────────
+// ── SoundProfileButton — NW46 HUD selector ───────────────────────────────────
 
-/**
- * AudioSettingsSection: rendered inside SettingsPanel under a ◈ AUDIO header.
- * Provides master volume slider + per-channel toggles.
- */
+const PROFILES: SoundProfile[] = ['SILENT', 'MINIMAL', 'AMBIENT', 'FOCUS', 'IMMERSIVE']
+
+interface SoundProfileButtonProps {
+  soundLayerEnabled: boolean
+}
+
+export function SoundProfileButton({ soundLayerEnabled }: SoundProfileButtonProps) {
+  const engine = getAudioEngine()
+  const [profile, setProfile] = useState<SoundProfile>(() => loadProfile())
+  const [popupOpen, setPopupOpen] = useState(false)
+  const popupRef = useRef<HTMLDivElement>(null)
+
+  // Close popup on outside click
+  useEffect(() => {
+    if (!popupOpen) return
+    function handleOutside(e: MouseEvent) {
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
+        setPopupOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [popupOpen])
+
+  const handleSelect = useCallback((p: SoundProfile) => {
+    if (!engine.isInitialized) engine.init()
+    engine.setProfile(p)
+    setProfile(p)
+    setPopupOpen(false)
+  }, [engine])
+
+  const handleToggle = useCallback(() => {
+    if (!engine.isInitialized) engine.init()
+    setPopupOpen(prev => !prev)
+  }, [engine])
+
+  if (!soundLayerEnabled) return null
+
+  const isMuted = profile === 'SILENT'
+  const isImmersive = profile === 'IMMERSIVE'
+  const icon = PROFILE_ICONS[profile]
+
+  return (
+    <div ref={popupRef} style={{ position: 'relative' }}>
+      {/* ── Popup (vertical list, above the button) ── */}
+      {popupOpen && (
+        <div style={{
+          position: 'absolute',
+          bottom: '110%',
+          right: 0,
+          zIndex: 60,
+          background: 'rgba(5,5,15,0.96)',
+          border: '1px solid rgba(0,229,204,0.30)',
+          borderRadius: 8,
+          padding: '8px 0',
+          backdropFilter: 'blur(12px)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.7)',
+          minWidth: 230,
+          animation: 'nw-profile-popup-in 0.15s ease',
+        }}>
+          {/* Header */}
+          <div style={{
+            padding: '4px 14px 8px',
+            color: 'rgba(0,229,204,0.6)',
+            fontSize: 9,
+            fontFamily: 'monospace',
+            letterSpacing: 2,
+            fontWeight: 700,
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            marginBottom: 4,
+          }}>
+            SOUND PROFILE
+          </div>
+
+          {PROFILES.map(p => {
+            const isActive = p === profile
+            const isImm    = p === 'IMMERSIVE'
+            return (
+              <button
+                key={p}
+                onClick={() => handleSelect(p)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  width: '100%',
+                  padding: '8px 14px',
+                  background: isActive ? 'rgba(0,229,204,0.12)' : 'transparent',
+                  border: 'none',
+                  borderLeft: isActive ? '2px solid #00e5cc' : '2px solid transparent',
+                  cursor: 'pointer',
+                  fontFamily: 'monospace',
+                  textAlign: 'left',
+                  transition: 'all 0.12s',
+                }}
+                onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.04)' }}
+                onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+              >
+                {/* Icon */}
+                <span style={{
+                  fontSize: 16,
+                  lineHeight: 1,
+                  filter: isImm && isActive ? 'drop-shadow(0 0 4px rgba(0,229,204,0.8))' : 'none',
+                }}>
+                  {PROFILE_ICONS[p]}
+                </span>
+
+                {/* Label + description */}
+                <div>
+                  <div style={{
+                    fontSize: 11,
+                    fontWeight: isActive ? 700 : 400,
+                    color: isActive ? '#00e5cc' : 'rgba(255,255,255,0.75)',
+                    letterSpacing: 0.5,
+                    marginBottom: 2,
+                  }}>
+                    {PROFILE_LABELS[p]}
+                    {p === 'MINIMAL' && (
+                      <span style={{
+                        marginLeft: 6,
+                        fontSize: 8,
+                        color: 'rgba(0,229,204,0.55)',
+                        letterSpacing: 1,
+                      }}>DEFAULT</span>
+                    )}
+                  </div>
+                  <div style={{
+                    fontSize: 9,
+                    color: 'rgba(255,255,255,0.35)',
+                    letterSpacing: 0.2,
+                    lineHeight: 1.4,
+                  }}>
+                    {PROFILE_DESCRIPTIONS[p]}
+                  </div>
+                </div>
+
+                {/* Active dot */}
+                {isActive && (
+                  <div style={{
+                    marginLeft: 'auto',
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: '#00e5cc',
+                    boxShadow: '0 0 6px #00e5cc',
+                    flexShrink: 0,
+                  }} />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── Speaker / profile button ── */}
+      <button
+        onClick={handleToggle}
+        title={`Sound profile: ${PROFILE_LABELS[profile]} — click to change`}
+        style={{
+          width:        34,
+          height:       34,
+          minWidth:     44,
+          minHeight:    44,
+          borderRadius: 8,
+          border: `1px solid ${
+            isMuted  ? 'rgba(255,255,255,0.15)' :
+            isImmersive ? 'rgba(0,229,204,0.7)' :
+            'rgba(0,229,204,0.4)'
+          }`,
+          background: isMuted
+            ? 'rgba(0,0,0,0.6)'
+            : isImmersive
+            ? 'rgba(0,229,204,0.15)'
+            : 'rgba(0,229,204,0.10)',
+          color: isMuted ? 'rgba(255,255,255,0.4)' : '#00e5cc',
+          fontSize:    16,
+          cursor:      'pointer',
+          display:     'flex',
+          alignItems:  'center',
+          justifyContent: 'center',
+          backdropFilter: 'blur(6px)',
+          transition: 'all 0.15s',
+          lineHeight:  1,
+          touchAction: 'none',
+          userSelect:  'none',
+          boxShadow: isImmersive && !isMuted
+            ? '0 0 10px rgba(0,229,204,0.3)'
+            : 'none',
+        }}
+      >
+        {icon}
+      </button>
+
+      <style>{`
+        @keyframes nw-profile-popup-in {
+          from { opacity: 0; transform: translateY(4px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// ── AudioSettingsSection — NW46 per-layer volume sliders ─────────────────────
+
 export function AudioSettingsSection() {
   const engine = getAudioEngine()
-  const [settings, setSettings] = useState(() => engine.loadSettings())
+  const [profile, setProfile]       = useState<SoundProfile>(() => loadProfile())
+  const [volumes, setVolumes]       = useState<LayerVolumes>(() => loadLayerVolumes())
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const update = useCallback((patch: Parameters<typeof engine.updateSettings>[0]) => {
-    engine.updateSettings(patch)
-    setSettings(engine.getSettings())
-    // Debounced save (engine already saves, this just refreshes local state)
+  const handleProfileChange = useCallback((p: SoundProfile) => {
+    if (!engine.isInitialized) engine.init()
+    engine.setProfile(p)
+    setProfile(p)
+  }, [engine])
+
+  const handleVolumeChange = useCallback((key: keyof LayerVolumes, rawVal: number) => {
+    const v = clamp01(rawVal)
+    engine.setLayerVolume(key, v)
+    setVolumes(prev => ({ ...prev, [key]: v }))
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      setSettings(engine.getSettings())
+      setVolumes(engine.getLayerVolumes())
     }, 100)
   }, [engine])
 
-  const s = settings
+  const active = getActiveSliders(profile)
+
+  // Layer slider rows config
+  const layerSliders: Array<{
+    key:   keyof LayerVolumes
+    label: string
+    activeKey: keyof ReturnType<typeof getActiveSliders>
+    inactiveName: string
+  }> = [
+    { key: 'events',    label: 'EVENT SOUNDS',   activeKey: 'events',    inactiveName: 'SILENT' },
+    { key: 'ambient',   label: 'AMBIENT / WIND',  activeKey: 'ambient',   inactiveName: 'MINIMAL' },
+    { key: 'proximity', label: 'PROXIMITY TONES', activeKey: 'proximity', inactiveName: 'AMBIENT' },
+    { key: 'pulse',     label: 'WORLD PULSE',     activeKey: 'pulse',     inactiveName: 'AMBIENT' },
+    { key: 'drone',     label: 'DRONE',           activeKey: 'drone',     inactiveName: 'FOCUS' },
+  ]
 
   return (
     <>
@@ -412,120 +608,122 @@ export function AudioSettingsSection() {
         color: '#00e5cc',
         fontSize: 9,
         letterSpacing: 2,
-        marginBottom: 4,
+        marginBottom: 6,
         fontWeight: 700,
         marginTop: 4,
       }}>
-        ◈ AUDIO
+        ◈ AUDIO — SOUND PROFILE
       </div>
 
-      {/* Master volume */}
-      <div>
+      {/* Profile selector buttons */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
+        {PROFILES.map(p => {
+          const isActive = p === profile
+          return (
+            <button
+              key={p}
+              onClick={() => handleProfileChange(p)}
+              style={{
+                display:      'flex',
+                alignItems:   'center',
+                gap:          8,
+                padding:      '5px 8px',
+                borderRadius: 4,
+                border: `1px solid ${isActive ? 'rgba(0,229,204,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                background: isActive ? 'rgba(0,229,204,0.12)' : 'transparent',
+                color: isActive ? '#00e5cc' : 'rgba(255,255,255,0.45)',
+                cursor:       'pointer',
+                fontFamily:   'monospace',
+                fontSize:     9,
+                textAlign:    'left',
+                transition:   'all 0.12s',
+              }}
+            >
+              <span style={{ fontSize: 12 }}>{PROFILE_ICONS[p]}</span>
+              <span style={{ fontWeight: isActive ? 700 : 400 }}>{PROFILE_LABELS[p]}</span>
+              {p === 'MINIMAL' && (
+                <span style={{ fontSize: 8, color: 'rgba(0,229,204,0.5)', letterSpacing: 1 }}>DEF</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Master Volume */}
+      <div style={{ marginBottom: 6 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
           <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>MASTER VOLUME</span>
-          <span style={{ color: '#00e5cc', fontSize: 9, letterSpacing: 1 }}>{Math.round(s.masterVolume * 100)}%</span>
+          <span style={{ color: '#00e5cc', fontSize: 9, letterSpacing: 1 }}>{Math.round(volumes.master * 100)}%</span>
         </div>
         <input
           type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={s.masterVolume}
-          onChange={e => update({ masterVolume: parseFloat(e.target.value) })}
+          min={0} max={1} step={0.01}
+          value={volumes.master}
+          onChange={e => handleVolumeChange('master', parseFloat(e.target.value))}
           style={{ width: '100%', accentColor: '#00e5cc', cursor: 'pointer' }}
         />
       </div>
 
-      {/* Channel toggles */}
-      {([
-        ['ambientEnabled',  'AMBIENT DRONE'],
-        ['nodesEnabled',    'NODE TONES'],
-        ['agentsEnabled',   'AGENT SOUNDS'],
-        ['eventsEnabled',   'EVENT CHIMES'],
-        ['pulseEnabled',    'WORLD PULSE'],
-      ] as const).map(([key, label]) => (
-        <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, letterSpacing: 1 }}>{label}</span>
-          <button
-            onClick={() => update({ [key]: !s[key] })}
-            style={{
-              width: 38,
-              height: 18,
-              borderRadius: 9,
-              border: 'none',
-              background: s[key] ? '#00e5cc' : 'rgba(255,255,255,0.15)',
-              position: 'relative',
-              cursor: 'pointer',
-              transition: 'background 0.2s',
-            }}
-          >
-            <div style={{
-              position: 'absolute',
-              top: 2,
-              left: s[key] ? 20 : 2,
-              width: 14,
-              height: 14,
-              borderRadius: '50%',
-              background: s[key] ? '#050508' : 'rgba(255,255,255,0.5)',
-              transition: 'left 0.2s',
-            }} />
-          </button>
-        </div>
-      ))}
+      {/* Per-layer volume sliders */}
+      <div style={{
+        color: 'rgba(255,255,255,0.3)',
+        fontSize: 8,
+        letterSpacing: 1.5,
+        marginBottom: 4,
+      }}>
+        LAYER VOLUMES
+      </div>
+
+      {layerSliders.map(({ key, label, activeKey, inactiveName }) => {
+        const isActive = active[activeKey]
+        return (
+          <div key={key} style={{ marginBottom: 5, opacity: isActive ? 1 : 0.4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+              <span style={{
+                color: isActive ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.25)',
+                fontSize: 9,
+                letterSpacing: 1,
+              }}>
+                {label}
+              </span>
+              <span style={{
+                color: isActive ? '#00e5cc' : 'rgba(255,255,255,0.2)',
+                fontSize: 9,
+                letterSpacing: 1,
+              }}>
+                {isActive
+                  ? `${Math.round(volumes[key] * 100)}%`
+                  : `Not active in ${inactiveName}`
+                }
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0} max={1} step={0.01}
+              value={volumes[key]}
+              disabled={!isActive}
+              onChange={e => handleVolumeChange(key, parseFloat(e.target.value))}
+              style={{
+                width: '100%',
+                accentColor: '#00e5cc',
+                cursor: isActive ? 'pointer' : 'not-allowed',
+                opacity: isActive ? 1 : 0.4,
+              }}
+            />
+          </div>
+        )
+      })}
     </>
   )
 }
 
-// ── Mute Toggle Button (rendered in HUD bottom-right) ────────────────────────
+// ── MuteButton — kept for backward compat (delegates to SoundProfileButton) ──
 
 interface MuteButtonProps {
-  /** Whether the sound layer is enabled */
   soundLayerEnabled: boolean
 }
 
+/** @deprecated Use SoundProfileButton instead (NW46). This wrapper delegates to it. */
 export function MuteButton({ soundLayerEnabled }: MuteButtonProps) {
-  const engine = getAudioEngine()
-  const [muted, setMuted] = useState(() => engine.loadSettings().muted)
-
-  const handleToggle = useCallback(() => {
-    if (!engine.isInitialized) {
-      // Try init on interaction
-      engine.init()
-    }
-    const nextMuted = engine.toggleMute()
-    setMuted(nextMuted)
-  }, [engine])
-
-  if (!soundLayerEnabled) return null
-
-  const icon = muted ? '🔇' : '🔊'
-
-  return (
-    <button
-      onClick={handleToggle}
-      title={muted ? 'Unmute Neural World audio' : 'Mute Neural World audio'}
-      style={{
-        width:  34,
-        height: 34,
-        minWidth:  44,
-        minHeight: 44,
-        borderRadius: 8,
-        border: `1px solid ${muted ? 'rgba(255,255,255,0.15)' : 'rgba(0,229,204,0.4)'}`,
-        background: muted ? 'rgba(0,0,0,0.6)' : 'rgba(0,229,204,0.10)',
-        color: muted ? 'rgba(255,255,255,0.4)' : '#00e5cc',
-        fontSize: 16,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(6px)',
-        transition: 'all 0.15s',
-        lineHeight: 1,
-        touchAction: 'none',
-        userSelect: 'none',
-      }}
-    >
-      {icon}
-    </button>
-  )
+  return <SoundProfileButton soundLayerEnabled={soundLayerEnabled} />
 }
