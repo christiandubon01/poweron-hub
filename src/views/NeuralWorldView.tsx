@@ -79,6 +79,7 @@ import { TidalForcesLayer } from '@/components/neural-world/TidalForcesLayer'
 import { MyceliumNetworkLayer } from '@/components/neural-world/MyceliumNetworkLayer'
 import { AuroraEventsLayer } from '@/components/neural-world/AuroraEventsLayer'
 import { FossilRecordLayer } from '@/components/neural-world/FossilRecordLayer'
+import { ClimateZonesLayer } from '@/components/neural-world/ClimateZonesLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -136,6 +137,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'aurora':           true,
   // NW60: Fossil Record — archaeological layer for completed projects, off by default
   'fossil-record':    false,
+  // NW61: Climate zones — regional business-condition weather. Off by default.
+  'climate':          false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -237,6 +240,8 @@ function WorldLayers({
       <AuroraEventsLayer visible={!!layerStates['aurora']} soundEnabled={!!layerStates['sound']} />
       {/* NW60: Fossil Record — archaeological layer for completed/archived projects */}
       <FossilRecordLayer visible={!!layerStates['fossil-record']} />
+      {/* NW61: Climate zones — regional weather driven by domain business health scores */}
+      <ClimateZonesLayer visible={!!layerStates['climate']} />
     </>
   )
 }
