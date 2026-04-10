@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { NeuralPathwaysLayer } from '@/components/neural-world/NeuralPathwaysLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW53: Neural Pathways — decision history trails etched into ground (off by default)
+  'neural-pathways':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -166,6 +169,8 @@ function WorldLayers({
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
       {/* NW-PROX: Proximity info cards — domain awareness HUD */}
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
+      {/* NW53: Neural Pathways — decision history trails etched into ground plane */}
+      <NeuralPathwaysLayer visible={!!layerStates['neural-pathways']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}

@@ -105,6 +105,8 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW53: Neural Pathways — decision history trails etched into the ground plane. Off by default. */
+  { id: 'neural-pathways',  label: 'Neural Pathways',  icon: '≋', r: 255, g: 215, b: 0   },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'neural-pathways': 'Decision history trails etched into the ground. Repeated decisions carve deep, glowing roads — invoices, crew dispatch, project starts, lead follow-up. Hover to see use count. Click for full NEXUS pattern analysis.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -365,7 +368,7 @@ export default function CommandHUD({
     },
     {
       id: 'dataflows', label: 'DATA FLOWS', color: '#00dcb4',
-      layerIds: ['data-flow', 'automation-flows', 'signal', 'simulation'],
+      layerIds: ['data-flow', 'automation-flows', 'signal', 'simulation', 'neural-pathways'],
     },
     {
       id: 'audionav', label: 'AUDIO & NAVIGATION', color: '#44aaff',
