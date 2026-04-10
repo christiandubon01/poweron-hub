@@ -72,6 +72,7 @@ import { GoldenPathLayer } from '@/components/neural-world/layers/GoldenPathLaye
 import { NetworkEffectsLayer } from '@/components/neural-world/NetworkEffectsLayer'
 import { ThreatMovementLayer } from '@/components/neural-world/ThreatMovementLayer'
 import { GhostUniverseLayer } from '@/components/neural-world/GhostUniverseLayer'
+import { GravitationalLensingLayer } from '@/components/neural-world/GravitationalLensingLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -115,6 +116,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'ghost-universe':   false,
   // NW50: Ecosystem Symbiosis — resource-sharing vines, off by default
   'ecosystem':        false,
+  // NW51: Gravity Fields — high-value node distortion fields. Off by default.
+  'gravity-fields':   false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -202,6 +205,8 @@ function WorldLayers({
       <GhostUniverseLayer visible={!!layerStates['ghost-universe']} />
       {/* NW50: Ecosystem Symbiosis — resource-sharing vines between project mountains */}
       <EcosystemSymbiosisLayer visible={!!layerStates['ecosystem']} />
+      {/* NW51: Gravitational lensing — high-value node distortion fields, mass comparison, interference rings */}
+      <GravitationalLensingLayer visible={!!layerStates['gravity-fields']} />
     </>
   )
 }
