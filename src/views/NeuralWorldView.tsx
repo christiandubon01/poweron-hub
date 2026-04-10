@@ -76,6 +76,7 @@ import { GhostUniverseLayer } from '@/components/neural-world/GhostUniverseLayer
 import { GravitationalLensingLayer } from '@/components/neural-world/GravitationalLensingLayer'
 import { TectonicPlatesLayer } from '@/components/neural-world/TectonicPlatesLayer'
 import { TidalForcesLayer } from '@/components/neural-world/TidalForcesLayer'
+import { MyceliumNetworkLayer } from '@/components/neural-world/MyceliumNetworkLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -127,6 +128,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'constellation':    true,
   // NW57: Tidal forces — cash flow ocean tide simulation, off by default
   'tides':            false,
+  // NW58: Mycelium underground resource network — off by default (opt-in)
+  'mycelium':         false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -201,6 +204,8 @@ function WorldLayers({
       <ConstellationModeLayer visible={!!layerStates['constellation']} />
       {/* NW57: Tidal Forces — cash flow ocean tide simulation */}
       <TidalForcesLayer visible={!!layerStates['tides']} />
+      {/* NW58: Mycelium underground resource network — supply chains, knowledge, client bonds */}
+      <MyceliumNetworkLayer visible={!!layerStates['mycelium']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}

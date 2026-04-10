@@ -121,6 +121,8 @@ const LAYERS: LayerDef[] = [
   { id: 'tectonic-plates',  label: 'Tectonic Plates',  icon: '🌋', r: 255, g: 160, b: 48  },
   /** NW57: Tidal Forces — cash flow ocean tide simulation. Off by default. */
   { id: 'tides',            label: 'Tides',             icon: '🌊', r: 0,   g: 210, b: 200 },
+  /** NW58: Mycelium network — underground resource connections, supply chains, knowledge transfer */
+  { id: 'mycelium',         label: 'Mycelium',          icon: '⟳', r: 0,   g: 229, b: 204 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -175,6 +177,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'tectonic-plates': 'Business domain boundaries (residential, commercial, service, solar) rendered as tectonic plates. Size = revenue share. Fault lines glow amber; red = competing growth. Earthquakes fire on major shifts.',
   'constellation':   'Zoom out past 80 units to reveal the constellation view — projects become stars, connections become lines. Reveals business patterns invisible at ground level.',
   'tides':           'Ocean tide simulation driven by cash flow. Rising tide = money coming in. Receding tide = money going out. Spring Tide events on large payment surges. Neap Tide warnings on tight-cash weeks. Includes 7-day tidal forecast bar.',
+  'mycelium':        'Underground resource network — reveals material supply chains, crew knowledge transfer, client relationships, and geographic logistics links between projects. Click any connection to see shared value. Click a dead zone to get connection suggestions.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -432,6 +435,10 @@ export default function CommandHUD({
     {
       id: 'ecosystem', label: 'ECOSYSTEM', color: '#14B8A6',
       layerIds: ['ecosystem'],
+    },
+    {
+      id: 'underground', label: 'UNDERGROUND', color: '#00e5cc',
+      layerIds: ['mycelium'],
     },
   ] as const
 
