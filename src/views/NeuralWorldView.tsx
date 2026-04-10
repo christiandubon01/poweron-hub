@@ -80,6 +80,7 @@ import { MyceliumNetworkLayer } from '@/components/neural-world/MyceliumNetworkL
 import { AuroraEventsLayer } from '@/components/neural-world/AuroraEventsLayer'
 import { FossilRecordLayer } from '@/components/neural-world/FossilRecordLayer'
 import { ClimateZonesLayer } from '@/components/neural-world/ClimateZonesLayer'
+import { MagneticFieldLayer } from '@/components/neural-world/MagneticFieldLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -139,6 +140,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'fossil-record':    false,
   // NW61: Climate zones — regional business-condition weather. Off by default.
   'climate':          false,
+  // NW62: Magnetic field lines — influence direction, polarity system. Off by default.
+  'magnetic-fields':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -242,6 +245,8 @@ function WorldLayers({
       <FossilRecordLayer visible={!!layerStates['fossil-record']} />
       {/* NW61: Climate zones — regional weather driven by domain business health scores */}
       <ClimateZonesLayer visible={!!layerStates['climate']} />
+      {/* NW62: Magnetic field lines — influence direction, polarity system, animated particle flow */}
+      <MagneticFieldLayer visible={!!layerStates['magnetic-fields']} />
     </>
   )
 }

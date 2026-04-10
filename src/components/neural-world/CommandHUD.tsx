@@ -127,6 +127,8 @@ const LAYERS: LayerDef[] = [
   { id: 'fossil-record',    label: 'Fossil Record',    icon: '⛏', r: 255, g: 160, b: 60  },
   /** NW61: Climate zones — regional weather driven by domain business health. Off by default. */
   { id: 'climate',          label: 'Climate',          icon: '🌤', r: 255, g: 200, b: 80  },
+  /** NW62: Magnetic field lines — influence direction, polarity system, animated particle flow. Off by default. */
+  { id: 'magnetic-fields',  label: 'Magnetic Fields',  icon: '⊛', r: 0,   g: 229, b: 204 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -190,6 +192,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'mycelium':        'Underground resource network — reveals material supply chains, crew knowledge transfer, client relationships, and geographic logistics links between projects. Click any connection to see shared value. Click a dead zone to get connection suggestions.',
   'fossil-record':   'Geological archaeology layer. Completed projects leave fossil imprints — flat circular beds with compressed material history. Hover to read the record. Click to excavate layer by layer.',
   'climate':         'Regional climate zones driven by domain business health. THRIVING = golden dust motes, warm light. STRUGGLING = rain, dark clouds. DORMANT = cold fog, frost. Shimmer lines where warm meets cold.',
+  'magnetic-fields': 'Magnetic field lines show influence direction between entities. Teal lines = push outward (contributors). Amber lines = pull inward (consumers). Green glow = net contributor. Amber glow = net consumer. Hover to isolate. Click for influence breakdown.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -430,7 +433,7 @@ export default function CommandHUD({
     },
     {
       id: 'dataflows', label: 'DATA FLOWS', color: '#00dcb4',
-      layerIds: ['data-flow', 'automation-flows', 'signal', 'simulation'],
+      layerIds: ['data-flow', 'automation-flows', 'signal', 'simulation', 'magnetic-fields'],
     },
     {
       id: 'audionav', label: 'AUDIO & NAVIGATION', color: '#44aaff',
