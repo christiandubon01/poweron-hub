@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { ThreatMovementLayer } from '@/components/neural-world/ThreatMovementLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW48: Threat movement layer — negative indicators drift toward camera, on by default
+  'threats':          true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -170,6 +173,11 @@ function WorldLayers({
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
       <IncomeTutorial />
+      {/* NW48: Threat Movement — negative indicators drift toward camera with urgency escalation */}
+      <ThreatMovementLayer
+        visible={!!layerStates['threats']}
+        soundEnabled={!!layerStates['sound']}
+      />
     </>
   )
 }

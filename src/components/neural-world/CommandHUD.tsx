@@ -105,10 +105,12 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW48: Threat movement — negative indicators drift toward camera, urgency escalation. On by default. */
+  { id: 'threats',           label: 'Threats',           icon: '⚠', r: 255, g: 40,  b: 40  },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info'])
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'threats'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'threats':         'Negative indicators (overdue invoices, stalled projects, expiring contracts, cold leads) drift toward you as threat markers. Click to see details and dismiss.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
