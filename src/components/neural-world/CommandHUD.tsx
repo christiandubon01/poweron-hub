@@ -105,6 +105,8 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW58: Mycelium network — underground resource connections, supply chains, knowledge transfer */
+  { id: 'mycelium',         label: 'Mycelium',          icon: '⟳', r: 0,   g: 229, b: 204 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'mycelium':        'Underground resource network — reveals material supply chains, crew knowledge transfer, client relationships, and geographic logistics links between projects. Click any connection to see shared value. Click a dead zone to get connection suggestions.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -374,6 +377,10 @@ export default function CommandHUD({
     {
       id: 'overlays', label: 'OVERLAYS', color: '#ff7744',
       layerIds: ['command', 'katsuro-bridge', 'proximity-info'],
+    },
+    {
+      id: 'underground', label: 'UNDERGROUND', color: '#00e5cc',
+      layerIds: ['mycelium'],
     },
   ] as const
 

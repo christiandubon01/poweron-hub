@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { MyceliumNetworkLayer } from '@/components/neural-world/MyceliumNetworkLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW58: Mycelium underground resource network — off by default (opt-in)
+  'mycelium':         false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -166,6 +169,8 @@ function WorldLayers({
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
       {/* NW-PROX: Proximity info cards — domain awareness HUD */}
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
+      {/* NW58: Mycelium underground resource network — supply chains, knowledge, client bonds */}
+      <MyceliumNetworkLayer visible={!!layerStates['mycelium']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
