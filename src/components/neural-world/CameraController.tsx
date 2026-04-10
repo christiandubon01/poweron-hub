@@ -273,6 +273,7 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
           ORBIT_RADIUS_MIN,
           Math.min(ORBIT_RADIUS_MAX, orbitRadius.current * factor)
         )
+        window.dispatchEvent(new CustomEvent('nw:orbit-radius', { detail: { radius: orbitRadius.current } }))
         return
       }
 
@@ -525,6 +526,22 @@ export function CameraController({ mode, onModeChange, showUI = true, settings: 
     window.addEventListener('nw:settings-change', onSettingsChange)
     return () => window.removeEventListener('nw:settings-change', onSettingsChange)
   }, [])
+
+  // NW56: Constellation zoom-in — double-clicking a star sets orbit radius + target
+  useEffect(() => {
+    function onSetOrbitRadius(e: Event) {
+      const ev = e as CustomEvent<{ radius: number; target?: { x: number; y: number; z: number } }>
+      if (ev.detail?.radius !== undefined) {
+        orbitRadius.current = Math.max(5, Math.min(500, ev.detail.radius))
+        window.dispatchEvent(new CustomEvent('nw:orbit-radius', { detail: { radius: orbitRadius.current } }))
+      }
+      if (ev.detail?.target) {
+        orbitTarget.current.set(ev.detail.target.x, ev.detail.target.y, ev.detail.target.z)
+      }
+    }
+    window.addEventListener('nw:set-orbit-radius', onSetOrbitRadius)
+    return () => window.removeEventListener('nw:set-orbit-radius', onSetOrbitRadius)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // NW-TUTORIAL: Tour lock/unlock listeners
   useEffect(() => {

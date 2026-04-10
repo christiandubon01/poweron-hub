@@ -63,6 +63,7 @@ import TemporalNavigator from '@/components/neural-world/TemporalNavigator'
 import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/DataBridge'
 import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
+import { ConstellationModeLayer } from '@/components/neural-world/ConstellationModeLayer'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW56: Constellation mode — activates automatically at zoom threshold, on by default
+  'constellation':    true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -166,6 +169,8 @@ function WorldLayers({
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
       {/* NW-PROX: Proximity info cards — domain awareness HUD */}
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
+      {/* NW56: Constellation mode — zoom-out star field + pattern connections */}
+      <ConstellationModeLayer visible={!!layerStates['constellation']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
