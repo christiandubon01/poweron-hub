@@ -14,3 +14,4 @@ export { HunterLeadCard, type HunterLeadCardProps, type HunterLead } from './Hun
 export { HunterScoreBadge, type HunterScoreBadgeProps, type ScoreFactor } from './HunterScoreBadge'
 export { HunterDebriefPanel, type HunterDebriefPanelProps } from './HunterDebriefPanel'
 export { HunterRuleSetPanel, type HunterRuleSetPanelProps } from './HunterRuleSetPanel'
+export { default as HunterAnalyticsPanel } from './HunterAnalyticsPanel'
