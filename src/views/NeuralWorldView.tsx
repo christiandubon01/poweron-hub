@@ -75,6 +75,7 @@ import { ThreatMovementLayer } from '@/components/neural-world/ThreatMovementLay
 import { GhostUniverseLayer } from '@/components/neural-world/GhostUniverseLayer'
 import { GravitationalLensingLayer } from '@/components/neural-world/GravitationalLensingLayer'
 import { TectonicPlatesLayer } from '@/components/neural-world/TectonicPlatesLayer'
+import { TidalForcesLayer } from '@/components/neural-world/TidalForcesLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -124,6 +125,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'tectonic-plates':  false,
   // NW56: Constellation mode — activates automatically at zoom threshold, on by default
   'constellation':    true,
+  // NW57: Tidal forces — cash flow ocean tide simulation, off by default
+  'tides':            false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -196,6 +199,8 @@ function WorldLayers({
       <BioluminescentLayer visible={!!layerStates['bioluminescence']} />
       {/* NW56: Constellation mode — zoom-out star field + pattern connections */}
       <ConstellationModeLayer visible={!!layerStates['constellation']} />
+      {/* NW57: Tidal Forces — cash flow ocean tide simulation */}
+      <TidalForcesLayer visible={!!layerStates['tides']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}

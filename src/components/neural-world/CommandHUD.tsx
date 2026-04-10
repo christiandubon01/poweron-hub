@@ -119,6 +119,8 @@ const LAYERS: LayerDef[] = [
   { id: 'gravity-fields',   label: 'Gravity Fields',   icon: '⊕', r: 0,   g: 229, b: 204 },
   /** NW52: Tectonic plates — business domain boundaries shift with revenue mix. Off by default. */
   { id: 'tectonic-plates',  label: 'Tectonic Plates',  icon: '🌋', r: 255, g: 160, b: 48  },
+  /** NW57: Tidal Forces — cash flow ocean tide simulation. Off by default. */
+  { id: 'tides',            label: 'Tides',             icon: '🌊', r: 0,   g: 210, b: 200 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -172,6 +174,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'gravity-fields':  'High-value nodes warp space like gravity wells. Top 20% by contract/AR value get Fresnel influence fields. Overlapping fields create gold interference rings. Hover inside a field for mass/radius data. Click to see what each node pulls.',
   'tectonic-plates': 'Business domain boundaries (residential, commercial, service, solar) rendered as tectonic plates. Size = revenue share. Fault lines glow amber; red = competing growth. Earthquakes fire on major shifts.',
   'constellation':   'Zoom out past 80 units to reveal the constellation view — projects become stars, connections become lines. Reveals business patterns invisible at ground level.',
+  'tides':           'Ocean tide simulation driven by cash flow. Rising tide = money coming in. Receding tide = money going out. Spring Tide events on large payment surges. Neap Tide warnings on tight-cash weeks. Includes 7-day tidal forecast bar.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
