@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { ErosionModelingLayer } from '@/components/neural-world/ErosionModelingLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW55: Erosion modeling — revenue decay visualization, on by default
+  'erosion':          true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -170,6 +173,8 @@ function WorldLayers({
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
       <IncomeTutorial />
+      {/* NW55: Erosion Modeling — revenue decay visualization, 4 erosion stages, restoration animation */}
+      <ErosionModelingLayer visible={!!layerStates['erosion']} />
     </>
   )
 }
