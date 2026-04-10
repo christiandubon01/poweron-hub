@@ -105,6 +105,8 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW49: Ghost Universe — parallel timeline overlay. Declined leads as ghost mountains. Off by default. */
+  { id: 'ghost-universe',   label: 'Ghost Universe',   icon: '◌', r: 170, g: 200, b: 255 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'ghost-universe':  'Parallel timeline overlay. Declined leads appear as ghost mountains showing the revenue that never materialized. Comparison HUD shows reality vs. potential. Click any ghost mountain to revive the lead.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
