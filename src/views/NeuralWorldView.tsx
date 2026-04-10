@@ -65,6 +65,8 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import GoalModeController from '@/components/neural-world/GoalModePanel'
+import { GoldenPathLayer } from '@/components/neural-world/layers/GoldenPathLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -170,6 +172,8 @@ function WorldLayers({
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
       <IncomeTutorial />
+      {/* NW45: Golden Path Layer — goal mode waypoint diamonds + amber trail */}
+      <GoldenPathLayer />
     </>
   )
 }
@@ -875,6 +879,9 @@ export default function NeuralWorldView() {
 
       {/* ── NW29/B76: NEXUS Master Briefing premium panel ── */}
       <NexusSweepController soundLayerEnabled={!!layerStates['sound']} />
+
+      {/* ── NW45: Goal Mode controller — setup panel, HUD tracker, mission detail ── */}
+      <GoalModeController />
 
       {/* ── NW29: Flight analytics panel + chart icon toggle ── */}
       <FlightAnalyticsPanel />
