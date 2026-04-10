@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { NetworkEffectsLayer } from '@/components/neural-world/NetworkEffectsLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW47: Network Effects — second-order influence radiation + downstream connection web
+  'network-effects':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -170,6 +173,8 @@ function WorldLayers({
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
       <IncomeTutorial />
+      {/* NW47: Network Effects — influence radiation pulses + downstream connection web */}
+      <NetworkEffectsLayer visible={!!layerStates['network-effects']} />
     </>
   )
 }

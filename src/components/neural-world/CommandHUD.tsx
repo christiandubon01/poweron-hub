@@ -105,6 +105,8 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW47: Network Effects — second-order influence radiation + downstream connection web. Off by default. */
+  { id: 'network-effects',  label: 'Network Effects',  icon: '⟴', r: 0,   g: 229, b: 180 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'network-effects': 'Visualizes second-order ripple effects across business nodes. Radial pulse waves show revenue, progress, workforce, and risk events. Glowing lines show downstream connections — crew sharing, cash-to-materials flow, and resource tension. Click any connection line for the full cause → effect chain with estimated dollar impact.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -373,7 +376,7 @@ export default function CommandHUD({
     },
     {
       id: 'overlays', label: 'OVERLAYS', color: '#ff7744',
-      layerIds: ['command', 'katsuro-bridge', 'proximity-info'],
+      layerIds: ['command', 'katsuro-bridge', 'proximity-info', 'network-effects'],
     },
   ] as const
 
