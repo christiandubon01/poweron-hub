@@ -63,6 +63,7 @@ import TemporalNavigator from '@/components/neural-world/TemporalNavigator'
 import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/DataBridge'
 import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
+import { BioluminescentLayer } from '@/components/neural-world/BioluminescentLayer'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
 import GoalModeController from '@/components/neural-world/GoalModePanel'
@@ -100,6 +101,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW54: Bioluminescence — organic data-driven glow patterns, on by default
+  'bioluminescence':  true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -168,6 +171,8 @@ function WorldLayers({
       <ResonanceOrb visible={!!layerStates['resonance-orb']} />
       {/* NW-PROX: Proximity info cards — domain awareness HUD */}
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
+      {/* NW54: Bioluminescence — organic data-driven ground glow + activity pulses */}
+      <BioluminescentLayer visible={!!layerStates['bioluminescence']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
