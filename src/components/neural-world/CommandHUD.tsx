@@ -114,6 +114,12 @@ const LAYERS: LayerDef[] = [
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
   LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'bioluminescence'])
+  /** NW48: Threat movement — negative indicators drift toward camera, urgency escalation. On by default. */
+  { id: 'threats',           label: 'Threats',           icon: '⚠', r: 255, g: 40,  b: 40  },
+]
+
+const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'threats'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -145,6 +151,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
   'bioluminescence': 'Organic data-driven ground glow. Active project zones pulse teal-green, dormant areas go dark. Brightness follows time of day and business hours.',
   'network-effects': 'Visualizes second-order ripple effects across business nodes. Radial pulse waves show revenue, progress, workforce, and risk events. Glowing lines show downstream connections — crew sharing, cash-to-materials flow, and resource tension. Click any connection line for the full cause → effect chain with estimated dollar impact.',
+  'threats':         'Negative indicators (overdue invoices, stalled projects, expiring contracts, cold leads) drift toward you as threat markers. Click to see details and dismiss.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
