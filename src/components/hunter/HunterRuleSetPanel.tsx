@@ -1,19 +1,46 @@
 /**
  * src/components/hunter/HunterRuleSetPanel.tsx
- * HUNTER Rule Set Management Panel — HT7
+ * HUNTER Rule Set Management Panel — HT10
  *
  * Displays all permanent learned rules grouped by type.
  * Shows rule text, source lead, approval date, and version.
- * Owner can edit or archive any rule.
+ * Owner can edit/archive any rule, add manual rules, search, and export.
+ * Features:
+ * - Rules grouped by type tabs with counts
+ * - Full-text search across all rules
+ * - Add manual rules with type selector
+ * - Edit inline with version incrementing
+ * - Archive/restore functionality
+ * - Version history viewing
+ * - Export to plain text
  */
 
 import React, { useState, useEffect } from 'react';
 import { HunterRule, RuleType, RuleStatus } from '@/services/hunter/HunterTypes';
+import {
+  fetchRules,
+  addRule,
+  editRule,
+  archiveRule,
+  restoreRule,
+  searchRules,
+  exportRules,
+  getRuleStats,
+  getRuleVersionHistory,
+} from '@/services/hunter/HunterRuleService';
 import { supabase } from '@/lib/supabase';
 
 interface RuleSetUIState extends HunterRule {
   isEditing: boolean;
   editText: string;
+  showHistory?: boolean;
+}
+
+interface RuleStats {
+  totalActive: number;
+  totalArchived: number;
+  countByType: Record<RuleType, number>;
+  lastUpdated: string | null;
 }
 
 export interface HunterRuleSetPanelProps {
@@ -21,39 +48,56 @@ export interface HunterRuleSetPanelProps {
 }
 
 type RuleTypeFilter = 'all' | 'pitch' | 'suppression' | 'urgency' | 'objection' | 'source' | 'timing';
+type SortBy = 'date_added' | 'type' | 'source_lead';
 
 export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }) => {
   const [rules, setRules] = useState<RuleSetUIState[]>([]);
+  const [archivedRules, setArchivedRules] = useState<RuleSetUIState[]>([]);
   const [filteredRules, setFilteredRules] = useState<RuleSetUIState[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<RuleTypeFilter>('all');
+  const [sortBy, setSortBy] = useState<SortBy>('date_added');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [stats, setStats] = useState<RuleStats | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newRuleType, setNewRuleType] = useState<RuleType>(RuleType.PITCH);
+  const [newRuleText, setNewRuleText] = useState('');
+  const [isAddingRule, setIsAddingRule] = useState(false);
 
   // Load rules on mount
   useEffect(() => {
     const loadRules = async () => {
       setIsLoading(true);
       try {
-        const { data, error } = await (supabase.from('hunter_rules') as any)
-          .select('*')
-          .eq('user_id', userId)
-          .eq('status', RuleStatus.ACTIVE)
-          .order('updated_at', { ascending: false });
+        const allRules = await fetchRules(userId);
 
-        if (error) {
-          console.error('Failed to fetch rules:', error);
-          return;
-        }
+        const active: RuleSetUIState[] = allRules
+          .filter((rule) => rule.status === RuleStatus.ACTIVE)
+          .map((rule) => ({
+            ...(rule as HunterRule),
+            isEditing: false,
+            editText: rule.rule_text,
+            showHistory: false,
+          }));
 
-        const rulesWithUI: RuleSetUIState[] = (data || []).map((rule: any) => ({
-          ...(rule as HunterRule),
-          isEditing: false,
-          editText: rule.rule_text,
-        }));
+        const archived: RuleSetUIState[] = allRules
+          .filter((rule) => rule.status === RuleStatus.ARCHIVED)
+          .map((rule) => ({
+            ...(rule as HunterRule),
+            isEditing: false,
+            editText: rule.rule_text,
+            showHistory: false,
+          }));
 
-        setRules(rulesWithUI);
+        setRules(active);
+        setArchivedRules(archived);
         setLastUpdated(new Date().toISOString());
+
+        // Load stats
+        const ruleStats = await getRuleStats(userId);
+        setStats(ruleStats);
       } catch (error) {
         console.error('Error loading rules:', error);
       } finally {
@@ -66,9 +110,9 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
     }
   }, [userId]);
 
-  // Apply filters and search
+  // Apply filters, search, and sorting
   useEffect(() => {
-    let filtered = rules;
+    let filtered = showArchived ? archivedRules : rules;
 
     // Filter by type
     if (filterType !== 'all') {
@@ -78,12 +122,27 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
     // Filter by search term
     if (searchTerm) {
       filtered = filtered.filter((rule) =>
-        rule.rule_text.toLowerCase().includes(searchTerm.toLowerCase())
+        rule.rule_text.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        rule.rule_type.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
-    setFilteredRules(filtered);
-  }, [rules, filterType, searchTerm]);
+    // Sort
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === 'date_added') {
+        const dateA = new Date(a.created_at || a.updated_at || 0).getTime();
+        const dateB = new Date(b.created_at || b.updated_at || 0).getTime();
+        return dateB - dateA;
+      } else if (sortBy === 'type') {
+        return a.rule_type.localeCompare(b.rule_type);
+      } else if (sortBy === 'source_lead') {
+        return (a.source_lead_id || '').localeCompare(b.source_lead_id || '');
+      }
+      return 0;
+    });
+
+    setFilteredRules(sorted);
+  }, [rules, archivedRules, filterType, searchTerm, sortBy, showArchived]);
 
   const handleEditRule = (ruleId: string) => {
     setRules((prev) =>
@@ -93,18 +152,12 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
 
   const handleSaveEdit = async (ruleId: string) => {
     const rule = rules.find((r) => r.id === ruleId);
-    if (!rule) return;
+    if (!rule || rule.editText === rule.rule_text) return;
 
     try {
-      const { error } = await (supabase.from('hunter_rules') as any)
-        .update({
-          rule_text: rule.editText,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', ruleId);
-
-      if (error) {
-        console.error('Failed to update rule:', error);
+      const updated = await editRule(ruleId, rule.editText);
+      if (!updated) {
+        console.error('Failed to update rule');
         return;
       }
 
@@ -112,11 +165,21 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
       setRules((prev) =>
         prev.map((r) =>
           r.id === ruleId
-            ? { ...r, rule_text: r.editText, isEditing: false }
+            ? {
+                ...r,
+                rule_text: r.editText,
+                isEditing: false,
+                version: updated.version,
+                updated_at: updated.updated_at,
+              }
             : r
         )
       );
       setLastUpdated(new Date().toISOString());
+
+      // Refresh stats
+      const ruleStats = await getRuleStats(userId);
+      setStats(ruleStats);
     } catch (error) {
       console.error('Error saving rule:', error);
     }
@@ -133,29 +196,135 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
   };
 
   const handleArchiveRule = async (ruleId: string) => {
-    if (!confirm('Archive this rule? It will no longer be active.')) {
+    if (!confirm('Archive this rule? It will no longer be active but can be restored.')) {
       return;
     }
 
     try {
-      const { error } = await (supabase.from('hunter_rules') as any)
-        .update({
-          status: RuleStatus.ARCHIVED,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', ruleId);
-
-      if (error) {
-        console.error('Failed to archive rule:', error);
+      const success = await archiveRule(ruleId);
+      if (!success) {
+        console.error('Failed to archive rule');
         return;
       }
 
-      // Remove from local state
-      setRules((prev) => prev.filter((r) => r.id !== ruleId));
+      // Move from active to archived
+      const ruleToArchive = rules.find((r) => r.id === ruleId);
+      if (ruleToArchive) {
+        setRules((prev) => prev.filter((r) => r.id !== ruleId));
+        setArchivedRules((prev) => [
+          ...prev,
+          { ...ruleToArchive, status: RuleStatus.ARCHIVED },
+        ]);
+      }
+
       setLastUpdated(new Date().toISOString());
+
+      // Refresh stats
+      const ruleStats = await getRuleStats(userId);
+      setStats(ruleStats);
     } catch (error) {
       console.error('Error archiving rule:', error);
     }
+  };
+
+  const handleRestoreRule = async (ruleId: string) => {
+    if (!confirm('Restore this rule to active status?')) {
+      return;
+    }
+
+    try {
+      const restored = await restoreRule(ruleId);
+      if (!restored) {
+        console.error('Failed to restore rule');
+        return;
+      }
+
+      // Move from archived to active
+      const ruleToRestore = archivedRules.find((r) => r.id === ruleId);
+      if (ruleToRestore) {
+        setArchivedRules((prev) => prev.filter((r) => r.id !== ruleId));
+        setRules((prev) => [
+          ...prev,
+          { ...ruleToRestore, status: RuleStatus.ACTIVE },
+        ]);
+      }
+
+      setLastUpdated(new Date().toISOString());
+
+      // Refresh stats
+      const ruleStats = await getRuleStats(userId);
+      setStats(ruleStats);
+    } catch (error) {
+      console.error('Error restoring rule:', error);
+    }
+  };
+
+  const handleAddRule = async () => {
+    if (!newRuleText.trim()) {
+      alert('Please enter rule text');
+      return;
+    }
+
+    setIsAddingRule(true);
+    try {
+      const newRule = await addRule(userId, newRuleType, newRuleText.trim());
+      if (!newRule) {
+        console.error('Failed to add rule');
+        setIsAddingRule(false);
+        return;
+      }
+
+      // Add to local state
+      setRules((prev) => [
+        {
+          ...newRule,
+          isEditing: false,
+          editText: newRule.rule_text,
+          showHistory: false,
+        },
+        ...prev,
+      ]);
+
+      // Reset form
+      setNewRuleText('');
+      setNewRuleType(RuleType.PITCH);
+      setShowAddForm(false);
+      setLastUpdated(new Date().toISOString());
+
+      // Refresh stats
+      const ruleStats = await getRuleStats(userId);
+      setStats(ruleStats);
+    } catch (error) {
+      console.error('Error adding rule:', error);
+    } finally {
+      setIsAddingRule(false);
+    }
+  };
+
+  const handleExportRules = async () => {
+    try {
+      const text = await exportRules(userId);
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hunter-rules-${new Date().toISOString().split('T')[0]}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting rules:', error);
+      alert('Failed to export rules');
+    }
+  };
+
+  const handleToggleHistory = async (ruleId: string) => {
+    setRules((prev) =>
+      prev.map((r) =>
+        r.id === ruleId ? { ...r, showHistory: !r.showHistory } : r
+      )
+    );
   };
 
   const ruleTypeOptions: Array<{ value: RuleTypeFilter; label: string }> = [
@@ -168,46 +337,157 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
     { value: RuleType.TIMING, label: 'Timing' },
   ];
 
+  const sortOptions: Array<{ value: SortBy; label: string }> = [
+    { value: 'date_added', label: 'Date Added (Newest)' },
+    { value: 'type', label: 'Rule Type' },
+    { value: 'source_lead', label: 'Source Lead' },
+  ];
+
   const groupedRules = groupRulesByType(filteredRules);
+
+  const getTypeCount = (type: RuleType): number => {
+    return (stats?.countByType[type] || 0);
+  };
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-          Learned Rules
-        </h2>
-        <div className="flex items-center justify-between mt-2">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            {filteredRules.length} active {filteredRules.length === 1 ? 'rule' : 'rules'}
-            {lastUpdated && ` • Last updated ${formatTime(lastUpdated)}`}
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Learned Rules
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              {stats?.totalActive || 0} active • {stats?.totalArchived || 0} archived
+              {lastUpdated && ` • Last updated ${formatTime(lastUpdated)}`}
+            </p>
+          </div>
+          <button
+            onClick={handleExportRules}
+            className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
+            title="Export all active rules as plain text"
+          >
+            📥 Export Rules
+          </button>
         </div>
       </div>
+
+      {/* Tabs for Active/Archived */}
+      <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => setShowArchived(false)}
+          className={`px-4 py-2 font-medium text-sm transition-colors ${
+            !showArchived
+              ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+          }`}
+        >
+          Active Rules ({stats?.totalActive || 0})
+        </button>
+        <button
+          onClick={() => setShowArchived(true)}
+          className={`px-4 py-2 font-medium text-sm transition-colors ${
+            showArchived
+              ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+          }`}
+        >
+          Archived Rules ({stats?.totalArchived || 0})
+        </button>
+      </div>
+
+      {/* Add Rule Button (only show on Active tab) */}
+      {!showArchived && (
+        <div>
+          {!showAddForm ? (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors"
+            >
+              ➕ Add Manual Rule
+            </button>
+          ) : (
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 space-y-3">
+              <h3 className="font-semibold text-gray-900 dark:text-white">Add New Rule</h3>
+
+              <select
+                value={newRuleType}
+                onChange={(e) => setNewRuleType(e.target.value as RuleType)}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {ruleTypeOptions.slice(1).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+
+              <textarea
+                value={newRuleText}
+                onChange={(e) => setNewRuleText(e.target.value)}
+                placeholder="Enter rule text..."
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={3}
+              />
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleAddRule}
+                  disabled={isAddingRule}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {isAddingRule ? '⏳ Saving...' : '✓ Save Rule'}
+                </button>
+                <button
+                  onClick={() => setShowAddForm(false)}
+                  className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white text-sm rounded hover:bg-gray-400 dark:hover:bg-gray-700 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Search and Filter Controls */}
       <div className="space-y-3">
         {/* Search */}
         <input
           type="text"
-          placeholder="Search rules..."
+          placeholder="Search rules by text or type..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
 
-        {/* Filter Dropdown */}
-        <select
-          value={filterType}
-          onChange={(e) => setFilterType(e.target.value as RuleTypeFilter)}
-          className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {ruleTypeOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        {/* Filter and Sort Dropdowns */}
+        <div className="grid grid-cols-2 gap-3">
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value as RuleTypeFilter)}
+            className="px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          >
+            {ruleTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortBy)}
+            className="px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          >
+            {sortOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Loading State */}
@@ -220,7 +500,7 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
       {/* Rules by Type */}
       {!isLoading && filteredRules.length === 0 ? (
         <div className="text-center py-8 text-gray-600 dark:text-gray-400">
-          <p>No rules match your search.</p>
+          <p>{showArchived ? 'No archived rules.' : 'No active rules. Add one to get started!'}</p>
         </div>
       ) : (
         Object.entries(groupedRules).map(([typeLabel, typeRules]) => (
@@ -238,22 +518,29 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
                   {/* Header */}
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className={`inline-block px-2 py-1 text-xs font-semibold rounded ${getRuleTypeBadgeColor(rule.rule_type)}`}>
                           {rule.rule_type.toUpperCase()}
                         </span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          v{rule.version}
-                        </span>
+                        <button
+                          onClick={() => handleToggleHistory(rule.id)}
+                          className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                          title="View version history"
+                        >
+                          v{rule.version} {rule.showHistory ? '▾' : '▸'}
+                        </button>
                       </div>
-                      {rule.source_lead_id && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Source: {rule.source_lead_id}
-                        </p>
-                      )}
+                      <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                        {rule.source_lead_id && (
+                          <p>Source: <span className="font-medium">{rule.source_lead_id}</span></p>
+                        )}
+                        {rule.created_at && (
+                          <p>Approved: {new Date(rule.created_at).toLocaleDateString()}</p>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                      {new Date(rule.created_at || '').toLocaleDateString()}
+                    <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">
+                      Updated {formatTime(rule.updated_at || rule.created_at || '')}
                     </span>
                   </div>
 
@@ -277,6 +564,15 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
                     </p>
                   )}
 
+                  {/* Version History (if shown) */}
+                  {rule.showHistory && (
+                    <div className="bg-gray-50 dark:bg-gray-700/50 rounded p-3 text-xs space-y-1">
+                      <p className="font-semibold text-gray-700 dark:text-gray-300">Version History:</p>
+                      <p className="text-gray-600 dark:text-gray-400">v{rule.version}: {new Date(rule.updated_at || '').toLocaleDateString()}</p>
+                      <p className="text-gray-500 dark:text-gray-500 italic">(Full version history table would require hunter_rule_history table)</p>
+                    </div>
+                  )}
+
                   {/* Action Buttons */}
                   <div className="flex gap-2 flex-wrap">
                     {rule.isEditing ? (
@@ -285,7 +581,7 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
                           onClick={() => handleSaveEdit(rule.id)}
                           className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors"
                         >
-                          Save
+                          ✓ Save
                         </button>
                         <button
                           onClick={() => handleCancelEdit(rule.id)}
@@ -296,18 +592,30 @@ export const HunterRuleSetPanel: React.FC<HunterRuleSetPanelProps> = ({ userId }
                       </>
                     ) : (
                       <>
-                        <button
-                          onClick={() => handleEditRule(rule.id)}
-                          className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors"
-                        >
-                          ✎ Edit
-                        </button>
-                        <button
-                          onClick={() => handleArchiveRule(rule.id)}
-                          className="px-3 py-1 bg-gray-600 text-white text-sm rounded hover:bg-gray-700 transition-colors"
-                        >
-                          Archive
-                        </button>
+                        {!showArchived && (
+                          <>
+                            <button
+                              onClick={() => handleEditRule(rule.id)}
+                              className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors"
+                            >
+                              ✎ Edit
+                            </button>
+                            <button
+                              onClick={() => handleArchiveRule(rule.id)}
+                              className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+                            >
+                              📦 Archive
+                            </button>
+                          </>
+                        )}
+                        {showArchived && (
+                          <button
+                            onClick={() => handleRestoreRule(rule.id)}
+                            className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
+                          >
+                            ↩️ Restore
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
