@@ -77,6 +77,7 @@ import { GravitationalLensingLayer } from '@/components/neural-world/Gravitation
 import { TectonicPlatesLayer } from '@/components/neural-world/TectonicPlatesLayer'
 import { TidalForcesLayer } from '@/components/neural-world/TidalForcesLayer'
 import { MyceliumNetworkLayer } from '@/components/neural-world/MyceliumNetworkLayer'
+import { AuroraEventsLayer } from '@/components/neural-world/AuroraEventsLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -130,6 +131,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'tides':            false,
   // NW58: Mycelium underground resource network — off by default (opt-in)
   'mycelium':         false,
+  // NW59: Aurora events — milestone celebration sky effects, on by default
+  'aurora':           true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -227,6 +230,8 @@ function WorldLayers({
       <GravitationalLensingLayer visible={!!layerStates['gravity-fields']} />
       {/* NW52: Tectonic plates — domain boundary ground planes with fault lines + earthquake events */}
       <TectonicPlatesLayer visible={!!layerStates['tectonic-plates']} />
+      {/* NW59: Aurora Events — milestone celebration sky effects */}
+      <AuroraEventsLayer visible={!!layerStates['aurora']} soundEnabled={!!layerStates['sound']} />
     </>
   )
 }

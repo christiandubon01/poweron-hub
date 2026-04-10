@@ -139,6 +139,12 @@ const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
   LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'constellation'])
+  /** NW59: Aurora Events — milestone celebration sky effects. On by default. */
+  { id: 'aurora',           label: 'Aurora',           icon: '🌌', r: 168, g: 85,  b: 247 },
+]
+
+const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'aurora'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -422,7 +428,7 @@ export default function CommandHUD({
     },
     {
       id: 'audionav', label: 'AUDIO & NAVIGATION', color: '#44aaff',
-      layerIds: ['sound', 'time-navigation', 'resonance-orb'],
+      layerIds: ['sound', 'time-navigation', 'resonance-orb', 'aurora'],
     },
     {
       id: 'overlays', label: 'OVERLAYS', color: '#ff7744',
