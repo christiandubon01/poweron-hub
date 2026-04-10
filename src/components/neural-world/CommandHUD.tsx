@@ -105,6 +105,8 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW50: Ecosystem Symbiosis — resource-sharing vines between project mountains. Off by default. */
+  { id: 'ecosystem',        label: 'Ecosystem',        icon: '🌿', r: 20,  g: 184, b: 166 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'ecosystem':       'Ecosystem Symbiosis — organic vine connections between projects sharing crew (amber), materials (teal), equipment (gold), or schedule overlap (gradient). Click any vine for savings and synergy recommendations. Isolated projects glow orange.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -374,6 +377,10 @@ export default function CommandHUD({
     {
       id: 'overlays', label: 'OVERLAYS', color: '#ff7744',
       layerIds: ['command', 'katsuro-bridge', 'proximity-info'],
+    },
+    {
+      id: 'ecosystem', label: 'ECOSYSTEM', color: '#14B8A6',
+      layerIds: ['ecosystem'],
     },
   ] as const
 
