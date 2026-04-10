@@ -62,6 +62,16 @@ export * from './HunterPitchGenerator'
 // Objection Bank
 export * from './HunterObjectionBank'
 
+// Source Analytics (HT14)
+export {
+  hunterSourceAnalytics,
+  type SourceMetrics,
+  type SourceAnalysis,
+  type PitchAnglePerformance,
+  type TimePattern,
+  type HeatmapEntry,
+} from './HunterSourceAnalytics'
+
 // Types
 export {
   LeadStatus,
