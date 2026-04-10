@@ -105,10 +105,12 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW54: Bioluminescence — organic data-driven ground glow + activity pulses. On by default. */
+  { id: 'bioluminescence',  label: 'Bioluminescence',  icon: '✦', r: 0,   g: 255, b: 153 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info'])
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'bioluminescence'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'bioluminescence': 'Organic data-driven ground glow. Active project zones pulse teal-green, dormant areas go dark. Brightness follows time of day and business hours.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -374,6 +377,10 @@ export default function CommandHUD({
     {
       id: 'overlays', label: 'OVERLAYS', color: '#ff7744',
       layerIds: ['command', 'katsuro-bridge', 'proximity-info'],
+    },
+    {
+      id: 'world', label: 'WORLD FX', color: '#00ff99',
+      layerIds: ['bioluminescence'],
     },
   ] as const
 
