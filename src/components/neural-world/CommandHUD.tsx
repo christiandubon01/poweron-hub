@@ -105,10 +105,12 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW59: Aurora Events — milestone celebration sky effects. On by default. */
+  { id: 'aurora',           label: 'Aurora',           icon: '🌌', r: 168, g: 85,  b: 247 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info'])
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'aurora'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -369,7 +371,7 @@ export default function CommandHUD({
     },
     {
       id: 'audionav', label: 'AUDIO & NAVIGATION', color: '#44aaff',
-      layerIds: ['sound', 'time-navigation', 'resonance-orb'],
+      layerIds: ['sound', 'time-navigation', 'resonance-orb', 'aurora'],
     },
     {
       id: 'overlays', label: 'OVERLAYS', color: '#ff7744',

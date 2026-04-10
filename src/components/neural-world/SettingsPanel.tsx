@@ -28,6 +28,7 @@ import { ColorModeSelector, type ColorMode } from './AdaptiveColorEngine'
 import { AudioSettingsSection } from './SonicLandscape'
 import { ResizablePanel } from './ResizablePanel'
 import { triggerIncomeTutorial, INCOME_TUTORIAL_COMPLETED_KEY } from './IncomeTutorial'
+import { AuroraHistoryPanel } from './AuroraEventsLayer'
 
 interface SettingsPanelProps {
   cameraMode: CameraMode
@@ -541,6 +542,11 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
 
           <Divider />
 
+          {/* ── NW59: Aurora History ── */}
+          <AuroraHistorySection />
+
+          <Divider />
+
           {/* Hint — B73: min 14px from 8 */}
           <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 14, letterSpacing: 0.8, lineHeight: 1.5, marginTop: 2 }}>
             1P/3P: Scroll = speed · Shift = toggle sprint<br/>
@@ -557,6 +563,40 @@ export function SettingsPanel({ cameraMode, onCameraModeChange }: SettingsPanelP
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+
+/** NW59: Aurora History expandable section inside SettingsPanel */
+function AuroraHistorySection() {
+  const [expanded, setExpanded] = React.useState(false)
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(o => !o)}
+        style={{
+          width:         '100%',
+          display:       'flex',
+          justifyContent:'space-between',
+          alignItems:    'center',
+          background:    'transparent',
+          border:        'none',
+          cursor:        'pointer',
+          padding:       0,
+          marginBottom:  expanded ? 8 : 0,
+        }}
+      >
+        <span style={{ color: '#a855f7', fontSize: 14, letterSpacing: 2, fontWeight: 700 }}>
+          ◈ AURORA HISTORY
+        </span>
+        <span style={{ color: 'rgba(168,85,247,0.7)', fontSize: 12 }}>
+          {expanded ? '▲' : '▼'}
+        </span>
+      </button>
+      {expanded && (
+        <AuroraHistoryPanel onClose={() => setExpanded(false)} />
+      )}
+    </div>
+  )
+}
 
 function SliderRow({
   label, value, min, max, step, display, onChange, touchFriendly = false,

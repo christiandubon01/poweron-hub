@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { AuroraEventsLayer } from '@/components/neural-world/AuroraEventsLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW59: Aurora events — milestone celebration sky effects, on by default
+  'aurora':           true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -170,6 +173,8 @@ function WorldLayers({
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
       <IncomeTutorial />
+      {/* NW59: Aurora Events — milestone celebration sky effects */}
+      <AuroraEventsLayer visible={!!layerStates['aurora']} soundEnabled={!!layerStates['sound']} />
     </>
   )
 }
