@@ -65,6 +65,7 @@ import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
+import { TectonicPlatesLayer } from '@/components/neural-world/TectonicPlatesLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'resonance-orb':    true,
   // NW-PROX: Proximity info cards — domain awareness HUD, on by default
   'proximity-info':   true,
+  // NW52: Tectonic plates — domain boundary visualization, off by default
+  'tectonic-plates':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -170,6 +173,8 @@ function WorldLayers({
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
       <IncomeTutorial />
+      {/* NW52: Tectonic plates — domain boundary ground planes with fault lines + earthquake events */}
+      <TectonicPlatesLayer visible={!!layerStates['tectonic-plates']} />
     </>
   )
 }

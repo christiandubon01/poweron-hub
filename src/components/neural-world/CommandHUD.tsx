@@ -105,6 +105,8 @@ const LAYERS: LayerDef[] = [
   { id: 'sound',            label: 'Sound',            icon: '♪', r: 0,   g: 229, b: 204 },
   /** NW-PROX: Proximity info cards — domain awareness HUD, no clicks required. On by default. */
   { id: 'proximity-info',   label: 'Proximity Info',   icon: '◎', r: 0,   g: 200, b: 255 },
+  /** NW52: Tectonic plates — business domain boundaries shift with revenue mix. Off by default. */
+  { id: 'tectonic-plates',  label: 'Tectonic Plates',  icon: '🌋', r: 255, g: 160, b: 48  },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -138,6 +140,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'resonance-orb':   'Central orb showing operational harmony score. DISSONANT/COHERENT/GROWTH state drives world speed. Click orb to see factor breakdown.',
   'sound':           'Procedural audio layer. Ambient drone, node tones, agent sounds, and event chimes respond to your business state. Headphones recommended.',
   'proximity-info':  'Domain awareness HUD. Info cards appear as you approach domain zones, project mountains, and special entities — no clicks required.',
+  'tectonic-plates': 'Business domain boundaries (residential, commercial, service, solar) rendered as tectonic plates. Size = revenue share. Fault lines glow amber; red = competing growth. Earthquakes fire on major shifts.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -353,7 +356,7 @@ export default function CommandHUD({
   const LAYER_GROUPS = [
     {
       id: 'terrain', label: 'TERRAIN', color: '#00e5cc',
-      layerIds: ['pulse', 'pressure', 'critical-path', 'decision-gravity', 'risk-surface', 'velocity', 'forecast'],
+      layerIds: ['pulse', 'pressure', 'critical-path', 'decision-gravity', 'risk-surface', 'velocity', 'forecast', 'tectonic-plates'],
     },
     {
       id: 'fog', label: 'FOG LAYERS', color: '#aa66ee',
