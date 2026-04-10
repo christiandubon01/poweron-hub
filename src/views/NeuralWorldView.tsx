@@ -68,6 +68,7 @@ import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
 import GoalModeController from '@/components/neural-world/GoalModePanel'
 import { GoldenPathLayer } from '@/components/neural-world/layers/GoldenPathLayer'
+import { NetworkEffectsLayer } from '@/components/neural-world/NetworkEffectsLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -103,6 +104,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'proximity-info':   true,
   // NW54: Bioluminescence — organic data-driven glow patterns, on by default
   'bioluminescence':  true,
+  // NW47: Network Effects — second-order influence radiation + downstream connection web
+  'network-effects':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -179,6 +182,8 @@ function WorldLayers({
       <IncomeTutorial />
       {/* NW45: Golden Path Layer — goal mode waypoint diamonds + amber trail */}
       <GoldenPathLayer />
+      {/* NW47: Network Effects — influence radiation pulses + downstream connection web */}
+      <NetworkEffectsLayer visible={!!layerStates['network-effects']} />
     </>
   )
 }
