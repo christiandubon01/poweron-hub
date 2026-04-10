@@ -33,7 +33,7 @@ interface UsageMetric {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function BillingPanel() {
-  const { subscription, loading, isActive, tierName, refresh } = useSubscription()
+  const { tier: tierName, isLoading: loading, features, limits, canAccess, checkLimit, refresh } = useSubscription(); const isActive = tierName !== 'free' && tierName !== 'expired'; const subscription = { tierSlug: tierName, tier: tierName, features, limits, currentPeriodEnd: null as Date | null, status: isActive ? 'active' : 'inactive' }
   const { profile } = useAuth()
   const [usageMetrics, setUsageMetrics] = useState<UsageMetric[]>([])
   const [loadingUsage, setLoadingUsage] = useState(true)
@@ -242,7 +242,7 @@ export function BillingPanel() {
               <div>
                 <p className="text-text-4 text-xs uppercase tracking-wide mb-1">Monthly Price</p>
                 <p className="text-2xl font-bold text-emerald-400">
-                  ${subscription.tier.monthlyPrice}
+                  ${({solo:49,growth:129,pro:299,proplus:499,enterprise:800}[tierName] || 0)}
                   <span className="text-sm text-text-3 font-normal">/mo</span>
                 </p>
               </div>
@@ -418,3 +418,4 @@ export function BillingPanel() {
 }
 
 export default BillingPanel
+
