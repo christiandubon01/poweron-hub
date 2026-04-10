@@ -116,6 +116,8 @@ const LAYERS: LayerDef[] = [
   { id: 'ecosystem',        label: 'Ecosystem',        icon: '🌿', r: 20,  g: 184, b: 166 },
   /** NW51: Gravity Fields — high-value node influence fields with Fresnel distortion. Off by default. */
   { id: 'gravity-fields',   label: 'Gravity Fields',   icon: '⊕', r: 0,   g: 229, b: 204 },
+  /** NW52: Tectonic plates — business domain boundaries shift with revenue mix. Off by default. */
+  { id: 'tectonic-plates',  label: 'Tectonic Plates',  icon: '🌋', r: 255, g: 160, b: 48  },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -161,6 +163,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'ghost-universe':  'Parallel timeline overlay. Declined leads appear as ghost mountains showing the revenue that never materialized. Comparison HUD shows reality vs. potential. Click any ghost mountain to revive the lead.',
   'ecosystem':       'Ecosystem Symbiosis — organic vine connections between projects sharing crew (amber), materials (teal), equipment (gold), or schedule overlap (gradient). Click any vine for savings and synergy recommendations. Isolated projects glow orange.',
   'gravity-fields':  'High-value nodes warp space like gravity wells. Top 20% by contract/AR value get Fresnel influence fields. Overlapping fields create gold interference rings. Hover inside a field for mass/radius data. Click to see what each node pulls.',
+  'tectonic-plates': 'Business domain boundaries (residential, commercial, service, solar) rendered as tectonic plates. Size = revenue share. Fault lines glow amber; red = competing growth. Earthquakes fire on major shifts.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -389,7 +392,7 @@ export default function CommandHUD({
   const LAYER_GROUPS = [
     {
       id: 'terrain', label: 'TERRAIN', color: '#00e5cc',
-      layerIds: ['pulse', 'pressure', 'critical-path', 'decision-gravity', 'risk-surface', 'velocity', 'forecast'],
+      layerIds: ['pulse', 'pressure', 'critical-path', 'decision-gravity', 'risk-surface', 'velocity', 'forecast', 'tectonic-plates'],
     },
     {
       id: 'fog', label: 'FOG LAYERS', color: '#aa66ee',

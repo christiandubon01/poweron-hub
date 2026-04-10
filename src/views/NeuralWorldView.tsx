@@ -73,6 +73,7 @@ import { NetworkEffectsLayer } from '@/components/neural-world/NetworkEffectsLay
 import { ThreatMovementLayer } from '@/components/neural-world/ThreatMovementLayer'
 import { GhostUniverseLayer } from '@/components/neural-world/GhostUniverseLayer'
 import { GravitationalLensingLayer } from '@/components/neural-world/GravitationalLensingLayer'
+import { TectonicPlatesLayer } from '@/components/neural-world/TectonicPlatesLayer'
 
 // ── Default layer state ───────────────────────────────────────────────────────
 
@@ -118,6 +119,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'ecosystem':        false,
   // NW51: Gravity Fields — high-value node distortion fields. Off by default.
   'gravity-fields':   false,
+  // NW52: Tectonic plates — domain boundary visualization, off by default
+  'tectonic-plates':  false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -207,6 +210,8 @@ function WorldLayers({
       <EcosystemSymbiosisLayer visible={!!layerStates['ecosystem']} />
       {/* NW51: Gravitational lensing — high-value node distortion fields, mass comparison, interference rings */}
       <GravitationalLensingLayer visible={!!layerStates['gravity-fields']} />
+      {/* NW52: Tectonic plates — domain boundary ground planes with fault lines + earthquake events */}
+      <TectonicPlatesLayer visible={!!layerStates['tectonic-plates']} />
     </>
   )
 }
