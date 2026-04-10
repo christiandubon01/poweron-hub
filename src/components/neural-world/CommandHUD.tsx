@@ -39,9 +39,8 @@ import WhatIfSimulator, { WhatIfButton } from './WhatIfSimulator'
 import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 import LegendPanel, { LegendButton } from './LegendPanel'
 import { AdaptiveColorEngine, CognitiveStateHUD } from './AdaptiveColorEngine'
-import { SonicLandscape, MuteButton } from './SonicLandscape'
-import { SetGoalButton, triggerGoalSetup, getGoalState } from './GoalModePanel'
 import { SonicLandscape, SoundProfileButton } from './SonicLandscape'
+import { SetGoalButton, triggerGoalSetup, getGoalState } from './GoalModePanel'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -111,6 +110,8 @@ const LAYERS: LayerDef[] = [
   { id: 'bioluminescence',  label: 'Bioluminescence',  icon: '✦', r: 0,   g: 255, b: 153 },
   /** NW47: Network Effects — second-order influence radiation + downstream connection web. Off by default. */
   { id: 'network-effects',  label: 'Network Effects',  icon: '⟴', r: 0,   g: 229, b: 180 },
+  /** NW48: Threat movement — negative indicators drift toward camera, urgency escalation. On by default. */
+  { id: 'threats',           label: 'Threats',           icon: '⚠', r: 255, g: 40,  b: 40  },
   /** NW49: Ghost Universe — parallel timeline overlay. Declined leads as ghost mountains. Off by default. */
   { id: 'ghost-universe',   label: 'Ghost Universe',   icon: '◌', r: 170, g: 200, b: 255 },
   /** NW50: Ecosystem Symbiosis — resource-sharing vines between project mountains. Off by default. */
@@ -119,34 +120,20 @@ const LAYERS: LayerDef[] = [
   { id: 'gravity-fields',   label: 'Gravity Fields',   icon: '⊕', r: 0,   g: 229, b: 204 },
   /** NW52: Tectonic plates — business domain boundaries shift with revenue mix. Off by default. */
   { id: 'tectonic-plates',  label: 'Tectonic Plates',  icon: '🌋', r: 255, g: 160, b: 48  },
+  /** NW56: Constellation mode — zoom-out star field, pattern connections, constellation naming. On by default. */
+  { id: 'constellation',    label: 'Constellation',    icon: '✦', r: 140, g: 180, b: 255 },
   /** NW57: Tidal Forces — cash flow ocean tide simulation. Off by default. */
   { id: 'tides',            label: 'Tides',             icon: '🌊', r: 0,   g: 210, b: 200 },
   /** NW58: Mycelium network — underground resource connections, supply chains, knowledge transfer */
   { id: 'mycelium',         label: 'Mycelium',          icon: '⟳', r: 0,   g: 229, b: 204 },
+  /** NW59: Aurora Events — milestone celebration sky effects. On by default. */
+  { id: 'aurora',           label: 'Aurora',           icon: '🌌', r: 168, g: 85,  b: 247 },
   /** NW60: Fossil Record — archaeological layer for completed/archived projects. Off by default. */
   { id: 'fossil-record',    label: 'Fossil Record',    icon: '⛏', r: 255, g: 160, b: 60  },
   /** NW61: Climate zones — regional weather driven by domain business health. Off by default. */
   { id: 'climate',          label: 'Climate',          icon: '🌤', r: 255, g: 200, b: 80  },
   /** NW62: Magnetic field lines — influence direction, polarity system, animated particle flow. Off by default. */
   { id: 'magnetic-fields',  label: 'Magnetic Fields',  icon: '⊛', r: 0,   g: 229, b: 204 },
-]
-
-const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'bioluminescence'])
-  /** NW48: Threat movement — negative indicators drift toward camera, urgency escalation. On by default. */
-  { id: 'threats',           label: 'Threats',           icon: '⚠', r: 255, g: 40,  b: 40  },
-]
-
-const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'threats'])
-  /** NW56: Constellation mode — zoom-out star field, pattern connections, constellation naming */
-  { id: 'constellation',    label: 'Constellation',    icon: '✦', r: 140, g: 180, b: 255 },
-]
-
-const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
-  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'constellation'])
-  /** NW59: Aurora Events — milestone celebration sky effects. On by default. */
-  { id: 'aurora',           label: 'Aurora',           icon: '🌌', r: 168, g: 85,  b: 247 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -453,8 +440,7 @@ export default function CommandHUD({
     },
     {
       id: 'underground', label: 'UNDERGROUND', color: '#00e5cc',
-      layerIds: ['mycelium'],
-      layerIds: ['command', 'katsuro-bridge', 'proximity-info', 'fossil-record'],
+      layerIds: ['mycelium', 'fossil-record'],
     },
     {
       id: 'climate', label: 'CLIMATE', color: '#ffcc44',
