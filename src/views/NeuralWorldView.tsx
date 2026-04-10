@@ -49,6 +49,7 @@ import { FortressLayer } from '@/components/neural-world/layers/FortressLayer'
 import { FogDomainLayer } from '@/components/neural-world/layers/FogDomainLayer'
 import { KatsuroBridgeLayer } from '@/components/neural-world/layers/KatsuroBridgeLayer'
 import { AutomationFlowLayer } from '@/components/neural-world/layers/AutomationFlowLayer'
+import { EcosystemSymbiosisLayer } from '@/components/neural-world/EcosystemSymbiosisLayer'
 import { AutomationFlowBuilder, FlowsButton } from '@/components/neural-world/AutomationFlowBuilder'
 import { NexusSweepController } from '@/components/neural-world/NexusSweepController'
 import { FlightAnalyticsPanel } from '@/components/neural-world/FlightAnalyticsPanel'
@@ -112,6 +113,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'threats':          true,
   // NW49: Ghost Universe — parallel timeline / declined leads. Off by default.
   'ghost-universe':   false,
+  // NW50: Ecosystem Symbiosis — resource-sharing vines, off by default
+  'ecosystem':        false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -197,6 +200,8 @@ function WorldLayers({
       />
       {/* NW49: Ghost Universe — parallel timeline, declined leads as ghost mountains */}
       <GhostUniverseLayer visible={!!layerStates['ghost-universe']} />
+      {/* NW50: Ecosystem Symbiosis — resource-sharing vines between project mountains */}
+      <EcosystemSymbiosisLayer visible={!!layerStates['ecosystem']} />
     </>
   )
 }

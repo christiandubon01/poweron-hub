@@ -112,6 +112,8 @@ const LAYERS: LayerDef[] = [
   { id: 'network-effects',  label: 'Network Effects',  icon: '⟴', r: 0,   g: 229, b: 180 },
   /** NW49: Ghost Universe — parallel timeline overlay. Declined leads as ghost mountains. Off by default. */
   { id: 'ghost-universe',   label: 'Ghost Universe',   icon: '◌', r: 170, g: 200, b: 255 },
+  /** NW50: Ecosystem Symbiosis — resource-sharing vines between project mountains. Off by default. */
+  { id: 'ecosystem',        label: 'Ecosystem',        icon: '🌿', r: 20,  g: 184, b: 166 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
@@ -155,6 +157,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'network-effects': 'Visualizes second-order ripple effects across business nodes. Radial pulse waves show revenue, progress, workforce, and risk events. Glowing lines show downstream connections — crew sharing, cash-to-materials flow, and resource tension. Click any connection line for the full cause → effect chain with estimated dollar impact.',
   'threats':         'Negative indicators (overdue invoices, stalled projects, expiring contracts, cold leads) drift toward you as threat markers. Click to see details and dismiss.',
   'ghost-universe':  'Parallel timeline overlay. Declined leads appear as ghost mountains showing the revenue that never materialized. Comparison HUD shows reality vs. potential. Click any ghost mountain to revive the lead.',
+  'ecosystem':       'Ecosystem Symbiosis — organic vine connections between projects sharing crew (amber), materials (teal), equipment (gold), or schedule overlap (gradient). Click any vine for savings and synergy recommendations. Isolated projects glow orange.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {
@@ -408,6 +411,10 @@ export default function CommandHUD({
     {
       id: 'world', label: 'WORLD FX', color: '#00ff99',
       layerIds: ['bioluminescence'],
+    },
+    {
+      id: 'ecosystem', label: 'ECOSYSTEM', color: '#14B8A6',
+      layerIds: ['ecosystem'],
     },
   ] as const
 
