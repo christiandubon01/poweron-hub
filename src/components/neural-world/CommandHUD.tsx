@@ -40,6 +40,7 @@ import ProjectionGuide, { ProjectionGuideButton } from './ProjectionGuide'
 import LegendPanel, { LegendButton } from './LegendPanel'
 import { AdaptiveColorEngine, CognitiveStateHUD } from './AdaptiveColorEngine'
 import { SonicLandscape, MuteButton } from './SonicLandscape'
+import { SetGoalButton, triggerGoalSetup, getGoalState } from './GoalModePanel'
 
 // ── Enum mirrors (must match AtmosphereManager / CameraController) ────────────
 
@@ -260,6 +261,19 @@ export default function CommandHUD({
     function onCalibrated() { setFogCalibrated(true) }
     window.addEventListener('nw:fog-calibrated', onCalibrated)
     return () => window.removeEventListener('nw:fog-calibrated', onCalibrated)
+  }, [])
+
+  // NW45: Goal Mode active state (for SET GOAL button glow)
+  const [goalModeActive, setGoalModeActive] = React.useState(() => !!getGoalState())
+  useEffect(() => {
+    function onActivate()   { setGoalModeActive(true)  }
+    function onDeactivate() { setGoalModeActive(false) }
+    window.addEventListener('nw:goal-mode-activate',   onActivate)
+    window.addEventListener('nw:goal-mode-deactivate', onDeactivate)
+    return () => {
+      window.removeEventListener('nw:goal-mode-activate',   onActivate)
+      window.removeEventListener('nw:goal-mode-deactivate', onDeactivate)
+    }
   }, [])
 
   // NW33: Actionable insight panel state
@@ -1002,6 +1016,12 @@ export default function CommandHUD({
           open={fogInterviewOpen}
           onClick={() => setFogInterviewOpen(prev => !prev)}
           calibrated={fogCalibrated}
+        />
+
+        {/* NW45: SET GOAL button — income target + golden path missions */}
+        <SetGoalButton
+          active={goalModeActive}
+          onClick={triggerGoalSetup}
         />
 
         {/* NW33: Agent insight trigger button */}

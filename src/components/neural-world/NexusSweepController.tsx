@@ -21,6 +21,7 @@ import React, {
 import { ResizablePanel } from './ResizablePanel'
 import { getAudioEngine } from './AudioEngine'
 import { triggerIncomeTutorial } from './IncomeTutorial'
+import { triggerGoalSetup } from './GoalModePanel'
 
 // ── Briefing data emitted by AgentFlightLayer ────────────────────────────────
 
@@ -672,6 +673,11 @@ export function NexusSweepController({ soundLayerEnabled = false }: NexusSweepCo
           <AmberActionBtn label="▶ INCOME WALKTHROUGH" onClick={() => {
             dismiss()
             setTimeout(() => triggerIncomeTutorial(), 300)
+          }} />
+          {/* NW45: Set Goal quick action */}
+          <AmberActionBtn label="🎯 SET GOAL" onClick={() => {
+            dismiss()
+            setTimeout(() => triggerGoalSetup(), 300)
           }} />
           <ActionBtn label="DISMISS" onClick={dismiss} />
         </div>
