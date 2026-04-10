@@ -1,24 +1,40 @@
 /**
  * Stripe Services Index
+ * Exports all usage tracking and seat enforcement services
  */
-export * from './StripeService';
-export * from './StripeConfig';
+
+// Usage Tracking exports
 export {
-  getOrgSubscription,
-  checkFeatureAccess,
-  checkQuotaUsage,
-  getOrCreateBillingCustomer,
-  type SubscriptionStatus,
-  type OrgSubscription,
-} from '../stripe'
+  initUsageTracking,
+  trackApiCall,
+  trackVoiceCapture,
+  trackVoiceSession,
+  getUsageStats,
+  checkUsageLimit,
+  resetDailyCounters,
+  getUsageMetric,
+  type UsageMetric,
+  type UsageStats,
+  type UsageLimitCheck,
+  type TierLimits,
+} from './UsageTracker';
+
+// Seat Enforcement exports
 export {
-  checkFeatureAccess as checkFeatureAccessGate,
-  checkLimitAccess,
-  getCurrentTier,
+  initSeatEnforcement,
+  checkSeatLimit,
+  getSeatUsage,
+  onInviteTeamMember,
+  canInviteTeamMember,
   getUpgradePrompt,
-  getLimitInfo,
-  getAvailableFeaturesForTier,
-  type GatedFeature,
-  type GatedLimit,
-} from './TierGateService'
-export { default as TierGateService } from './TierGateService'
+  addTeamMember,
+  removeTeamMember,
+  updateTeamMemberRole,
+  getTeamMembers,
+  getTierConfig,
+  getAllTierConfigs,
+  canDowngradeTier,
+  getEnforcementMessage,
+  type SeatUsageInfo,
+  type UpgradePrompt,
+} from './SeatEnforcement';
