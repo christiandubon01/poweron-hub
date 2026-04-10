@@ -129,6 +129,12 @@ const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
   LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'threats'])
+  /** NW56: Constellation mode — zoom-out star field, pattern connections, constellation naming */
+  { id: 'constellation',    label: 'Constellation',    icon: '✦', r: 140, g: 180, b: 255 },
+]
+
+const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(
+  LAYERS.map(l => [l.id, l.id === 'pressure' || l.id === 'risk-surface' || l.id === 'data-flow' || l.id === 'simulation' || l.id === 'resonance-orb' || l.id === 'proximity-info' || l.id === 'constellation'])
 )
 
 // ── NW37: Layer tooltip descriptions ─────────────────────────────────────────
@@ -165,6 +171,7 @@ const LAYER_DESCRIPTIONS: Record<string, string> = {
   'ecosystem':       'Ecosystem Symbiosis — organic vine connections between projects sharing crew (amber), materials (teal), equipment (gold), or schedule overlap (gradient). Click any vine for savings and synergy recommendations. Isolated projects glow orange.',
   'gravity-fields':  'High-value nodes warp space like gravity wells. Top 20% by contract/AR value get Fresnel influence fields. Overlapping fields create gold interference rings. Hover inside a field for mass/radius data. Click to see what each node pulls.',
   'tectonic-plates': 'Business domain boundaries (residential, commercial, service, solar) rendered as tectonic plates. Size = revenue share. Fault lines glow amber; red = competing growth. Earthquakes fire on major shifts.',
+  'constellation':   'Zoom out past 80 units to reveal the constellation view — projects become stars, connections become lines. Reveals business patterns invisible at ground level.',
 }
 
 const ATMO_LABELS: Record<AtmosphereMode, string> = {

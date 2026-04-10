@@ -65,6 +65,7 @@ import { subscribeWorldData, type NWWorldData } from '@/components/neural-world/
 import { ResonanceOrb } from '@/components/neural-world/ResonanceOrb'
 import { ProximityInfoCard } from '@/components/neural-world/ProximityInfoCard'
 import { BioluminescentLayer } from '@/components/neural-world/BioluminescentLayer'
+import { ConstellationModeLayer } from '@/components/neural-world/ConstellationModeLayer'
 import { GuidedTour } from '@/components/neural-world/GuidedTour'
 import { IncomeTutorial } from '@/components/neural-world/IncomeTutorial'
 import GoalModeController from '@/components/neural-world/GoalModePanel'
@@ -121,6 +122,8 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'gravity-fields':   false,
   // NW52: Tectonic plates — domain boundary visualization, off by default
   'tectonic-plates':  false,
+  // NW56: Constellation mode — activates automatically at zoom threshold, on by default
+  'constellation':    true,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
@@ -191,6 +194,8 @@ function WorldLayers({
       <ProximityInfoCard visible={!!layerStates['proximity-info']} />
       {/* NW54: Bioluminescence — organic data-driven ground glow + activity pulses */}
       <BioluminescentLayer visible={!!layerStates['bioluminescence']} />
+      {/* NW56: Constellation mode — zoom-out star field + pattern connections */}
+      <ConstellationModeLayer visible={!!layerStates['constellation']} />
       {/* NW-TUTORIAL: Guided Tour — must be inside WorldEngine for useWorldContext access */}
       <GuidedTour />
       {/* NW44: Income Tutorial — 8-step income target walkthrough, NEXUS narrated */}
