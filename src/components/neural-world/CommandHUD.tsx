@@ -134,6 +134,12 @@ const LAYERS: LayerDef[] = [
   { id: 'climate',          label: 'Climate',          icon: '🌤', r: 255, g: 200, b: 80  },
   /** NW62: Magnetic field lines — influence direction, polarity system, animated particle flow. Off by default. */
   { id: 'magnetic-fields',  label: 'Magnetic Fields',  icon: '⊛', r: 0,   g: 229, b: 204 },
+  /** NW46: Sound Profiles — per-layer volume, 5 audio modes, HUD selector. Off by default. */
+  { id: 'sound-profiles',   label: 'Sound Profiles',   icon: '♫', r: 100, g: 200, b: 255 },
+  /** Future: Neural Pathways — synaptic connection visualization between agent nodes. Off by default. */
+  { id: 'neural-pathways',  label: 'Neural Pathways',  icon: '⟿', r: 0,   g: 200, b: 200 },
+  /** Future: Erosion — terrain wear patterns driven by project aging and neglect. Off by default. */
+  { id: 'erosion',          label: 'Erosion',          icon: '⊘', r: 180, g: 140, b: 100 },
 ]
 
 const DEFAULT_LAYER_STATES: Record<string, boolean> = Object.fromEntries(

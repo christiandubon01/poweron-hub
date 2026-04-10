@@ -142,6 +142,12 @@ const DEFAULT_LAYER_STATES: LayerStates = {
   'climate':          false,
   // NW62: Magnetic field lines — influence direction, polarity system. Off by default.
   'magnetic-fields':  false,
+  // NW46: Sound Profiles — per-layer volume, 5 audio modes, HUD selector. Off by default.
+  'sound-profiles':   false,
+  // Future: Neural Pathways — synaptic connection visualization. Off by default.
+  'neural-pathways':  false,
+  // Future: Erosion — terrain wear patterns from project aging. Off by default.
+  'erosion':          false,
 }
 
 // ── WorldLayers — renders all layer components inside a single WorldEngine ────
