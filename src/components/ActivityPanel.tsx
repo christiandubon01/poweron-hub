@@ -87,17 +87,25 @@ function groupByDay(entries: ActivityEntry[]): DayGroup[] {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+// ── Pagination constants ──────────────────────────────────────────────────────
+
+const PAGE_SIZE = 10
+const FETCH_LIMIT = 100   // fetch enough to page through client-side
+
 export function ActivityPanel() {
   const { isDemoMode } = useDemoMode()
-  const [entries, setEntries]     = useState<ActivityEntry[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const [entries, setEntries]         = useState<ActivityEntry[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [refreshing, setRefreshing]   = useState(false)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true)
     try {
-      const data = await getRecentActivity(50)
+      const data = await getRecentActivity(FETCH_LIMIT)
       setEntries(data)
+      // Reset to first page on every refresh
+      setVisibleCount(PAGE_SIZE)
     } catch {
       // Non-critical — panel just shows empty state
     } finally {
@@ -110,7 +118,13 @@ export function ActivityPanel() {
     load()
   }, [load])
 
-  const groups = groupByDay(entries)
+  // Newest-first slice for the current page
+  const visibleEntries = entries.slice(0, visibleCount)
+  const hasMore        = entries.length > visibleCount
+  const remaining      = entries.length - visibleCount
+  const nextBatch      = Math.min(PAGE_SIZE, remaining)
+
+  const groups = groupByDay(visibleEntries)
 
   return (
     <div
@@ -252,6 +266,37 @@ export function ActivityPanel() {
               ))}
             </div>
           ))
+        )}
+
+        {/* ── View More button ──────────────────────────────────────────────── */}
+        {!loading && hasMore && (
+          <div style={{ padding: '12px 16px', textAlign: 'center', borderTop: '1px solid var(--color-border, #2a2a2a)' }}>
+            <button
+              onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
+              style={{
+                background:   'rgba(59,130,246,0.12)',
+                border:       '1px solid rgba(59,130,246,0.3)',
+                borderRadius: 6,
+                color:        '#60a5fa',
+                fontSize:     12,
+                fontWeight:   600,
+                padding:      '7px 20px',
+                cursor:       'pointer',
+                transition:   'background 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(59,130,246,0.22)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(59,130,246,0.12)' }}
+            >
+              View More ({nextBatch} of {remaining} remaining)
+            </button>
+          </div>
+        )}
+
+        {/* ── End of log indicator ─────────────────────────────────────────── */}
+        {!loading && !hasMore && entries.length > 0 && (
+          <div style={{ padding: '10px 16px', textAlign: 'center', color: 'var(--color-text-muted, #888)', fontSize: 11 }}>
+            All {entries.length} entries shown
+          </div>
         )}
       </div>
 
