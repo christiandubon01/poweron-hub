@@ -34,6 +34,13 @@ const CrewPortal = lazy(() =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .catch((): any => { window.location.reload(); return { default: () => null } })
 )
+
+// INT-1 — Customer Portal: public-facing route at /portal (no auth required)
+const CustomerPortalPage = lazy(() =>
+  import('@/views/CustomerPortalView')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .catch((): any => { window.location.reload(); return { default: () => null } })
+)
 const InviteAccept = lazy(() =>
   import('@/components/crew/InviteAccept')
     .then(m => ({ default: m.InviteAccept }))
@@ -404,6 +411,24 @@ export default function App() {
             element={
               <Suspense fallback={<FullPageSpinner />}>
                 <InviteAccept />
+              </Suspense>
+            }
+          />
+
+          {/* INT-1: Customer Portal — public route, no auth required */}
+          <Route
+            path="/portal"
+            element={
+              <Suspense fallback={<FullPageSpinner />}>
+                <CustomerPortalPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/request"
+            element={
+              <Suspense fallback={<FullPageSpinner />}>
+                <CustomerPortalPage />
               </Suspense>
             }
           />

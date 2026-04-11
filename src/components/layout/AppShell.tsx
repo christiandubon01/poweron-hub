@@ -22,6 +22,10 @@ import ProactiveAlertCards from '@/components/ProactiveAlertCards'
 import SessionDebrief from '@/components/SessionDebrief'
 import { hasUserSignedNDA } from '@/services/ndaService'
 import { validateInviteToken, markInviteAccepted } from '@/services/inviteService'
+// INT-1 — Guardian agent connections (registers cross-agent compliance listeners on startup)
+import { registerAllListeners } from '@/services/guardian/GuardianAgentConnections'
+// INT-1 — Onboarding service (checks user_onboarding table for V4-OB1 first-run check)
+import { isOnboardingComplete } from '@/services/onboarding/OnboardingService'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
@@ -109,6 +113,32 @@ const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminComm
 // NW1 — Neural World (lazy-loaded)
 const NeuralWorldView = lazy(() => chunkRetry(() => import('@/views/NeuralWorldView')))
 
+// ── INT-1: New feature views — all lazy-loaded ────────────────────────────────
+
+// Sales Intelligence — unified 5-tab panel (Practice/Live Call/Leads/Pipeline/Coach)
+const SalesIntelligenceView = lazy(() => chunkRetry(() => import('@/views/SalesIntelligenceView')))
+
+// Guardian Dashboard — GRD1-6 compliance command center
+const GuardianDashboardView = lazy(() => chunkRetry(() => import('@/views/GuardianDashboardView')))
+
+// Diagnostics — lead pipeline diagnostics, scenario simulator, report
+const DiagnosticsView = lazy(() => chunkRetry(() => import('@/views/DiagnosticsView')))
+
+// Security — admin-only pen test, threat monitor, key rotation, compliance
+const SecurityView = lazy(() => chunkRetry(() => import('@/views/SecurityView')))
+
+// Billing — Stripe billing & subscription management
+const BillingView = lazy(() => chunkRetry(() => import('@/views/BillingView')))
+
+// Customer Portal — public-facing service request form
+const CustomerPortalView = lazy(() => chunkRetry(() => import('@/views/CustomerPortalView')))
+
+// Portal Lead Inbox — owner-side view of portal submissions
+const PortalLeadInboxView = lazy(() => chunkRetry(() => import('@/views/PortalLeadInboxView')))
+
+// Solar Training — quiz engine, NEM 3.0 visualizer, retention heatmap
+const SolarTrainingView = lazy(() => chunkRetry(() => import('@/views/SolarTrainingView')))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
 // B51 — Wins Log floating button + drawer
@@ -119,6 +149,9 @@ const OnboardingModal = lazy(() => chunkRetry(() => import('@/components/onboard
 
 // Beta onboarding flow — fires once after NDA, checks orgs.onboarding_complete
 const BetaOnboarding = lazy(() => chunkRetry(() => import('@/components/onboarding/BetaOnboarding')))
+
+// INT-1 — V4-OB1 OnboardingFlow — AI-driven first-run interview (checks user_onboarding table)
+const OnboardingFlow = lazy(() => chunkRetry(() => import('@/components/onboarding/OnboardingFlow')))
 
 // Loading fallback for lazy-loaded panels
 function PanelLoading() {
@@ -170,6 +203,11 @@ export function AppShell({ children }: AppShellProps) {
   const [showBetaOnboarding, setShowBetaOnboarding] = useState(false)
   const [betaOnboardingChecked, setBetaOnboardingChecked] = useState(false)
 
+  // INT-1: V4-OB1 OnboardingFlow — AI-driven first-run interview
+  // Fires after NDA + beta onboarding, checks user_onboarding table
+  const [showV4Onboarding, setShowV4Onboarding] = useState(false)
+  const [v4OnboardingChecked, setV4OnboardingChecked] = useState(false)
+
   // Beta invite token — read from ?invite=[token] on mount
   const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null)
 
@@ -190,6 +228,13 @@ export function AppShell({ children }: AppShellProps) {
   // real data on the first paint when demo mode is persisted in localStorage.
   useEffect(() => {
     useDemoStore.getState().setHasHydrated()
+  }, [])
+
+  // INT-1 — Register GUARDIAN cross-agent compliance listeners on startup.
+  // Returns a cleanup function that unsubscribes all listeners on unmount.
+  useEffect(() => {
+    const unregister = registerAllListeners()
+    return () => { unregister() }
   }, [])
 
   // Auto-enable Demo Mode when URL contains ?demo=true (Flow B — remote sharing)
@@ -255,6 +300,25 @@ export function AppShell({ children }: AppShellProps) {
         })
     })
   }, [ndaSigned, profile?.org_id, isReadOnly, isDemoMode, betaOnboardingChecked])
+
+  // INT-1 — V4-OB1 OnboardingFlow: check user_onboarding table after NDA signed.
+  // Runs once per session; shows AI-driven interview overlay if user hasn't completed it.
+  useEffect(() => {
+    if (isReadOnly || isDemoMode) return
+    if (v4OnboardingChecked) return
+    if (ndaSigned !== true) return
+    if (!profile?.id) return
+
+    setV4OnboardingChecked(true)
+
+    isOnboardingComplete(profile.id).then((complete) => {
+      if (!complete) {
+        setShowV4Onboarding(true)
+      }
+    }).catch((err) => {
+      console.warn('[AppShell] V4 onboarding check failed:', err)
+    })
+  }, [ndaSigned, profile?.id, isReadOnly, isDemoMode, v4OnboardingChecked])
 
   // NEXUS command "show snapshots" → navigate to settings panel
   useEffect(() => {
@@ -540,6 +604,48 @@ export function AppShell({ children }: AppShellProps) {
       case 'business-overview':
         return <Suspense fallback={<PanelLoading />}><BusinessOverviewView /></Suspense>
 
+      // ── INT-1: New feature routes ──────────────────────────────────────────
+
+      // Sales Intelligence — unified 5-tab panel (Practice/Live Call/Leads/Pipeline/Coach)
+      case 'sales-intelligence':
+        return <Suspense fallback={<PanelLoading />}><SalesIntelligenceView /></Suspense>
+
+      // Guardian Dashboard — GRD1-6 compliance command center (TEAM section)
+      case 'guardian-dashboard':
+        return <Suspense fallback={<PanelLoading />}><GuardianDashboardView /></Suspense>
+
+      // Diagnostics — pipeline, scenario simulator, report
+      case 'diagnostics':
+        return <Suspense fallback={<PanelLoading />}><DiagnosticsView /></Suspense>
+
+      // Security — admin-only: pen test, threat monitor, key rotation, compliance
+      case 'security':
+        return <Suspense fallback={<PanelLoading />}><SecurityView /></Suspense>
+
+      // Billing — Stripe subscription management
+      case 'billing':
+        return <Suspense fallback={<PanelLoading />}><BillingView /></Suspense>
+
+      // Customer Portal — public-facing service request form
+      case 'customer-portal':
+        return <Suspense fallback={<PanelLoading />}><CustomerPortalView /></Suspense>
+
+      // Portal Lead Inbox — owner-side view of portal submissions
+      case 'portal-lead-inbox':
+        return <Suspense fallback={<PanelLoading />}><PortalLeadInboxView /></Suspense>
+
+      // Solar Training — quiz engine, NEM 3.0 visualizer, retention heatmap
+      case 'solar-training':
+        return <Suspense fallback={<PanelLoading />}><SolarTrainingView /></Suspense>
+
+      // INT-1 — V4-OB1 OnboardingFlow as a navigable view
+      case 'onboarding-flow':
+        return (
+          <Suspense fallback={<PanelLoading />}>
+            <OnboardingFlow onComplete={() => { setActiveView('home') }} />
+          </Suspense>
+        )
+
       default:                return <V15rHome />
     }
   }
@@ -721,6 +827,15 @@ export function AppShell({ children }: AppShellProps) {
       {showOnboarding && (
         <Suspense fallback={null}>
           <OnboardingModal onComplete={() => setShowOnboarding(false)} />
+        </Suspense>
+      )}
+
+      {/* INT-1 — V4-OB1 OnboardingFlow overlay — AI-driven first-run interview */}
+      {showV4Onboarding && !isReadOnly && !isDemoMode && (
+        <Suspense fallback={null}>
+          <OnboardingFlow
+            onComplete={() => setShowV4Onboarding(false)}
+          />
         </Suspense>
       )}
 
