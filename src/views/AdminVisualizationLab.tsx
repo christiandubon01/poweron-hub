@@ -22,6 +22,8 @@ import VisualSuitePanel from '../components/v15r/AIVisualSuite/VisualSuitePanel'
 import { getVoiceSubsystem, unlockAudioContext, onOrbStateChange, onTTSAudioChange, setOrbLabMode, type VoiceSessionStatus } from '../services/voice'
 // B62: orbLabActive zustand flag — hides floating NEXUS mic while ORB LAB is mounted
 import { useUIStore } from '../store/uiStore'
+// FIX-ORB: auth store — used to ensure voice subsystem is initialized before OrbLab mic fires
+import { useAuthStore } from '../store/authStore'
 // B67: Combined Neural Map 2
 import CombinedNeuralMap from './CombinedNeuralMap'
 
@@ -723,6 +725,11 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
   const [ttsElement, setTtsElement] = useState<HTMLAudioElement | null>(null)
   // B56 FIX 2: status text replaces full chat panel in ORB LAB
   const [nexusStatusText, setNexusStatusText] = useState<string | null>(null)
+  // FIX-ORB: mic error message shown inside ORB LAB panel
+  const [micError, setMicError] = useState<string | null>(null)
+
+  // FIX-ORB: auth context — ensure voice subsystem is initialized with orgId+userId
+  const { user, profile } = useAuthStore()
 
   // B62: Set orbLabActive flag on mount so floating NEXUS mic is hidden
   useEffect(() => {
@@ -730,9 +737,24 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
     return () => setOrbLabActive(false)
   }, [setOrbLabActive])
 
+  // FIX-ORB: Initialize voice subsystem on mount if auth is available.
+  // VoiceActivationButton normally owns initialization, but when orbLabActive=true
+  // the floating NEXUS mic is hidden — so OrbLab must ensure the singleton is ready
+  // before calling startRecording(). initialize() is idempotent-safe (re-calling is harmless).
+  useEffect(() => {
+    const orgId  = (profile as any)?.org_id as string | undefined
+    const userId = (user as any)?.id as string | undefined
+    if (!orgId || !userId) return
+    const voice = getVoiceSubsystem()
+    voice.initialize({ orgId, userId }).catch((err: unknown) => {
+      console.warn('[OrbLab] Voice subsystem init failed:', err)
+    })
+  }, [(user as any)?.id, (profile as any)?.org_id])
+
   // B53+B56: Subscribe to NEXUS voice status so micStream + nexusState stay in sync.
   // B56 FIX 3: ttsElement is now set via onTTSAudioChange (fires after audio is created),
   // not getCurrentAudio() inside onOrbStateChange (which fires before audio exists).
+  // FIX-ORB: also subscribe to voice.on() so error event payloads surface in OrbLab UI.
   useEffect(() => {
     const unsubOrb = onOrbStateChange((status: VoiceSessionStatus) => {
       setVoiceStatus(status)
@@ -750,17 +772,25 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
       if (status === 'inactive') {
         setMicActive(false)
         setOrbLabMode(false)
-        setNexusStatusText(null)
+        setNexusStatusText('IDLE')
+        micStreamRef.current = null; setMicStream(null)
       } else if (status === 'complete') {
         setMicActive(false)
         setNexusStatusText(null)
       } else if (status === 'recording' || status === 'listening') {
         setMicActive(true)
-        setNexusStatusText(null)
+        setMicError(null)
+        setNexusStatusText('LISTENING')
       } else if (status === 'transcribing' || status === 'processing') {
-        setNexusStatusText('NEXUS THINKING...')
+        setNexusStatusText('PROCESSING')
       } else if (status === 'responding') {
-        setNexusStatusText('NEXUS SPEAKING...')
+        setNexusStatusText('SPEAKING')
+      } else if (status === 'error') {
+        // FIX-ORB: error status — reset mic, clear orbLabMode, show IDLE label
+        setMicActive(false)
+        setOrbLabMode(false)
+        setNexusStatusText('IDLE')
+        micStreamRef.current = null; setMicStream(null)
       }
     })
     // B56 FIX 1+3: subscribe to TTS audio element — fires when audio is actually created,
@@ -768,13 +798,27 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
     const unsubTTS = onTTSAudioChange((audio: HTMLAudioElement | null) => {
       setTtsElement(audio)
     })
-    return () => { unsubOrb(); unsubTTS() }
+    // FIX-ORB: subscribe to voice error events to capture the human-readable error string
+    // (e.g. "Microphone access blocked." / "Microphone requires HTTPS").
+    // voice.on() fires for ALL events; we only act on 'error' here.
+    const unsubVoiceEvents = getVoiceSubsystem().on((event: any) => {
+      if (event.type === 'error') {
+        const msg = typeof event.data?.error === 'string'
+          ? event.data.error
+          : 'Mic error — check browser permissions.'
+        setMicError(msg)
+        // Auto-dismiss error after 6 seconds so it doesn't linger
+        setTimeout(() => setMicError(null), 6000)
+      }
+    })
+    return () => { unsubOrb(); unsubTTS(); unsubVoiceEvents() }
   }, [])
 
   // B53+B56: handleMicToggle routes through NEXUS voice pipeline.
   // B56 FIX 2: sets orbLabMode=true so drawer stays closed (pure-visual mode).
   const handleMicToggle = async () => {
     const voice = getVoiceSubsystem()
+    setMicError(null)
     if (micActive) {
       setOrbLabMode(false)
       if (voiceStatus === 'recording') { await voice.stopRecording() }
@@ -782,7 +826,7 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
       setMicActive(false)
       micStreamRef.current = null; setMicStream(null)
       setOrbState('IDLE')
-      setNexusStatusText(null)
+      setNexusStatusText('IDLE')
     } else {
       try {
         unlockAudioContext()
@@ -793,14 +837,50 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         setOrbState('LISTENING')
       } catch (e) {
         setOrbLabMode(false)
+        const errMsg = e instanceof Error ? e.message : 'Mic error — check browser permissions.'
+        setMicError(errMsg)
+        // Auto-dismiss after 6 seconds
+        setTimeout(() => setMicError(null), 6000)
         console.warn('[OrbLab] NEXUS voice start failed', e)
       }
     }
   }
 
+  // FIX-ORB: map nexusStatusText label color for LISTENING/PROCESSING/SPEAKING/IDLE
+  const statusColor =
+    nexusStatusText === 'LISTENING'   ? '#22c55e' :
+    nexusStatusText === 'PROCESSING'  ? '#3A8EFF' :
+    nexusStatusText === 'SPEAKING'    ? '#7c3aed' : '#4b5563'
+  const statusBg =
+    nexusStatusText === 'LISTENING'   ? 'rgba(34,197,94,0.10)' :
+    nexusStatusText === 'PROCESSING'  ? 'rgba(58,142,255,0.12)' :
+    nexusStatusText === 'SPEAKING'    ? 'rgba(124,58,237,0.12)' : 'rgba(75,85,99,0.10)'
+  const statusBorder =
+    nexusStatusText === 'LISTENING'   ? 'rgba(34,197,94,0.30)' :
+    nexusStatusText === 'PROCESSING'  ? 'rgba(58,142,255,0.30)' :
+    nexusStatusText === 'SPEAKING'    ? 'rgba(124,58,237,0.30)' : 'rgba(75,85,99,0.20)'
+
   // B62: Full-screen layout — canvas + 72px bar = 100% height, zero scrolling
   return (
-    <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+    <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', position:'relative' }}>
+      {/* FIX-ORB: mic error banner — shown inside ORB LAB when mic permission denied or pipeline fails */}
+      {micError && (
+        <div style={{
+          position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 100, backgroundColor: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.45)',
+          borderRadius: 7, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8,
+          fontFamily: 'Courier New, monospace', fontSize: 11, color: '#fca5a5',
+          backdropFilter: 'blur(8px)', boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+          maxWidth: 480, textAlign: 'center',
+        }}>
+          <span style={{ fontSize: 14, flexShrink: 0 }}>⚠️</span>
+          <span>{micError}</span>
+          <button
+            onClick={() => setMicError(null)}
+            style={{ background:'none', border:'none', color:'#f87171', cursor:'pointer', fontSize:13, flexShrink:0, padding:'0 2px' }}
+          >✕</button>
+        </div>
+      )}
       <VisualSuitePanel
         micStream={micStream}
         ttsElement={ttsElement}
@@ -814,6 +894,9 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
         onMicToggle={handleMicToggle}
         micActive={micActive}
         nexusStatusText={nexusStatusText}
+        nexusStatusColor={statusColor}
+        nexusStatusBg={statusBg}
+        nexusStatusBorder={statusBorder}
       />
     </div>
   )

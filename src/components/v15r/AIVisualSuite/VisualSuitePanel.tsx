@@ -146,6 +146,10 @@ interface VisualSuitePanelProps {
   onMicToggle?: () => void | Promise<void>
   micActive?: boolean
   nexusStatusText?: string | null
+  // FIX-ORB: optional color overrides for the nexusStatusText badge (LISTENING/PROCESSING/SPEAKING/IDLE)
+  nexusStatusColor?: string
+  nexusStatusBg?: string
+  nexusStatusBorder?: string
 }
 
 // ─── NEXUS state → visual config ─────────────────────────────────────────────
@@ -165,6 +169,9 @@ export default function VisualSuitePanel({
   onMicToggle,
   micActive,
   nexusStatusText,
+  nexusStatusColor,
+  nexusStatusBg,
+  nexusStatusBorder,
 }: VisualSuitePanelProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -560,15 +567,17 @@ export default function VisualSuitePanel({
           )}
         </button>
 
-        {/* NEXUS status text (when responding/thinking) */}
+        {/* FIX-ORB: NEXUS status indicator — LISTENING / PROCESSING / SPEAKING / IDLE */}
         {nexusStatusText && (
           <span style={{
             fontSize: 8, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase',
-            color: nexusStatusText.includes('SPEAKING') ? '#7c3aed' : '#3A8EFF',
-            padding: '2px 6px', borderRadius: 4, flexShrink: 0,
-            backgroundColor: nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.12)' : 'rgba(58,142,255,0.12)',
-            border: `1px solid ${nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.3)' : 'rgba(58,142,255,0.3)'}`,
-            animation: 'orbMicPulse 1.2s ease-in-out infinite',
+            color:           nexusStatusColor ?? (nexusStatusText.includes('SPEAKING') ? '#7c3aed' : '#3A8EFF'),
+            padding:         '2px 6px', borderRadius: 4, flexShrink: 0,
+            backgroundColor: nexusStatusBg    ?? (nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.12)' : 'rgba(58,142,255,0.12)'),
+            border: `1px solid ${nexusStatusBorder ?? (nexusStatusText.includes('SPEAKING') ? 'rgba(124,58,237,0.3)' : 'rgba(58,142,255,0.3)')}`,
+            animation: (nexusStatusText === 'IDLE' || nexusStatusText === 'SPEAKING' || nexusStatusText === 'LISTENING')
+              ? 'none'
+              : 'orbMicPulse 1.2s ease-in-out infinite',
           }}>{nexusStatusText}</span>
         )}
 
