@@ -558,7 +558,12 @@ export default function V15rMoneyPanel() {
       {/* ── EXPOSURE FRAMEWORK ───────────────────────────────────────────── */}
       <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Exposure Framework</h3>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto scrollbar-hide -mx-4 px-4"
+          style={{
+            WebkitOverflowScrolling: 'touch',
+            msOverflowStyle: 'none',
+            scrollbarWidth: 'none',
+          }}>
           <table className="w-full text-[10px]">
             <thead>
               <tr className="text-gray-500 uppercase border-b border-gray-700">
@@ -770,7 +775,12 @@ export default function V15rMoneyPanel() {
         </button>
       </div>
     </div>
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto scrollbar-hide -mx-6 px-6"
+      style={{
+        WebkitOverflowScrolling: 'touch',
+        msOverflowStyle: 'none',
+        scrollbarWidth: 'none',
+      }}>
       <table className="w-full text-[10px]">
         <thead>
           <tr className="text-gray-500 uppercase border-b border-gray-700">
