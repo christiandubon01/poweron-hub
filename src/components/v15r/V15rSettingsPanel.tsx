@@ -43,6 +43,7 @@ import {
   type MilestoneSnapshotMeta,
   type SnapshotFilter,
 } from '@/services/milestoneBackupService'
+import TestDataManagementPanel from '@/components/testdata/TestDataManagementPanel'
 
 function NoData() {
   return (
@@ -1555,6 +1556,13 @@ export default function V15rSettingsPanel() {
               onClose={() => setShowBetaInviteModal(false)}
               inviterUserId={user.id}
             />
+          )}
+
+          {/* DATA MANAGEMENT — owner only: load / clear / verify test data */}
+          {isOwner && (
+            <SettingCard title="Data Management">
+              <TestDataManagementPanel />
+            </SettingCard>
           )}
 
           {/* DEMO MODE */}
