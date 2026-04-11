@@ -281,7 +281,14 @@ export function getUnlockedAudioContext(): AudioContext | null {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const MAX_RECORDING_SECONDS = 30
+// FIX-KATSURO: hard timeout reduced to 8 s; VAD silence detection ends recording sooner
+const MAX_RECORDING_SECONDS = 8
+/** RMS level below which audio is considered silence (0–1 range) */
+const VAD_SILENCE_THRESHOLD = 0.015
+/** Consecutive milliseconds of silence before auto-stop triggers */
+const VAD_SILENCE_DURATION_MS = 1800
+/** How long the passive LISTENING state is allowed to wait for a wake word (ms) */
+const LISTENING_TIMEOUT_MS = 30_000
 const DEFAULT_PREFERENCES: VoicePreferences = {
   enabled: true,
   ttsVoiceId: DEFAULT_VOICE_ID,
@@ -310,6 +317,15 @@ export class VoiceSubsystem {
   private mediaStream: MediaStream | null = null
   private audioChunks: Blob[] = []
   private recordingTimeout: ReturnType<typeof setTimeout> | null = null
+
+  // FIX-KATSURO: VAD (voice activity detection) — silence-based auto-stop
+  private vadAudioContext: AudioContext | null = null
+  private vadAnalyser: AnalyserNode | null = null
+  private vadRafId: number | null = null
+  private vadSilenceStart: number = 0
+
+  // FIX-KATSURO: passive-listening auto-expire timeout
+  private listeningTimeout: ReturnType<typeof setTimeout> | null = null
 
   // Speaking state — mic suppression during TTS playback
   private currentAudio: HTMLAudioElement | null = null
@@ -375,9 +391,16 @@ export class VoiceSubsystem {
 
   /**
    * Start listening for the wake word (passive mode).
+   * FIX-KATSURO: auto-expires after LISTENING_TIMEOUT_MS so state never gets stuck.
    */
   async startListening(): Promise<void> {
     if (!this.preferences.enabled) return
+
+    // Clear any previous listening timeout before starting a new one
+    if (this.listeningTimeout) {
+      clearTimeout(this.listeningTimeout)
+      this.listeningTimeout = null
+    }
 
     if (this.preferences.wakeWordEnabled) {
       const detector = getWakeWordDetector()
@@ -385,15 +408,30 @@ export class VoiceSubsystem {
     }
 
     this.setStatus('listening')
+
+    // FIX-KATSURO: hard timeout — if no wake word fires within 30 s, return to IDLE
+    this.listeningTimeout = setTimeout(() => {
+      if (this.status === 'listening') {
+        console.log('[Voice] Listening timeout — no wake word detected, returning to inactive')
+        this.setStatus('inactive')
+      }
+      this.listeningTimeout = null
+    }, LISTENING_TIMEOUT_MS)
   }
 
   /**
    * Stop all voice activity.
    */
   async stopAll(): Promise<void> {
+    // FIX-KATSURO: cancel listening / VAD timers
+    if (this.listeningTimeout) {
+      clearTimeout(this.listeningTimeout)
+      this.listeningTimeout = null
+    }
+    this.stopVAD()
+
     // Stop any playing audio
     this.stopCurrentAudio()
-
 
     // Cancel browser speechSynthesis if active
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -539,10 +577,14 @@ export class VoiceSubsystem {
       this.setStatus('recording')
       this.emit('recording_started')
 
-      // Auto-stop after max duration
+      // FIX-KATSURO: 8 s hard-timeout fallback (VAD should fire first on silence)
       this.recordingTimeout = setTimeout(() => {
+        console.log('[Voice] Hard timeout (8 s) — auto-stopping recording')
         this.stopRecording()
       }, MAX_RECORDING_SECONDS * 1000)
+
+      // FIX-KATSURO: VAD — stop recording on sustained silence via AnalyserNode
+      this.startVAD()
 
       console.log(`[Voice] Recording started (mode: ${mode})`)
     } catch (err) {
@@ -561,6 +603,9 @@ export class VoiceSubsystem {
    * Stop recording and begin processing.
    */
   async stopRecording(): Promise<void> {
+    // FIX-KATSURO: tear down VAD before stopping the recorder
+    this.stopVAD()
+
     if (this.recordingTimeout) {
       clearTimeout(this.recordingTimeout)
       this.recordingTimeout = null
@@ -702,9 +747,9 @@ export class VoiceSubsystem {
       }
 
       if (!analysis.hasVoiceActivity) {
-        console.log('[Voice] No voice activity detected')
+        // FIX-KATSURO: no speech detected — return to IDLE silently, no API call
+        console.log('[Voice] No voice activity detected — returning to IDLE silently')
         this.setStatus('inactive')
-        this.emit('error', { error: 'No speech detected. Speak clearly into the mic and try again.' })
         return
       }
 
@@ -724,9 +769,9 @@ export class VoiceSubsystem {
       console.log('[Whisper] Response received — text length:', whisperResult.text?.length, 'text:', whisperResult.text?.substring(0, 80))
 
       if (!whisperResult.text || whisperResult.text.trim().length === 0) {
-        console.log('[Voice] Empty transcription from Whisper')
+        // FIX-KATSURO: empty transcript — return to IDLE silently, no API call
+        console.log('[Voice] Empty transcription — returning to IDLE silently')
         this.setStatus('inactive')
-        this.emit('error', { error: 'No speech recognized. Try speaking closer to the mic.' })
         return
       }
 
@@ -1300,6 +1345,11 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
 
   private onWakeWordDetected(): void {
     console.log('[Voice] Wake word detected!')
+    // FIX-KATSURO: cancel the listening-expire timeout when wake word fires
+    if (this.listeningTimeout) {
+      clearTimeout(this.listeningTimeout)
+      this.listeningTimeout = null
+    }
     this.emit('wake_word_detected')
     this.startRecording(this.preferences.pushToTalkEnabled ? 'push_to_talk' : 'normal')
   }
@@ -1307,12 +1357,81 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
   // ── Private: Recording Cleanup ────────────────────────────────────────────
 
   private cleanupRecording(): void {
+    this.stopVAD()
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach(t => t.stop())
       this.mediaStream = null
     }
     this.mediaRecorder = null
     this.audioChunks = []
+  }
+
+  // ── FIX-KATSURO: VAD — Voice Activity Detection ───────────────────────────
+
+  /**
+   * Start VAD loop using AnalyserNode on the existing mic stream.
+   * Auto-stops recording after VAD_SILENCE_DURATION_MS of sustained silence.
+   */
+  private startVAD(): void {
+    if (!this.mediaStream) return
+    try {
+      // Prefer the shared pre-unlocked AudioContext; create a private fallback if needed
+      const ctx = getUnlockedAudioContext() ?? new AudioContext()
+      this.vadAudioContext = ctx
+      const source = ctx.createMediaStreamSource(this.mediaStream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 512
+      source.connect(analyser)
+      this.vadAnalyser = analyser
+      this.vadSilenceStart = 0
+
+      const dataArray = new Float32Array(analyser.fftSize)
+
+      const loop = () => {
+        if (!this.vadAnalyser) return
+        this.vadAnalyser.getFloatTimeDomainData(dataArray)
+        let sumSq = 0
+        for (let i = 0; i < dataArray.length; i++) sumSq += dataArray[i] * dataArray[i]
+        const rms = Math.sqrt(sumSq / dataArray.length)
+
+        if (rms < VAD_SILENCE_THRESHOLD) {
+          if (this.vadSilenceStart === 0) this.vadSilenceStart = Date.now()
+          const elapsed = Date.now() - this.vadSilenceStart
+          if (elapsed >= VAD_SILENCE_DURATION_MS) {
+            console.log(`[Voice] VAD: ${VAD_SILENCE_DURATION_MS}ms silence — auto-stopping recording`)
+            this.stopVAD()
+            this.stopRecording()
+            return
+          }
+        } else {
+          this.vadSilenceStart = 0
+        }
+
+        this.vadRafId = requestAnimationFrame(loop)
+      }
+
+      this.vadRafId = requestAnimationFrame(loop)
+      console.log('[Voice] VAD started')
+    } catch (err) {
+      // VAD is best-effort; hard timeout still protects against stuck state
+      console.warn('[Voice] VAD init failed (hard timeout still active):', err)
+    }
+  }
+
+  /** Stop and clean up the VAD analyser loop. */
+  private stopVAD(): void {
+    if (this.vadRafId !== null) {
+      cancelAnimationFrame(this.vadRafId)
+      this.vadRafId = null
+    }
+    this.vadAnalyser = null
+    this.vadSilenceStart = 0
+    // Close the dedicated AudioContext only if it was created privately by startVAD
+    // (not the shared pre-unlocked context — that belongs to the module singleton)
+    if (this.vadAudioContext && this.vadAudioContext !== getUnlockedAudioContext()) {
+      try { this.vadAudioContext.close() } catch { /* ignore */ }
+    }
+    this.vadAudioContext = null
   }
 
   private getSupportedMimeType(): string {
