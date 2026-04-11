@@ -755,6 +755,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Team', icon: Users, view: 'team' },
     { label: 'Crew Portal', icon: HardHat, view: 'crew-portal' },
     { label: 'Guardian', icon: ShieldAlert, view: 'guardian' },
+    { label: 'Guardian Dashboard', icon: ShieldAlert, view: 'guardian-dashboard' },
   ]
 
   // Intelligence nav items — B14 restructure (Voice Hub replaces 3 items)
@@ -770,15 +771,21 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // BUCKET 1 — COMMAND (default open, purple border)
   const adminBucket1 = [
     { label: 'NEXUS ADMIN', icon: Mic, view: 'nexus-voice', badge: 'ADMIN ONLY', subtitle: null, purple: true },
+    { label: 'Sales Intelligence', icon: Brain, view: 'sales-intelligence', badge: 'NEW', subtitle: 'Practice · Leads · Pipeline' },
     { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null, subtitle: null },
+    { label: 'Diagnostics', icon: Terminal, view: 'diagnostics', badge: 'NEW', subtitle: null },
+    { label: 'Portal Lead Inbox', icon: Phone, view: 'portal-lead-inbox', badge: 'NEW', subtitle: null },
+    { label: 'Security', icon: Lock, view: 'security', badge: 'ADMIN', subtitle: null },
     { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null, subtitle: null },
   ]
   // BUCKET 2 — PERSONAL TOOLS (default collapsed, gold border)
   const adminBucket2 = [
     { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null, subtitle: null },
     { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null, subtitle: null },
+    { label: 'Solar Training', icon: FlaskConical, view: 'solar-training', badge: 'NEW', subtitle: 'NEM 3.0 · Quiz · Progress' },
     { label: 'Wins Log', icon: Trophy, view: 'wins-log', badge: 'B51', subtitle: null },
     { label: 'Pinned Insights', icon: Pin, view: 'pinned-insights', badge: 'B52', subtitle: null },
+    { label: 'Billing', icon: Building2, view: 'billing', badge: 'NEW', subtitle: 'Subscription & Plans' },
   ]
   // BUCKET 3 — VISUALIZATION (default collapsed, teal border)
   const adminBucket3 = [
