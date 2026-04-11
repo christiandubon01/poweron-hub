@@ -139,6 +139,16 @@ const PortalLeadInboxView = lazy(() => chunkRetry(() => import('@/views/PortalLe
 // Solar Training — quiz engine, NEM 3.0 visualizer, retention heatmap
 const SolarTrainingView = lazy(() => chunkRetry(() => import('@/views/SolarTrainingView')))
 
+// NAV1 — New views
+// NexusAdminView — merged ORB Lab + NEXUS Admin (route: nexus-admin)
+const NexusAdminView = lazy(() => chunkRetry(() => import('@/views/NexusAdminView')))
+// AdminToolsView — Agent Intelligence panel (route: admin-tools, owner only)
+const AdminToolsView = lazy(() => chunkRetry(() => import('@/views/AdminToolsView')))
+// AbsoluteDashboardView — all key metrics in one place (route: absolute-dashboard, sub-tab of business-overview)
+const AbsoluteDashboardView = lazy(() => chunkRetry(() => import('@/views/AbsoluteDashboardView')))
+// AgentSystemMapView — agent pyramid (route: agent-system-map, embedded in AbsoluteDashboard)
+const AgentSystemMapView = lazy(() => chunkRetry(() => import('@/views/AgentSystemMapView')))
+
 // Lazy-load non-critical overlays
 const VoiceActivationButton = lazy(() => import('@/components/voice/VoiceActivationButton').then(m => ({ default: m.VoiceActivationButton })).catch(() => { window.location.reload(); return { default: () => null } }))
 // B51 — Wins Log floating button + drawer
@@ -158,6 +168,116 @@ function PanelLoading() {
   return (
     <div className="flex items-center justify-center w-full h-64">
       <div className="text-gray-500 text-sm">Loading panel...</div>
+    </div>
+  )
+}
+
+// NAV1 — SparkHunterTabShell: wraps SPARK Live Call + Lead Inbox sub-tab navigation
+// Sub-tabs: Live Call | Lead Inbox | Hunter Leads | Scripts
+// Pill-style navigation, mobile responsive.
+function SparkHunterTabShell() {
+  const [tab, setTab] = React.useState<'live-call' | 'lead-inbox' | 'hunter-leads' | 'scripts'>('live-call')
+  const tabs = [
+    { id: 'live-call' as const,     label: 'Live Call' },
+    { id: 'lead-inbox' as const,    label: 'Lead Inbox' },
+    { id: 'hunter-leads' as const,  label: 'Hunter Leads' },
+    { id: 'scripts' as const,       label: 'Scripts' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, backgroundColor: 'var(--bg-secondary, #111827)' }}>
+      {/* Pill tab bar */}
+      <div style={{
+        display: 'flex', gap: 6, padding: '10px 16px',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        flexShrink: 0, flexWrap: 'wrap',
+      }}>
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              padding: '6px 14px', borderRadius: 20,
+              border: tab === t.id ? '1.5px solid rgba(245,158,11,0.7)' : '1.5px solid rgba(255,255,255,0.12)',
+              background: tab === t.id ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.04)',
+              color: tab === t.id ? '#fbbf24' : '#9ca3af',
+              fontSize: 12, fontWeight: tab === t.id ? 700 : 500,
+              cursor: 'pointer', transition: 'all 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {/* Tab content */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {tab === 'live-call' && (
+          <Suspense fallback={<PanelLoading />}><SparkLiveCall /></Suspense>
+        )}
+        {tab === 'lead-inbox' && (
+          <Suspense fallback={<PanelLoading />}><PortalLeadInboxView /></Suspense>
+        )}
+        {tab === 'hunter-leads' && (
+          <div style={{ padding: '40px 24px', color: '#6b7280', textAlign: 'center' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#9ca3af' }}>Hunter Leads</div>
+            <div style={{ fontSize: 12 }}>Wire HUNTER agent to populate leads here.</div>
+          </div>
+        )}
+        {tab === 'scripts' && (
+          <div style={{ padding: '40px 24px', color: '#6b7280', textAlign: 'center' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#9ca3af' }}>Scripts</div>
+            <div style={{ fontSize: 12 }}>Call script library — wire to Supabase call_scripts table.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// NAV1 — BusinessOverviewTabShell: wraps existing BusinessOverviewView + new AbsoluteDashboard tab
+// Tab 1: Business Overview (existing, untouched)
+// Tab 2: Absolute Dashboard (NEW — all key numbers in one place)
+function BusinessOverviewTabShell() {
+  const [tab, setTab] = React.useState<'overview' | 'absolute'>('overview')
+  const tabs = [
+    { id: 'overview' as const, label: 'Business Overview' },
+    { id: 'absolute' as const, label: 'Absolute Dashboard' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* Tab bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 0,
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        paddingLeft: 20, flexShrink: 0,
+        backgroundColor: 'var(--bg-secondary, #0f1117)',
+      }}>
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
+              fontSize: 12, fontWeight: tab === t.id ? 700 : 500,
+              color: tab === t.id ? '#f9fafb' : '#6b7280',
+              borderBottom: tab === t.id ? '2px solid #22c55e' : '2px solid transparent',
+              transition: 'color 0.15s, border-color 0.15s',
+              marginBottom: -1, whiteSpace: 'nowrap',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {/* Tab content */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {tab === 'overview' && (
+          <Suspense fallback={<PanelLoading />}><BusinessOverviewView /></Suspense>
+        )}
+        {tab === 'absolute' && (
+          <Suspense fallback={<PanelLoading />}><AbsoluteDashboardView /></Suspense>
+        )}
+      </div>
     </div>
   )
 }
@@ -560,8 +680,9 @@ export function AppShell({ children }: AppShellProps) {
           </Suspense>
         )
 
+      // NAV1: SPARK Live Call wrapped with tab shell (Live Call | Lead Inbox | Hunter Leads | Scripts)
       case 'spark-live-call':
-        return <Suspense fallback={<PanelLoading />}><SparkLiveCall /></Suspense>
+        return <SparkHunterTabShell />
 
       case 'vault-estimate':
         return <Suspense fallback={<PanelLoading />}><VaultEstimatePanel /></Suspense>
@@ -602,9 +723,9 @@ export function AppShell({ children }: AppShellProps) {
       case 'neural-world':
         return <Suspense fallback={<PanelLoading />}><NeuralWorldView /></Suspense>
 
-      // B68 — Business Overview split view (full build)
+      // B68 + NAV1 — Business Overview (Tab 1: existing) + Absolute Dashboard (Tab 2: NEW)
       case 'business-overview':
-        return <Suspense fallback={<PanelLoading />}><BusinessOverviewView /></Suspense>
+        return <BusinessOverviewTabShell />
 
       // ── INT-1: New feature routes ──────────────────────────────────────────
 
@@ -647,6 +768,26 @@ export function AppShell({ children }: AppShellProps) {
             <OnboardingFlow onComplete={() => { setActiveView('home') }} />
           </Suspense>
         )
+
+      // NAV1 — NEXUS Admin (merged ORB Lab + NEXUS Admin)
+      case 'nexus-admin':
+        return <Suspense fallback={<PanelLoading />}><NexusAdminView /></Suspense>
+
+      // NAV1 — /orb-lab and /viz-lab redirect to nexus-admin
+      case 'orb-lab':
+        return <Suspense fallback={<PanelLoading />}><NexusAdminView /></Suspense>
+
+      // NAV1 — Admin Tools (Agent Intelligence panel, owner only)
+      case 'admin-tools':
+        return <Suspense fallback={<PanelLoading />}><AdminToolsView /></Suspense>
+
+      // NAV1 — Absolute Dashboard (aggregates all key metrics + agent system map)
+      case 'absolute-dashboard':
+        return <Suspense fallback={<PanelLoading />}><AbsoluteDashboardView /></Suspense>
+
+      // NAV1 — Agent System Map standalone
+      case 'agent-system-map':
+        return <Suspense fallback={<PanelLoading />}><AgentSystemMapView /></Suspense>
 
       default:                return <V15rHome />
     }

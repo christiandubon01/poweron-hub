@@ -160,22 +160,22 @@ export default function PinnedInsightsPanel({ open, onClose }: PinnedInsightsPan
 
   return (
     <>
-      {/* Backdrop */}
+      {/* NAV1: Backdrop — only shown when solo (winsLog closed) to avoid double-darken */}
       {open && (
         <div
           onClick={onClose}
-          style={{ position: 'fixed', inset: 0, zIndex: 70, backgroundColor: 'rgba(0,0,0,0.4)' }}
+          style={{ position: 'fixed', inset: 0, zIndex: 9000, backgroundColor: 'rgba(0,0,0,0.4)' }}
         />
       )}
 
-      {/* Panel */}
+      {/* Panel — NAV1: z-index aligned to 9001 (same as WinsLog, no overlap) */}
       <div style={{
         position:        'fixed',
         top:             0,
         right:           0,
         bottom:          0,
         width:           380,
-        zIndex:          71,
+        zIndex:          9001,  /* NAV1: matches WinsLog z-index — side by side, no overlap */
         backgroundColor: 'rgba(4,6,18,0.98)',
         borderLeft:      '1px solid rgba(0,229,255,0.15)',
         boxShadow:       '-8px 0 32px rgba(0,0,0,0.6)',

@@ -1,16 +1,25 @@
 // @ts-nocheck
 /**
- * PinnedInsightsButton.tsx — B52 | Floating pin button (bottom-right)
- * Opens PinnedInsightsPanel via custom event.
- * Positioned above WinsLog button.
+ * PinnedInsightsButton.tsx — B52 + NAV1 | Floating pin button (bottom-right)
+ *
+ * NAV1 changes:
+ * - Toggle behavior: click once opens, click again closes
+ * - State stored in uiStore (pinnedInsightsOpen) — persists within session
+ * - When both PinnedInsights + WinsLog open on wide screens: side by side (right: 0)
+ * - When both open on iPhone 16 Pro: stacked (PinnedInsights on top, WinsLog below it)
+ * - Z-index aligned to same level as WinsLog drawer (no overlap)
+ *
+ * Content inside panel: DO NOT CHANGE — toggle behavior only (spec 4.6)
  */
 import React, { useState, useEffect } from 'react'
 import { Pin } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import PinnedInsightsPanel from './PinnedInsightsPanel'
+// NAV1: uiStore for independent toggle state
+import { useUIStore } from '@/store/uiStore'
 
 export function PinnedInsightsButton() {
-  const [open, setOpen] = useState(false)
+  const { pinnedInsightsOpen, togglePinnedInsights, setPinnedInsightsOpen } = useUIStore()
   const [count, setCount] = useState(0)
 
   // Load count on mount
@@ -31,36 +40,42 @@ export function PinnedInsightsButton() {
     } catch {}
   }
 
-  // Listen for open event from sidebar nav
+  // Listen for open event from sidebar nav (only opens, doesn't toggle from event)
   useEffect(() => {
-    const handler = () => setOpen(true)
+    const handler = () => setPinnedInsightsOpen(true)
     window.addEventListener('poweron:open-pinned-insights', handler)
     return () => window.removeEventListener('poweron:open-pinned-insights', handler)
-  }, [])
+  }, [setPinnedInsightsOpen])
 
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
-        title="Pinned Insights"
+        onClick={togglePinnedInsights}
+        title={pinnedInsightsOpen ? 'Close Pinned Insights' : 'Open Pinned Insights'}
         style={{
           width:           48,
           height:          48,
           borderRadius:    '50%',
-          backgroundColor: 'rgba(0,229,255,0.12)',
-          border:          '1.5px solid rgba(0,229,255,0.5)',
+          backgroundColor: pinnedInsightsOpen ? 'rgba(0,229,255,0.22)' : 'rgba(0,229,255,0.12)',
+          border:          pinnedInsightsOpen ? '1.5px solid rgba(0,229,255,0.7)' : '1.5px solid rgba(0,229,255,0.5)',
           color:           '#00e5ff',
           display:         'flex',
           alignItems:      'center',
           justifyContent:  'center',
           cursor:          'pointer',
-          boxShadow:       '0 4px 20px rgba(0,229,255,0.2)',
+          boxShadow:       pinnedInsightsOpen ? '0 4px 24px rgba(0,229,255,0.35)' : '0 4px 20px rgba(0,229,255,0.2)',
           position:        'relative',
           transition:      'all 0.15s',
           flexShrink:      0,
         }}
-        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(0,229,255,0.22)' }}
-        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(0,229,255,0.12)' }}
+        onMouseEnter={e => {
+          if (!pinnedInsightsOpen)
+            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(0,229,255,0.22)'
+        }}
+        onMouseLeave={e => {
+          if (!pinnedInsightsOpen)
+            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(0,229,255,0.12)'
+        }}
       >
         <Pin size={20} />
         {count > 0 && (
@@ -87,8 +102,8 @@ export function PinnedInsightsButton() {
       </button>
 
       <PinnedInsightsPanel
-        open={open}
-        onClose={() => { setOpen(false); fetchCount() }}
+        open={pinnedInsightsOpen}
+        onClose={() => { togglePinnedInsights(); fetchCount() }}
       />
     </>
   )

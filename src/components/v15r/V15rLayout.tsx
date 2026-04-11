@@ -794,16 +794,25 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Material Intelligence', icon: Brain, view: 'material-intelligence' },
   ]
 
-  // B64 — Admin nav items reorganized into 4 collapsible buckets
+  // NAV1 — Admin nav items reorganized into 4 collapsible buckets
   // BUCKET 1 — COMMAND (default open, purple border)
+  // Group 1 — AI Command
+  // Group 2 — Operations
+  // Group 3 — Security & Access
+  // Portal Lead Inbox REMOVED from here (moves to SPARK/HUNTER sub-tab per 4.3)
+  // ORB LAB REMOVED — merged into NEXUS Admin (nav1-nexus-admin)
   const adminBucket1 = [
-    { label: 'NEXUS ADMIN', icon: Mic, view: 'nexus-voice', badge: 'ADMIN ONLY', subtitle: null, purple: true },
-    { label: 'Sales Intelligence', icon: Brain, view: 'sales-intelligence', badge: 'NEW', subtitle: 'Practice · Leads · Pipeline' },
-    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null, subtitle: null },
-    { label: 'Diagnostics', icon: Terminal, view: 'diagnostics', badge: 'NEW', subtitle: null },
-    { label: 'Portal Lead Inbox', icon: Phone, view: 'portal-lead-inbox', badge: 'NEW', subtitle: null },
-    { label: 'Security', icon: Lock, view: 'security', badge: 'ADMIN', subtitle: null },
+    // Group 1 — AI Command
+    { label: 'NEXUS Admin', icon: Mic, view: 'nexus-admin', badge: 'AI CMD', subtitle: 'ORB · Voice · Oversight', purple: true },
+    { label: 'Sales Intelligence', icon: Brain, view: 'sales-intelligence', badge: null, subtitle: 'Practice · Leads · Pipeline' },
+    { label: 'Agent Mode Selector', icon: Layers, view: 'agent-mode-selector', badge: null, subtitle: null },
+    // Group 2 — Operations (visual separator via subtitle)
+    { label: 'GUARDIAN View', icon: ShieldAlert, view: 'guardian-view', badge: null, subtitle: '— Operations —' },
+    { label: 'Diagnostics', icon: Terminal, view: 'diagnostics', badge: null, subtitle: null },
     { label: 'n8n Automation', icon: GitBranch, view: 'n8n-automation', badge: null, subtitle: null },
+    // Group 3 — Security & Access
+    { label: 'Security', icon: Lock, view: 'security', badge: 'ADMIN', subtitle: '— Security & Access —' },
+    { label: 'Admin Tools', icon: Brain, view: 'admin-tools', badge: 'NEW', subtitle: 'Agent Intelligence' },
   ]
   // BUCKET 2 — PERSONAL TOOLS (default collapsed, gold border)
   const adminBucket2 = [
@@ -815,28 +824,30 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Billing', icon: Building2, view: 'billing', badge: 'NEW', subtitle: 'Subscription & Plans' },
   ]
   // BUCKET 3 — VISUALIZATION (default collapsed, teal border)
+  // ORB LAB REMOVED — Visual Suite + SPARK Live Call only
   const adminBucket3 = [
-    { label: 'ORB LAB', icon: FlaskConical, view: 'viz-lab', badge: 'B42', subtitle: null },
-    { label: 'Visual Suite', icon: Layers, view: 'visual-suite', badge: 'B48', subtitle: null },
+    { label: 'Visual Suite', icon: Layers, view: 'visual-suite', badge: null, subtitle: 'Neural Map Elec · Combined · World' },
     { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview', subtitle: null },
-    // Neural Map — Electrical: sidebar link to Command Center (neural_map tab)
-    { label: 'Neural Map — Electrical', icon: Map, view: 'admin-command-center', badge: null, subtitle: 'Command Center' },
-    // Neural Map — Combined: sidebar link to Viz Lab (Combined tab, placeholder B67)
-    { label: 'Neural Map — Combined', icon: Brain, view: 'viz-lab', badge: 'B67', subtitle: 'Viz Lab · Combined' },
-    // NW1 — Neural World: 3D immersive visualization
-    { label: 'Neural World', icon: Globe, view: 'neural-world', badge: 'NW1', subtitle: null },
   ]
   // BUCKET 4 — BUSINESS OVERVIEW (default collapsed, green border)
+  // Absolute Dashboard added as second sub-tab inside the view (not a separate nav item)
   const adminBucket4 = [
-    { label: 'Business Overview', icon: Building2, view: 'business-overview', badge: 'B68', subtitle: 'placeholder' },
+    { label: 'Business Overview', icon: Building2, view: 'business-overview', badge: null, subtitle: 'Overview · Absolute Dashboard' },
   ]
 
   // Toggle and close helpers
   const toggleSidebar = () => setSidebarOpen(prev => !prev)
   const closeSidebar = () => { if (isMobile || isTablet) setSidebarOpen(false) }
   const handleNavClick = (view: string) => {
+    // NAV1: nexus-voice is legacy — redirect to nexus-admin (merged ORB + NEXUS Admin)
     if (view === 'nexus-voice') {
-      window.dispatchEvent(new CustomEvent('poweron:open-nexus-drawer'))
+      onNav('nexus-admin')
+      if (isMobile) setSidebarOpen(false)
+      return
+    }
+    // NAV1: /orb-lab redirect to nexus-admin
+    if (view === 'orb-lab' || view === 'viz-lab') {
+      onNav('nexus-admin')
       if (isMobile) setSidebarOpen(false)
       return
     }

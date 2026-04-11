@@ -9,6 +9,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Trophy, Plus, X, Filter, ChevronDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+// NAV1: uiStore for independent toggle state
+import { useUIStore } from '@/store/uiStore'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Win {
@@ -210,7 +212,7 @@ function AddWinModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
 }
 
 // ─── Wins Drawer ──────────────────────────────────────────────────────────────
-function WinsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+function WinsDrawer({ open, onClose, rightOffset = 0 }: { open: boolean; onClose: () => void; rightOffset?: number }) {
   const [wins, setWins] = useState<Win[]>([])
   const [loading, setLoading] = useState(false)
   const [filterCat, setFilterCat] = useState<string>('all')
@@ -241,18 +243,21 @@ function WinsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <>
       {/* Overlay */}
-      {open && (
+      {/* NAV1: backdrop only when no other panel is alongside (rightOffset === 0 means solo) */}
+      {open && rightOffset === 0 && (
         <div
           onClick={onClose}
           style={{ position: 'fixed', inset: 0, zIndex: 9000, backgroundColor: 'rgba(0,0,0,0.4)' }}
         />
       )}
 
-      {/* Drawer */}
+      {/* Drawer — NAV1: rightOffset allows side-by-side with PinnedInsights */}
       <div style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 380, zIndex: 9001,
+        position: 'fixed', top: 0, right: rightOffset, bottom: 0, width: 380,
+        zIndex: 9001,  /* NAV1: same z-index as PinnedInsights — no overlap */
         backgroundColor: '#0a0b0f', border: '1px solid rgba(255,215,0,0.2)',
-        borderRight: 'none', transform: open ? 'translateX(0)' : 'translateX(100%)',
+        borderRight: rightOffset === 0 ? 'none' : '1px solid rgba(255,215,0,0.2)',
+        transform: open ? 'translateX(0)' : `translateX(calc(100% + ${rightOffset}px))`,
         transition: 'transform 0.25s ease', display: 'flex', flexDirection: 'column',
         boxShadow: '-8px 0 32px rgba(0,0,0,0.5)',
       }}>
@@ -375,44 +380,56 @@ function WinsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 // ─── WinsLogPanel (Floating Button + Drawer) ──────────────────────────────────
+// NAV1: toggle behavior — click once opens, click again closes. State in uiStore.
+// When both WinsLog + PinnedInsights are open: side by side (WinsLog at right: 380).
+// On mobile: stacked (rightOffset = 0 regardless).
 export function WinsLogPanel() {
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const { winsLogOpen, toggleWinsLog, setWinsLogOpen, pinnedInsightsOpen } = useUIStore()
 
-  // Listen for sidebar nav dispatch
+  // Listen for sidebar nav dispatch (still opens, doesn't close)
   useEffect(() => {
-    const handler = () => setDrawerOpen(true)
+    const handler = () => setWinsLogOpen(true)
     window.addEventListener('poweron:open-wins-log', handler)
     return () => window.removeEventListener('poweron:open-wins-log', handler)
-  }, [])
+  }, [setWinsLogOpen])
+
+  // When both panels open on wide screens, offset WinsLog to the left of PinnedInsights
+  // Mobile: rightOffset = 0 (stacked, full width each)
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  const rightOffset = (!isMobile && pinnedInsightsOpen && winsLogOpen) ? 380 : 0
 
   return (
     <>
-      {/* Floating +WIN Button */}
+      {/* Floating Trophy Button — click to toggle */}
       <button
-        onClick={() => setDrawerOpen(true)}
-        title="Wins Log"
+        onClick={toggleWinsLog}
+        title={winsLogOpen ? 'Close Wins Log' : 'Open Wins Log'}
         style={{
           width: 42, height: 42, borderRadius: '50%',
-          backgroundColor: 'rgba(255,215,0,0.15)',
-          border: '1px solid rgba(255,215,0,0.4)',
+          backgroundColor: winsLogOpen ? 'rgba(255,215,0,0.25)' : 'rgba(255,215,0,0.15)',
+          border: winsLogOpen ? '1.5px solid rgba(255,215,0,0.6)' : '1px solid rgba(255,215,0,0.4)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', flexShrink: 0,
-          boxShadow: '0 0 12px rgba(255,215,0,0.2)',
+          boxShadow: winsLogOpen ? '0 0 20px rgba(255,215,0,0.35)' : '0 0 12px rgba(255,215,0,0.2)',
           transition: 'all 0.15s ease',
         }}
         onMouseEnter={e => {
-          (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,215,0,0.25)'
-          ;(e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 20px rgba(255,215,0,0.35)'
+          if (!winsLogOpen) {
+            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,215,0,0.25)'
+            ;(e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 20px rgba(255,215,0,0.35)'
+          }
         }}
         onMouseLeave={e => {
-          (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,215,0,0.15)'
-          ;(e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 12px rgba(255,215,0,0.2)'
+          if (!winsLogOpen) {
+            (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,215,0,0.15)'
+            ;(e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 12px rgba(255,215,0,0.2)'
+          }
         }}
       >
         <Trophy size={18} style={{ color: '#ffd700' }} />
       </button>
 
-      <WinsDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <WinsDrawer open={winsLogOpen} onClose={toggleWinsLog} rightOffset={rightOffset} />
     </>
   )
 }
