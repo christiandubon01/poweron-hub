@@ -6,7 +6,10 @@
  * Expand with additional app-wide settings as features are built out.
  */
 
-import { Settings2, Droplets, Lock, CheckCircle } from 'lucide-react';
+import { Settings2, Droplets, Lock, CheckCircle, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,7 +117,34 @@ export default function SettingsView({
   watermarkSettings,
   onWatermarkSettingsChange,
 }: SettingsViewProps) {
+  const { user } = useAuth();
+  const [rerunOnboardingLoading, setRerunOnboardingLoading] = useState(false);
   const canToggleExportWatermark = userTier === 'pro' || userTier === 'enterprise';
+
+  // FIX 1 — Re-run Onboarding button
+  const handleRerunOnboarding = async () => {
+    if (!user?.id) return;
+    setRerunOnboardingLoading(true);
+    try {
+      // Reset onboarding_completed flag to false, triggering the onboarding flow on next app reload
+      await supabase
+        .from('user_onboarding' as never)
+        .upsert(
+          {
+            user_id: user.id,
+            completed_at: null,
+            updated_at: new Date().toISOString(),
+          } as never,
+          { onConflict: 'user_id' }
+        );
+      // Reload the app to re-trigger onboarding
+      window.location.reload();
+    } catch (err) {
+      console.error('[Settings] Re-run onboarding failed:', err);
+    } finally {
+      setRerunOnboardingLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: '#0a0b0f' }}>
@@ -197,6 +227,45 @@ export default function SettingsView({
             <span className="text-yellow-500">Enterprise</span> to remove PowerOn Hub branding from exports.
           </p>
         )}
+
+        {/* ── Onboarding ────────────────────────────────────────────────────── */}
+        <div
+          className="rounded-xl border overflow-hidden"
+          style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+        >
+          {/* Card header */}
+          <div
+            className="flex items-center gap-2 px-5 py-3 border-b"
+            style={{ borderColor: '#1e2128', backgroundColor: '#11121a' }}
+          >
+            <RotateCcw size={14} className="text-emerald-500" />
+            <span className="text-sm font-semibold text-gray-200">Onboarding</span>
+          </div>
+
+          <div className="px-5 py-5 flex flex-col gap-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium text-gray-200">Re-run Setup Wizard</span>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Start the initial setup wizard again. This lets you update your AI name, business type, and job types.
+                  The wizard will only show once per login after you complete it.
+                </p>
+              </div>
+              <button
+                onClick={handleRerunOnboarding}
+                disabled={rerunOnboardingLoading}
+                className="flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: rerunOnboardingLoading ? '#2a3040' : '#16a34a',
+                  color: rerunOnboardingLoading ? '#6b7280' : '#ffffff',
+                  cursor: rerunOnboardingLoading ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {rerunOnboardingLoading ? 'Restarting...' : 'Re-run Setup'}
+              </button>
+            </div>
+          </div>
+        </div>
 
       </div>
     </div>

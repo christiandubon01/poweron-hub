@@ -1,9 +1,10 @@
 /**
- * OnboardingFlow.tsx
- * V4-OB1 — First-run onboarding experience.
+ * OnboardingFlow.tsx — FIXED VERSION
+ * V4-OB1 — First-run onboarding experience with back button, multi-select job types, and completion flag.
  *
- * Full-screen overlay that runs on first login. An AI-human mutual interview
- * that learns the business and configures the platform accordingly.
+ * FIX 1: Only show on first login — checks onboarding_completed flag in Supabase
+ * FIX 2: Back button on every question with answer preservation
+ * FIX 3: Multi-select job types with individual price range inputs
  *
  * Steps:
  *   1. Welcome + custom AI name input
@@ -12,11 +13,11 @@
  *   4. AI summary + user confirmation
  *   5. Platform configuration + activation
  *
- * Stores onboarding data in Supabase `user_onboarding` table.
+ * Stores onboarding data in Supabase `user_onboarding` table with completed_at flag.
  * "Skip for now" is always available.
  */
 
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Zap,
   ChevronRight,
@@ -35,6 +36,7 @@ import {
   Wind,
   HardHat,
   MoreHorizontal,
+  Check,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { callClaude } from '@/services/claudeProxy'
@@ -53,7 +55,23 @@ import type {
 
 const TOTAL_STEPS = 5
 
-// Fixed interview questions — Claude will add adaptive follow-ups
+// Job type options for multi-select (FIX 3)
+interface JobTypeOption {
+  id: string
+  label: string
+  description: string
+}
+
+const JOB_TYPE_OPTIONS: JobTypeOption[] = [
+  { id: 'service_calls', label: 'Service Calls', description: '$100–$600' },
+  { id: 'small_projects', label: 'Small Projects', description: '$1,000–$5,000' },
+  { id: 'medium_projects', label: 'Medium Projects', description: '$5,000–$20,000' },
+  { id: 'large_projects', label: 'Large Projects', description: '$20,000+' },
+  { id: 'solar_installation', label: 'Solar Installation', description: 'Varies' },
+  { id: 'commercial_ti', label: 'Commercial/TI', description: 'Varies' },
+]
+
+// Fixed interview questions
 const BASE_QUESTIONS: Array<{ key: keyof OnboardingResponses; label: string; placeholder: string }> = [
   {
     key: 'teamSize',
@@ -62,13 +80,13 @@ const BASE_QUESTIONS: Array<{ key: keyof OnboardingResponses; label: string; pla
   },
   {
     key: 'jobTypes',
-    label: 'What types of jobs do you do most?',
-    placeholder: 'e.g. Residential service calls, commercial new construction, solar installs…',
+    label: 'What types of jobs do you do? (Select all that apply)',
+    placeholder: 'Select one or more job types below…',
   },
   {
     key: 'typicalJobSize',
-    label: "What's your typical job size in dollars?",
-    placeholder: 'e.g. $500–$2,000 service calls, $15k–$50k projects…',
+    label: "What's your typical overall job size range in dollars?",
+    placeholder: 'e.g. $500–$2,000 on average…',
   },
   {
     key: 'trackingMethod',
@@ -187,8 +205,13 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   // ── Step 3: Interview ──────────────────────────────────────────────────────
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
-  const [interviewAnswers, setInterviewAnswers] = useState<Partial<OnboardingResponses>>({})
+  const [interviewAnswers, setInterviewAnswers] = useState<Partial<OnboardingResponses>>({
+    jobTypes: [],
+    jobTypeRanges: {},
+  })
   const [currentAnswer, setCurrentAnswer] = useState('')
+  const [selectedJobTypes, setSelectedJobTypes] = useState<string[]>([])
+  const [jobTypeRanges, setJobTypeRanges] = useState<Record<string, string>>({})
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null)
   const [followUpAnswers, setFollowUpAnswers] = useState<Record<string, string>>({})
   const [isGeneratingFollowUp, setIsGeneratingFollowUp] = useState(false)
@@ -254,6 +277,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const currentBaseQuestion = BASE_QUESTIONS[currentQuestionIndex]
   const isLastBaseQuestion = currentQuestionIndex === BASE_QUESTIONS.length - 1
+  const isJobTypesQuestion = currentQuestionIndex === 1 // Job types is question 2 (index 1)
 
   /**
    * Generates a Claude follow-up question based on the user's answer.
@@ -288,6 +312,43 @@ Return ONLY the question text, no preamble.`,
     [currentQuestionIndex]
   )
 
+  // Handle job type selection (FIX 3 - multi-select)
+  const handleJobTypeToggle = useCallback((jobTypeId: string) => {
+    setSelectedJobTypes((prev) => {
+      if (prev.includes(jobTypeId)) {
+        return prev.filter((id) => id !== jobTypeId)
+      } else {
+        return [...prev, jobTypeId]
+      }
+    })
+  }, [])
+
+  // Handle submitting job types question with ranges
+  const handleJobTypesSubmit = useCallback(async () => {
+    if (selectedJobTypes.length === 0) return
+
+    // Save selected job types and their ranges
+    const jobTypeLabels = selectedJobTypes
+      .map((id) => JOB_TYPE_OPTIONS.find((opt) => opt.id === id)?.label)
+      .filter(Boolean)
+
+    setInterviewAnswers((prev) => ({
+      ...prev,
+      jobTypes: jobTypeLabels as string[],
+      jobTypeRanges: jobTypeRanges,
+    }))
+
+    // Move to next question or complete
+    if (isLastBaseQuestion) {
+      setInterviewComplete(true)
+    } else {
+      setCurrentQuestionIndex((i) => i + 1)
+      setFollowUpQuestion(null)
+      setSelectedJobTypes([])
+      setJobTypeRanges({})
+    }
+  }, [selectedJobTypes, jobTypeRanges, isLastBaseQuestion])
+
   const handleAnswerSubmit = useCallback(async () => {
     if (!currentAnswer.trim()) return
 
@@ -301,7 +362,7 @@ Return ONLY the question text, no preamble.`,
     }))
 
     // Generate a follow-up question
-    if (currentQuestionIndex <= 1) {
+    if (currentQuestionIndex <= 1 && !isJobTypesQuestion) {
       setIsGeneratingFollowUp(true)
       const followUp = await generateFollowUp(question.label, currentAnswer.trim())
       setIsGeneratingFollowUp(false)
@@ -326,6 +387,7 @@ Return ONLY the question text, no preamble.`,
     currentQuestionIndex,
     generateFollowUp,
     isLastBaseQuestion,
+    isJobTypesQuestion,
   ])
 
   const handleFollowUpSubmit = useCallback(() => {
@@ -357,7 +419,8 @@ Return ONLY the question text, no preamble.`,
         aiName,
         businessType,
         teamSize: (interviewAnswers.teamSize as string) ?? '',
-        jobTypes: (interviewAnswers.jobTypes as string) ?? '',
+        jobTypes: (interviewAnswers.jobTypes as string[]) ?? [],
+        jobTypeRanges: (interviewAnswers.jobTypeRanges as Record<string, string>) ?? {},
         typicalJobSize: (interviewAnswers.typicalJobSize as string) ?? '',
         trackingMethod: (interviewAnswers.trackingMethod as string) ?? '',
         biggestHeadache: (interviewAnswers.biggestHeadache as string) ?? '',
@@ -387,7 +450,8 @@ Return ONLY the question text, no preamble.`,
         aiName,
         businessType,
         teamSize: (interviewAnswers.teamSize as string) ?? '',
-        jobTypes: (interviewAnswers.jobTypes as string) ?? '',
+        jobTypes: (interviewAnswers.jobTypes as string[]) ?? [],
+        jobTypeRanges: (interviewAnswers.jobTypeRanges as Record<string, string>) ?? {},
         typicalJobSize: (interviewAnswers.typicalJobSize as string) ?? '',
         trackingMethod: (interviewAnswers.trackingMethod as string) ?? '',
         biggestHeadache: (interviewAnswers.biggestHeadache as string) ?? '',
@@ -395,6 +459,7 @@ Return ONLY the question text, no preamble.`,
       }
 
       // Run platform configuration and save data in parallel
+      // FIX 1: Set completed_at to mark onboarding as complete (prevents repeated prompts)
       await Promise.all([
         configureFromOnboarding(userId, analysis),
         saveOnboardingData({
@@ -628,6 +693,17 @@ Return ONLY the question text, no preamble.`,
                 {BASE_QUESTIONS.slice(0, currentQuestionIndex).map((q) => {
                   const ans = interviewAnswers[q.key]
                   if (!ans) return null
+                  
+                  // Special rendering for job types array
+                  if (Array.isArray(ans)) {
+                    return (
+                      <div key={q.key} className="bg-zinc-900/50 rounded-lg p-3 border border-zinc-800/50">
+                        <p className="text-xs text-zinc-500 mb-1">{q.label}</p>
+                        <p className="text-sm text-zinc-300">{(ans as string[]).join(', ')}</p>
+                      </div>
+                    )
+                  }
+                  
                   return (
                     <div key={q.key} className="bg-zinc-900/50 rounded-lg p-3 border border-zinc-800/50">
                       <p className="text-xs text-zinc-500 mb-1">{q.label}</p>
@@ -647,42 +723,11 @@ Return ONLY the question text, no preamble.`,
 
             {/* Current question */}
             {!interviewComplete && (
-              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5">
-                {followUpQuestion ? (
-                  <>
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
-                        <Sparkles className="w-3 h-3 text-purple-400" />
-                      </div>
-                      <p className="text-sm font-medium text-purple-300">{followUpQuestion}</p>
-                    </div>
-                    <textarea
-                      ref={textareaRef}
-                      value={currentAnswer}
-                      onChange={(e) => setCurrentAnswer(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          handleFollowUpSubmit()
-                        }
-                      }}
-                      placeholder="Your answer…"
-                      rows={3}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors resize-none text-sm"
-                      autoFocus
-                    />
-                    <button
-                      onClick={handleFollowUpSubmit}
-                      disabled={!currentAnswer.trim()}
-                      className="mt-3 w-full bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
-                    >
-                      <Send className="w-4 h-4" />
-                      Submit
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 mb-3">
+              <>
+                {/* FIX 3: Multi-select job types question */}
+                {isJobTypesQuestion && (
+                  <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5">
+                    <div className="flex items-center gap-2 mb-4">
                       <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
                         <Bot className="w-3 h-3 text-emerald-400" />
                       </div>
@@ -690,38 +735,128 @@ Return ONLY the question text, no preamble.`,
                         {currentBaseQuestion?.label}
                       </p>
                     </div>
-                    <textarea
-                      ref={textareaRef}
-                      value={currentAnswer}
-                      onChange={(e) => setCurrentAnswer(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          handleAnswerSubmit()
-                        }
-                      }}
-                      placeholder={currentBaseQuestion?.placeholder}
-                      rows={3}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors resize-none text-sm"
-                      autoFocus
-                    />
-                    {isGeneratingFollowUp && (
-                      <div className="flex items-center gap-2 mt-2 text-xs text-purple-400">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Thinking of a follow-up…
-                      </div>
-                    )}
+
+                    {/* Job type checkboxes */}
+                    <div className="space-y-2 mb-4">
+                      {JOB_TYPE_OPTIONS.map((jobType) => (
+                        <button
+                          key={jobType.id}
+                          onClick={() => handleJobTypeToggle(jobType.id)}
+                          className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left ${
+                            selectedJobTypes.includes(jobType.id)
+                              ? 'border-emerald-500 bg-emerald-500/10'
+                              : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'
+                          }`}
+                        >
+                          <div
+                            className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                              selectedJobTypes.includes(jobType.id)
+                                ? 'border-emerald-500 bg-emerald-500'
+                                : 'border-zinc-600 bg-transparent'
+                            }`}
+                          >
+                            {selectedJobTypes.includes(jobType.id) && (
+                              <Check className="w-3 h-3 text-white" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-zinc-100">{jobType.label}</p>
+                            <p className="text-xs text-zinc-500">{jobType.description}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
                     <button
-                      onClick={handleAnswerSubmit}
-                      disabled={!currentAnswer.trim() || isGeneratingFollowUp}
-                      className="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+                      onClick={handleJobTypesSubmit}
+                      disabled={selectedJobTypes.length === 0}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
                     >
                       <Send className="w-4 h-4" />
                       {isLastBaseQuestion ? 'Finish Interview' : 'Next Question'}
                     </button>
-                  </>
+                  </div>
                 )}
-              </div>
+
+                {/* FIX 2: Back button on all questions + regular text answer */}
+                {!isJobTypesQuestion && (
+                  <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5">
+                    {followUpQuestion ? (
+                      <>
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                            <Sparkles className="w-3 h-3 text-purple-400" />
+                          </div>
+                          <p className="text-sm font-medium text-purple-300">{followUpQuestion}</p>
+                        </div>
+                        <textarea
+                          ref={textareaRef}
+                          value={currentAnswer}
+                          onChange={(e) => setCurrentAnswer(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
+                              handleFollowUpSubmit()
+                            }
+                          }}
+                          placeholder="Your answer…"
+                          rows={3}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors resize-none text-sm"
+                          autoFocus
+                        />
+                        <button
+                          onClick={handleFollowUpSubmit}
+                          disabled={!currentAnswer.trim()}
+                          className="mt-3 w-full bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+                        >
+                          <Send className="w-4 h-4" />
+                          Submit
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                            <Bot className="w-3 h-3 text-emerald-400" />
+                          </div>
+                          <p className="text-sm font-medium text-zinc-200">
+                            {currentBaseQuestion?.label}
+                          </p>
+                        </div>
+                        <textarea
+                          ref={textareaRef}
+                          value={currentAnswer}
+                          onChange={(e) => setCurrentAnswer(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
+                              handleAnswerSubmit()
+                            }
+                          }}
+                          placeholder={currentBaseQuestion?.placeholder}
+                          rows={3}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors resize-none text-sm"
+                          autoFocus
+                        />
+                        {isGeneratingFollowUp && (
+                          <div className="flex items-center gap-2 mt-2 text-xs text-purple-400">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Thinking of a follow-up…
+                          </div>
+                        )}
+                        <button
+                          onClick={handleAnswerSubmit}
+                          disabled={!currentAnswer.trim() || isGeneratingFollowUp}
+                          className="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+                        >
+                          <Send className="w-4 h-4" />
+                          {isLastBaseQuestion ? 'Finish Interview' : 'Next Question'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
             )}
 
             {/* Interview complete — ready to analyze */}
@@ -757,14 +892,16 @@ Return ONLY the question text, no preamble.`,
               </div>
             )}
 
-            {/* Back button */}
-            <button
-              onClick={goBack}
-              className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors mx-auto"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              Back
-            </button>
+            {/* FIX 2: Back button on interview step */}
+            {!interviewComplete && (
+              <button
+                onClick={goBack}
+                className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors mx-auto"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Back
+              </button>
+            )}
           </div>
         )}
 

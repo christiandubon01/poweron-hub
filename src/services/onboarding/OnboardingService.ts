@@ -25,7 +25,8 @@ export interface OnboardingResponses {
   aiName: string
   businessType: BusinessType
   teamSize: string
-  jobTypes: string
+  jobTypes: string[]
+  jobTypeRanges: Record<string, string>
   typicalJobSize: string
   trackingMethod: string
   biggestHeadache: string
@@ -90,12 +91,13 @@ Be concise. Return ONLY the JSON object, no markdown, no explanation.`
 export async function runOnboardingInterview(
   responses: OnboardingResponses
 ): Promise<OnboardingAnalysis> {
+  const jobTypesStr = Array.isArray(responses.jobTypes) ? responses.jobTypes.join(', ') : String(responses.jobTypes)
   const prompt = `Analyze these business onboarding responses and return a JSON configuration object.
 
 AI Name chosen: ${responses.aiName}
 Business type selected: ${responses.businessType}
 Team size: ${responses.teamSize}
-Job types: ${responses.jobTypes}
+Job types (multi-select): ${jobTypesStr}
 Typical job size: ${responses.typicalJobSize}
 Current tracking method: ${responses.trackingMethod}
 Biggest operational headache: ${responses.biggestHeadache}
@@ -128,15 +130,16 @@ Additional follow-up answers: ${JSON.stringify(responses.followUpAnswers, null, 
     console.error('[OnboardingService] Interview analysis failed:', err)
 
     // Graceful fallback — return sensible defaults
+    const jobTypesStr = Array.isArray(responses.jobTypes) ? responses.jobTypes.join(', ') : String(responses.jobTypes)
     return {
       summary: `Welcome! You've configured PowerOn Hub for your ${responses.businessType} business with ${responses.teamSize} team members.`,
       industryTemplate: responses.businessType,
       recommendedAgents: INDUSTRY_AGENT_MAP[responses.businessType] ?? INDUSTRY_AGENT_MAP.other,
-      systemPromptContext: `This user operates a ${responses.businessType} contracting business with ${responses.teamSize} people. They typically handle ${responses.jobTypes} jobs in the ${responses.typicalJobSize} range. Their biggest operational challenge is: ${responses.biggestHeadache}.`,
+      systemPromptContext: `This user operates a ${responses.businessType} contracting business with ${responses.teamSize} people. They typically handle ${jobTypesStr} jobs. Their biggest operational challenge is: ${responses.biggestHeadache}.`,
       suggestedDemoData: responses.businessType === 'electrical' ? 'electrical_contractor_3_person' : 'generic_contractor',
       keyInsights: [
         `${responses.businessType} contractor with ${responses.teamSize} team members`,
-        `Focuses on ${responses.jobTypes}`,
+        `Focuses on ${jobTypesStr}`,
         `Current pain point: ${responses.biggestHeadache}`,
       ],
     }
