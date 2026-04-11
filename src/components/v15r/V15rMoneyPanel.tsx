@@ -32,7 +32,10 @@ import {
 } from '@/services/backupDataService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
-import { calcPipeline } from '@/utils/pipelineCalc'
+// BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
+import { calcActivePipeline } from '@/utils/pipelineCalc'
+// BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs, not quote − collected)
+import { calculateProjectFinancials, calculatePortfolioFinancials } from '@/utils/calculateProjectFinancials'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 
@@ -325,8 +328,9 @@ export default function V15rMoneyPanel() {
   const ytdAccum = weeklyData.length > 0 ? num(weeklyData[weeklyData.length - 1]?.accum) : 0
 
   // ── 8 HEADER KPIs (Per-Business Summary) ────────────────────────────────────
-  // 1. Total Pipeline = active + coming-up project contracts + remaining service balance
-  const totalPipeline = calcPipeline(projects) + Math.max(0, svcQuoted - svcCollected)
+  // BUG 2 FIX — Total Pipeline = active projects ONLY + open service call balances
+  // (removed 'coming' projects and fully-collected service calls from pipeline)
+  const totalPipeline = calcActivePipeline(projects, serviceLogs)
 
   // 2. Total Collected = sum of project paid + service collected
   const totalCollected = projectPaid + svcCollected
@@ -685,6 +689,28 @@ export default function V15rMoneyPanel() {
                     <span className="text-gray-400">Billed: <span className="font-mono font-semibold text-gray-200">${fmtK(m.billed)}</span></span>
                   </div>
                 </div>
+                {/* BUG 3 FIX — Canonical balance: remaining_balance (quote−costs) and total_collected side-by-side */}
+                {(() => {
+                  const fin = calculateProjectFinancials(m.p, logs, mileRate)
+                  const balColor = fin.remaining_balance > 0
+                    ? (fin.remaining_balance / Math.max(fin.quote, 1) > 0.2 ? '#10b981' : fin.remaining_balance / Math.max(fin.quote, 1) > 0.1 ? '#f59e0b' : '#f97316')
+                    : '#ef4444'
+                  return (
+                    <div className="flex items-center gap-4 mt-1.5 pt-1.5 border-t border-gray-700/40 text-[9px]">
+                      <span className="text-gray-500 font-semibold uppercase tracking-wide">Balance:</span>
+                      <span>
+                        <span className="text-gray-500">Remaining </span>
+                        <span style={{ color: balColor, fontWeight: 700 }}>{fmt(fin.remaining_balance)}</span>
+                        <span className="text-gray-600 mx-1">·</span>
+                        <span className="text-gray-500">Collected </span>
+                        <span style={{ color: '#10b981', fontWeight: 700 }}>{fmt(fin.total_collected)}</span>
+                        <span className="text-gray-600 mx-1">·</span>
+                        <span className="text-gray-500">Costs </span>
+                        <span className="text-orange-400 font-mono">{fmt(fin.total_costs)}</span>
+                      </span>
+                    </div>
+                  )
+                })()}
               </div>
             )
           })}

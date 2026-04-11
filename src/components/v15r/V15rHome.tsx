@@ -55,6 +55,10 @@ import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+// BUG 2 FIX — Active-only pipeline formula
+import { calcActivePipeline } from '@/utils/pipelineCalc'
+// BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
+import { calculateProjectFinancials } from '@/utils/calculateProjectFinancials'
 
 // ── Greeting helper ──────────────────────────────────────────────────────────
 
@@ -206,6 +210,12 @@ export default function V15rHome() {
 
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
+
+  // BUG 2 FIX — Override pipeline KPI with active-only formula.
+  // getKPIs() includes 'coming' projects and all service quoted totals (including collected).
+  // Correct formula: active projects ONLY + uncollected service call balances.
+  const correctedPipeline = calcActivePipeline(projects, serviceLogs)
+  kpis = { ...kpis, pipeline: correctedPipeline }
 
   // ── Agenda alerts (auto-generated) ─────────────────────────────────────
   const agendaAlerts: Array<{ clr: string; txt: string; id: string }> = []
@@ -612,21 +622,33 @@ export default function V15rHome() {
                       {h.reasons.length ? h.reasons.join(' · ') : 'On track'}
                     </div>
 
-                    {/* Sparkline: paid vs remaining contract exposure */}
+                    {/* BUG 3 FIX — Canonical financials: remaining_balance (quote−costs) + total_collected side-by-side */}
                     {(() => {
-                      const fin = getProjectFinancials(p, backup)
-                      const paidPct = Math.round((fin.paid / Math.max(fin.contract, 1)) * 100)
+                      const mileRate = num(backup?.settings?.mileRate) || 0.66
+                      const fin = calculateProjectFinancials(p, backup.logs || [], mileRate)
+                      const balColor = getBalanceColor(fin.remaining_balance, fin.quote)
                       return (
-                        <div className="mb-2 flex items-center gap-2">
-                          <div style={{ width: '60px', height: '6px', backgroundColor: '#374151', borderRadius: '2px', overflow: 'hidden', display: 'flex' }}>
-                            {fin.paid > 0 && fin.contract > 0 && (
-                              <div style={{ width: `${(fin.paid / fin.contract) * 100}%`, backgroundColor: '#10b981', height: '100%' }} />
-                            )}
-                            {fin.paid < fin.contract && (
-                              <div style={{ width: `${((fin.contract - fin.paid) / fin.contract) * 100}%`, backgroundColor: '#9ca3af', height: '100%' }} />
-                            )}
+                        <div className="mb-2 space-y-1">
+                          {/* Progress bar: cost burn vs quote */}
+                          <div className="flex items-center gap-2">
+                            <div style={{ width: '60px', height: '6px', backgroundColor: '#374151', borderRadius: '2px', overflow: 'hidden' }}>
+                              {fin.quote > 0 && (
+                                <div style={{ width: `${Math.min(100, (fin.total_costs / fin.quote) * 100)}%`, backgroundColor: '#f59e0b', height: '100%' }} />
+                              )}
+                            </div>
+                            <span style={{ fontSize: '8px', color: '#9ca3af' }}>{fin.quote > 0 ? Math.round((fin.total_costs / fin.quote) * 100) : 0}% costs</span>
                           </div>
-                          <span style={{ fontSize: '8px', color: '#9ca3af' }}>{paidPct}% paid</span>
+                          {/* Remaining balance & total collected side-by-side */}
+                          <div className="flex items-center gap-3 text-[9px]">
+                            <span>
+                              <span style={{ color: '#9ca3af' }}>Remaining: </span>
+                              <span style={{ color: balColor, fontWeight: 700 }}>{fmt(fin.remaining_balance)}</span>
+                            </span>
+                            <span>
+                              <span style={{ color: '#9ca3af' }}>Collected: </span>
+                              <span style={{ color: '#10b981', fontWeight: 700 }}>{fmt(fin.total_collected)}</span>
+                            </span>
+                          </div>
                         </div>
                       )
                     })()}

@@ -46,6 +46,10 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
+// BUG 1 FIX — Realtime sync + stale-check service
+import { initRealtimeSync } from '@/services/realtimeSyncService'
+// BUG 2 FIX — Active-only pipeline formula
+import { calcActivePipeline } from '@/utils/pipelineCalc'
 import { useDemoStore } from '@/store/demoStore'
 import templates from '@/config/templates/index'
 import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
@@ -353,6 +357,21 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }, 30000) // every 30 seconds (aligned with new sync interval)
 
     return () => { stopSync(); clearInterval(interval) }
+  }, [])
+
+  // BUG 1 FIX — Supabase Realtime sync + stale-data detection
+  // Runs after the initial loadFromSupabase() so we don't double-pull on mount.
+  useEffect(() => {
+    const cleanupRealtime = initRealtimeSync((table) => {
+      // When any realtime change fires, refresh local KPIs immediately
+      const data = getBackupData()
+      if (data) {
+        setBackupData(data)
+        setKpis(getKPIs(data))
+      }
+      console.log(`[Layout] Realtime refresh triggered by table: ${table}`)
+    })
+    return () => cleanupRealtime()
   }, [])
 
   // Initialize Phase B event bus + agent subscriptions
@@ -676,8 +695,16 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const lastSaved = backupData?._lastSavedAt || new Date().toISOString()
   const _rawKpis = kpis || { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
 
+  // BUG 2 FIX — Override pipeline with active-only formula (+ open service balances).
+  // getKPIs() in backupDataService includes 'coming' projects and all service quoted values.
+  // calcActivePipeline uses status === 'active' ONLY + uncollected service call balances.
+  const _correctedPipeline = (hasHydrated && isDemoMode)
+    ? _rawKpis.pipeline  // keep demo as-is
+    : calcActivePipeline(backupData?.projects || [], backupData?.serviceLogs || [])
+  const _correctedRawKpis = { ..._rawKpis, pipeline: _correctedPipeline }
+
   // Demo Mode: swap KPIs and company name for display only — real data unchanged
-  const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _rawKpis
+  const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _correctedRawKpis
 
   // Calculate percentage for revenue target progress
   const annualTarget = (isDemoMode ? 480000 : backupData?.settings?.annualTarget) || 120000

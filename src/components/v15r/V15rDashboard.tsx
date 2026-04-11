@@ -15,7 +15,10 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
 import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
-import { calcPipeline } from '@/utils/pipelineCalc'
+// BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
+import { calcActivePipeline } from '@/utils/pipelineCalc'
+// BUG 3 FIX — Canonical project financials
+import { calculateProjectFinancials, calculatePortfolioFinancials } from '@/utils/calculateProjectFinancials'
 import { BarChart, Bar, XAxis as RXAxis, YAxis as RYAxis, CartesianGrid as RCGrid, Tooltip as RTooltip, Legend as RLegend, ResponsiveContainer as RRC } from 'recharts'
 import { callClaude, extractText } from '@/services/claudeProxy'
 // SVGCharts kept as reference only — use individual Recharts chart files below
@@ -129,26 +132,35 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
 
         // Pre-calculate accurate values — active = status === 'active' ONLY
         const activeProjects = projects.filter(p => p.status === 'active')
-        // Pipeline = active + coming-up projects (canonical formula via shared helper)
-        const pipelineProjects = projects.filter(p => {
-          const s = (p.status || '').toLowerCase()
-          return s === 'active' || s === 'coming'
-        })
+        // BUG 2 FIX — Pipeline = active projects ONLY + uncollected service balances
+        // (removed 'coming' from pipeline per owner spec)
         const activeContractTotal = activeProjects.reduce((s: number, p: any) => s + num(p.contract), 0)
         const totalARExposure = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
         const totalCollected = activeProjects.reduce((s: number, p: any) => s + num(p.paid), 0)
         const totalBilled = activeProjects.reduce((s: number, p: any) => s + num(p.billed), 0)
         const totalUnbilledInvoiced = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.billed) - num(p.paid)), 0)
-        const pipelineTotal = calcPipeline(projects)
+        // BUG 2 FIX — use calcActivePipeline (active ONLY + open service balances)
+        const pipelineTotal = calcActivePipeline(projects, backup.serviceLogs || [])
 
-        // Per-project detail for active projects
-        const activeProjectDetails = activeProjects.map(p => ({
-          name: p.name,
-          contract: num(p.contract),
-          paid: num(p.paid),
-          billed: num(p.billed),
-          arExposure: Math.max(0, num(p.contract) - num(p.paid)),
-        }))
+        // BUG 3 FIX — Canonical project financials using calculatePortfolioFinancials
+        const mileRate = num(backup?.settings?.mileRate) || 0.66
+        const portfolioFin = calculatePortfolioFinancials(activeProjects, backup.logs || [], mileRate)
+
+        // Per-project detail for active projects (include canonical balance)
+        const activeProjectDetails = activeProjects.map(p => {
+          const fin = calculateProjectFinancials(p, backup.logs || [], mileRate)
+          return {
+            name: p.name,
+            contract: num(p.contract),
+            paid: num(p.paid),
+            billed: num(p.billed),
+            arExposure: Math.max(0, num(p.contract) - num(p.paid)),
+            // BUG 3 — canonical fields
+            remaining_balance: fin.remaining_balance,
+            total_costs: fin.total_costs,
+            total_collected: fin.total_collected,
+          }
+        })
 
         // Service logs — use collected (actual revenue), not quoted
         const recentSvcLogs = (backup.serviceLogs || []).slice(-5).map((l: any) => ({
@@ -161,19 +173,22 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
         const svcTotalCollected = (backup.serviceLogs || []).reduce((s: number, l: any) => s + num(l.collected), 0)
 
         const dashboardContext = {
-          definitions: 'Active projects = status === active only. AR Exposure = contract minus paid (uncollected contract value). Unbilled/invoiced = billed minus paid (invoiced but not yet collected). Pipeline = active + coming-up project contracts (canonical formula). These values are pre-calculated — do not recalculate them.',
+          definitions: 'Active projects = status === active ONLY (not coming/pending). Pipeline = active project contracts + open service call balances. Remaining balance = quote minus total costs (labor+material+transport), NOT quote minus collected. Collected is tracked separately. These values are pre-calculated — do not recalculate them.',
           activeProjectCount: activeProjects.length,
           activeContractTotal,
           totalARExposure,
           totalCollected,
           totalBilled,
           totalUnbilledInvoiced,
-          pipelineCount: pipelineProjects.length,
           pipelineTotal,
           serviceLogRevenue: svcTotalCollected,
           activeProjectDetails,
           recentServiceLogs: recentSvcLogs,
           weeklyData: (backup.weeklyData || []).slice(-4),
+          // BUG 3 — portfolio-level canonical financials
+          portfolioRemainingBalance: portfolioFin.remaining_balance,
+          portfolioTotalCosts: portfolioFin.total_costs,
+          portfolioTotalCollected: portfolioFin.total_collected,
         }
 
         const response = await callClaude({

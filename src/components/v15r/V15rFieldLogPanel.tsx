@@ -40,6 +40,8 @@ import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import VoiceMaterialCapture from './VoiceMaterialCapture'
+// BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
+import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABOR_RATE, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -1051,31 +1053,28 @@ export default function V15rFieldLogPanel() {
           )
         })()}
 
-        {/* Running Totals Sticky Bar — uses billRate per spec */}
+        {/* Running Totals Sticky Bar — BUG 3 FIX: uses canonical calculateProjectFinancials ($43/hr internal rate) */}
         {sorted.length > 0 && (() => {
           const totalHours = sorted.reduce((s, l) => s + num(l.hrs), 0)
           const totalMat = sorted.reduce((s, l) => s + num(l.mat), 0)
-          const totalCollected = sorted.reduce((s, l) => s + num(l.collected || 0), 0)
-          // Spec: labor cost = hours × billing rate
-          const stickyBillRate = num(backup.settings?.billRate) || 95
-          const stickyMileRate = num(backup.settings?.mileRate) || 0.67
-          const totalLaborCost = sorted.reduce((s, l) => s + (num(l.hrs) * stickyBillRate), 0)
-          const totalMileCost = sorted.reduce((s, l) => s + (num(l.miles || 0) * stickyMileRate), 0)
-          const totalCost = totalLaborCost + totalMat + totalMileCost
 
-          // Balance left: contract − collected − totalCost (spec formula)
-          let contractSum = 0
+          // BUG 3 FIX — Canonical formula via calculateProjectFinancials:
+          //   remaining_balance = quote − total_costs  (NOT quote − collected)
+          //   total_costs = labor ($43/hr) + material + transportation (mileRate)
+          //   total_collected tracked SEPARATELY
+          const canonMileRate = num(backup.settings?.mileRate) || VAN_MILE_RATE
+          let canonFin: ReturnType<typeof calculateProjectFinancials>
           if (projFilter === 'all') {
-            contractSum = projects.reduce((s, p) => s + num(p.contract || 0), 0)
+            canonFin = calculatePortfolioFinancials(projects, backup.logs || [], canonMileRate)
           } else {
-            const proj = projects.find(p => p.id === projFilter)
+            const proj = projects.find((p: any) => p.id === projFilter)
             if (proj) {
-              const fin = getProjectFinancials(proj, backup)
-              contractSum = fin.contract
+              canonFin = calculateProjectFinancials(proj, backup.logs || [], canonMileRate)
+            } else {
+              canonFin = { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: canonMileRate }
             }
           }
-          const balanceLeft = contractSum - totalCollected - totalCost
-          const stickyBalanceColor = getBalanceColor(balanceLeft, contractSum)
+          const canonBalColor = getBalanceColor(canonFin.remaining_balance, canonFin.quote)
 
           return (
             <div className="sticky top-0 z-10 bg-[var(--bg-input)] border border-gray-700 rounded-lg p-3 mb-3 shadow-lg">
@@ -1086,19 +1085,21 @@ export default function V15rFieldLogPanel() {
                 </div>
                 <div>
                   <div className="text-[9px] text-gray-500 uppercase font-bold">Material Cost</div>
-                  <div className="text-sm font-bold font-mono text-orange-400">{fmt(totalMat)}</div>
+                  <div className="text-sm font-bold font-mono text-orange-400">{fmt(canonFin.material_cost)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] text-gray-500 uppercase font-bold">Total Costs</div>
+                  <div className="text-[9px] text-gray-600">L+M+T @$43/hr</div>
+                  <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.total_costs)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] text-gray-500 uppercase font-bold">Remaining Bal</div>
+                  <div className="text-[9px] text-gray-600">Quote−Costs</div>
+                  <div className="text-sm font-bold font-mono" style={{ color: canonBalColor }}>{fmt(canonFin.remaining_balance)}</div>
                 </div>
                 <div>
                   <div className="text-[9px] text-gray-500 uppercase font-bold">Collected</div>
-                  <div className="text-sm font-bold font-mono text-emerald-400">{fmt(totalCollected)}</div>
-                </div>
-                <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Total Cost</div>
-                  <div className="text-sm font-bold font-mono text-red-400">{fmt(totalCost)}</div>
-                </div>
-                <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Balance Left</div>
-                  <div className="text-sm font-bold font-mono" style={{ color: stickyBalanceColor }}>{fmt(balanceLeft)}</div>
+                  <div className="text-sm font-bold font-mono text-emerald-400">{fmt(canonFin.total_collected)}</div>
                 </div>
               </div>
             </div>
