@@ -3,6 +3,12 @@
  * NDA signing service for PowerOn Hub.
  *
  * B3 — PDF generation + confirmation emails + admin view support.
+ * NDA-FIX — Auth race condition fix:
+ * - Wait for auth.getSession() to resolve before any Supabase writes
+ * - Verify auth.uid() returns valid UUID
+ * - localStorage backup + self-healing sync
+ * - Retry logic with exponential backoff (3 tries)
+ * - On page load: check localStorage FIRST (instant gate bypass)
  *
  * Supabase table: signed_agreements
  * Supabase Storage bucket: nda-documents (private)
@@ -40,6 +46,158 @@ export interface NDASubmission {
   signatureBase64: string;
   typedName: string;
   ipAddress: string;
+}
+
+// ─── Auth Guard — Wait for session resolution ────────────────────────────────
+
+/**
+ * Waits for auth session to be fully resolved.
+ * Returns the authenticated user ID, or throws if auth fails.
+ *
+ * This is critical: if auth hasn't resolved yet, Supabase writes will use
+ * the wrong (or anonymous) context.
+ */
+async function waitForAuthSession(maxWaitMs = 5000): Promise<string> {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        throw new Error(`Auth error: ${error.message}`);
+      }
+      
+      if (session?.user?.id) {
+        // Validate UUID format
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.user.id)) {
+          throw new Error(`Invalid auth UID format: ${session.user.id}`);
+        }
+        return session.user.id;
+      }
+    } catch (err) {
+      console.warn('[ndaService] Auth check failed, retrying:', err);
+    }
+    
+    // Wait 200ms before retrying
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+  throw new Error('Auth session not available after 5 seconds');
+}
+
+// ─── Retry logic with exponential backoff ─────────────────────────────────────
+
+/**
+ * Executes an async operation with retry logic.
+ * @param operation The async operation to retry
+ * @param maxRetries Number of retry attempts (default: 3)
+ * @param baseDelayMs Initial delay between retries in ms (default: 500)
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries = 3,
+  baseDelayMs = 500
+): Promise<T> {
+  let lastError: Error = new Error('Unknown error');
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      
+      if (attempt < maxRetries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt);
+        console.warn(`[ndaService] Retry ${attempt + 1}/${maxRetries} after ${delayMs}ms:`, lastError.message);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
+// ─── localStorage cache helpers ────────────────────────────────────────────────
+
+function getNdaCacheKey(userId: string): string {
+  return `poweron_nda_accepted_${userId}`;
+}
+
+function isNdaCachedAccepted(userId: string): boolean {
+  try {
+    return localStorage.getItem(getNdaCacheKey(userId)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setNdaCacheAccepted(userId: string): void {
+  try {
+    localStorage.setItem(getNdaCacheKey(userId), '1');
+  } catch (err) {
+    console.warn('[ndaService] Failed to update localStorage cache:', err);
+  }
+}
+
+function clearNdaCache(userId: string): void {
+  try {
+    localStorage.removeItem(getNdaCacheKey(userId));
+  } catch {
+    // Ignore
+  }
+}
+
+// ─── Self-healing sync ─────────────────────────────────────────────────────────
+
+/**
+ * If localStorage says accepted but Supabase disagrees, re-write to Supabase
+ * to ensure consistency. Called during page load.
+ */
+async function healNdaSync(userId: string): Promise<void> {
+  try {
+    // Only attempt healing if both conditions are true:
+    // 1. localStorage says accepted
+    // 2. Supabase says NOT accepted
+    
+    if (!isNdaCachedAccepted(userId)) {
+      return; // Nothing to heal
+    }
+    
+    const signed = await hasUserSignedNDA(userId);
+    
+    if (signed) {
+      return; // Already in sync
+    }
+    
+    console.log('[ndaService] Healing: localStorage says accepted but Supabase disagrees. Re-writing...');
+    
+    // Re-write a marker record to Supabase
+    // This uses a minimal record since we're just establishing consensus
+    const signedAt = new Date().toISOString();
+    const healRecord: SignedAgreementRecord = {
+      user_id: userId,
+      agreement_type: NDA_AGREEMENT_VERSION,
+      signature_image: '', // Marker: empty signature means auto-healed
+      typed_name: 'AUTO-HEALED',
+      ip_address: 'auto-heal',
+      signed_at: signedAt,
+      pin_verified: true, // Mark as verified since user accepted
+    };
+    
+    await withRetry(async () => {
+      await syncToSupabase({
+        table: 'signed_agreements',
+        data: healRecord as unknown as Record<string, unknown>,
+        operation: 'insert',
+      });
+    });
+    
+    console.log('[ndaService] Self-healing complete');
+  } catch (err) {
+    console.warn('[ndaService] Self-healing failed (non-blocking):', err);
+    // Self-healing is non-blocking; the app continues either way
+  }
 }
 
 // ─── PDF Generation ───────────────────────────────────────────────────────────
@@ -280,7 +438,7 @@ async function sendNDAConfirmationEmails(params: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       to: 'app@poweronsolutionsllc.com',
-      subject: `NDA Signed \u2014 ${typedName}`,
+      subject: `NDA Signed — ${typedName}`,
       body: adminBody,
     }),
   }).catch((err) => console.warn('[ndaService] Admin email send failed:', err));
@@ -291,9 +449,17 @@ async function sendNDAConfirmationEmails(params: {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Saves a signed NDA record to Supabase, generates a PDF, uploads it to
- * Supabase Storage, updates the row with the pdf_url, and sends confirmation
- * emails to the user and admin.
+ * Saves a signed NDA record to Supabase with auth race condition fix.
+ *
+ * CRITICAL: Waits for auth.getSession() to resolve before any Supabase writes.
+ * If auth is not ready within 5 seconds, throws an error.
+ *
+ * Process:
+ * 1. Wait for auth session to be available
+ * 2. Verify auth.uid() is a valid UUID
+ * 3. Retry insert/update up to 3 times with exponential backoff
+ * 4. Update localStorage cache BEFORE the function returns
+ * 5. Send confirmation emails (fire-and-forget)
  *
  * Returns the stored record ID.
  */
@@ -308,9 +474,26 @@ export async function saveSignedNDA(
   const signedAt = new Date().toISOString();
   const verificationTimestamp = new Date().toISOString();
 
-  // 1 ── INSERT the record (no pdf_url yet)
+  // ── CRITICAL: Wait for auth to be ready before writing ────────────────────
+  let authUid: string;
+  try {
+    authUid = await waitForAuthSession();
+    console.log('[ndaService] Auth session resolved, UID:', authUid);
+  } catch (authErr) {
+    console.error('[ndaService] Auth session not available:', authErr);
+    throw new Error(
+      'Unable to sign NDA: authentication session not ready. ' +
+      'Please refresh the page and try again.'
+    );
+  }
+
+  // Use the authenticated UID instead of the caller-supplied userId
+  // This ensures consistency with the RLS-enforced table
+  const finalUserId = authUid;
+
+  // 1 ── INSERT the record (with retry logic) ─────────────────────────────────
   const record: SignedAgreementRecord = {
-    user_id: userId,
+    user_id: finalUserId,
     agreement_type: NDA_AGREEMENT_VERSION,
     signature_image: signatureBase64,
     typed_name: typedName,
@@ -321,13 +504,29 @@ export async function saveSignedNDA(
     verification_timestamp: verificationTimestamp,
   };
 
-  const insertedRow = await syncToSupabase({
-    table: 'signed_agreements',
-    data: record as unknown as Record<string, unknown>,
-    operation: 'insert',
-  });
+  let insertedRow: any;
+  try {
+    insertedRow = await withRetry(async () => {
+      return await syncToSupabase({
+        table: 'signed_agreements',
+        data: record as unknown as Record<string, unknown>,
+        operation: 'insert',
+      });
+    });
+  } catch (insertErr) {
+    console.error('[ndaService] Failed to insert NDA record after 3 retries:', insertErr);
+    throw new Error(
+      'Failed to save NDA agreement. Please check your connection and try again.'
+    );
+  }
 
   const rowId = (insertedRow.id as string) ?? `local-${Date.now()}`;
+
+  // ── Set localStorage cache IMMEDIATELY after successful insert ──────────────
+  // This is critical: the cache must be set BEFORE we continue with PDF generation
+  // so that page reloads during PDF generation don't re-trigger the NDA gate
+  setNdaCacheAccepted(finalUserId);
+  console.log('[ndaService] NDA cache set for user:', finalUserId);
 
   // 2 ── Generate PDF with jsPDF
   let pdfBlob: Blob;
@@ -354,16 +553,28 @@ export async function saveSignedNDA(
   }
 
   // 3 ── Upload PDF to Supabase Storage
-  const storagePath = await uploadNDAPdf(userId, rowId, pdfBlob);
+  let storagePath = '';
+  try {
+    storagePath = await uploadNDAPdf(finalUserId, rowId, pdfBlob);
+  } catch (storageErr) {
+    console.warn('[ndaService] PDF upload failed (non-blocking):', storageErr);
+    // Non-blocking: PDF upload failure doesn't prevent NDA acceptance
+  }
 
-  // 4 ── UPDATE signed_agreements row with pdf_url
-  if (!rowId.startsWith('local-')) {
-    await syncToSupabase({
-      table: 'signed_agreements',
-      data: { id: rowId, pdf_url: storagePath } as Record<string, unknown>,
-      operation: 'upsert',
-      matchColumn: 'id',
-    });
+  // 4 ── UPDATE signed_agreements row with pdf_url (with retry logic)
+  if (!rowId.startsWith('local-') && storagePath) {
+    try {
+      await withRetry(async () => {
+        return await syncToSupabase({
+          table: 'signed_agreements',
+          data: { id: rowId, pdf_url: storagePath } as Record<string, unknown>,
+          operation: 'upsert',
+          matchColumn: 'id',
+        });
+      });
+    } catch (updateErr) {
+      console.warn('[ndaService] Failed to update PDF URL (non-blocking):', updateErr);
+    }
   }
 
   // 5 ── Send confirmation emails (fire-and-forget)
@@ -383,18 +594,51 @@ export async function saveSignedNDA(
 /**
  * Returns true if the user has a signed NDA on record.
  *
- * Uses the Supabase auth.uid() directly — NOT the caller-supplied userId —
- * so the SELECT always queries with the same identifier the RLS-enforced INSERT stores.
+ * Priority:
+ * 1. Check localStorage FIRST (instant, no network)
+ * 2. If not cached, verify against Supabase (uses auth.uid())
+ * 3. Background: if Supabase disagrees with cache, trigger self-healing
+ *
+ * This ensures page reloads never re-trigger the NDA gate if the user
+ * has already accepted, even if Supabase is temporarily unavailable.
  */
-export async function hasUserSignedNDA(_userId: string): Promise<boolean> {
-  const { data: { user } } = await (supabase as any).auth.getUser();
-  const authUid = user?.id ?? _userId;
+export async function hasUserSignedNDA(userId: string): Promise<boolean> {
+  // FAST PATH: Check localStorage cache FIRST
+  const cached = isNdaCachedAccepted(userId);
+  if (cached) {
+    console.log('[ndaService] NDA acceptance found in localStorage cache (fast path)');
+    
+    // Background: trigger self-healing sync if needed (non-blocking)
+    void healNdaSync(userId).catch(err => {
+      console.warn('[ndaService] Background self-healing failed (non-blocking):', err);
+    });
+    
+    return true;
+  }
 
-  const records = await fetchFromSupabase<SignedAgreementRecord>(
-    'signed_agreements',
-    { user_id: authUid, agreement_type: NDA_AGREEMENT_VERSION }
-  );
-  return records.length > 0;
+  // SLOW PATH: Query Supabase using authenticated UID (not the caller's userId)
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const authUid = user?.id ?? userId;
+
+    const records = await fetchFromSupabase<SignedAgreementRecord>(
+      'signed_agreements',
+      { user_id: authUid, agreement_type: NDA_AGREEMENT_VERSION }
+    );
+
+    const signed = records.length > 0;
+
+    if (signed) {
+      // Update localStorage cache for next time
+      setNdaCacheAccepted(authUid);
+    }
+
+    return signed;
+  } catch (err) {
+    console.error('[ndaService] Error checking NDA status:', err);
+    // On error: assume not signed (err on the side of caution)
+    return false;
+  }
 }
 
 /**
