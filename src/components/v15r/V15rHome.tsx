@@ -197,20 +197,29 @@ export default function V15rHome() {
   }
 
   // ── Data derivation ──────────────────────────────────────────────────────
+  // FIX-DASH: use Array.isArray guards throughout so a malformed/null/non-array
+  // value stored in the backup (e.g. backup.logs = null) never reaches .slice()
+  // or the spread operator and causes a runtime crash.
   let kpis: any
   let projects: BackupProject[] = []
 
   try {
     ensureAgendaState(backup)
     kpis = getKPIs(backup)
-    projects = backup.projects || []
+    projects = Array.isArray(backup.projects) ? backup.projects : []
   } catch (err) {
     console.error('[V15rHome] Data derivation error:', err)
     kpis = { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
+    projects = []
   }
 
-  const logs = backup.logs || []
-  const serviceLogs = backup.serviceLogs || []
+  // Ensure kpis is always a valid object even if try/catch path left it undefined
+  if (!kpis) {
+    kpis = { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
+  }
+
+  const logs: any[] = Array.isArray(backup.logs) ? backup.logs : []
+  const serviceLogs: any[] = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
 
   // ── Agenda alerts (auto-generated) ─────────────────────────────────────
   const agendaAlerts: Array<{ clr: string; txt: string; id: string }> = []
@@ -224,13 +233,13 @@ export default function V15rHome() {
     } else if (d >= 7) {
       agendaAlerts.push({ clr: '#f59e0b', txt: '📧 Check-in: ' + p.name + ' — ' + d + 'd', id: p.id })
     }
-    ;(p.rfis || []).filter((r: any) => r.status === 'critical').forEach((r: any) => {
+    ;(Array.isArray(p.rfis) ? p.rfis : []).filter((r: any) => r.status === 'critical').forEach((r: any) => {
       agendaAlerts.push({ clr: '#ef4444', txt: '⚠ Critical RFI on ' + p.name + ': ' + (r.question || '').slice(0, 55) + '...', id: p.id })
     })
   })
 
   // Load custom alerts from backup
-  const loadedCustomAlerts = backup.customAlerts || []
+  const loadedCustomAlerts = Array.isArray(backup.customAlerts) ? backup.customAlerts : []
 
   // Filter out AI alerts that have been manually edited (avoid duplicates)
   const editedProjectIds = new Set(
@@ -250,12 +259,13 @@ export default function V15rHome() {
   mergedAlerts.sort((a, b) => a.idx - b.idx)
 
   // ── Recent logs — paginated (default 10, +10 per "View More" click) ────────
-  const allLogsReversed = [...logs].reverse()
+  // FIX-DASH: logs is now guaranteed an array above, but we spread defensively
+  const allLogsReversed = (logs ?? []).slice().reverse()
   const recentLogs = allLogsReversed.slice(0, logsVisible)
   const hasMoreLogs = allLogsReversed.length > logsVisible
 
   // ── Service jobs requiring attention (money math) ────────────────────────
-  const serviceJobsNeedingAttention = serviceLogs
+  const serviceJobsNeedingAttention = (serviceLogs ?? [])
     .map((l: any) => ({
       ...l,
       balanceDue: getServiceBalanceDue(l),
