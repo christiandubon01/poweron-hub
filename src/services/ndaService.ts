@@ -635,9 +635,10 @@ export async function hasUserSignedNDA(userId: string): Promise<boolean> {
 
     return signed;
   } catch (err) {
-    console.error('[ndaService] Error checking NDA status:', err);
-    // On error: assume not signed (err on the side of caution)
-    return false;
+    console.warn('[ndaService] Error checking NDA status — failing open (do not re-trigger gate on network error):', err);
+    // NDA-FIX: Fail open — if Supabase is unreachable, do NOT force re-acceptance.
+    // A network hiccup should never lock the user out of the app.
+    return true;
   }
 }
 

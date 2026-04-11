@@ -182,13 +182,15 @@ export function AppShell({ children }: AppShellProps) {
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
   // NDA gate — check if current user has signed NDA; show flow if not.
-  // B24: Cache result in localStorage so it never re-triggers after signing.
-  // Key: 'poweron_nda_signed_{userId}' → '1'
+  // NDA-FIX: Cache key must match the key written by ndaService.setNdaCacheAccepted().
+  // ndaService uses 'poweron_nda_accepted_{userId}'; previously AppShell used a different
+  // key ('poweron_nda_signed_{userId}') which meant the fast path never hit after signing.
   const [ndaSigned, setNdaSigned] = useState<boolean | null>(null)
   const [showNdaGate, setShowNdaGate] = useState(false)
 
   function getNdaCacheKey(userId: string) {
-    return `poweron_nda_signed_${userId}`
+    // MUST match getNdaCacheKey() in ndaService.ts: 'poweron_nda_accepted_{userId}'
+    return `poweron_nda_accepted_${userId}`
   }
 
   function isNdaCachedSigned(userId: string): boolean {
