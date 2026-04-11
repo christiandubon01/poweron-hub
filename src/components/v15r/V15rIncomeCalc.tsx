@@ -949,7 +949,19 @@ function V15rIncomeCalcInner() {
               </div>
               <ProjectionLine label="Combined Annual Estimate" value={fmtK((rmoMonthly + dealOutlook.active.total) * 12)} bold />
             </div>
-            <div className="mt-4 px-3 py-2 bg-yellow-900/30 border border-yellow-700 rounded-lg text-xs text-yellow-200">
+            {/* SOL1 — Crew Lead Hire Metric */}
+            {(rmoMonthly + dealOutlook.active.total) > 0 && (() => {
+              const combinedMonthly = rmoMonthly + dealOutlook.active.total
+              const crewHireDays = combinedMonthly / (45 * 8 * 22 * 1.2)
+              return (
+                <div className="mt-2 px-3 py-2 bg-emerald-900/20 border border-emerald-800 rounded-lg text-xs text-emerald-300">
+                  <span className="font-semibold">👷 Each closed deal funds: </span>
+                  <span className="text-emerald-200 font-bold">{crewHireDays.toFixed(1)} days</span>
+                  <span> toward crew lead hire at $45/hr</span>
+                </div>
+              )
+            })()}
+            <div className="mt-2 px-3 py-2 bg-yellow-900/30 border border-yellow-700 rounded-lg text-xs text-yellow-200">
               <p className="font-semibold mb-1">⚠️ PROJECTION ONLY</p>
               <p>Does not affect your business numbers — this is a scenario calculator only</p>
             </div>
