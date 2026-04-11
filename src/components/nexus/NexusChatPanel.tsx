@@ -197,6 +197,63 @@ export function NexusChatPanel() {
   const [debriefSessionId, setDebriefSessionId]     = useState<string>('')
   const debriefTriggeredRef                         = useRef(false)
 
+  // SOL1 — Solar training brief additions (loaded async, appended to briefingContext)
+  const [solarBriefLines, setSolarBriefLines] = useState<string[]>([])
+  useEffect(() => {
+    const userId = profile?.id
+    if (!userId) return
+    const load = async () => {
+      try {
+        const lines: string[] = []
+        // In-progress certs
+        const { data: certs } = await supabase
+          .from('solar_certifications')
+          .select('cert_name,progress_pct,status')
+          .eq('user_id', userId)
+          .eq('status', 'in_progress')
+        if (certs && certs.length > 0) {
+          certs.forEach(c => lines.push(`Solar cert: ${c.cert_name} at ${c.progress_pct}%. Continue today.`))
+        }
+        // Incomplete study domains
+        const { data: queue } = await supabase
+          .from('solar_study_queue')
+          .select('domain,topic')
+          .eq('user_id', userId)
+          .eq('completed', false)
+          .limit(2)
+        if (queue && queue.length > 0) {
+          const domains = [...new Set(queue.map(q => q.domain).filter(Boolean))]
+          if (domains.length > 0) lines.push(`NABCEP study pending: ${domains.join(', ')}.`)
+        }
+        // Training streak check (last 48 hours)
+        const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString()
+        const { data: recent } = await supabase
+          .from('solar_training_sessions')
+          .select('id')
+          .eq('user_id', userId)
+          .gte('started_at', cutoff)
+          .limit(1)
+        if (!recent || recent.length === 0) {
+          lines.push('No solar training in 48 hours. Run your daily rep.')
+        }
+        // Unconfirmed rule from yesterday
+        const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+        const { data: unconfirmed } = await supabase
+          .from('solar_rules')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('confirmed', false)
+          .gte('date_added', yesterday)
+          .limit(1)
+        if (unconfirmed && unconfirmed.length > 0) {
+          lines.push("Yesterday's solar debrief has an unconfirmed rule. Confirm it in Solar Training.")
+        }
+        setSolarBriefLines(lines)
+      } catch { /* Supabase unavailable — skip solar brief */ }
+    }
+    load()
+  }, [profile?.id])
+
   // Update syncTime whenever operational context is rebuilt
   // Poll every 30s to keep display current after initial build
   useEffect(() => {
@@ -232,12 +289,17 @@ export function NexusChatPanel() {
   // B12 — Prepend active alerts to briefing context on first NEXUS open of the day
   const _alertPrefix = isFirstNexusOpenToday() ? getAlertSummaryForBriefing() : ''
 
+  // SOL1 — append solar brief lines if any
+  const solarBriefSection = solarBriefLines.length > 0
+    ? `\nSolar Training Updates:\n${solarBriefLines.map(l => `- ${l}`).join('\n')}`
+    : ''
+
   const briefingContext = `${_alertPrefix}Good ${greeting}, Christian. Give a brief morning briefing based on:
 - ${overdueServiceCalls.length} overdue service calls (uncollected 7+ days)
 - ${stagnantProjects.length} stagnant projects (no activity 14+ days)
 - $${uncollectedAR.toFixed(0)} uncollected AR total
 - ${(backup?.projects || []).filter(p => p.status !== 'completed').length} active projects
-- ${(backup?.serviceLogs || []).length} total service logs
+- ${(backup?.serviceLogs || []).length} total service logs${solarBriefSection}
 
 Prioritize the top 3 items that need attention RIGHT NOW. Be brief and actionable.`
 
