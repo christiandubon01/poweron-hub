@@ -55,10 +55,6 @@ import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
-// BUG 2 FIX — Active-only pipeline formula
-import { calcActivePipeline } from '@/utils/pipelineCalc'
-// BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
-import { calculateProjectFinancials } from '@/utils/calculateProjectFinancials'
 
 // ── Greeting helper ──────────────────────────────────────────────────────────
 
@@ -210,12 +206,6 @@ export default function V15rHome() {
 
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
-
-  // BUG 2 FIX — Override pipeline KPI with active-only formula.
-  // getKPIs() includes 'coming' projects and all service quoted totals (including collected).
-  // Correct formula: active projects ONLY + uncollected service call balances.
-  const correctedPipeline = calcActivePipeline(projects, serviceLogs)
-  kpis = { ...kpis, pipeline: correctedPipeline }
 
   // ── Agenda alerts (auto-generated) ─────────────────────────────────────
   const agendaAlerts: Array<{ clr: string; txt: string; id: string }> = []
@@ -510,7 +500,13 @@ export default function V15rHome() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[var(--bg-secondary)] p-6 space-y-6">
+    <div className="min-h-screen bg-[var(--bg-secondary)] p-6 space-y-6 safe-area-all"
+      style={{
+        paddingTop: `max(1.5rem, env(safe-area-inset-top))`,
+        paddingBottom: `max(1.5rem, env(safe-area-inset-bottom))`,
+        paddingLeft: `max(1.5rem, env(safe-area-inset-left))`,
+        paddingRight: `max(1.5rem, env(safe-area-inset-right))`,
+      }}>
 
       {/* ── HEADER ──────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between">
@@ -525,24 +521,27 @@ export default function V15rHome() {
         </button>
       </div>
 
-      {/* ── 4 KPI PILLS ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* ── 4 KPI PILLS - RESPONSIVE ────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {[
-          { cls: 'border-l-emerald-500', lbl: 'Total Pipeline', val: fmtK(kpis.pipeline), sub: projects.length + ' projects' },
-          { cls: 'border-l-blue-500', lbl: 'Cash Received', val: fmtK(kpis.paid), sub: 'Accumulative' },
-          { cls: 'border-l-red-500', lbl: 'Open RFIs', val: String(kpis.openRfis), sub: 'Need resolution' },
-          { cls: 'border-l-gray-500', lbl: 'Hours Logged', val: kpis.totalHours.toFixed(1) + 'h', sub: logs.length + ' entries' },
+          { cls: 'border-l-emerald-500', lbl: 'Pipeline', lblFull: 'Total Pipeline', val: fmtK(kpis.pipeline), sub: projects.length + ' proj' },
+          { cls: 'border-l-blue-500', lbl: 'Cash Rcvd', lblFull: 'Cash Received', val: fmtK(kpis.paid), sub: 'Accum.' },
+          { cls: 'border-l-red-500', lbl: 'RFIs', lblFull: 'Open RFIs', val: String(kpis.openRfis), sub: 'Need res.' },
+          { cls: 'border-l-gray-500', lbl: 'Hrs Log', lblFull: 'Hours Logged', val: kpis.totalHours.toFixed(1) + 'h', sub: logs.length + ' ent' },
         ].map((k, i) => (
-          <div key={i} className={`rounded-lg border border-gray-800 border-l-4 ${k.cls} bg-[var(--bg-card)] p-3`}>
-            <div className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">{k.lbl}</div>
-            <div className="text-lg font-bold font-mono text-gray-100 mt-1">{k.val}</div>
-            <div className="text-[9px] text-gray-500 mt-0.5">{k.sub}</div>
+          <div key={i} className={`rounded-lg border border-gray-800 border-l-4 ${k.cls} bg-[var(--bg-card)] p-3 touch-target`}>
+            <div className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">
+              <span className="sm:hidden">{k.lbl}</span>
+              <span className="hidden sm:inline">{k.lblFull}</span>
+            </div>
+            <div className="text-base sm:text-lg font-bold font-mono text-gray-100 mt-1 truncate">{k.val}</div>
+            <div className="text-[9px] text-gray-500 mt-0.5 truncate">{k.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* ── GOOGLE CALENDAR EMBED ───────────────────────────────────────────── */}
-      <div>
+      {/* ── GOOGLE CALENDAR EMBED - RESPONSIVE ───────────────────────────────── */}
+      <div className="calendar-container-wrapper">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Calendar</h2>
           <span className="text-[9px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 font-semibold">Week View ✓</span>
@@ -550,29 +549,42 @@ export default function V15rHome() {
         {gcalUrl ? (
           <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800/50">
-              <h3 className="text-sm font-semibold text-gray-200">
+              <h3 className="text-sm font-semibold text-gray-200 truncate">
                 {calOffset === 0 ? 'This Week' : calOffset > 0 ? `+${calOffset} week${calOffset !== 1 ? 's' : ''}` : `${calOffset} weeks`}
               </h3>
-              <div className="flex gap-2">
+              <div className="flex gap-2 ml-2 flex-shrink-0">
                 <button
                   onClick={prevWeek}
-                  className="p-1 rounded hover:bg-gray-700/50 transition-colors"
+                  className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target"
+                  title="Previous week"
+                  aria-label="Previous week"
                 >
                   <ChevronLeft size={16} className="text-gray-400" />
                 </button>
                 <button
                   onClick={nextWeek}
-                  className="p-1 rounded hover:bg-gray-700/50 transition-colors"
+                  className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target"
+                  title="Next week"
+                  aria-label="Next week"
                 >
                   <ChevronRight size={16} className="text-gray-400" />
                 </button>
               </div>
             </div>
-            <iframe
-              src={gcalUrl}
-              style={{ border: '0', width: '100%', height: '600px' }}
-              className="bg-[var(--bg-secondary)]"
-            />
+            {/* Calendar container with responsive sizing */}
+            <div className="calendar-container w-full overflow-hidden">
+              <iframe
+                src={gcalUrl}
+                style={{ 
+                  border: '0', 
+                  width: '100%', 
+                  height: 'clamp(350px, 60vh, 600px)',
+                  display: 'block'
+                }}
+                className="bg-[var(--bg-secondary)] w-full"
+                title="Google Calendar"
+              />
+            </div>
           </div>
         ) : (
           <div className="p-6 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-center">
@@ -582,11 +594,11 @@ export default function V15rHome() {
         )}
       </div>
 
-      {/* ── JOB HEALTH CARDS ─────────────────────────────────────────────────── */}
+      {/* ── JOB HEALTH CARDS - RESPONSIVE ───────────────────────────────────── */}
       {projects.filter(p => resolveProjectBucket(p) === 'active').length > 0 && (
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Job Health</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="job-health-grid">
             {projects
               .filter(p => resolveProjectBucket(p) === 'active')
               .map(p => {
@@ -622,33 +634,21 @@ export default function V15rHome() {
                       {h.reasons.length ? h.reasons.join(' · ') : 'On track'}
                     </div>
 
-                    {/* BUG 3 FIX — Canonical financials: remaining_balance (quote−costs) + total_collected side-by-side */}
+                    {/* Sparkline: paid vs remaining contract exposure */}
                     {(() => {
-                      const mileRate = num(backup?.settings?.mileRate) || 0.66
-                      const fin = calculateProjectFinancials(p, backup.logs || [], mileRate)
-                      const balColor = getBalanceColor(fin.remaining_balance, fin.quote)
+                      const fin = getProjectFinancials(p, backup)
+                      const paidPct = Math.round((fin.paid / Math.max(fin.contract, 1)) * 100)
                       return (
-                        <div className="mb-2 space-y-1">
-                          {/* Progress bar: cost burn vs quote */}
-                          <div className="flex items-center gap-2">
-                            <div style={{ width: '60px', height: '6px', backgroundColor: '#374151', borderRadius: '2px', overflow: 'hidden' }}>
-                              {fin.quote > 0 && (
-                                <div style={{ width: `${Math.min(100, (fin.total_costs / fin.quote) * 100)}%`, backgroundColor: '#f59e0b', height: '100%' }} />
-                              )}
-                            </div>
-                            <span style={{ fontSize: '8px', color: '#9ca3af' }}>{fin.quote > 0 ? Math.round((fin.total_costs / fin.quote) * 100) : 0}% costs</span>
+                        <div className="mb-2 flex items-center gap-2">
+                          <div style={{ width: '60px', height: '6px', backgroundColor: '#374151', borderRadius: '2px', overflow: 'hidden', display: 'flex' }}>
+                            {fin.paid > 0 && fin.contract > 0 && (
+                              <div style={{ width: `${(fin.paid / fin.contract) * 100}%`, backgroundColor: '#10b981', height: '100%' }} />
+                            )}
+                            {fin.paid < fin.contract && (
+                              <div style={{ width: `${((fin.contract - fin.paid) / fin.contract) * 100}%`, backgroundColor: '#9ca3af', height: '100%' }} />
+                            )}
                           </div>
-                          {/* Remaining balance & total collected side-by-side */}
-                          <div className="flex items-center gap-3 text-[9px]">
-                            <span>
-                              <span style={{ color: '#9ca3af' }}>Remaining: </span>
-                              <span style={{ color: balColor, fontWeight: 700 }}>{fmt(fin.remaining_balance)}</span>
-                            </span>
-                            <span>
-                              <span style={{ color: '#9ca3af' }}>Collected: </span>
-                              <span style={{ color: '#10b981', fontWeight: 700 }}>{fmt(fin.total_collected)}</span>
-                            </span>
-                          </div>
+                          <span style={{ fontSize: '8px', color: '#9ca3af' }}>{paidPct}% paid</span>
                         </div>
                       )
                     })()}
