@@ -788,14 +788,14 @@ export function AppShell({ children }: AppShellProps) {
 
       {/* B51 — Wins Log floating button (above NEXUS orb) — bottom right */}
       <Suspense fallback={null}>
-        <div style={{ position: 'fixed', bottom: '164px', right: '24px', zIndex: 58 }}>
+        <div style={{ position: 'fixed', bottom: '164px', right: '24px', zIndex: 58, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <WinsLogPanel />
         </div>
       </Suspense>
 
       {/* B52 — Pinned Insights floating button (above Wins Log) — bottom right */}
       <Suspense fallback={null}>
-        <div style={{ position: 'fixed', bottom: '224px', right: '24px', zIndex: 58 }}>
+        <div style={{ position: 'fixed', bottom: '224px', right: '24px', zIndex: 58, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <PinnedInsightsButton />
         </div>
       </Suspense>

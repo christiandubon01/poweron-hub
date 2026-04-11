@@ -29,6 +29,8 @@ interface VoicePrefs {
   field_mode_enabled: boolean
   push_to_talk_enabled: boolean
   push_to_talk_key: string
+  voice_response_delay: number      // seconds before NEXUS responds (0.5-5.0, default 1.75)
+  ask_before_responding: boolean    // whether to ask "Anything else?" before processing
 }
 
 const DEFAULT_PREFS: VoicePrefs = {
@@ -42,6 +44,8 @@ const DEFAULT_PREFS: VoicePrefs = {
   field_mode_enabled: true,
   push_to_talk_enabled: false,
   push_to_talk_key: 'Space',
+  voice_response_delay: 1.75,       // 1.75 seconds default
+  ask_before_responding: false,
 }
 
 export function VoiceSettings() {
@@ -225,6 +229,8 @@ export function VoiceSettings() {
             field_mode_enabled: d.field_mode_enabled ?? true,
             push_to_talk_enabled: d.push_to_talk_enabled ?? false,
             push_to_talk_key: d.push_to_talk_key || 'Space',
+            voice_response_delay: d.voice_response_delay ?? 1.75,
+            ask_before_responding: d.ask_before_responding ?? false,
           })
         } else if (lsVoiceId || lsSpeed !== null) {
           // No Supabase row yet — seed from localStorage
@@ -443,6 +449,42 @@ export function VoiceSettings() {
             </div>
           </div>
         )}
+      </Section>
+
+      {/* Voice Response Timing */}
+      <Section title="Response Behavior" icon={<Radio className="w-4 h-4" />}>
+        <p className="text-sm text-gray-400 mb-4">Customize how NEXUS responds after you speak</p>
+        
+        {/* Response delay slider */}
+        <div className="mb-5">
+          <label className="flex items-center justify-between text-sm">
+            <span className="text-gray-300">Response Delay</span>
+            <span className="text-emerald-400 font-mono">{prefs.voice_response_delay.toFixed(2)}s</span>
+          </label>
+          <p className="text-xs text-gray-500 mt-1 mb-2">Time before NEXUS starts speaking after silence detection</p>
+          <input
+            type="range"
+            min={0.5}
+            max={5.0}
+            step={0.25}
+            value={prefs.voice_response_delay}
+            onChange={e => update('voice_response_delay', parseFloat(e.target.value))}
+            className="w-full accent-emerald-500"
+          />
+          <div className="flex justify-between text-xs text-gray-600 mt-1">
+            <span>0.5s Fast</span>
+            <span>1.75s Default</span>
+            <span>5.0s Slow</span>
+          </div>
+        </div>
+
+        {/* Ask before responding toggle */}
+        <Toggle
+          label="Ask Before Responding"
+          description='After silence, NEXUS will say "Anything else?" and wait 2 seconds for follow-up'
+          checked={prefs.ask_before_responding}
+          onChange={v => update('ask_before_responding', v)}
+        />
       </Section>
 
       {/* Save button */}
