@@ -55,6 +55,7 @@ import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import CollectionPriorityCard from '@/components/CollectionPriorityCard'
 
 // ── Greeting helper ──────────────────────────────────────────────────────────
 
@@ -139,6 +140,10 @@ export default function V15rHome() {
   const [editingAIAlertId, setEditingAIAlertId] = useState<string | null>(null)
   const [editAIAlertText, setEditAIAlertText] = useState('')
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+
+  // ── Recent Logs pagination ──
+  const [logsVisible, setLogsVisible] = useState(10)
+  const LOGS_PAGE = 10
 
   // ── Quote refresh offset ──
   const [quoteOffset, setQuoteOffset] = useState(0)
@@ -244,8 +249,10 @@ export default function V15rHome() {
   })
   mergedAlerts.sort((a, b) => a.idx - b.idx)
 
-  // ── Recent logs (last 4-6) ───────────────────────────────────────────────
-  const recentLogs = [...logs].reverse().slice(0, 6)
+  // ── Recent logs — paginated (default 10, +10 per "View More" click) ────────
+  const allLogsReversed = [...logs].reverse()
+  const recentLogs = allLogsReversed.slice(0, logsVisible)
+  const hasMoreLogs = allLogsReversed.length > logsVisible
 
   // ── Service jobs requiring attention (money math) ────────────────────────
   const serviceJobsNeedingAttention = serviceLogs
@@ -684,29 +691,27 @@ export default function V15rHome() {
         </div>
       )}
 
-      {/* ── SERVICE JOBS REQUIRING ATTENTION ─────────────────────────────────── */}
+      {/* ── SERVICE JOBS REQUIRING ATTENTION — Priority Visual ────────────────── */}
       {serviceJobsNeedingAttention.length > 0 && (
         <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Service Jobs Requiring Attention</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              Service Jobs Requiring Attention
+            </h2>
+            {/* Legend */}
+            <div className="flex items-center gap-3 text-[9px] text-gray-500">
+              <span><span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 mr-1 align-middle" />$1k+</span>
+              <span><span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 mr-1 align-middle" />$500–1k</span>
+              <span><span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-500 mr-1 align-middle" />&lt;$500</span>
+            </div>
+          </div>
           <div className="space-y-2">
             {serviceJobsNeedingAttention.map((l: any) => (
-              <div
+              <CollectionPriorityCard
                 key={l.id}
-                className="flex items-center justify-between p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg"
-              >
-                <div className="flex-1">
-                  <div className="font-semibold text-sm text-gray-100">{l.customer}</div>
-                  <div className="text-[9px] text-gray-200 mt-0.5">
-                    {l.jtype} • {fmt(l.balanceDue)} due • {daysSince(l.date)}d ago
-                  </div>
-                </div>
-                <button
-                  onClick={() => markServiceJobCollected(l.id)}
-                  className="ml-3 text-[10px] px-2.5 py-1.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors font-semibold whitespace-nowrap"
-                >
-                  Mark Collected
-                </button>
-              </div>
+                log={l}
+                onMarkCollected={markServiceJobCollected}
+              />
             ))}
           </div>
         </div>
@@ -1101,72 +1106,89 @@ export default function V15rHome() {
       <div>
         <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Recent Logs</h2>
         {recentLogs.length > 0 ? (
-          <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
-            {(() => {
-              // Build rollup cache per project — same pattern as Field Log tab
-              const rollCache: Record<string, any> = {}
-              const getRoll = (projId: string) => {
-                if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
-                return rollCache[projId]
-              }
-
-              return recentLogs.map((l: any, i: number) => {
-                const projId = l.projId || l.projectId || ''
-                const projRoll = getRoll(projId)
-                // Fall back gracefully if log id not found in rollup (e.g. missing projId)
-                const rr = projRoll.byId[l.id] || {
-                  entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
-                  entryMaterialCost: num(l.mat),
-                  entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
-                  entryTotalCost: 0,
-                  remainingAfter: projRoll.quote,
+          // Fragment wraps both the log list and the View More button — valid JSX
+          <>
+            <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
+              {(() => {
+                // Build rollup cache per project — same pattern as Field Log tab
+                const rollCache: Record<string, any> = {}
+                const getRoll = (projId: string) => {
+                  if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
+                  return rollCache[projId]
                 }
-                const entryRevenue = rr.entryLaborCost
-                const entryExpenses = rr.entryMaterialCost + rr.entryMileageCost
-                const runningBalance = num(rr.remainingAfter)
-                const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
 
-                return (
-                  <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
-                        <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
-                        <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
+                return recentLogs.map((l: any, i: number) => {
+                  const projId = l.projId || l.projectId || ''
+                  const projRoll = getRoll(projId)
+                  // Fall back gracefully if log id not found in rollup (e.g. missing projId)
+                  const rr = projRoll.byId[l.id] || {
+                    entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
+                    entryMaterialCost: num(l.mat),
+                    entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
+                    entryTotalCost: 0,
+                    remainingAfter: projRoll.quote,
+                  }
+                  const entryRevenue = rr.entryLaborCost
+                  const entryExpenses = rr.entryMaterialCost + rr.entryMileageCost
+                  const runningBalance = num(rr.remainingAfter)
+                  const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
+
+                  return (
+                    <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
+                          <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
+                          <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
+                        </div>
+                        <div className="text-[10px] text-blue-300">{l.phase}</div>
+                        {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
+                        {/* Expenses row: per-entry Revenue | Expenses | Net (running project balance) */}
+                        <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
+                          <span>
+                            <span className="text-gray-500">Revenue: </span>
+                            <span style={{ color: '#10b981' }}>{fmt(entryRevenue)}</span>
+                          </span>
+                          <span>
+                            <span className="text-gray-500">Expenses: </span>
+                            <span style={{ color: '#ef4444' }}>{fmt(entryExpenses)}</span>
+                          </span>
+                          <span>
+                            <span className="text-gray-500">Net: </span>
+                            <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span>
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-[10px] text-blue-300">{l.phase}</div>
-                      {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
-                      {/* Expenses row: per-entry Revenue | Expenses | Net (running project balance) */}
-                      <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
-                        <span>
-                          <span className="text-gray-500">Revenue: </span>
-                          <span style={{ color: '#10b981' }}>{fmt(entryRevenue)}</span>
-                        </span>
-                        <span>
-                          <span className="text-gray-500">Expenses: </span>
-                          <span style={{ color: '#ef4444' }}>{fmt(entryExpenses)}</span>
-                        </span>
-                        <span>
-                          <span className="text-gray-500">Net: </span>
-                          <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span>
-                        </span>
+                      {/* Right side: hours | mat cost | running balance */}
+                      <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
+                        <div className="text-xs font-mono text-gray-200">{num(l.hrs).toFixed(1)}h</div>
+                        {num(l.mat) > 0 && (
+                          <div className="text-[10px] font-mono text-yellow-400">{fmt(num(l.mat))}</div>
+                        )}
+                        <div className="text-[11px] font-mono font-bold" style={{ color: balanceColor }}>
+                          Net: {fmt(runningBalance)}
+                        </div>
                       </div>
                     </div>
-                    {/* Right side: hours | mat cost | running balance */}
-                    <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
-                      <div className="text-xs font-mono text-gray-200">{num(l.hrs).toFixed(1)}h</div>
-                      {num(l.mat) > 0 && (
-                        <div className="text-[10px] font-mono text-yellow-400">{fmt(num(l.mat))}</div>
-                      )}
-                      <div className="text-[11px] font-mono font-bold" style={{ color: balanceColor }}>
-                        Net: {fmt(runningBalance)}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            })()}
-          </div>
+                  )
+                })
+              })()}
+            </div>
+
+            {/* ── View More / "all shown" indicator ──────────────────────── */}
+            {hasMoreLogs ? (
+              <button
+                onClick={() => setLogsVisible(v => v + LOGS_PAGE)}
+                className="w-full mt-2 py-2 text-xs font-semibold text-blue-400 bg-blue-900/10 border border-blue-900/30 rounded-lg hover:bg-blue-900/20 transition-colors"
+              >
+                View More — {Math.min(LOGS_PAGE, allLogsReversed.length - logsVisible)} of {allLogsReversed.length - logsVisible} remaining
+              </button>
+            ) : (
+              <div className="mt-2 text-center text-[10px] text-gray-600">
+                All {allLogsReversed.length} log {allLogsReversed.length === 1 ? 'entry' : 'entries'} shown
+              </div>
+            )}
+          </>
         ) : (
           <div className="p-4 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">
             No logs yet. Tap + Log to start.

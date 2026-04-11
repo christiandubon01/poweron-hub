@@ -12,6 +12,7 @@ import V15rRFITab from './V15rRFITab'
 import V15rCoordinationTab from './V15rCoordinationTab'
 import V15rBlueprintsTab from './V15rBlueprintsTab'
 import V15rPhaseTimelineTab from './V15rPhaseTimelineTab'
+import ProjectSummaryBoxes from '@/components/v15r/ProjectSummaryBoxes'
 
 interface V15rProjectInnerProps {
   projectId: string
@@ -142,6 +143,9 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
           </div>
         </div>
       </div>
+
+      {/* ── Project Summary Boxes: Total Hours / Materials / Miles / Log Count / Remaining / Collected */}
+      <ProjectSummaryBoxes projectId={projectId} backup={backup} />
 
       <div className="flex-1 overflow-auto p-4">
         <ActiveComponent projectId={projectId} onUpdate={forceUpdate} backup={backup} />
