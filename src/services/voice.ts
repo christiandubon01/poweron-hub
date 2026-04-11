@@ -77,6 +77,8 @@ export interface VoicePreferences {
   fieldModeEnabled: boolean
   pushToTalkEnabled: boolean
   pushToTalkKey?: string
+  voiceResponseDelay?: number     // seconds before NEXUS responds (0.5-5.0, default 1.75)
+  askBeforeResponding?: boolean   // whether to ask "Anything else?" before processing
 }
 
 export type VoiceEventType =
@@ -291,6 +293,8 @@ const DEFAULT_PREFERENCES: VoicePreferences = {
   fieldModeEnabled: true,
   pushToTalkEnabled: false,
   pushToTalkKey: 'Space',
+  voiceResponseDelay: 1.75,
+  askBeforeResponding: false,
 }
 
 // ── Implementation ───────────────────────────────────────────────────────────
@@ -940,7 +944,38 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
           this.currentSession.responseDurationSeconds = ttsResult.durationSeconds
         }
 
-        // Step 6: Play response (with interruptible audio reference)
+        // Step 6a: Apply configurable response delay before playing
+        const responseDelayMs = (this.preferences.voiceResponseDelay ?? 1.75) * 1000
+        if (responseDelayMs > 0) {
+          debugPush(`[Voice] Response delay: ${responseDelayMs}ms`)
+          await new Promise(resolve => setTimeout(resolve, responseDelayMs))
+        }
+
+        // Step 6b: Optional "Anything else?" prompt before processing response
+        if (this.preferences.askBeforeResponding) {
+          try {
+            debugPush('[Voice] Asking "Anything else?" before responding')
+            console.log('[Voice] Playing prompt: "Anything else?"')
+            // Use brief Web Speech prompt instead of full TTS to save time
+            if (typeof window !== 'undefined' && window.speechSynthesis) {
+              const utterance = new SpeechSynthesisUtterance('Anything else?')
+              utterance.rate = this.preferences.ttsSpeed ?? 1.0
+              utterance.pitch = 1.0
+              utterance.volume = 1.0
+              await new Promise<void>((resolve) => {
+                utterance.onend = () => resolve()
+                utterance.onerror = () => resolve() // Don't fail if Web Speech fails
+                window.speechSynthesis.speak(utterance)
+              })
+              // Wait 2 seconds for user to respond
+              await new Promise(resolve => setTimeout(resolve, 2000))
+            }
+          } catch (promptErr) {
+            console.warn('[Voice] "Anything else?" prompt failed, continuing anyway:', promptErr)
+          }
+        }
+
+        // Step 6c: Play response (with interruptible audio reference)
         this.lastTTSText = ttsText
         debugPush(`TTS chars: ${ttsText.length}`)
         debugPush('playAudioTracked() — starting playback...')

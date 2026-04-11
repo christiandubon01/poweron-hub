@@ -152,8 +152,16 @@ export async function transcribeWithWhisper(
   })
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error')
-    throw new Error(`Whisper API error (${response.status}): ${errorBody}`)
+    let errorMsg = `Whisper transcription failed (${response.status})`
+    try {
+      const json = await response.json()
+      if (json.error?.message) {
+        errorMsg += `: ${json.error.message}`
+      }
+    } catch {
+      // Couldn't parse JSON error response
+    }
+    throw new Error(errorMsg)
   }
 
   const data = await response.json()
