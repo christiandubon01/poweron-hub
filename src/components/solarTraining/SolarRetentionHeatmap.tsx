@@ -119,9 +119,14 @@ export const SolarRetentionHeatmap: React.FC<SolarRetentionHeatmapProps> = ({
   const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
 
+  // Null guards — prevent crash when props arrive undefined
+  const safeTopics  = Array.isArray(topics)  ? topics  : [];
+  const safePeriods = Array.isArray(periods) ? periods : [];
+  const safeData    = Array.isArray(data)    ? data    : [];
+
   const handleCellClick = (topicIndex: number, periodIndex: number) => {
-    const topic = topics[topicIndex];
-    const period = periods[periodIndex];
+    const topic = safeTopics[topicIndex];
+    const period = safePeriods[periodIndex];
     setSelectedTopic(topic);
     
     if (onCellTap) {
@@ -180,7 +185,7 @@ export const SolarRetentionHeatmap: React.FC<SolarRetentionHeatmapProps> = ({
               <th className="text-left p-3 font-semibold text-slate-700 dark:text-slate-300 border-b-2 border-slate-300 dark:border-slate-600">
                 Topic
               </th>
-              {periods.map((period, idx) => (
+              {safePeriods.map((period, idx) => (
                 <th
                   key={idx}
                   className="text-center p-3 font-semibold text-slate-700 dark:text-slate-300 border-b-2 border-slate-300 dark:border-slate-600 min-w-[100px]"
@@ -196,7 +201,7 @@ export const SolarRetentionHeatmap: React.FC<SolarRetentionHeatmapProps> = ({
 
           {/* Data Rows */}
           <tbody>
-            {topics.map((topic, topicIdx) => (
+            {safeTopics.map((topic, topicIdx) => (
               <tr
                 key={topicIdx}
                 className="hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
@@ -214,8 +219,8 @@ export const SolarRetentionHeatmap: React.FC<SolarRetentionHeatmapProps> = ({
                 </td>
 
                 {/* Metric Cells */}
-                {periods.map((period, periodIdx) => {
-                  const metrics = data[topicIdx]?.[periodIdx];
+                {safePeriods.map((period, periodIdx) => {
+                  const metrics = (safeData[topicIdx] ?? [])[periodIdx] ?? null;
                   const style = getRetentionColor(metrics);
 
                   return (

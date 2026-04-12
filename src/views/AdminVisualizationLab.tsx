@@ -26,11 +26,12 @@ import { useUIStore } from '../store/uiStore'
 import { useAuthStore } from '../store/authStore'
 // B67: Combined Neural Map 2
 import CombinedNeuralMap from './CombinedNeuralMap'
+import NeuralWorldView from './NeuralWorldView'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrbState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'MULTI_AGENT'
 type BgMode = 'deepspace' | 'datastream' | 'grid' | 'soliddark'
-type MainTab = 'ORB_LAB' | 'NEURAL_MAP' | 'COMBINED'
+type MainTab = 'ORB_LAB' | 'NEURAL_MAP' | 'COMBINED' | 'NEURAL_WORLD'
 type NeuralTab = 'Projects' | 'Agents' | 'Decisions' | 'Data' | 'All'
 type DepartureMode = 'silent' | 'label' | 'tone'
 type SpeedMode = 'normal' | 'slow' | 'paused'
@@ -2348,8 +2349,13 @@ export default function AdminVisualizationLab({ defaultTab = 'ORB_LAB' }: AdminV
         </div>
         <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B42 · Admin Only</span>
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-          {(['ORB_LAB', 'NEURAL_MAP', 'COMBINED'] as MainTab[]).map((t) => (
-            <button key={t} onClick={() => setActiveTab(t)} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', border: 'none', cursor: 'pointer', backgroundColor: activeTab===t?'#00ff88':'rgba(255,255,255,0.06)', color: activeTab===t?'#000':'#9ca3af', transition: 'all 0.2s', boxShadow: activeTab===t?'0 0 16px rgba(0,255,136,0.3)':'none' }}>{t.replace('_', ' ')}</button>
+          {([
+            { id: 'ORB_LAB'      as MainTab, label: 'ORB LAB'                },
+            { id: 'NEURAL_MAP'   as MainTab, label: 'ELECTRICAL NEURAL MAP'  },
+            { id: 'COMBINED'     as MainTab, label: 'NEURAL MAP ECOSYSTEM'   },
+            { id: 'NEURAL_WORLD' as MainTab, label: 'NEURAL WORLD'           },
+          ]).map(({ id, label }) => (
+            <button key={id} onClick={() => setActiveTab(id)} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', border: 'none', cursor: 'pointer', backgroundColor: activeTab===id?'#00ff88':'rgba(255,255,255,0.06)', color: activeTab===id?'#000':'#9ca3af', transition: 'all 0.2s', boxShadow: activeTab===id?'0 0 16px rgba(0,255,136,0.3)':'none' }}>{label}</button>
           ))}
         </div>
       </div>
@@ -2365,6 +2371,10 @@ export default function AdminVisualizationLab({ defaultTab = 'ORB_LAB' }: AdminV
         {/* B67 — COMBINED MAP: Neural Map 2 - Combined Business Intelligence */}
         <div style={{ display: activeTab==='COMBINED'?'flex':'none', flex: 1, overflow: 'hidden' }}>
           <CombinedNeuralMap />
+        </div>
+        {/* NEURAL WORLD */}
+        <div style={{ display: activeTab==='NEURAL_WORLD'?'flex':'none', flex: 1, overflow: 'hidden' }}>
+          <NeuralWorldView />
         </div>
       </div>
     </div>
