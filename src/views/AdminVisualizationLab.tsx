@@ -2321,8 +2321,10 @@ function NeuralMap() {
 }
 
 // ─── Admin Visualization Lab (main) ──────────────────────────────────────────
-export default function AdminVisualizationLab() {
-  const [activeTab, setActiveTab] = useState<MainTab>('ORB_LAB')
+interface AdminVisualizationLabProps { defaultTab?: MainTab }
+
+export default function AdminVisualizationLab({ defaultTab = 'ORB_LAB' }: AdminVisualizationLabProps = {}) {
+  const [activeTab, setActiveTab] = useState<MainTab>(defaultTab)
   const [healthAvg, setHealthAvg] = useState(75)
 
   useEffect(() => {

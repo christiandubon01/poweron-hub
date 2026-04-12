@@ -20,6 +20,7 @@ import { Mic, MicOff, Square, ChevronDown, ChevronRight, X, Zap, ShieldAlert } f
 import { useNexusStore } from '@/store/nexusStore'
 import { useUIStore } from '@/store/uiStore'
 import type { NexusMode, NexusContextMode } from '@/store/nexusStore'
+import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -42,31 +43,7 @@ function NexusOrbVisual({ mode, active, muted }: { mode: NexusMode; active: bool
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px' }}>
       {/* Main ORB */}
-      <div
-        style={{
-          width: 140,
-          height: 140,
-          borderRadius: '50%',
-          background: `radial-gradient(circle at 38% 38%, ${gradientStart}, ${gradientEnd})`,
-          border: `2px solid ${primaryColor}`,
-          boxShadow: active
-            ? `0 0 40px ${glowColor}, 0 0 80px ${glowColor}, 0 0 120px ${isElectrical ? 'rgba(34,197,94,0.15)' : 'rgba(168,85,247,0.15)'}`
-            : `0 0 20px ${glowColor}`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'box-shadow 0.3s ease',
-          animation: active ? 'orbPulse 2s ease-in-out infinite' : 'none',
-          position: 'relative',
-        }}
-      >
-        <Mic size={48} color="#fff" style={{ opacity: muted ? 0.4 : 1 }} />
-        {muted && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <MicOff size={24} color="#ef4444" />
-          </div>
-        )}
-      </div>
+      <NexusPresenceOrb />
 
       {/* Mode label */}
       <div style={{ textAlign: 'center' }}>
