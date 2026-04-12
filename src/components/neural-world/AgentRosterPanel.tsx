@@ -54,10 +54,9 @@ const ACTIVE_AGENTS: AgentCard[] = [
   { id: 'GUARDIAN', name: 'GUARDIAN', role: 'Security Patrol',       domain: 'Perimeter',            color: '#FF5060', status: 'active' },
 ]
 
-// Planned agents (8) — these can be simulation-activated
+// Planned agents (7) — NEGOTIATE removed (absorbed into SPARK)
 const PLANNED_AGENTS: AgentCard[] = [
   { id: 'HUNTER',       name: 'HUNTER',       role: 'Lead Hunter',         domain: 'Lead Acquisition',   color: '#FFE040', status: 'planned', version: 'V4', versionLabel: 'PLANNED V4' },
-  { id: 'NEGOTIATE',    name: 'NEGOTIATE',    role: 'Deal Closer',         domain: 'Closing',            color: '#FF9040', status: 'planned', version: 'V4', versionLabel: 'PLANNED V4' },
   { id: 'SENTINEL',     name: 'SENTINEL',     role: 'Risk Sentinel',       domain: 'Compliance',         color: '#FF5060', status: 'planned', version: 'V5', versionLabel: 'PLANNED V5' },
   { id: 'ATLAS-ENT',    name: 'ATLAS ENT',    role: 'Enterprise Mapper',   domain: 'Geographic',         color: '#40FF80', status: 'planned', version: 'V6', versionLabel: 'PLANNED V6' },
   { id: 'CORE',         name: 'CORE',         role: 'Personal OS Core',    domain: 'Katsuro Tower',      color: '#FFFFFF', status: 'planned', version: 'V5', versionLabel: 'PLANNED V5' },
@@ -66,7 +65,19 @@ const PLANNED_AGENTS: AgentCard[] = [
   { id: 'ATLAS-PER',    name: 'ATLAS PERSONAL',role: 'Personal Navigator', domain: 'Katsuro Tower',      color: '#5FBD8A', status: 'planned', version: 'V6', versionLabel: 'PLANNED V6' },
 ]
 
-// Total roster: 11 active + 8 planned + 1 Katsuro = 20
+// Absorbed agents — shown grayed out with ABSORBED badge
+interface AbsorbedAgentCard {
+  id: string
+  name: string
+  role: string
+  absorbedInto: string
+  absorbedDate: string
+}
+const ABSORBED_AGENTS: AbsorbedAgentCard[] = [
+  { id: 'NEGOTIATE', name: 'NEGOTIATE', role: 'Deal Closer', absorbedInto: 'SPARK', absorbedDate: 'April 9, 2026' },
+]
+
+// Total roster: 11 active + 7 planned + 1 Katsuro + 1 absorbed = 20
 
 // ── Katsuro special card ───────────────────────────────────────────────────────
 
@@ -142,7 +153,7 @@ export function AgentRosterPanel({ open, onClose }: AgentRosterPanelProps) {
 
   // Active count: 11 always + simulated planned + 1 Katsuro
   const activeCount = ACTIVE_AGENTS.length + simulatedAgents.size + 1  // +1 Katsuro
-  const totalCount  = ACTIVE_AGENTS.length + PLANNED_AGENTS.length + 1  // 20
+  const totalCount  = ACTIVE_AGENTS.length + PLANNED_AGENTS.length + ABSORBED_AGENTS.length + 1  // 20
 
   if (!open) return null
 
@@ -263,7 +274,7 @@ export function AgentRosterPanel({ open, onClose }: AgentRosterPanelProps) {
           </div>
 
           {/* ── Planned agents ── */}
-          <div>
+          <div style={{ marginBottom: 20 }}>
             <div style={{
               fontSize: 9,
               fontFamily: 'monospace',
@@ -290,6 +301,31 @@ export function AgentRosterPanel({ open, onClose }: AgentRosterPanelProps) {
               ))}
             </div>
           </div>
+
+          {/* ── Absorbed agents ── */}
+          {ABSORBED_AGENTS.length > 0 && (
+            <div>
+              <div style={{
+                fontSize: 9,
+                fontFamily: 'monospace',
+                color: 'rgba(150,150,170,0.45)',
+                letterSpacing: 2,
+                marginBottom: 10,
+                textTransform: 'uppercase',
+              }}>
+                Absorbed Agents — {ABSORBED_AGENTS.length}
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 8,
+              }}>
+                {ABSORBED_AGENTS.map(agent => (
+                  <AbsorbedAgentCard key={agent.id} agent={agent} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -538,6 +574,75 @@ function PlannedAgentCard({ agent, simActive, onActivate, onDeactivate }: Planne
             ACTIVATE SIM
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── Absorbed agent card ────────────────────────────────────────────────────────
+
+function AbsorbedAgentCard({ agent }: { agent: AbsorbedAgentCard }) {
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.015)',
+      border: '1px solid rgba(150,150,170,0.18)',
+      borderRadius: 6,
+      padding: '10px 12px',
+      opacity: 0.65,
+      position: 'relative',
+    }}>
+      {/* Top: grayed-out icon + name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <div style={{
+          width: 28,
+          height: 28,
+          borderRadius: '50%',
+          background: 'transparent',
+          border: '1.5px dashed rgba(150,150,170,0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <div style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            border: '1px solid rgba(150,150,170,0.30)',
+          }} />
+        </div>
+        <div style={{
+          fontSize: 11,
+          fontFamily: 'monospace',
+          fontWeight: 700,
+          color: 'rgba(150,150,170,0.55)',
+          letterSpacing: 1,
+          textDecoration: 'line-through',
+        }}>
+          {agent.name}
+        </div>
+      </div>
+      {/* Role */}
+      <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'rgba(255,255,255,0.25)', marginBottom: 4, lineHeight: 1.4 }}>
+        {agent.role}
+      </div>
+      {/* Absorbed label */}
+      <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'rgba(150,150,170,0.40)', marginBottom: 8 }}>
+        — {agent.absorbedInto} · {agent.absorbedDate}
+      </div>
+      {/* ABSORBED badge */}
+      <div style={{
+        display: 'inline-block',
+        fontSize: 8,
+        fontFamily: 'monospace',
+        background: 'rgba(150,150,170,0.08)',
+        border: '1px solid rgba(150,150,170,0.30)',
+        color: 'rgba(150,150,170,0.65)',
+        borderRadius: 3,
+        padding: '2px 7px',
+        letterSpacing: 1.5,
+      }}>
+        ABSORBED
       </div>
     </div>
   )
