@@ -24,6 +24,13 @@ import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// NAV1-FIX-VS: ORB LAB header context picker — two top-level context buttons
+type OrbContext = 'electrical' | 'ecosystem'
+const ORB_CONTEXT_BUTTONS: { id: OrbContext; label: string; color: string; hoverBg: string; activeBg: string; border: string }[] = [
+  { id: 'electrical', label: 'Electrical', color: '#22c55e', hoverBg: 'rgba(34,197,94,0.15)', activeBg: 'rgba(34,197,94,0.22)', border: 'rgba(34,197,94,0.55)' },
+  { id: 'ecosystem',  label: 'Ecosystem',  color: '#38bdf8', hoverBg: 'rgba(56,189,248,0.15)', activeBg: 'rgba(56,189,248,0.22)', border: 'rgba(56,189,248,0.55)' },
+]
+
 const CONTEXT_TABS: { id: NexusContextMode; label: string }[] = [
   { id: 'combined',   label: 'Combined'   },
   { id: 'electrical', label: 'Electrical' },
@@ -220,6 +227,38 @@ function ModeSelectorScreen({
   )
 }
 
+// NAV1-FIX-VS: ORB LAB header context picker button (hover state requires own component)
+function OrbContextButton({ id, label, color, hoverBg, activeBg, border, active, onClick }: {
+  id: OrbContext; label: string; color: string; hoverBg: string; activeBg: string; border: string; active: boolean; onClick: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={`Context: ${label}`}
+      style={{
+        padding: '4px 10px',
+        borderRadius: 6,
+        border: `1px solid ${active ? border : 'rgba(255,255,255,0.10)'}`,
+        background: active ? activeBg : hovered ? hoverBg : 'transparent',
+        color: active ? color : hovered ? color : '#6b7280',
+        fontFamily: 'monospace',
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+        cursor: 'pointer',
+        transition: 'all 0.15s',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function NexusAdminView() {
@@ -244,6 +283,8 @@ export default function NexusAdminView() {
   const setOrbLabActive = useUIStore((s) => s.setOrbLabActive)
 
   const [showModeSelector, setShowModeSelector] = useState(false)
+  // NAV1-FIX-VS: ORB LAB header context picker state
+  const [orbContext, setOrbContext] = useState<OrbContext>('electrical')
   const transcriptEndRef = useRef<HTMLDivElement>(null)
 
   // Signal ORB LAB active to suppress floating NEXUS mic
@@ -329,6 +370,12 @@ export default function NexusAdminView() {
               {nexusContextMode.toUpperCase()}
             </span>
           )}
+        </div>
+
+        {/* NAV1-FIX-VS: ORB LAB context picker — Electrical / Ecosystem */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <OrbContextButton id="electrical" label="Electrical" color="#22c55e" hoverBg="rgba(34,197,94,0.15)" activeBg="rgba(34,197,94,0.22)" border="rgba(34,197,94,0.55)" active={orbContext === 'electrical'} onClick={() => setOrbContext('electrical')} />
+          <OrbContextButton id="ecosystem"  label="Ecosystem"  color="#38bdf8" hoverBg="rgba(56,189,248,0.15)" activeBg="rgba(56,189,248,0.22)" border="rgba(56,189,248,0.55)" active={orbContext === 'ecosystem'}  onClick={() => setOrbContext('ecosystem')} />
         </div>
 
         {/* Mode selector trigger button */}

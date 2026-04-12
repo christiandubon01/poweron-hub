@@ -945,7 +945,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         </div>
 
         {/* Sidebar content */}
-        <div className="flex-1 overflow-y-auto">
+        {/* NAV1-FIX-VS: pb-4 prevents last bucket items from being hidden behind pinned footer */}
+        <div className="flex-1 overflow-y-auto pb-4">
 
           {/* Helper: render a collapsible section */}
           {/* WORKSPACE Section */}

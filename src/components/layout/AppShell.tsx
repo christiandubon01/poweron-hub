@@ -707,11 +707,9 @@ export function AppShell({ children }: AppShellProps) {
           </Suspense>
         )
 
-      // B33 — Admin Visualization Lab (ORB LAB + NEURAL MAP tabs — admin view)
-      case 'viz-lab':
-        return <Suspense fallback={<PanelLoading />}><AdminVisualizationLab /></Suspense>
-
       // B52 — Visual Suite Standalone (fullscreen 43-mode ambient display)
+      // NAV1-FIX-VS: 'viz-lab' legacy key consolidated to VisualSuiteStandalone (same as 'visual-suite')
+      case 'viz-lab':
       case 'visual-suite':
         return <Suspense fallback={<PanelLoading />}><VisualSuiteStandalone onExit={() => handleNav('home')} /></Suspense>
 
