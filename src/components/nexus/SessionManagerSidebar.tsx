@@ -56,9 +56,10 @@ interface SessionCardProps {
   isActive:  boolean
   onSelect:  () => void
   onRename:  (id: string, newName: string) => Promise<void>
+  onDelete:  (id: string) => Promise<void>
 }
 
-function SessionCard({ session, isActive, onSelect, onRename }: SessionCardProps) {
+function SessionCard({ session, isActive, onSelect, onRename, onDelete }: SessionCardProps) {
   const agentColor = AGENT_COLORS[session.agent ?? 'nexus'] ?? '#8b5cf6'
 
   // B61b — Editable title state
@@ -66,6 +67,8 @@ function SessionCard({ session, isActive, onSelect, onRename }: SessionCardProps
   const [editValue, setEditValue]   = useState(session.topic_name || 'New Session')
   const [isSaving, setIsSaving]     = useState(false)
   const inputRef                    = useRef<HTMLInputElement>(null)
+  // Delete hover state
+  const [hovered, setHovered]       = useState(false)
 
   // Keep editValue in sync with external topic_name updates (auto-naming)
   React.useEffect(() => {
@@ -120,9 +123,38 @@ function SessionCard({ session, isActive, onSelect, onRename }: SessionCardProps
         display:      'block',
         position:     'relative',
       }}
-      onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.border = `1.5px solid ${agentColor}66` }}
-      onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.border = `1.5px solid rgba(255,255,255,0.07)` }}
+      onMouseEnter={e => { setHovered(true); if (!isActive) (e.currentTarget as HTMLDivElement).style.border = `1.5px solid ${agentColor}66` }}
+      onMouseLeave={e => { setHovered(false); if (!isActive) (e.currentTarget as HTMLDivElement).style.border = `1.5px solid rgba(255,255,255,0.07)` }}
     >
+      {/* Delete button — small X, appears on hover, top-right corner */}
+      {hovered && !isEditing && (
+        <button
+          onClick={e => {
+            e.stopPropagation()
+            onDelete(session.id)
+          }}
+          title="Delete session"
+          style={{
+            position:    'absolute',
+            top:         '4px',
+            right:       '4px',
+            background:  'rgba(239,68,68,0.15)',
+            border:      '1px solid rgba(239,68,68,0.35)',
+            borderRadius:'4px',
+            cursor:      'pointer',
+            color:       '#ef4444',
+            padding:     '2px 3px',
+            display:     'flex',
+            alignItems:  'center',
+            justifyContent: 'center',
+            zIndex:      2,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.30)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.15)' }}
+        >
+          <X size={10} />
+        </button>
+      )}
       {/* Topic name row — either display or edit mode */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
         {isEditing ? (
@@ -324,6 +356,30 @@ export function SessionManagerSidebar({ onSelectSession, onNewSession, onClose }
     }
   }, [updateSessionTopicName])
 
+  // ── NEXUS-SIDE1: Delete session ──────────────────────────────────────────
+
+  const handleDelete = useCallback(async (sessionId: string) => {
+    if (!window.confirm('Delete this session?')) return
+
+    // Optimistic update: remove from local state
+    const prev = sessionList.find(s => s.id === sessionId)
+    setSessionList(sessionList.filter(s => s.id !== sessionId))
+
+    try {
+      const { error } = await supabase
+        .from('nexus_sessions')
+        .delete()
+        .eq('id', sessionId)
+      if (error) throw error
+    } catch (err) {
+      console.error('[SessionManagerSidebar] Failed to delete session:', err)
+      // Rollback: restore session in local state
+      if (prev) setSessionList([...sessionList.filter(s => s.id !== sessionId), prev].sort(
+        (a, b) => new Date(b.last_active).getTime() - new Date(a.last_active).getTime()
+      ))
+    }
+  }, [sessionList, setSessionList])
+
   // ── Select session: load last 6 messages ─────────────────────────────────
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
@@ -455,6 +511,7 @@ export function SessionManagerSidebar({ onSelectSession, onNewSession, onClose }
               isActive  = {session.id === activeSessionId}
               onSelect  = {() => handleSelectSession(session.id)}
               onRename  = {handleRename}
+              onDelete  = {handleDelete}
             />
           ))
         )}

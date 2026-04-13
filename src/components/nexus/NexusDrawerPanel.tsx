@@ -24,7 +24,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Mic, MicOff, Loader2, Send, Volume2, VolumeX, Pin, Check, LayoutList } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Mic, MicOff, Loader2, Send, Volume2, VolumeX, Pin, Check, LayoutList } from 'lucide-react'
 import { SessionManagerSidebar } from './SessionManagerSidebar'
 import type { NexusSessionRow } from '@/store/nexusStore'
 import { supabase } from '@/lib/supabase'
@@ -305,6 +305,10 @@ export function NexusDrawerPanel({
 }: NexusDrawerPanelProps) {
   // B61a — Session sidebar toggle
   const [showSessionSidebar, setShowSessionSidebar] = useState(false)
+  // NEXUS-SIDE1: Collapsible orb panel
+  const [orbCollapsed, setOrbCollapsed] = useState(false)
+  // NEXUS-SIDE1: Active tab — 'chat' or 'orb'
+  const [activeTab, setActiveTab] = useState<'chat' | 'orb'>('chat')
   // B49 — Live audio bands (falls back to simulation when streams are null)
   const { bass, mid, high } = useNEXUSAudio(micStream ?? null, ttsElement ?? null)
   // Map orbState to mtzBoost for visual intensity
@@ -428,57 +432,76 @@ export function NexusDrawerPanel({
           transition: 'transform 300ms ease-in-out',
         }}
       >
-        {/* ── LEFT: Orb panel ─────────────────────────────────────────────── */}
-        <div
-          className="relative flex flex-col items-center justify-center"
-          style={{
-            width: '45%',
-            borderRight: '1px solid rgba(255,255,255,0.06)',
-            background: 'rgba(0,0,0,0.25)',
-          }}
-        >
-          {/* Collapse button — top left of orb panel */}
-          <button
-            onClick={onToggleDrawer}
-            className="absolute top-3 left-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors z-10"
-            aria-label="Collapse NEXUS panel"
-            title="Collapse panel"
-          >
-            <ChevronRight size={16} />
-          </button>
-
-          {/* NEXUS label */}
-          <div className="absolute top-4 right-4 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest">
-              NEXUS
-            </span>
-          </div>
-
-          {/* Orb — fills the left half — B49: live audio reactive */}
+        {/* ── LEFT: Orb panel — collapsible, hidden when activeTab === 'orb' (shown inside right panel) ─── */}
+        {activeTab !== 'orb' && (
           <div
-            className="w-full flex-1"
-            style={{ maxHeight: '100%', minHeight: 0 }}
+            className="relative flex flex-col items-center justify-center overflow-hidden"
+            style={{
+              width:      orbCollapsed ? '0px' : '45%',
+              minWidth:   orbCollapsed ? '0px' : undefined,
+              borderRight: orbCollapsed ? 'none' : '1px solid rgba(255,255,255,0.06)',
+              background: 'rgba(0,0,0,0.25)',
+              transition: 'width 200ms ease-in-out',
+              flexShrink: 0,
+            }}
           >
-            <VisualRenderer mode={getVizMode()} bass={bass} mid={mid} high={high} mtz={_vizMtz} hue={160} style={{ width: '100%', height: '100%' }} />
-          </div>
+            {!orbCollapsed && (
+              <>
+                {/* Close-drawer button — top left */}
+                <button
+                  onClick={onToggleDrawer}
+                  className="absolute top-3 left-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors z-10"
+                  aria-label="Collapse NEXUS panel"
+                  title="Collapse panel"
+                >
+                  <ChevronRight size={16} />
+                </button>
 
-          {/* State label */}
-          <div className="absolute bottom-4 left-0 right-0 flex justify-center">
-            <span
-              className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full"
-              style={{
-                background: 'rgba(0,0,0,0.4)',
-                color: orbState === 'listening' || orbState === 'recording' ? '#3b82f6' :
-                       orbState === 'responding' ? '#10b981' :
-                       orbState === 'processing' || orbState === 'transcribing' ? '#a855f7' :
-                       '#6b7280',
-              }}
-            >
-              {orbStateLabel(voiceStatus)}
-            </span>
+                {/* Collapse-orb-only button — next to close button */}
+                <button
+                  onClick={() => setOrbCollapsed(true)}
+                  className="absolute top-3 left-10 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors z-10"
+                  aria-label="Collapse orb panel"
+                  title="Collapse orb"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+
+                {/* NEXUS label */}
+                <div className="absolute top-4 right-4 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest">
+                    NEXUS
+                  </span>
+                </div>
+
+                {/* Orb — fills the left half — B49: live audio reactive */}
+                <div
+                  className="w-full flex-1"
+                  style={{ maxHeight: '100%', minHeight: 0 }}
+                >
+                  <VisualRenderer mode={getVizMode()} bass={bass} mid={mid} high={high} mtz={_vizMtz} hue={160} style={{ width: '100%', height: '100%' }} />
+                </div>
+
+                {/* State label */}
+                <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                  <span
+                    className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full"
+                    style={{
+                      background: 'rgba(0,0,0,0.4)',
+                      color: orbState === 'listening' || orbState === 'recording' ? '#3b82f6' :
+                             orbState === 'responding' ? '#10b981' :
+                             orbState === 'processing' || orbState === 'transcribing' ? '#a855f7' :
+                             '#6b7280',
+                    }}
+                  >
+                    {orbStateLabel(voiceStatus)}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
-        </div>
+        )}
 
         {/* ── RIGHT: Chat panel (with optional session sidebar) ─────────── */}
         <div className="flex flex-row flex-1 min-w-0">
@@ -511,6 +534,50 @@ export function NexusDrawerPanel({
             style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
           >
             <div className="flex items-center gap-2">
+              {/* NEXUS-SIDE1: Expand orb button — shown when orb is collapsed and on Chat tab */}
+              {orbCollapsed && activeTab === 'chat' && (
+                <button
+                  onClick={() => setOrbCollapsed(false)}
+                  title="Expand orb panel"
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Expand orb"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              )}
+
+              {/* NEXUS-SIDE1: Orb / Chat tabs */}
+              <div
+                className="flex items-center rounded-lg overflow-hidden"
+                style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)' }}
+              >
+                <button
+                  onClick={() => setActiveTab('orb')}
+                  title="Show orb"
+                  className={clsx(
+                    'px-2.5 py-1 text-[10px] font-mono font-semibold transition-colors',
+                    activeTab === 'orb'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  Orb
+                </button>
+                <div style={{ width: '1px', background: 'rgba(255,255,255,0.10)', height: '16px' }} />
+                <button
+                  onClick={() => setActiveTab('chat')}
+                  title="Show chat"
+                  className={clsx(
+                    'px-2.5 py-1 text-[10px] font-mono font-semibold transition-colors',
+                    activeTab === 'chat'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  Chat
+                </button>
+              </div>
+
               {/* B61a — Sessions sidebar toggle */}
               <button
                 onClick={() => setShowSessionSidebar(prev => !prev)}
@@ -525,12 +592,14 @@ export function NexusDrawerPanel({
                 <LayoutList size={11} />
                 Sessions
               </button>
-              <div>
-                <div className="text-sm font-bold text-white">Voice Session</div>
-                <div className="text-[10px] text-gray-500 font-mono">
-                  {messages.length} message{messages.length !== 1 ? 's' : ''}
+              {activeTab === 'chat' && (
+                <div>
+                  <div className="text-sm font-bold text-white">Voice Session</div>
+                  <div className="text-[10px] text-gray-500 font-mono">
+                    {messages.length} message{messages.length !== 1 ? 's' : ''}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Mute toggle — FIX 2 */}
@@ -550,7 +619,48 @@ export function NexusDrawerPanel({
             </button>
           </div>
 
-          {/* Messages — full height, scrollable */}
+          {/* NEXUS-SIDE1: Orb tab — shows orb full-width inside chat panel */}
+          {activeTab === 'orb' && (
+            <div
+              className="flex-1 relative flex flex-col items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.25)', minHeight: 0 }}
+            >
+              {/* Close-drawer button */}
+              <button
+                onClick={onToggleDrawer}
+                className="absolute top-3 left-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors z-10"
+                aria-label="Collapse NEXUS panel"
+                title="Collapse panel"
+              >
+                <ChevronRight size={16} />
+              </button>
+              {/* NEXUS label */}
+              <div className="absolute top-4 right-4 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest">NEXUS</span>
+              </div>
+              <div className="w-full flex-1" style={{ maxHeight: '100%', minHeight: 0 }}>
+                <VisualRenderer mode={getVizMode()} bass={bass} mid={mid} high={high} mtz={_vizMtz} hue={160} style={{ width: '100%', height: '100%' }} />
+              </div>
+              <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                <span
+                  className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full"
+                  style={{
+                    background: 'rgba(0,0,0,0.4)',
+                    color: orbState === 'listening' || orbState === 'recording' ? '#3b82f6' :
+                           orbState === 'responding' ? '#10b981' :
+                           orbState === 'processing' || orbState === 'transcribing' ? '#a855f7' :
+                           '#6b7280',
+                  }}
+                >
+                  {orbStateLabel(voiceStatus)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Messages — full height, scrollable — hidden when Orb tab is active */}
+          {activeTab === 'chat' && (
           <div
             ref={scrollContRef}
             className="flex-1 overflow-y-auto px-3 py-4 space-y-4 min-h-0"
@@ -617,8 +727,11 @@ export function NexusDrawerPanel({
 
             <div ref={messagesEndRef} />
           </div>
+          )}
+          {/* end activeTab === 'chat' messages block */}
 
-          {/* Input area */}
+          {/* Input area — shown on Chat tab only */}
+          {activeTab === 'chat' && (
           <div
             className="flex-shrink-0 px-3 pb-3 pt-2"
             style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
@@ -746,6 +859,8 @@ export function NexusDrawerPanel({
               NEXUS · VAULT · PULSE · LEDGER · SPARK · BLUEPRINT · OHM · CHRONO · SCOUT
             </p>
           </div>
+          )}
+          {/* end activeTab === 'chat' input block */}
 
           {/* Fade-out keyframe for continue prompt */}
           <style>{`
