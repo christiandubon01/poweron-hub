@@ -315,8 +315,18 @@ export default function NexusAdminView() {
   // NEXUS-VOICE1: voice pipeline state
   const [isProcessing, setIsProcessing] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isListening, setIsListening] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+
+  // NEXUS-VOICE2: continuous conversation history (persists across Start/Stop within a session)
+  const conversationHistoryRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([])
+
+  // NEXUS-VOICE2: silence detection refs
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const silenceStartRef = useRef<number | null>(null)
 
   // NEXUS-CTX1: Persistent context strip state
   const [contextExpanded, setContextExpanded] = useState(true)
@@ -398,12 +408,34 @@ export default function NexusAdminView() {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [transcriptLines])
 
-  // NEXUS-VOICE1: full voice pipeline
+  // NEXUS-VOICE2: clean up silence detection resources
+  const cleanupSilenceDetection = useCallback(() => {
+    if (silenceTimerRef.current !== null) {
+      clearInterval(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+    silenceStartRef.current = null
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
+    analyserRef.current = null
+  }, [])
+
+  // NEXUS-VOICE1 + NEXUS-VOICE2: full voice pipeline with continuous history + silence detection
   const handleStartSession = useCallback(async () => {
-    clearTranscript()
+    // NEXUS-VOICE2: Only clear the transcript display on the very first turn of a brand-new session.
+    // conversationHistoryRef is NOT cleared here — it persists across Start/Stop cycles.
+    // It is only cleared in handleEndSession (explicit session end).
+    const isFirstTurn = conversationHistoryRef.current.length === 0
+    if (isFirstTurn) {
+      clearTranscript()
+      appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session started — ${nexusMode === 'electrical' ? 'Electrical context' : 'Admin Full Oversight'}`)
+    }
+
     setVoiceSessionActive(true)
     setVoiceSessionMuted(false)
-    appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session started — ${nexusMode === 'electrical' ? 'Electrical context' : 'Admin Full Oversight'}`)
+    setIsListening(true)
 
     // Step 1: Open microphone
     let stream: MediaStream
@@ -412,7 +444,55 @@ export default function NexusAdminView() {
     } catch (_err) {
       appendTranscriptLine('Microphone access denied — check browser permissions and try again.')
       setVoiceSessionActive(false)
+      setIsListening(false)
       return
+    }
+
+    // NEXUS-VOICE2: Set up Web Audio API for silence detection
+    try {
+      const audioCtx = new AudioContext()
+      audioContextRef.current = audioCtx
+      const source = audioCtx.createMediaStreamSource(stream)
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 2048
+      source.connect(analyser)
+      analyserRef.current = analyser
+
+      const dataArray = new Uint8Array(analyser.fftSize)
+      const RMS_THRESHOLD = 0.01
+      const SILENCE_DURATION_MS = 1500
+
+      silenceStartRef.current = null
+      silenceTimerRef.current = setInterval(() => {
+        if (!analyserRef.current) return
+        analyserRef.current.getByteTimeDomainData(dataArray)
+
+        // Calculate RMS
+        let sumSq = 0
+        for (let i = 0; i < dataArray.length; i++) {
+          const normalized = (dataArray[i] - 128) / 128
+          sumSq += normalized * normalized
+        }
+        const rms = Math.sqrt(sumSq / dataArray.length)
+
+        if (rms < RMS_THRESHOLD) {
+          // Below threshold — start or continue silence timer
+          if (silenceStartRef.current === null) {
+            silenceStartRef.current = Date.now()
+          } else if (Date.now() - silenceStartRef.current >= SILENCE_DURATION_MS) {
+            // Silence threshold reached — auto-stop recording
+            silenceStartRef.current = null
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+              mediaRecorderRef.current.stop()
+            }
+          }
+        } else {
+          // Sound detected — reset silence timer
+          silenceStartRef.current = null
+        }
+      }, 100)
+    } catch (_audioErr) {
+      // Web Audio API unavailable — fall back to manual stop only
     }
 
     // Step 2: Begin recording
@@ -425,6 +505,10 @@ export default function NexusAdminView() {
     }
 
     mr.onstop = async () => {
+      // Clean up silence detection
+      cleanupSilenceDetection()
+      setIsListening(false)
+
       // Stop all mic tracks
       stream.getTracks().forEach(t => t.stop())
 
@@ -433,9 +517,9 @@ export default function NexusAdminView() {
       audioChunksRef.current = []
 
       setIsProcessing(true)
+      appendTranscriptLine('Processing...')
 
       // Step 3: Whisper transcription
-      appendTranscriptLine('Transcribing...')
       let transcribedText = ''
       try {
         transcribedText = await transcribeAudioBlobNexus(audioBlob)
@@ -455,13 +539,23 @@ export default function NexusAdminView() {
 
       appendTranscriptLine(`You: ${transcribedText}`)
 
-      // Step 4: runNexusEngine
+      // NEXUS-VOICE2: Build sessionContext from conversation history
+      const history = conversationHistoryRef.current
+      const sessionContext = history.length > 0
+        ? 'Previous conversation:\n' + history.map(m => `${m.role}: ${m.content}`).join('\n')
+        : undefined
+
+      // NEXUS-VOICE2: Append user turn to history before calling engine
+      conversationHistoryRef.current = [...history, { role: 'user', content: transcribedText }]
+
+      // Step 4: runNexusEngine with conversation context
       appendTranscriptLine('NEXUS thinking...')
       let nexusResponse
       try {
         nexusResponse = await runNexusEngine({
           query: transcribedText,
           agentMode: nexusMode,
+          ...(sessionContext ? { sessionContext } : {}),
         })
       } catch (_err) {
         appendTranscriptLine('NEXUS unavailable — try again.')
@@ -472,6 +566,11 @@ export default function NexusAdminView() {
 
       const speakText = nexusResponse.speak || ''
       appendTranscriptLine(`NEXUS: ${speakText}`)
+
+      // NEXUS-VOICE2: Append assistant turn to history
+      if (speakText) {
+        conversationHistoryRef.current = [...conversationHistoryRef.current, { role: 'assistant', content: speakText }]
+      }
 
       // Step 5: ElevenLabs TTS
       if (speakText) {
@@ -501,17 +600,34 @@ export default function NexusAdminView() {
     }
 
     mr.start()
-  }, [nexusMode, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine])
+  }, [nexusMode, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine, cleanupSilenceDetection])
+
+  // NEXUS-VOICE2: explicit session end — clears conversation history
+  const handleEndSession = useCallback(() => {
+    cleanupSilenceDetection()
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+    }
+    conversationHistoryRef.current = []
+    setIsListening(false)
+    setVoiceSessionActive(false)
+    setIsProcessing(false)
+    clearTranscript()
+    appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session ended.`)
+  }, [cleanupSilenceDetection, clearTranscript, setVoiceSessionActive, appendTranscriptLine])
 
   const handleStopSession = useCallback(() => {
     // Stop recording — triggers mr.onstop which runs the full pipeline
+    // Does NOT clear conversation history (that's handleEndSession)
+    cleanupSilenceDetection()
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop()
     } else {
       setVoiceSessionActive(false)
-      appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session ended.`)
+      setIsListening(false)
+      appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Recording stopped.`)
     }
-  }, [setVoiceSessionActive, appendTranscriptLine])
+  }, [cleanupSilenceDetection, setVoiceSessionActive, appendTranscriptLine])
 
   const handleToggleMute = useCallback(() => {
     setVoiceSessionMuted(!voiceSessionMuted)
@@ -951,11 +1067,11 @@ export default function NexusAdminView() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
             width: 8, height: 8, borderRadius: '50%',
-            backgroundColor: isSpeaking ? '#38bdf8' : voiceSessionActive ? (voiceSessionMuted ? '#f59e0b' : modeColor) : isProcessing ? '#f59e0b' : '#4b5563',
-            boxShadow: isSpeaking ? '0 0 6px #38bdf8' : voiceSessionActive ? `0 0 6px ${modeColor}` : isProcessing ? '0 0 6px #f59e0b' : 'none',
+            backgroundColor: isSpeaking ? '#38bdf8' : isListening ? modeColor : isProcessing ? '#f59e0b' : voiceSessionActive ? (voiceSessionMuted ? '#f59e0b' : modeColor) : '#4b5563',
+            boxShadow: isSpeaking ? '0 0 6px #38bdf8' : isListening ? `0 0 6px ${modeColor}` : isProcessing ? '0 0 6px #f59e0b' : voiceSessionActive ? `0 0 6px ${modeColor}` : 'none',
           }} />
           <span style={{ fontSize: 11, color: '#6b7280', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            {isSpeaking ? 'Speaking' : isProcessing ? 'Processing' : voiceSessionActive ? (voiceSessionMuted ? 'Muted' : 'Live') : 'Standby'}
+            {isSpeaking ? 'Speaking' : isProcessing ? 'Processing...' : isListening ? 'Listening...' : voiceSessionActive ? (voiceSessionMuted ? 'Muted' : 'Live') : 'Standby'}
           </span>
           <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>
             {modeLabelShort}
@@ -965,19 +1081,37 @@ export default function NexusAdminView() {
         {/* Voice controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {!voiceSessionActive ? (
-            <button
-              onClick={handleStartSession}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 20px', borderRadius: 24,
-                background: `linear-gradient(135deg, ${isElectrical ? '#22c55e' : '#a855f7'}, ${isElectrical ? '#16a34a' : '#7c3aed'})`,
-                border: 'none', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                boxShadow: `0 4px 16px ${isElectrical ? 'rgba(34,197,94,0.35)' : 'rgba(168,85,247,0.35)'}`,
-              }}
-            >
-              <Mic size={16} />
-              Start Session
-            </button>
+            <>
+              <button
+                onClick={handleStartSession}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 20px', borderRadius: 24,
+                  background: `linear-gradient(135deg, ${isElectrical ? '#22c55e' : '#a855f7'}, ${isElectrical ? '#16a34a' : '#7c3aed'})`,
+                  border: 'none', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  boxShadow: `0 4px 16px ${isElectrical ? 'rgba(34,197,94,0.35)' : 'rgba(168,85,247,0.35)'}`,
+                }}
+              >
+                <Mic size={16} />
+                {conversationHistoryRef.current.length > 0 ? 'Continue' : 'Start Session'}
+              </button>
+              {conversationHistoryRef.current.length > 0 && (
+                <button
+                  onClick={handleEndSession}
+                  title="End session and clear history"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '8px 16px', borderRadius: 24,
+                    background: 'rgba(107,114,128,0.15)',
+                    border: '1.5px solid rgba(107,114,128,0.3)',
+                    color: '#9ca3af', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  <X size={12} />
+                  End Session
+                </button>
+              )}
+            </>
           ) : (
             <>
               <button
@@ -997,7 +1131,7 @@ export default function NexusAdminView() {
 
               <button
                 onClick={handleStopSession}
-                title="Stop session"
+                title="Stop recording (keeps conversation history)"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '8px 20px', borderRadius: 24,
@@ -1008,6 +1142,21 @@ export default function NexusAdminView() {
               >
                 <Square size={14} />
                 Stop
+              </button>
+
+              <button
+                onClick={handleEndSession}
+                title="End session and clear conversation history"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '8px 16px', borderRadius: 24,
+                  background: 'rgba(107,114,128,0.15)',
+                  border: '1.5px solid rgba(107,114,128,0.3)',
+                  color: '#9ca3af', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                <X size={12} />
+                End
               </button>
             </>
           )}
