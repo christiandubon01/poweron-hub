@@ -19,6 +19,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Mic, MicOff, Square, ChevronDown, ChevronRight, X, Zap, ShieldAlert } from 'lucide-react'
 import { useNexusStore } from '@/store/nexusStore'
 import { useUIStore } from '@/store/uiStore'
+import { useAuthStore } from '@/store/authStore'
 import type { NexusMode, NexusContextMode } from '@/store/nexusStore'
 import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
 import { VisualRenderer, getVizMode } from '@/components/v15r/AIVisualSuite'
@@ -319,6 +320,7 @@ export default function NexusAdminView() {
   } = useNexusStore()
 
   const setOrbLabActive = useUIStore((s) => s.setOrbLabActive)
+  const ownerId = useAuthStore((s) => s.ownerId)
 
   const [showModeSelector, setShowModeSelector] = useState(false)
   // NAV1-FIX-VS: ORB LAB header context picker state
@@ -347,6 +349,12 @@ export default function NexusAdminView() {
 
   // NEXUS-VOICE4: hold phrases — stores running partial transcript for silence-gate checks
   const lastTranscriptRef = useRef<string>('')
+
+  // NEXUS-VOICE5: recording guard — true from recording start until onstop handler completes
+  const isRecordingRef = useRef<boolean>(false)
+
+  // NEXUS-VOICE5: tracks currently playing TTS audio element so it can be interrupted
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
 
   // NEXUS-VOICE4: hold phrases list (lowercase, trimmed)
   const HOLD_PHRASES = ['uhm','uh','also','let me check','one second','let me grab that','hold on','wait','actually','and','so']
@@ -452,6 +460,13 @@ export default function NexusAdminView() {
 
   // NEXUS-VOICE1 + NEXUS-VOICE2: full voice pipeline with continuous history + silence detection
   const handleStartSession = useCallback(async () => {
+    // NEXUS-VOICE5: if TTS is still playing when user clicks Continue, stop it immediately
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+      setIsSpeaking(false)
+    }
+
     // NEXUS-VOICE2: Only clear the transcript display on the very first turn of a brand-new session.
     // conversationHistoryRef is NOT cleared here — it persists across Start/Stop cycles.
     // It is only cleared in handleEndSession (explicit session end).
@@ -487,9 +502,9 @@ export default function NexusAdminView() {
       analyserRef.current = analyser
 
       const dataArray = new Uint8Array(analyser.fftSize)
-      // NEXUS-VOICE4: updated thresholds
+      // NEXUS-VOICE5: updated silence threshold — 3000ms (was 2700ms)
       const RMS_THRESHOLD = 0.015
-      const SILENCE_DURATION_MS = 2700
+      const SILENCE_DURATION_MS = 3000
 
       silenceStartRef.current = null
       silenceTimerRef.current = setInterval(() => {
@@ -546,6 +561,9 @@ export default function NexusAdminView() {
       cleanupSilenceDetection()
       setIsListening(false)
 
+      // NEXUS-VOICE5: clear recording guard — we are now in onstop handler
+      isRecordingRef.current = false
+
       // Stop all mic tracks
       stream.getTracks().forEach(t => t.stop())
 
@@ -555,6 +573,13 @@ export default function NexusAdminView() {
 
       // NEXUS-VOICE4 FIX 2: if locally muted, skip Whisper — do not send audio to processing
       if (localMutedRef.current) {
+        setIsProcessing(false)
+        setVoiceSessionActive(false)
+        return
+      }
+
+      // NEXUS-VOICE5: safety gate — abort if recording guard is still unexpectedly true
+      if (isRecordingRef.current) {
         setIsProcessing(false)
         setVoiceSessionActive(false)
         return
@@ -584,22 +609,37 @@ export default function NexusAdminView() {
       // NEXUS-VOICE4: keep lastTranscriptRef updated for hold phrase silence gate
       lastTranscriptRef.current = transcribedText
 
-      // NEXUS-VOICE2: Build sessionContext from conversation history
+      // NEXUS-VOICE5 FIX 1: Build sessionContext — keep only last 6 turns (3 user + 3 NEXUS)
+      // Older turns are dropped to prevent context overflow.
       const history = conversationHistoryRef.current
       const sessionContext = history.length > 0
-        ? 'Previous conversation:\n' + history.map(m => `${m.role}: ${m.content}`).join('\n')
+        ? 'CONVERSATION SO FAR (most recent last):\n' +
+          history.slice(-6).map(m => (m.role === 'user' ? 'Christian: ' : 'NEXUS: ') + m.content).join('\n')
         : undefined
 
       // NEXUS-VOICE2: Append user turn to history before calling engine
       conversationHistoryRef.current = [...history, { role: 'user', content: transcribedText }]
+
+      // NEXUS-VOICE5 FIX 1: resolve agentMode from nexusMode for context-aware routing
+      const agentMode = nexusMode === 'electrical' ? 'electrical' : 'admin'
+
+      // NEXUS-VOICE5 FIX 1: resolve userId from ownerId (silently skip if unavailable)
+      let resolvedUserId: string | undefined
+      try {
+        const { data: { session: authSession } } = await supabase.auth.getSession()
+        resolvedUserId = authSession?.user?.id ?? (ownerId ?? undefined)
+      } catch (_) {
+        // silently skip — do not break flow
+      }
 
       // Step 4: runNexusEngine with conversation context
       let nexusResponse
       try {
         nexusResponse = await runNexusEngine({
           query: transcribedText,
-          agentMode: nexusMode,
+          agentMode,
           ...(sessionContext ? { sessionContext } : {}),
+          ...(resolvedUserId ? { userId: resolvedUserId } : {}),
         })
       } catch (_err) {
         appendTranscriptLine('NEXUS unavailable — try again.')
@@ -638,7 +678,8 @@ export default function NexusAdminView() {
       }
 
       // Step 5: ElevenLabs TTS
-      if (speakText) {
+      // NEXUS-VOICE5: only start TTS if runNexusEngine has returned AND recording guard is clear
+      if (speakText && !isRecordingRef.current) {
         setIsSpeaking(true)
         try {
           const ttsResult = await synthesizeWithElevenLabs({
@@ -646,17 +687,25 @@ export default function NexusAdminView() {
             voice_id: DEFAULT_VOICE_ID,
           })
           const audio = new Audio(ttsResult.audioUrl)
+          // NEXUS-VOICE5: track playing audio so it can be interrupted by Continue
+          currentAudioRef.current = audio
           audio.onended = () => {
             setIsSpeaking(false)
+            currentAudioRef.current = null
             URL.revokeObjectURL(ttsResult.audioUrl)
           }
           audio.onerror = () => {
             setIsSpeaking(false)
+            currentAudioRef.current = null
           }
-          audio.play().catch(() => setIsSpeaking(false))
+          audio.play().catch(() => {
+            setIsSpeaking(false)
+            currentAudioRef.current = null
+          })
         } catch (_err) {
           // ElevenLabs failed — text response already appended, skip audio silently
           setIsSpeaking(false)
+          currentAudioRef.current = null
         }
       }
 
@@ -667,8 +716,10 @@ export default function NexusAdminView() {
     // NEXUS-VOICE3: delay 600ms after getUserMedia to let mic stream stabilize
     // and avoid clipping the first words of each recording turn
     await new Promise<void>(resolve => setTimeout(resolve, 600))
+    // NEXUS-VOICE5: arm recording guard before starting
+    isRecordingRef.current = true
     mr.start()
-  }, [nexusMode, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine, cleanupSilenceDetection])
+  }, [nexusMode, ownerId, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine, cleanupSilenceDetection])
 
   // NEXUS-VOICE2: explicit session end — clears conversation history
   const handleEndSession = useCallback(() => {
