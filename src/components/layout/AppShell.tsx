@@ -113,6 +113,10 @@ const AdminCommandCenter = lazy(() => chunkRetry(() => import('@/views/AdminComm
 // NW1 — Neural World (lazy-loaded)
 const NeuralWorldView = lazy(() => chunkRetry(() => import('@/views/NeuralWorldView')))
 
+// NAV1-FIX-VS2 — Neural Map views for Visual Suite sub-tabs
+const CommandCenterNeuralMap = lazy(() => chunkRetry(() => import('@/views/CommandCenterNeuralMap')))
+const CombinedNeuralMap = lazy(() => chunkRetry(() => import('@/views/CombinedNeuralMap')))
+
 // ── INT-1: New feature views — all lazy-loaded ────────────────────────────────
 
 // Sales Intelligence — unified 5-tab panel (Practice/Live Call/Leads/Pipeline/Coach)
@@ -276,6 +280,56 @@ function BusinessOverviewTabShell() {
         )}
         {tab === 'absolute' && (
           <Suspense fallback={<PanelLoading />}><AbsoluteDashboardView /></Suspense>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
+// NAV1-FIX-VS2 — VisualSuiteNeuralTabShell: Visual Suite = Electrical Neural Map + Ecosystem Neural Map
+// Tab 1: Electrical Neural Map → CommandCenterNeuralMap.tsx
+// Tab 2: Ecosystem Neural Map → CombinedNeuralMap.tsx
+// Desktop: sidebar stays open/collapsible. Mobile: collapsed by default.
+function VisualSuiteNeuralTabShell() {
+  const [tab, setTab] = React.useState<'electrical' | 'ecosystem'>('electrical')
+  const tabs = [
+    { id: 'electrical' as const, label: 'Electrical Neural Map' },
+    { id: 'ecosystem' as const,  label: 'Ecosystem Neural Map' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, backgroundColor: 'var(--bg-secondary, #0f1117)' }}>
+      {/* Tab bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 0,
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        paddingLeft: 20, flexShrink: 0,
+        backgroundColor: 'var(--bg-secondary, #0f1117)',
+      }}>
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
+              fontSize: 12, fontWeight: tab === t.id ? 700 : 500,
+              color: tab === t.id ? '#f9fafb' : '#6b7280',
+              borderBottom: tab === t.id ? '2px solid #22c55e' : '2px solid transparent',
+              transition: 'color 0.15s, border-color 0.15s',
+              marginBottom: -1, whiteSpace: 'nowrap',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {/* Tab content */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {tab === 'electrical' && (
+          <Suspense fallback={<PanelLoading />}><CommandCenterNeuralMap /></Suspense>
+        )}
+        {tab === 'ecosystem' && (
+          <Suspense fallback={<PanelLoading />}><CombinedNeuralMap /></Suspense>
         )}
       </div>
     </div>
@@ -708,10 +762,11 @@ export function AppShell({ children }: AppShellProps) {
         )
 
       // B52 — Visual Suite Standalone (fullscreen 43-mode ambient display)
-      // NAV1-FIX-VS: 'viz-lab' legacy key consolidated to VisualSuiteStandalone (same as 'visual-suite')
+      // NAV1-FIX-VS2: 'visual-suite' now renders Neural Map sub-tabs (Electrical + Ecosystem)
+      // 'viz-lab' legacy key preserved for backwards compat (same view)
       case 'viz-lab':
       case 'visual-suite':
-        return <Suspense fallback={<PanelLoading />}><VisualSuiteStandalone onExit={() => handleNav('home')} /></Suspense>
+        return <VisualSuiteNeuralTabShell />
 
       // B36 — Admin Command Center
       case 'admin-command-center':
@@ -771,9 +826,9 @@ export function AppShell({ children }: AppShellProps) {
       case 'nexus-admin':
         return <Suspense fallback={<PanelLoading />}><NexusAdminView /></Suspense>
 
-      // NAV1 — /orb-lab and /viz-lab redirect to nexus-admin
+      // NAV1-FIX-VS2 — ORB LAB: renders AdminVisualizationLab (restored from nexus-admin redirect)
       case 'orb-lab':
-        return <Suspense fallback={<PanelLoading />}><NexusAdminView /></Suspense>
+        return <Suspense fallback={<PanelLoading />}><AdminVisualizationLab /></Suspense>
 
       // NAV1 — Admin Tools (Agent Intelligence panel, owner only)
       case 'admin-tools':

@@ -800,7 +800,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Group 2 — Operations
   // Group 3 — Security & Access
   // Portal Lead Inbox REMOVED from here (moves to SPARK/HUNTER sub-tab per 4.3)
-  // ORB LAB REMOVED — merged into NEXUS Admin (nav1-nexus-admin)
+  // ORB LAB restored to Visualization bucket (NAV1-FIX-VS2)
   const adminBucket1 = [
     // Group 1 — AI Command
     { label: 'NEXUS Admin', icon: Mic, view: 'nexus-admin', badge: 'AI CMD', subtitle: 'ORB · Voice · Oversight', purple: true },
@@ -824,10 +824,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Billing', icon: Building2, view: 'billing', badge: 'NEW', subtitle: 'Subscription & Plans' },
   ]
   // BUCKET 3 — VISUALIZATION (default collapsed, teal border)
-  // ORB LAB REMOVED — Visual Suite + SPARK Live Call only
+  // NAV1-FIX-VS2: restored Neural World + ORB LAB as separate nav tabs
   const adminBucket3 = [
-    { label: 'Visual Suite', icon: Layers, view: 'visual-suite', badge: null, subtitle: 'Neural Map Elec · Combined · World' },
-    { label: 'SPARK Live Call', icon: Phone, view: 'spark-live-call', badge: 'Preview', subtitle: null },
+    { label: 'Visual Suite',    icon: Layers, view: 'visual-suite',    badge: null,      subtitle: 'Electrical · Ecosystem Neural Map' },
+    { label: 'Neural World',    icon: Layers, view: 'neural-world',    badge: null,      subtitle: '3D Business Visualization' },
+    { label: 'ORB LAB',        icon: Layers, view: 'orb-lab',         badge: 'LAB',     subtitle: 'ORB · Neural Maps · World' },
+    { label: 'SPARK Live Call', icon: Phone,  view: 'spark-live-call', badge: 'Preview', subtitle: null },
   ]
   // BUCKET 4 — BUSINESS OVERVIEW (default collapsed, green border)
   // Absolute Dashboard added as second sub-tab inside the view (not a separate nav item)
@@ -845,9 +847,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       if (isMobile) setSidebarOpen(false)
       return
     }
-    // NAV1: /orb-lab redirect to nexus-admin
-    if (view === 'orb-lab' || view === 'viz-lab') {
-      onNav('nexus-admin')
+    // NAV1-FIX-VS2: viz-lab legacy key redirects to visual-suite (Neural Map views)
+    if (view === 'viz-lab') {
+      onNav('visual-suite')
       if (isMobile) setSidebarOpen(false)
       return
     }
@@ -861,9 +863,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       if (isMobile) setSidebarOpen(false)
       return
     }
-    // B52: Auto-collapse sidebar when entering visual-suite fullscreen mode
-    // NW7b: Also auto-collapse for neural-world
-    if (view === 'visual-suite' || view === 'neural-world') {
+    // NAV1-FIX-VS2: Auto-collapse sidebar for visual-suite, neural-world, and orb-lab
+    // orb-lab: sidebar collapsed by default (per interview spec)
+    if (view === 'visual-suite' || view === 'neural-world' || view === 'orb-lab') {
       if (!isMobile) {
         setDesktopCollapsed(true)
         localStorage.setItem('sidebar_collapsed', 'true')
