@@ -22,7 +22,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, onOrbStateChange, isOrbLabMode, type VoiceSessionStatus } from '@/services/voice'
+import { getVoiceSubsystem, unlockAudioContext, voiceDebugLog, onDebugUpdate, onOrbStateChange, onTTSAudioChange, isOrbLabMode, type VoiceSessionStatus } from '@/services/voice'
 import { useAuth } from '@/hooks/useAuth'
 import { NexusDrawerPanel, type DrawerMessage } from '@/components/nexus/NexusDrawerPanel'
 import type { OrbState } from '@/components/nexus/NexusPresenceOrb'
@@ -265,11 +265,16 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   }, [setActiveSessionId])
 
   // B61a — New session: clear state
+  // NEXUS-SIDE2: also reset transcript refs, context messages, and sessionStorage
   const handleNewSession = useCallback((session: NexusSessionRow) => {
     setActiveSessionId(session.id)
     conversationHistoryRef.current = []
+    lastTranscriptRef.current = ''
+    lastCleanedTranscriptRef.current = ''
     setMessages([])
-  }, [setActiveSessionId])
+    setContextMessages([])
+    try { sessionStorage.removeItem(DRAWER_SESSION_KEY) } catch {}
+  }, [setActiveSessionId, DRAWER_SESSION_KEY])
 
   // Silence detection refs
   const silenceTimerRef    = useRef(null)
@@ -281,7 +286,7 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   const [silenceProgress, setSilenceProgress] = useState(0)
 
   const SILENCE_THRESHOLD   = 0.01
-  const SILENCE_DURATION_MS = 4000  // B60: 40 frames × 100ms = 4s (was 2s/20 frames)
+  const SILENCE_DURATION_MS = 3000  // NEXUS-SIDE2: updated to 3s (was 4s)
 
   const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=1')
   const [debugTick, setDebugTick]           = useState(0)
@@ -343,6 +348,21 @@ export function VoiceActivationButton({ className, hideFloatingOrb = false }: Vo
   // Subscribe to orb state
   useEffect(() => {
     return onOrbStateChange((s) => setOrbState(s))
+  }, [])
+
+  // NEXUS-SIDE2: mute silence-detection stream during TTS playback to prevent echo
+  useEffect(() => {
+    return onTTSAudioChange((audio) => {
+      if (!silenceStreamRef.current) return
+      const tracks = silenceStreamRef.current.getAudioTracks()
+      if (audio) {
+        // TTS started — mute mic tracks so Whisper doesn't pick up speaker output
+        tracks.forEach(t => { t.enabled = false })
+      } else {
+        // TTS ended — re-enable mic tracks
+        tracks.forEach(t => { t.enabled = true })
+      }
+    })
   }, [])
 
   // Voice subsystem init + events

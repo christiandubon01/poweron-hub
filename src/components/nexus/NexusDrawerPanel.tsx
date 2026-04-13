@@ -104,6 +104,22 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+/**
+ * NEXUS-SIDE2: strip markdown from NEXUS response text for clean display.
+ * Removes bold (**text**), italic (*text*), headers (# at line start),
+ * list bullets (- or * at line start), and collapses multiple newlines.
+ * Applied only for display — stored message content is not modified.
+ */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')          // **bold** → plain
+    .replace(/\*([^*]+)\*/g, '$1')               // *italic* → plain
+    .replace(/^#{1,6}\s+/gm, '')                 // # headers at line start
+    .replace(/^[-*]\s+/gm, '')                   // - bullet / * bullet at line start
+    .replace(/\n{3,}/g, '\n\n')                  // collapse 3+ newlines to 2
+    .trim()
+}
+
 function orbStateLabel(status: VoiceSessionStatus): string {
   switch (status) {
     case 'recording':    return 'Recording…'
@@ -183,9 +199,9 @@ function MessageBubble({ msg, faded }: { msg: DrawerMessage; faded?: boolean }) 
           </div>
         )}
 
-        {/* Main content */}
+        {/* Main content — NEXUS-SIDE2: strip markdown for nexus role messages (display only) */}
         <p className="text-sm leading-relaxed whitespace-pre-wrap break-words m-0">
-          {msg.content}
+          {isUser ? msg.content : stripMarkdown(msg.content)}
         </p>
 
         {/* Voice transcript — show original Whisper text so user can verify what was heard */}

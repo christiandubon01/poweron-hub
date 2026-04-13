@@ -286,7 +286,7 @@ const MAX_RECORDING_SECONDS = 8
 /** RMS level below which audio is considered silence (0–1 range) */
 const VAD_SILENCE_THRESHOLD = 0.015
 /** Consecutive milliseconds of silence before auto-stop triggers */
-const VAD_SILENCE_DURATION_MS = 1800
+const VAD_SILENCE_DURATION_MS = 3000  // NEXUS-SIDE2: updated from 1800ms to 3s
 /** How long the passive LISTENING state is allowed to wait for a wake word (ms) */
 const LISTENING_TIMEOUT_MS = 30_000
 const DEFAULT_PREFERENCES: VoicePreferences = {
@@ -1160,19 +1160,44 @@ Your response will be spoken aloud via TTS — keep it conversational and under 
   }
 
   /**
+   * Mute all tracks on the active mic stream to prevent echo during TTS playback.
+   * Safe to call when mediaStream is null — no-op in that case.
+   */
+  private muteMicStream(): void {
+    if (!this.mediaStream) return
+    this.mediaStream.getAudioTracks().forEach(t => { t.enabled = false })
+    debugPush('muteMicStream() — mic muted for TTS playback')
+  }
+
+  /**
+   * Re-enable all tracks on the active mic stream after TTS playback ends.
+   * Safe to call when mediaStream is null — no-op in that case.
+   */
+  private unmuteMicStream(): void {
+    if (!this.mediaStream) return
+    this.mediaStream.getAudioTracks().forEach(t => { t.enabled = true })
+    debugPush('unmuteMicStream() — mic unmuted after TTS playback')
+  }
+
+  /**
    * Play audio with a tracked reference so it can be interrupted.
    * B57 FIX 4: skip the redundant fetch(objectUrl) → arrayBuffer → new Blob → new URL chain.
    * The URL is already a local object URL from synthesizeWithElevenLabs — set it on the
    * HTMLAudioElement directly to save ~1-3 s of unnecessary decode/re-encode overhead.
+   * NEXUS-SIDE2 echo fix: mute mic stream before playback, unmute after.
    */
   private playAudioTracked(url: string): Promise<void> {
     debugPush('playAudioTracked() — starting (direct, no fetch)')
+    // NEXUS-SIDE2: mute mic to prevent echo (Whisper picking up TTS audio)
+    this.muteMicStream()
     return new Promise<void>((resolve) => {
       let settled = false
       const safeResolve = () => {
         if (!settled) {
           settled = true
           clearTimeout(hangTimeout)
+          // NEXUS-SIDE2: unmute mic after TTS finishes
+          this.unmuteMicStream()
           resolve()
         }
       }
