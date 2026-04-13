@@ -564,7 +564,16 @@ export default function NexusAdminView() {
         return
       }
 
-      const speakText = nexusResponse.speak || ''
+      // NEXUS-VOICE3: Only show speak field; strip markdown before display
+      const rawSpeak = nexusResponse.speak || ''
+      const speakText = rawSpeak
+        .replace(/\*\*(.+?)\*\*/g, '$1')   // remove **bold**
+        .replace(/\*(.+?)\*/g, '$1')        // remove *italic*
+        .replace(/^#{1,6}\s+/gm, '')        // remove # headers
+        .replace(/^[\s]*[-*]\s+/gm, '')     // remove bullet points (- or *)
+        .replace(/\n{2,}/g, ' ')            // collapse multiple newlines
+        .replace(/\n/g, ' ')                // remaining newlines to spaces
+        .trim()
       appendTranscriptLine(`NEXUS: ${speakText}`)
 
       // NEXUS-VOICE2: Append assistant turn to history
@@ -599,6 +608,11 @@ export default function NexusAdminView() {
       setVoiceSessionActive(false)
     }
 
+    // NEXUS-VOICE3: delay 600ms after getUserMedia to let mic stream stabilize
+    // and avoid clipping the first words of each recording turn
+    appendTranscriptLine('Ready... speak now')
+    await new Promise<void>(resolve => setTimeout(resolve, 600))
+    appendTranscriptLine('Listening...')
     mr.start()
   }, [nexusMode, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine, cleanupSilenceDetection])
 
