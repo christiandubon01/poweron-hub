@@ -21,6 +21,7 @@ import { useNexusStore } from '@/store/nexusStore'
 import { useUIStore } from '@/store/uiStore'
 import type { NexusMode, NexusContextMode } from '@/store/nexusStore'
 import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
+import { supabase } from '@/lib/supabase'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -287,6 +288,75 @@ export default function NexusAdminView() {
   const [orbContext, setOrbContext] = useState<OrbContext>('electrical')
   const transcriptEndRef = useRef<HTMLDivElement>(null)
 
+  // NEXUS-CTX1: Persistent context strip state
+  const [contextExpanded, setContextExpanded] = useState(true)
+  const [contextLoading, setContextLoading] = useState(true)
+  const [contextData, setContextData] = useState<{
+    lastSession: { type: string; createdAt: string } | null
+    snapshot: { value: string; createdAt: string } | null
+    memoryEntries: { content: string; createdAt: string }[]
+  }>({ lastSession: null, snapshot: null, memoryEntries: [] })
+
+  // NEXUS-CTX1: Fire 3 Supabase queries on mount
+  useEffect(() => {
+    const fetchContextData = async () => {
+      setContextLoading(true)
+      try {
+        const [sessionRes, snapshotRes, memoryRes] = await Promise.allSettled([
+          supabase
+            .from('nexus_sessions')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(1),
+          supabase
+            .from('snapshots')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(1),
+          supabase
+            .from('memory_entries')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(2),
+        ])
+
+        const lastSession =
+          sessionRes.status === 'fulfilled' && sessionRes.value.data && sessionRes.value.data.length > 0
+            ? {
+                type: sessionRes.value.data[0].session_type ?? sessionRes.value.data[0].context ?? sessionRes.value.data[0].type ?? 'Session',
+                createdAt: sessionRes.value.data[0].created_at,
+              }
+            : null
+
+        const snapshotRow =
+          snapshotRes.status === 'fulfilled' && snapshotRes.value.data && snapshotRes.value.data.length > 0
+            ? snapshotRes.value.data[0]
+            : null
+        const snapshot = snapshotRow
+          ? {
+              value: snapshotRow.pipeline ?? snapshotRow.revenue ?? snapshotRow.value ?? snapshotRow.summary ?? 'Snapshot',
+              createdAt: snapshotRow.created_at,
+            }
+          : null
+
+        const memoryEntries =
+          memoryRes.status === 'fulfilled' && memoryRes.value.data
+            ? memoryRes.value.data.map((row: any) => ({
+                content: row.content ?? row.title ?? row.entry ?? 'Entry',
+                createdAt: row.created_at,
+              }))
+            : []
+
+        setContextData({ lastSession, snapshot, memoryEntries })
+      } catch (_) {
+        // Silently fail — data stays null/empty
+      } finally {
+        setContextLoading(false)
+      }
+    }
+    fetchContextData()
+  }, [])
+
   // Signal ORB LAB active to suppress floating NEXUS mic
   useEffect(() => {
     setOrbLabActive(true)
@@ -436,6 +506,131 @@ export default function NexusAdminView() {
           style={{ position: 'fixed', inset: 0, zIndex: 99 }}
         />
       )}
+
+      {/* ── NEXUS-CTX1: Persistent Context Strip ─────────── */}
+      <div style={{
+        flexShrink: 0,
+        background: 'rgba(255,255,255,0.03)',
+        borderBottom: '1px solid rgba(255,255,255,0.07)',
+        padding: contextExpanded ? '10px 20px' : '0 20px',
+        height: contextExpanded ? 'auto' : '32px',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        transition: 'height 0.2s ease, padding 0.2s ease',
+        position: 'relative',
+      }}>
+        {contextExpanded ? (
+          <>
+            {/* Section label */}
+            <div style={{
+              fontFamily: 'monospace',
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#374151',
+              marginBottom: 6,
+            }}>
+              CONTEXT
+            </div>
+
+            {/* Row 1 — Last Session */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <span style={{ fontFamily: 'monospace', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6b7280', minWidth: 100 }}>
+                LAST SESSION:
+              </span>
+              {contextLoading ? (
+                <span style={{ fontSize: 11, color: '#4b5563' }}>—</span>
+              ) : contextData.lastSession ? (
+                <span style={{ fontSize: 11, color: '#d1d5db' }}>
+                  {contextData.lastSession.type}
+                  <span style={{ color: '#6b7280', marginLeft: 6 }}>
+                    — {new Date(contextData.lastSession.createdAt).toLocaleString()}
+                  </span>
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: '#4b5563', fontStyle: 'italic' }}>None logged yet</span>
+              )}
+            </div>
+
+            {/* Row 2 — Snapshot */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <span style={{ fontFamily: 'monospace', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6b7280', minWidth: 100 }}>
+                SNAPSHOT:
+              </span>
+              {contextLoading ? (
+                <span style={{ fontSize: 11, color: '#4b5563' }}>—</span>
+              ) : contextData.snapshot ? (
+                <span style={{ fontSize: 11, color: '#d1d5db' }}>
+                  {String(contextData.snapshot.value)}
+                  <span style={{ color: '#6b7280', marginLeft: 6 }}>
+                    — {new Date(contextData.snapshot.createdAt).toLocaleDateString()}
+                  </span>
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: '#4b5563', fontStyle: 'italic' }}>None logged yet</span>
+              )}
+            </div>
+
+            {/* Row 3 — Memory Entries */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+              <span style={{ fontFamily: 'monospace', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6b7280', minWidth: 100, paddingTop: 1 }}>
+                PENDING:
+              </span>
+              {contextLoading ? (
+                <span style={{ fontSize: 11, color: '#4b5563' }}>—</span>
+              ) : contextData.memoryEntries.length > 0 ? (
+                <span style={{ fontSize: 11, color: '#d1d5db' }}>
+                  {contextData.memoryEntries.map((e, i) => (
+                    <span key={i}>
+                      {i > 0 && <span style={{ color: '#6b7280', margin: '0 4px' }}>/</span>}
+                      {e.content}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: '#4b5563', fontStyle: 'italic' }}>None logged yet</span>
+              )}
+            </div>
+          </>
+        ) : (
+          /* Collapsed single-line */
+          <div style={{ fontSize: 10, color: '#4b5563', fontFamily: 'monospace', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ textTransform: 'uppercase', fontWeight: 700 }}>CONTEXT</span>
+            <span style={{ color: '#374151' }}>—</span>
+            <span>{contextData.lastSession ? contextData.lastSession.type : 'No session'}</span>
+            <span style={{ color: '#374151' }}>—</span>
+            <span>{contextData.snapshot ? String(contextData.snapshot.value) : 'No snapshot'}</span>
+          </div>
+        )}
+
+        {/* Toggle chevron */}
+        <button
+          onClick={() => setContextExpanded(!contextExpanded)}
+          title={contextExpanded ? 'Collapse context strip' : 'Expand context strip'}
+          style={{
+            position: 'absolute',
+            right: 12,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            color: '#6b7280',
+            padding: 4,
+            display: 'flex',
+            alignItems: 'center',
+            transition: 'transform 0.2s',
+          }}
+        >
+          <ChevronDown
+            size={12}
+            style={{ transform: contextExpanded ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s' }}
+          />
+        </button>
+      </div>
 
       {/* ── Main Panel Area ────────────────────────────────── */}
       <div style={{
