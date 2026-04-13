@@ -21,6 +21,7 @@ import { useNexusStore } from '@/store/nexusStore'
 import { useUIStore } from '@/store/uiStore'
 import type { NexusMode, NexusContextMode } from '@/store/nexusStore'
 import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
+import { VisualRenderer, getVizMode } from '@/components/v15r/AIVisualSuite'
 import { supabase } from '@/lib/supabase'
 import { runNexusEngine } from '@/agents/nexusPromptEngine'
 import { synthesizeWithElevenLabs, DEFAULT_VOICE_ID } from '@/api/voice/elevenLabs'
@@ -68,14 +69,26 @@ const CONTEXT_TABS: { id: NexusContextMode; label: string }[] = [
 function NexusOrbVisual({ mode, active, muted }: { mode: NexusMode; active: boolean; muted: boolean }) {
   const isElectrical = mode === 'electrical'
   const primaryColor = isElectrical ? '#22c55e' : '#a855f7'
-  const glowColor = isElectrical ? 'rgba(34,197,94,0.4)' : 'rgba(168,85,247,0.4)'
-  const gradientStart = isElectrical ? '#22c55e' : '#c084fc'
-  const gradientEnd = isElectrical ? '#16a34a' : '#7c3aed'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px' }}>
-      {/* Main ORB */}
-      <NexusPresenceOrb />
+      {/* Main ORB — swap by mode */}
+      {isElectrical ? (
+        <NexusPresenceOrb />
+      ) : (
+        // NEXUS-VOICE4 FIX 5: Full Oversight mode uses VisualRenderer from AIVisualSuite
+        <div style={{ width: 220, height: 220, borderRadius: '50%', overflow: 'hidden', position: 'relative' }}>
+          <VisualRenderer
+            mode={getVizMode()}
+            bass={active ? 0.6 : 0.1}
+            mid={active ? 0.4 : 0.05}
+            high={active ? 0.3 : 0.05}
+            mtz={0}
+            hue={280}
+            style={{ width: '100%', height: '100%' }}
+          />
+        </div>
+      )}
 
       {/* Mode label */}
       <div style={{ textAlign: 'center' }}>
@@ -319,6 +332,10 @@ export default function NexusAdminView() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
 
+  // NEXUS-VOICE4: local mute state (stops mic stream to Whisper, keeps recording active visually)
+  const [localMuted, setLocalMuted] = useState(false)
+  const localMutedRef = useRef(false)
+
   // NEXUS-VOICE2: continuous conversation history (persists across Start/Stop within a session)
   const conversationHistoryRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([])
 
@@ -327,6 +344,12 @@ export default function NexusAdminView() {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const silenceStartRef = useRef<number | null>(null)
+
+  // NEXUS-VOICE4: hold phrases — stores running partial transcript for silence-gate checks
+  const lastTranscriptRef = useRef<string>('')
+
+  // NEXUS-VOICE4: hold phrases list (lowercase, trimmed)
+  const HOLD_PHRASES = ['uhm','uh','also','let me check','one second','let me grab that','hold on','wait','actually','and','so']
 
   // NEXUS-CTX1: Persistent context strip state
   const [contextExpanded, setContextExpanded] = useState(true)
@@ -403,6 +426,11 @@ export default function NexusAdminView() {
     return () => setOrbLabActive(false)
   }, [])
 
+  // NEXUS-VOICE4: keep localMutedRef in sync with localMuted state
+  useEffect(() => {
+    localMutedRef.current = localMuted
+  }, [localMuted])
+
   // Auto-scroll transcript
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -459,8 +487,9 @@ export default function NexusAdminView() {
       analyserRef.current = analyser
 
       const dataArray = new Uint8Array(analyser.fftSize)
-      const RMS_THRESHOLD = 0.01
-      const SILENCE_DURATION_MS = 1500
+      // NEXUS-VOICE4: updated thresholds
+      const RMS_THRESHOLD = 0.015
+      const SILENCE_DURATION_MS = 2700
 
       silenceStartRef.current = null
       silenceTimerRef.current = setInterval(() => {
@@ -480,10 +509,18 @@ export default function NexusAdminView() {
           if (silenceStartRef.current === null) {
             silenceStartRef.current = Date.now()
           } else if (Date.now() - silenceStartRef.current >= SILENCE_DURATION_MS) {
-            // Silence threshold reached — auto-stop recording
-            silenceStartRef.current = null
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-              mediaRecorderRef.current.stop()
+            // NEXUS-VOICE4: hold phrase check — if transcript ends with a hold phrase, reset timer
+            const transcript = lastTranscriptRef.current.toLowerCase().trim()
+            const endsWithHold = HOLD_PHRASES.some(phrase => transcript.endsWith(phrase))
+            if (endsWithHold) {
+              // Reset silence timer and keep recording
+              silenceStartRef.current = Date.now()
+            } else {
+              // Silence threshold reached — auto-stop recording
+              silenceStartRef.current = null
+              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                mediaRecorderRef.current.stop()
+              }
             }
           }
         } else {
@@ -516,8 +553,14 @@ export default function NexusAdminView() {
       const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
       audioChunksRef.current = []
 
+      // NEXUS-VOICE4 FIX 2: if locally muted, skip Whisper — do not send audio to processing
+      if (localMutedRef.current) {
+        setIsProcessing(false)
+        setVoiceSessionActive(false)
+        return
+      }
+
       setIsProcessing(true)
-      appendTranscriptLine('Processing...')
 
       // Step 3: Whisper transcription
       let transcribedText = ''
@@ -538,6 +581,8 @@ export default function NexusAdminView() {
       }
 
       appendTranscriptLine(`You: ${transcribedText}`)
+      // NEXUS-VOICE4: keep lastTranscriptRef updated for hold phrase silence gate
+      lastTranscriptRef.current = transcribedText
 
       // NEXUS-VOICE2: Build sessionContext from conversation history
       const history = conversationHistoryRef.current
@@ -549,7 +594,6 @@ export default function NexusAdminView() {
       conversationHistoryRef.current = [...history, { role: 'user', content: transcribedText }]
 
       // Step 4: runNexusEngine with conversation context
-      appendTranscriptLine('NEXUS thinking...')
       let nexusResponse
       try {
         nexusResponse = await runNexusEngine({
@@ -575,6 +619,18 @@ export default function NexusAdminView() {
         .replace(/\n/g, ' ')                // remaining newlines to spaces
         .trim()
       appendTranscriptLine(`NEXUS: ${speakText}`)
+
+      // NEXUS-VOICE4: Memory write — log exchange to nexus_sessions for traceability
+      try {
+        await supabase.from('nexus_sessions').insert({
+          context: nexusMode,
+          created_at: new Date().toISOString(),
+          notes: `You: ${transcribedText} | NEXUS: ${nexusResponse.speak || ''}`,
+          source: 'NEXUS-ADMIN',
+        })
+      } catch (_memErr) {
+        // Silently ignore — do not break voice flow
+      }
 
       // NEXUS-VOICE2: Append assistant turn to history
       if (speakText) {
@@ -610,9 +666,7 @@ export default function NexusAdminView() {
 
     // NEXUS-VOICE3: delay 600ms after getUserMedia to let mic stream stabilize
     // and avoid clipping the first words of each recording turn
-    appendTranscriptLine('Ready... speak now')
     await new Promise<void>(resolve => setTimeout(resolve, 600))
-    appendTranscriptLine('Listening...')
     mr.start()
   }, [nexusMode, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine, cleanupSilenceDetection])
 
@@ -1093,86 +1147,96 @@ export default function NexusAdminView() {
         </div>
 
         {/* Voice controls */}
+        {/* NEXUS-VOICE4 FIX 2: Continue button always visible, state-based label + overlay */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {!voiceSessionActive ? (
-            <>
-              <button
-                onClick={handleStartSession}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '8px 20px', borderRadius: 24,
-                  background: `linear-gradient(135deg, ${isElectrical ? '#22c55e' : '#a855f7'}, ${isElectrical ? '#16a34a' : '#7c3aed'})`,
-                  border: 'none', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                  boxShadow: `0 4px 16px ${isElectrical ? 'rgba(34,197,94,0.35)' : 'rgba(168,85,247,0.35)'}`,
-                }}
-              >
-                <Mic size={16} />
-                {conversationHistoryRef.current.length > 0 ? 'Continue' : 'Start Session'}
-              </button>
-              {conversationHistoryRef.current.length > 0 && (
-                <button
-                  onClick={handleEndSession}
-                  title="End session and clear history"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '8px 16px', borderRadius: 24,
-                    background: 'rgba(107,114,128,0.15)',
-                    border: '1.5px solid rgba(107,114,128,0.3)',
-                    color: '#9ca3af', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                  }}
-                >
-                  <X size={12} />
-                  End Session
-                </button>
+          {/* Main action button — changes label based on state */}
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <button
+              onClick={isListening ? handleStopSession : (!isSpeaking && !isProcessing ? handleStartSession : undefined)}
+              disabled={isSpeaking || isProcessing}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 20px', borderRadius: 24,
+                background: isListening
+                  ? `linear-gradient(135deg, ${isElectrical ? '#22c55e' : '#a855f7'}, ${isElectrical ? '#16a34a' : '#7c3aed'})`
+                  : `linear-gradient(135deg, ${isElectrical ? '#22c55e' : '#a855f7'}, ${isElectrical ? '#16a34a' : '#7c3aed'})`,
+                border: 'none', color: '#fff', fontSize: 13, fontWeight: 600,
+                cursor: isSpeaking ? 'not-allowed' : 'pointer',
+                opacity: 1,
+                boxShadow: `0 4px 16px ${isElectrical ? 'rgba(34,197,94,0.35)' : 'rgba(168,85,247,0.35)'}`,
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+            >
+              <Mic size={16} />
+              {isListening
+                ? 'Listening'
+                : isSpeaking
+                  ? 'Speaking'
+                  : isProcessing
+                    ? 'Processing'
+                    : (conversationHistoryRef.current.length > 0 ? 'Continue' : 'Start Session')}
+              {/* 50% dark overlay while NEXUS TTS is speaking */}
+              {isSpeaking && (
+                <span style={{
+                  position: 'absolute', inset: 0,
+                  background: 'rgba(0,0,0,0.5)',
+                  borderRadius: 24,
+                  pointerEvents: 'none',
+                }} />
               )}
-            </>
-          ) : (
-            <>
-              <button
-                onClick={handleToggleMute}
-                title={voiceSessionMuted ? 'Unmute' : 'Mute'}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 40, height: 40, borderRadius: '50%',
-                  background: voiceSessionMuted ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)',
-                  border: voiceSessionMuted ? '1.5px solid rgba(245,158,11,0.5)' : '1.5px solid rgba(255,255,255,0.15)',
-                  color: voiceSessionMuted ? '#f59e0b' : '#9ca3af',
-                  cursor: 'pointer',
-                }}
-              >
-                {voiceSessionMuted ? <MicOff size={16} /> : <Mic size={16} />}
-              </button>
+            </button>
+            {/* NEXUS-VOICE4 FIX 2: local mute button immediately to the right */}
+            <button
+              onClick={() => setLocalMuted(m => !m)}
+              title={localMuted ? 'Unmute mic' : 'Mute mic'}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 32, height: 32, borderRadius: '50%', marginLeft: 6,
+                background: localMuted ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)',
+                border: localMuted ? '1.5px solid rgba(245,158,11,0.5)' : '1.5px solid rgba(255,255,255,0.15)',
+                color: localMuted ? '#f59e0b' : '#9ca3af',
+                cursor: 'pointer',
+              }}
+            >
+              {localMuted ? <MicOff size={14} /> : <Mic size={14} />}
+            </button>
+          </div>
 
-              <button
-                onClick={handleStopSession}
-                title="Stop recording (keeps conversation history)"
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '8px 20px', borderRadius: 24,
-                  background: 'rgba(239,68,68,0.15)',
-                  border: '1.5px solid rgba(239,68,68,0.4)',
-                  color: '#f87171', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                <Square size={14} />
-                Stop
-              </button>
+          {/* Store mute toggle — shown while session active */}
+          {voiceSessionActive && (
+            <button
+              onClick={handleToggleMute}
+              title={voiceSessionMuted ? 'Unmute' : 'Mute'}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 40, height: 40, borderRadius: '50%',
+                background: voiceSessionMuted ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)',
+                border: voiceSessionMuted ? '1.5px solid rgba(245,158,11,0.5)' : '1.5px solid rgba(255,255,255,0.15)',
+                color: voiceSessionMuted ? '#f59e0b' : '#9ca3af',
+                cursor: 'pointer',
+              }}
+            >
+              {voiceSessionMuted ? <MicOff size={16} /> : <Mic size={16} />}
+            </button>
+          )}
 
-              <button
-                onClick={handleEndSession}
-                title="End session and clear conversation history"
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '8px 16px', borderRadius: 24,
-                  background: 'rgba(107,114,128,0.15)',
-                  border: '1.5px solid rgba(107,114,128,0.3)',
-                  color: '#9ca3af', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                <X size={12} />
-                End
-              </button>
-            </>
+          {/* End Session — shown when history exists and not mid-session */}
+          {conversationHistoryRef.current.length > 0 && !isSpeaking && !isProcessing && !isListening && (
+            <button
+              onClick={handleEndSession}
+              title="End session and clear history"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 16px', borderRadius: 24,
+                background: 'rgba(107,114,128,0.15)',
+                border: '1.5px solid rgba(107,114,128,0.3)',
+                color: '#9ca3af', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <X size={12} />
+              End Session
+            </button>
           )}
         </div>
       </div>
