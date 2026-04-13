@@ -22,6 +22,30 @@ import { useUIStore } from '@/store/uiStore'
 import type { NexusMode, NexusContextMode } from '@/store/nexusStore'
 import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
 import { supabase } from '@/lib/supabase'
+import { runNexusEngine } from '@/agents/nexusPromptEngine'
+import { synthesizeWithElevenLabs, DEFAULT_VOICE_ID } from '@/api/voice/elevenLabs'
+
+// ── Whisper helper (same pattern as VoiceHub.tsx QuickCaptureTab) ─────────────
+async function transcribeAudioBlobNexus(blob: Blob): Promise<string> {
+  const arrayBuffer = await blob.arrayBuffer()
+  const uint8 = new Uint8Array(arrayBuffer)
+  let binary = ''
+  const CHUNK = 8192
+  for (let i = 0; i < uint8.byteLength; i += CHUNK) {
+    binary += String.fromCharCode(...uint8.subarray(i, i + CHUNK))
+  }
+  const base64 = btoa(binary)
+  const mimeType = blob.type || 'audio/webm'
+  const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
+  const res = await fetch('/.netlify/functions/whisper', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audio: base64, filename: `nexus.${ext}`, language: 'en' }),
+  })
+  if (!res.ok) throw new Error(`Whisper error ${res.status}`)
+  const data = await res.json()
+  return (data.text || '').trim()
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -288,6 +312,12 @@ export default function NexusAdminView() {
   const [orbContext, setOrbContext] = useState<OrbContext>('electrical')
   const transcriptEndRef = useRef<HTMLDivElement>(null)
 
+  // NEXUS-VOICE1: voice pipeline state
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+
   // NEXUS-CTX1: Persistent context strip state
   const [contextExpanded, setContextExpanded] = useState(true)
   const [contextLoading, setContextLoading] = useState(true)
@@ -368,16 +398,119 @@ export default function NexusAdminView() {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [transcriptLines])
 
-  const handleStartSession = useCallback(() => {
+  // NEXUS-VOICE1: full voice pipeline
+  const handleStartSession = useCallback(async () => {
     clearTranscript()
     setVoiceSessionActive(true)
     setVoiceSessionMuted(false)
     appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session started — ${nexusMode === 'electrical' ? 'Electrical context' : 'Admin Full Oversight'}`)
+
+    // Step 1: Open microphone
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch (_err) {
+      appendTranscriptLine('Microphone access denied — check browser permissions and try again.')
+      setVoiceSessionActive(false)
+      return
+    }
+
+    // Step 2: Begin recording
+    audioChunksRef.current = []
+    const mr = new MediaRecorder(stream)
+    mediaRecorderRef.current = mr
+
+    mr.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunksRef.current.push(e.data)
+    }
+
+    mr.onstop = async () => {
+      // Stop all mic tracks
+      stream.getTracks().forEach(t => t.stop())
+
+      const mimeType = mr.mimeType || 'audio/webm'
+      const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
+      audioChunksRef.current = []
+
+      setIsProcessing(true)
+
+      // Step 3: Whisper transcription
+      appendTranscriptLine('Transcribing...')
+      let transcribedText = ''
+      try {
+        transcribedText = await transcribeAudioBlobNexus(audioBlob)
+      } catch (_err) {
+        appendTranscriptLine('Transcription failed — try again.')
+        setIsProcessing(false)
+        setVoiceSessionActive(false)
+        return
+      }
+
+      if (!transcribedText) {
+        appendTranscriptLine('No speech detected — try again.')
+        setIsProcessing(false)
+        setVoiceSessionActive(false)
+        return
+      }
+
+      appendTranscriptLine(`You: ${transcribedText}`)
+
+      // Step 4: runNexusEngine
+      appendTranscriptLine('NEXUS thinking...')
+      let nexusResponse
+      try {
+        nexusResponse = await runNexusEngine({
+          query: transcribedText,
+          agentMode: nexusMode,
+        })
+      } catch (_err) {
+        appendTranscriptLine('NEXUS unavailable — try again.')
+        setIsProcessing(false)
+        setVoiceSessionActive(false)
+        return
+      }
+
+      const speakText = nexusResponse.speak || ''
+      appendTranscriptLine(`NEXUS: ${speakText}`)
+
+      // Step 5: ElevenLabs TTS
+      if (speakText) {
+        setIsSpeaking(true)
+        try {
+          const ttsResult = await synthesizeWithElevenLabs({
+            text: speakText,
+            voice_id: DEFAULT_VOICE_ID,
+          })
+          const audio = new Audio(ttsResult.audioUrl)
+          audio.onended = () => {
+            setIsSpeaking(false)
+            URL.revokeObjectURL(ttsResult.audioUrl)
+          }
+          audio.onerror = () => {
+            setIsSpeaking(false)
+          }
+          audio.play().catch(() => setIsSpeaking(false))
+        } catch (_err) {
+          // ElevenLabs failed — text response already appended, skip audio silently
+          setIsSpeaking(false)
+        }
+      }
+
+      setIsProcessing(false)
+      setVoiceSessionActive(false)
+    }
+
+    mr.start()
   }, [nexusMode, clearTranscript, setVoiceSessionActive, setVoiceSessionMuted, appendTranscriptLine])
 
   const handleStopSession = useCallback(() => {
-    setVoiceSessionActive(false)
-    appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session ended.`)
+    // Stop recording — triggers mr.onstop which runs the full pipeline
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+    } else {
+      setVoiceSessionActive(false)
+      appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session ended.`)
+    }
   }, [setVoiceSessionActive, appendTranscriptLine])
 
   const handleToggleMute = useCallback(() => {
@@ -679,7 +812,7 @@ export default function NexusAdminView() {
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
               <NexusOrbVisual
                 mode={nexusMode}
-                active={voiceSessionActive}
+                active={voiceSessionActive || isSpeaking}
                 muted={voiceSessionMuted}
               />
             </div>
@@ -818,11 +951,11 @@ export default function NexusAdminView() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
             width: 8, height: 8, borderRadius: '50%',
-            backgroundColor: voiceSessionActive ? (voiceSessionMuted ? '#f59e0b' : modeColor) : '#4b5563',
-            boxShadow: voiceSessionActive ? `0 0 6px ${modeColor}` : 'none',
+            backgroundColor: isSpeaking ? '#38bdf8' : voiceSessionActive ? (voiceSessionMuted ? '#f59e0b' : modeColor) : isProcessing ? '#f59e0b' : '#4b5563',
+            boxShadow: isSpeaking ? '0 0 6px #38bdf8' : voiceSessionActive ? `0 0 6px ${modeColor}` : isProcessing ? '0 0 6px #f59e0b' : 'none',
           }} />
           <span style={{ fontSize: 11, color: '#6b7280', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            {voiceSessionActive ? (voiceSessionMuted ? 'Muted' : 'Live') : 'Standby'}
+            {isSpeaking ? 'Speaking' : isProcessing ? 'Processing' : voiceSessionActive ? (voiceSessionMuted ? 'Muted' : 'Live') : 'Standby'}
           </span>
           <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>
             {modeLabelShort}
