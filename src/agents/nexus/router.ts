@@ -208,7 +208,7 @@ export function getLocalScopedContext(query: string): string {
     for (const log of (scoped.serviceLogs as any[]).slice(0, 20)) {
       const quoted = num(log.quoted)
       const collected = num(log.collected)
-      const remaining = (quoted - collected) > 0 ? (quoted - collected) : num(log.balanceDue)s
+      const remaining = (quoted - collected) > 0 ? (quoted - collected) : num(log.balanceDue)
       lines.push(`- ${log.customer || 'Unknown'} | ${log.date || ''} | Quoted: $${quoted} | Collected: $${collected} | Remaining: $${remaining}`)
     }
   }
