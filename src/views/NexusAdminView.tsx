@@ -26,6 +26,7 @@ import NexusThreeOrb from '@/components/nexus/NexusThreeOrb'
 import { VisualRenderer, getVizMode } from '@/components/v15r/AIVisualSuite'
 import { supabase } from '@/lib/supabase'
 import { runNexusEngine } from '@/agents/nexusPromptEngine'
+import { hasCompletedInterview, startInterview, incrementSessionCount } from '@/services/nexusPreferences'
 import { synthesizeWithElevenLabs, DEFAULT_VOICE_ID } from '@/api/voice/elevenLabs'
 
 // ── Whisper helper (same pattern as VoiceHub.tsx QuickCaptureTab) ─────────────
@@ -475,6 +476,18 @@ export default function NexusAdminView() {
     if (isFirstTurn) {
       clearTranscript()
       appendTranscriptLine(`[${new Date().toLocaleTimeString()}] Session started — ${nexusMode === 'electrical' ? 'Electrical context' : 'Admin Full Oversight'}`)
+
+      // Trigger calibration interview on very first session ever
+      const sessionCount = incrementSessionCount()
+      if (sessionCount === 1 && !hasCompletedInterview()) {
+        const interviewIntro = startInterview()
+        appendTranscriptLine(`NEXUS: ${interviewIntro}`)
+        // Inject interview intro into conversation history so NEXUS carries it forward
+        conversationHistoryRef.current.push({
+          role: 'assistant',
+          content: interviewIntro,
+        })
+      }
     }
 
     setVoiceSessionActive(true)
