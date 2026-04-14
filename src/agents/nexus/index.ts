@@ -1771,12 +1771,31 @@ Always combine external research WITH the user's actual operational data — nev
     ? maybeHighlightProject(_operationalContext, request.message)
     : ''
 
+  // Force LEDGER context injection for AR/collections queries regardless of intent routing
+  // Prevents hallucination when collections questions classify as 'nexus' instead of 'ledger'
+  const AR_FORCE_PATTERN = /not been collected|not collected|haven't paid|hasn't paid|still owe|outstanding service|service cost|what.*owe|who owes|uncollected|balance due|unpaid service|service costs|collections due|what.*collected/i
+  let finalContext = resolvedContext
+  if (AR_FORCE_PATTERN.test(request.message)) {
+    try {
+      const { getLedgerContext } = await import('@/services/ledgerDataBridge')
+      const ledgerCtx = getLedgerContext()
+      if (ledgerCtx) {
+        finalContext = finalContext
+          ? finalContext + '\n\n' + ledgerCtx
+          : ledgerCtx
+        console.log('[NEXUS] AR query detected — LEDGER context force-injected')
+      }
+    } catch (ledgerErr) {
+      console.warn('[NEXUS] LEDGER context force-inject failed (non-critical):', ledgerErr)
+    }
+  }
+
   let agentResponse = await routeToAgent(
     intent,
     enrichedMessage,
     request.orgId,
     request.conversationHistory,
-    { isListQuery, isResearchQuery, operationalContext: resolvedContext, userId: request.userId }
+    { isListQuery, isResearchQuery, operationalContext: finalContext, userId: request.userId }
   )
 
   // ── Step 4b: SCOUT improvement detection — silent background logging ────
