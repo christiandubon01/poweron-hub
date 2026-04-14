@@ -122,7 +122,7 @@ interface ScopedLocalContext {
  * Ambiguous queries → both. Always includes a financial summary.
  */
 function scopeContextToQuery(query: string, backup: any): ScopedLocalContext {
-  const isServiceCall = /service call|service job|svc|collection|uncollected|open collection/i.test(query)
+  const isServiceCall = /service call|service job|svc|collection|uncollected|open collection|not been collected|not collected|haven't paid|hasn't paid|still owe|outstanding service|service cost|what.*owe|who owes|balance due|unpaid service/i.test(query)
   const isProject = /project|job|construction|estimate|active job/i.test(query)
 
   // Build financial summary (always included)
