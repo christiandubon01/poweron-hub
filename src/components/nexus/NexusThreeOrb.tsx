@@ -1,79 +1,68 @@
 // @ts-nocheck
 /**
- * NexusThreeOrb — Canvas 2D particle sphere matching Three.js visual spec.
+ * NexusThreeOrb — Dense wireframe grid sphere with twisted waist distortion.
  *
- * NOTE: This component is architected to match the Three.js particle sphere spec
- * exactly. The three package is listed in package.json and this component should
- * be migrated to use THREE.WebGLRenderer once `npm install three` succeeds in the
- * deployment environment (currently blocked by network policy in the build sandbox).
- *
- * Visual spec implemented:
- *   - ~200 nodes distributed on sphere surface via golden-angle algorithm
- *   - Thin connection lines between nearby nodes (chord distance threshold 0.3)
- *   - Slow idle Y-axis rotation: 0.003 rad/frame
- *   - Pulse/burst animation when speaking (responding state):
- *     nodes expand outward, lines brighten, then contract back
- *   - idle:     green  #10b981 (brand accent)
- *   - listening: blue  #3b82f6
- *   - speaking:  white burst (#ffffff) with green core (#10b981)
- *   - Fills container responsively via ResizeObserver
- *   - Initialize on mount, cleanup on unmount (cancelAnimationFrame + ResizeObserver)
+ * Visual spec:
+ *   - Latitude + longitude grid lines on sphere surface
+ *   - Deep purple (#7c3aed) to electric blue (#2563eb) color gradient
+ *   - Twisted waist: equatorial lines pinch inward creating hourglass distortion
+ *   - Depth-based line opacity (front = bright, back = dim)
+ *   - Slow idle Y-axis rotation
+ *   - Pulse animation when responding (lines brighten, twist intensifies)
+ *   - Fills container via ResizeObserver with setTransform (no scale stacking)
+ *   - State-driven color shift: idle=purple, listening=blue, responding=white burst
  */
 
 import { useEffect, useRef } from 'react'
 import type { OrbState } from './NexusPresenceOrb'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface NexusThreeOrbProps {
   state?: OrbState
   className?: string
 }
 
-interface Node3D {
-  x: number  // unit sphere coords
-  y: number
-  z: number
-}
-
-interface ConnectionPair {
-  i: number
-  j: number
-}
-
-// ── State config ──────────────────────────────────────────────────────────────
-
 interface StateConfig {
-  nodeColor: string
-  lineColor: string
-  coreColor: string
+  colorA: string   // inner/equator color
+  colorB: string   // pole color
   glowColor: string
-  pulse: boolean
   rotSpeed: number
+  pulse: boolean
+  twistAmt: number // equatorial twist intensity 0..1
 }
 
 const STATE_CONFIG: Record<OrbState, StateConfig> = {
-  inactive:     { nodeColor: '#10b981', lineColor: '#10b981', coreColor: '#10b981', glowColor: 'rgba(16,185,129,0.12)', pulse: false, rotSpeed: 0.003 },
-  listening:    { nodeColor: '#3b82f6', lineColor: '#3b82f6', coreColor: '#3b82f6', glowColor: 'rgba(59,130,246,0.18)', pulse: false, rotSpeed: 0.005 },
-  recording:    { nodeColor: '#3b82f6', lineColor: '#3b82f6', coreColor: '#3b82f6', glowColor: 'rgba(59,130,246,0.25)', pulse: true,  rotSpeed: 0.007 },
-  transcribing: { nodeColor: '#fbbf24', lineColor: '#fbbf24', coreColor: '#fbbf24', glowColor: 'rgba(251,191,36,0.18)',  pulse: false, rotSpeed: 0.006 },
-  processing:   { nodeColor: '#a855f7', lineColor: '#a855f7', coreColor: '#a855f7', glowColor: 'rgba(168,85,247,0.22)',  pulse: false, rotSpeed: 0.010 },
-  responding:   { nodeColor: '#ffffff', lineColor: '#ffffff', coreColor: '#10b981', glowColor: 'rgba(16,185,129,0.40)',  pulse: true,  rotSpeed: 0.006 },
-  complete:     { nodeColor: '#10b981', lineColor: '#10b981', coreColor: '#10b981', glowColor: 'rgba(16,185,129,0.15)', pulse: false, rotSpeed: 0.003 },
-  error:        { nodeColor: '#f97316', lineColor: '#f97316', coreColor: '#f97316', glowColor: 'rgba(249,115,22,0.22)',  pulse: false, rotSpeed: 0.007 },
+  inactive:     { colorA: '#7c3aed', colorB: '#2563eb', glowColor: 'rgba(124,58,237,0.18)',  rotSpeed: 0.004, pulse: false, twistAmt: 0.18 },
+  listening:    { colorA: '#2563eb', colorB: '#06b6d4', glowColor: 'rgba(37,99,235,0.22)',   rotSpeed: 0.007, pulse: false, twistAmt: 0.22 },
+  recording:    { colorA: '#2563eb', colorB: '#06b6d4', glowColor: 'rgba(6,182,212,0.28)',   rotSpeed: 0.010, pulse: true,  twistAmt: 0.28 },
+  transcribing: { colorA: '#7c3aed', colorB: '#a855f7', glowColor: 'rgba(168,85,247,0.22)',  rotSpeed: 0.007, pulse: false, twistAmt: 0.20 },
+  processing:   { colorA: '#4f46e5', colorB: '#7c3aed', glowColor: 'rgba(79,70,229,0.30)',   rotSpeed: 0.013, pulse: true,  twistAmt: 0.35 },
+  responding:   { colorA: '#ffffff', colorB: '#a5f3fc', glowColor: 'rgba(165,243,252,0.40)', rotSpeed: 0.008, pulse: true,  twistAmt: 0.30 },
+  complete:     { colorA: '#7c3aed', colorB: '#2563eb', glowColor: 'rgba(124,58,237,0.15)',  rotSpeed: 0.004, pulse: false, twistAmt: 0.18 },
+  error:        { colorA: '#dc2626', colorB: '#f97316', glowColor: 'rgba(220,38,38,0.25)',   rotSpeed: 0.008, pulse: false, twistAmt: 0.15 },
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+function hexToRgb(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return [r, g, b]
+}
+
+function lerpColor(a: string, b: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(a)
+  const [r2, g2, b2] = hexToRgb(b)
+  const r = Math.round(r1 + (r2 - r1) * t)
+  const g = Math.round(g1 + (g2 - g1) * t)
+  const bv = Math.round(b1 + (b2 - b1) * t)
+  return `rgb(${r},${g},${bv})`
+}
 
 export function NexusThreeOrb({ state = 'inactive', className = '' }: NexusThreeOrbProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef   = useRef<number>(0)
   const stateRef  = useRef<OrbState>(state)
 
-  // Keep stateRef current so animation loop reads latest state
-  useEffect(() => {
-    stateRef.current = state
-  }, [state])
+  useEffect(() => { stateRef.current = state }, [state])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -81,150 +70,139 @@ export function NexusThreeOrb({ state = 'inactive', className = '' }: NexusThree
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // ── Geometry — 200 nodes on unit sphere via golden-angle distribution ──
-    const NUM_NODES  = 200
-    const CONN_DIST  = 0.3    // chord distance threshold on unit sphere (3D space)
-    const SPHERE_R   = 0.38   // fraction of canvas half-size
-
-    const nodes: Node3D[] = []
-    for (let i = 0; i < NUM_NODES; i++) {
-      const theta = Math.acos(1 - (2 * (i + 0.5)) / NUM_NODES)
-      const phi   = Math.PI * (1 + Math.sqrt(5)) * i
-      nodes.push({
-        x: Math.sin(theta) * Math.cos(phi),
-        y: Math.sin(theta) * Math.sin(phi),
-        z: Math.cos(theta),
-      })
-    }
-
-    // Pre-compute which node pairs are within CONN_DIST (based on unit-sphere coords)
-    const connections: ConnectionPair[] = []
-    for (let i = 0; i < NUM_NODES; i++) {
-      for (let j = i + 1; j < NUM_NODES; j++) {
-        const dx = nodes[i].x - nodes[j].x
-        const dy = nodes[i].y - nodes[j].y
-        const dz = nodes[i].z - nodes[j].z
-        if (Math.sqrt(dx*dx + dy*dy + dz*dz) < CONN_DIST) {
-          connections.push({ i, j })
-        }
-      }
-    }
-
-    // ── Canvas sizing ──────────────────────────────────────────────────────
     const dpr = window.devicePixelRatio || 1
-    let canvasW = canvas.clientWidth  || 300
-    let canvasH = canvas.clientHeight || 300
+    let W = canvas.clientWidth  || 300
+    let H = canvas.clientHeight || 300
 
     function resizeCanvas() {
-      canvasW = canvas.clientWidth  || 300
-      canvasH = canvas.clientHeight || 300
-      canvas.width  = canvasW * dpr
-      canvas.height = canvasH * dpr
-      ctx.scale(dpr, dpr)
+      W = canvas.clientWidth  || 300
+      H = canvas.clientHeight || 300
+      canvas.width  = W * dpr
+      canvas.height = H * dpr
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     resizeCanvas()
 
-    const ro = new ResizeObserver(() => {
-      resizeCanvas()
-    })
+    const ro = new ResizeObserver(() => resizeCanvas())
     ro.observe(canvas)
 
-    // ── Animation state ────────────────────────────────────────────────────
+    // Grid resolution
+    const LAT_LINES  = 18   // horizontal rings
+    const LON_LINES  = 24   // vertical meridians
+    const SEG        = 60   // segments per line for smooth curves
+
     let rotation   = 0
     let pulsePhase = 0
 
-    // ── Draw loop ──────────────────────────────────────────────────────────
     function draw() {
       animRef.current = requestAnimationFrame(draw)
+      const cfg = STATE_CONFIG[stateRef.current]
+      const cx  = W / 2
+      const cy  = H / 2
+      const R   = Math.min(W, H) * 0.40
 
-      const cfg   = STATE_CONFIG[stateRef.current]
-      const cx    = canvasW / 2
-      const cy    = canvasH / 2
-      const rPx   = Math.min(canvasW, canvasH) * SPHERE_R  // sphere radius in px
+      rotation   += cfg.rotSpeed
+      if (cfg.pulse) pulsePhase += 0.06
+      const pulse = cfg.pulse ? Math.sin(pulsePhase) : 0
+      const twist = cfg.twistAmt + (cfg.pulse ? Math.abs(pulse) * 0.12 : 0)
 
-      // Advance rotation and pulse
-      rotation += cfg.rotSpeed
-      if (cfg.pulse) pulsePhase += 0.07
-      const pulseFactor = cfg.pulse ? 1 + Math.sin(pulsePhase) * 0.15 : 1.0
-      const lineAlpha   = cfg.pulse ? 0.30 + Math.abs(Math.sin(pulsePhase)) * 0.35 : 0.28
+      ctx.clearRect(0, 0, W, H)
 
-      // Clear
-      ctx.clearRect(0, 0, canvasW, canvasH)
+      // Outer glow
+      const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.5)
+      glow.addColorStop(0, cfg.glowColor)
+      glow.addColorStop(0.5, cfg.glowColor.replace(/[\d.]+\)$/, '0.06)'))
+      glow.addColorStop(1, 'transparent')
+      ctx.fillStyle = glow
+      ctx.fillRect(0, 0, W, H)
 
-      // Background glow
-      const glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rPx * 1.6)
-      glowGrad.addColorStop(0, cfg.glowColor)
-      glowGrad.addColorStop(1, 'transparent')
-      ctx.fillStyle = glowGrad
-      ctx.fillRect(0, 0, canvasW, canvasH)
-
-      // Core inner glow
-      const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rPx * 0.28)
-      coreGrad.addColorStop(0, cfg.coreColor + '55')
-      coreGrad.addColorStop(1, 'transparent')
-      ctx.fillStyle = coreGrad
+      // Inner core glow
+      const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.25)
+      core.addColorStop(0, cfg.colorA + '30')
+      core.addColorStop(1, 'transparent')
+      ctx.fillStyle = core
       ctx.beginPath()
-      ctx.arc(cx, cy, rPx * 0.28, 0, Math.PI * 2)
+      ctx.arc(cx, cy, R * 0.25, 0, Math.PI * 2)
       ctx.fill()
 
-      // Y-axis rotation matrix components
       const cosR = Math.cos(rotation)
       const sinR = Math.sin(rotation)
 
-      // Project all nodes to 2D (Y-axis rotation + perspective depth)
-      const projected = nodes.map(n => {
-        // Rotate around Y axis
-        const rx = n.x * cosR + n.z * sinR
-        const rz = -n.x * sinR + n.z * cosR
-        // Depth scale: z in [-1..1] → scale in [0.5..1.0]
-        const depth  = (rz + 2) / 3          // [0.33 .. 1.0]
-        const scaled = pulseFactor            // pulse expands sphere
-        return {
-          sx:    cx + rx * rPx * scaled,
-          sy:    cy + n.y * rPx * scaled,
-          depth,
-          visible: rz > -0.6,
-        }
-      })
+      // Project 3D point to 2D with Y-rotation + twist distortion
+      function project(lat: number, lon: number): { x: number; y: number; depth: number } {
+        // Apply twist: equatorial points are displaced in lon based on latitude
+        // twist is strongest at equator (lat=PI/2), zero at poles
+        const twistOffset = twist * Math.sin(lat) * Math.PI
+        const tLon = lon + twistOffset + rotation
 
-      // Draw connections
-      ctx.lineWidth = 0.5
-      for (const { i, j } of connections) {
-        if (!projected[i].visible || !projected[j].visible) continue
-        const avgDepth  = (projected[i].depth + projected[j].depth) / 2
-        const alpha     = lineAlpha * avgDepth
-        const alphaHex  = Math.round(Math.min(alpha, 1) * 255).toString(16).padStart(2, '0')
-        ctx.strokeStyle = cfg.lineColor + alphaHex
+        const sinLat = Math.sin(lat)
+        const cosLat = Math.cos(lat)
+        const sinLon = Math.sin(tLon)
+        const cosLon = Math.cos(tLon)
+
+        // Sphere point
+        const px = sinLat * cosLon
+        const py = Math.cos(lat)
+        const pz = sinLat * sinLon
+
+        // Y-axis rotation
+        const rx = px * cosR + pz * sinR
+        const rz = -px * sinR + pz * cosR
+
+        const depth = (rz + 1.8) / 2.8  // [0.0 .. 1.0]
+        return {
+          x: cx + rx * R,
+          y: cy + py * R,
+          depth,
+        }
+      }
+
+      ctx.lineWidth = 0.6
+
+      // Draw latitude lines (horizontal rings)
+      for (let i = 0; i <= LAT_LINES; i++) {
+        const lat = (i / LAT_LINES) * Math.PI  // 0 (north pole) to PI (south pole)
+        // Color: poles = colorB, equator = colorA
+        const t = Math.abs(Math.sin(lat))      // 0 at poles, 1 at equator
+        const lineColor = lerpColor(cfg.colorB, cfg.colorA, t)
+
         ctx.beginPath()
-        ctx.moveTo(projected[i].sx, projected[i].sy)
-        ctx.lineTo(projected[j].sx, projected[j].sy)
+        let started = false
+        for (let s = 0; s <= SEG; s++) {
+          const lon = (s / SEG) * Math.PI * 2
+          const p = project(lat, lon)
+          if (p.depth < 0.05) { started = false; continue }
+          const alpha = Math.max(0.05, p.depth * 0.85 + (cfg.pulse ? Math.abs(pulse) * 0.15 : 0))
+          ctx.strokeStyle = lineColor
+          ctx.globalAlpha = alpha
+          if (!started) { ctx.moveTo(p.x, p.y); started = true }
+          else ctx.lineTo(p.x, p.y)
+        }
         ctx.stroke()
       }
 
-      // Draw nodes
-      for (let i = 0; i < NUM_NODES; i++) {
-        const p = projected[i]
-        if (!p.visible) continue
+      // Draw longitude lines (vertical meridians)
+      for (let i = 0; i < LON_LINES; i++) {
+        const lon = (i / LON_LINES) * Math.PI * 2
 
-        const nodeR = (1.5 + p.depth * 1.5) * (cfg.pulse ? 1 + Math.sin(pulsePhase) * 0.2 : 1)
-
-        // Soft glow halo
-        const halo = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, nodeR * 4)
-        halo.addColorStop(0, cfg.nodeColor + Math.round(p.depth * 100).toString(16).padStart(2, '0'))
-        halo.addColorStop(1, 'transparent')
-        ctx.fillStyle = halo
         ctx.beginPath()
-        ctx.arc(p.sx, p.sy, nodeR * 4, 0, Math.PI * 2)
-        ctx.fill()
-
-        // Solid core
-        ctx.fillStyle = cfg.nodeColor
-        ctx.globalAlpha = 0.6 + p.depth * 0.4
-        ctx.beginPath()
-        ctx.arc(p.sx, p.sy, nodeR, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.globalAlpha = 1
+        let started = false
+        for (let s = 0; s <= SEG; s++) {
+          const lat = (s / SEG) * Math.PI
+          const t = Math.abs(Math.sin(lat))
+          const lineColor = lerpColor(cfg.colorB, cfg.colorA, t)
+          const p = project(lat, lon)
+          if (p.depth < 0.05) { started = false; continue }
+          const alpha = Math.max(0.05, p.depth * 0.75 + (cfg.pulse ? Math.abs(pulse) * 0.15 : 0))
+          ctx.strokeStyle = lineColor
+          ctx.globalAlpha = alpha
+          if (!started) { ctx.moveTo(p.x, p.y); started = true }
+          else ctx.lineTo(p.x, p.y)
+        }
+        ctx.stroke()
       }
+
+      ctx.globalAlpha = 1
     }
 
     draw()
@@ -233,7 +211,7 @@ export function NexusThreeOrb({ state = 'inactive', className = '' }: NexusThree
       cancelAnimationFrame(animRef.current)
       ro.disconnect()
     }
-  }, []) // run once on mount
+  }, [])
 
   return (
     <canvas

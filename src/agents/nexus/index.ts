@@ -1638,6 +1638,17 @@ export async function processMessage(request: NexusRequest): Promise<NexusRespon
           : BRIEFING_FORMAT_INSTRUCTION
   let enrichedMessage = `${request.message}\n\n${modeInstruction}`
 
+  // Re-inject live project context on every turn to prevent context loss
+  // _operationalContext is only rebuilt on session start — stale after long convos
+  try {
+    const freshContext = buildDeepProjectContext()
+    if (freshContext) {
+      enrichedMessage = `LIVE BUSINESS DATA:\n${freshContext}\n\n${enrichedMessage}`
+    }
+  } catch (ctxErr) {
+    console.warn('[NEXUS] Fresh context inject failed (non-critical):', ctxErr)
+  }
+
   // ── COACHING MODE CONSEQUENCES — inject structured option/consequence format ─
   // When in coaching mode and the user asks for advice/recommendation, force
   // NEXUS to present: situation → Option A → Option B → consequences → "What do you want to do?"

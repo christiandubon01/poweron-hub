@@ -111,16 +111,26 @@ export function NexusPresenceOrb({
 
     // Use 2x resolution for Retina
     const dpr = window.devicePixelRatio || 1
-    const canvasSize = sizeProp || 200
-    canvas.width = canvasSize * dpr
-    canvas.height = canvasSize * dpr
-    canvas.style.width = '100%'
-    canvas.style.height = '100%'
-    ctx.scale(dpr, dpr)
+    let canvasW = canvas.clientWidth  || sizeProp || 200
+    let canvasH = canvas.clientHeight || sizeProp || 200
 
-    const sz = canvasSize
-    const cx = sz / 2
-    const cy = sz / 2
+    function resizeCanvas() {
+      canvasW = canvas.clientWidth  || sizeProp || 200
+      canvasH = canvas.clientHeight || sizeProp || 200
+      canvas.width  = canvasW * dpr
+      canvas.height = canvasH * dpr
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    resizeCanvas()
+
+    const ro = new ResizeObserver(() => {
+      resizeCanvas()
+    })
+    ro.observe(canvas)
+
+    const sz = Math.min(canvasW, canvasH)
+    const cx = canvasW / 2
+    const cy = canvasH / 2
     const radius = sz * 0.35
     const numParticles = 80
 
@@ -147,14 +157,14 @@ export function NexusPresenceOrb({
       const speed = SPEED_MAP[currentState]
       rotationRef.current += speed
 
-      ctx.clearRect(0, 0, sz, sz)
+      ctx.clearRect(0, 0, canvasW, canvasH)
 
       // Background radial glow
       const glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.4)
       glowGrad.addColorStop(0, colors.glow)
       glowGrad.addColorStop(1, 'transparent')
       ctx.fillStyle = glowGrad
-      ctx.fillRect(0, 0, sz, sz)
+      ctx.fillRect(0, 0, canvasW, canvasH)
 
       // Core inner glow
       const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.3)
@@ -231,7 +241,10 @@ export function NexusPresenceOrb({
     }
 
     draw()
-    return () => cancelAnimationFrame(animRef.current)
+    return () => {
+      cancelAnimationFrame(animRef.current)
+      ro.disconnect()
+    }
   }, [sizeProp])
 
   return (
