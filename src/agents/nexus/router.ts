@@ -18,6 +18,7 @@ import { useDemoStore } from '@/store/demoStore'
 import { buildEchoRollingBlock, getEmptyEchoBlock } from '@/services/echoRollingWindow'
 import { useNexusStore } from '@/store/nexusStore'
 import type { ClassifiedIntent, ConversationMessage, TargetAgent } from './classifier'
+import { buildPreferencePrompt, detectPreference, savePreference } from '@/services/nexusPreferences'
 
 // ── Status Bucket Helpers ───────────────────────────────────────────────────
 
@@ -846,6 +847,29 @@ If the NEXUS synthesis already fully answered the question — stop there. Do NO
       role: 'user',
       content: userMessage + contextNote,
     }
+  }
+
+  // Detect and save preference instructions from this message
+  try {
+    const detectedPref = detectPreference(userMessage)
+    if (detectedPref && orgId && options?.userId) {
+      await savePreference(orgId, options.userId, detectedPref)
+    }
+  } catch {
+    // Non-critical — never block a query
+  }
+
+  // Prepend user preferences so the agent respects them
+  try {
+    const agentPrefPrompt = await buildPreferencePrompt(orgId, options?.userId ?? '', intent.targetAgent)
+    if (agentPrefPrompt) {
+      messages[messages.length - 1] = {
+        role: 'user',
+        content: `${agentPrefPrompt}\n${messages[messages.length - 1].content}`,
+      }
+    }
+  } catch {
+    // Non-critical
   }
 
   // 4. Call Claude via proxy — token limit varies by query type
