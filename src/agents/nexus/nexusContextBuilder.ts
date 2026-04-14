@@ -492,15 +492,15 @@ export function buildDeepProjectContext(): string {
   }
 
   // ── SERVICE LOG SUMMARY ────────────────────────────────────────────────────
-  const recentSvc = (data.serviceLogs || []).filter((s: any) => daysSince(s.date) <= 30)
+  const recentSvc = (data.serviceLogs || [])
   if (recentSvc.length > 0) {
-    sections.push('\n### Service Calls (Last 30 Days)')
+    sections.push('\n### Service Calls (All History)')
     const totalQuoted    = recentSvc.reduce((s: number, l: any) => s + num(l.quoted), 0)
     const totalCollected = recentSvc.reduce((s: number, l: any) => s + num(l.collected), 0)
     const unpaid         = recentSvc.filter((l: any) => num(l.quoted) - num(l.collected) > 0)
     const unpaidBalance  = unpaid.reduce((s: number, l: any) => s + (num(l.quoted) - num(l.collected)), 0)
 
-    let svcLine = `${recentSvc.length} service call${recentSvc.length !== 1 ? 's' : ''} in the last 30 days — quoted ${fmt(totalQuoted)}, collected ${fmt(totalCollected)}.`
+    let svcLine = `${recentSvc.length} service call${recentSvc.length !== 1 ? 's' : ''} total — quoted ${fmt(totalQuoted)}, collected ${fmt(totalCollected)}.`
     if (unpaid.length > 0) {
       svcLine += ` ${unpaid.length} unpaid or partial (${fmt(unpaidBalance)} outstanding).`
     }
