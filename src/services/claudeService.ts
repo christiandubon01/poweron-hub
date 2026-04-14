@@ -31,8 +31,8 @@ export interface ClaudeServiceResponse {
  */
 export async function callClaude(req: ClaudeServiceRequest): Promise<ClaudeServiceResponse> {
   const response = await proxyClaude({
-    messages: [{ role: 'user', content: req.prompt }],
-    system: req.system,
+    messages: [{ role: 'user', content: req.context ? String(req.context) : 'respond' }],
+    system: req.prompt,
     max_tokens: req.maxTokens ?? 2048,
   });
 

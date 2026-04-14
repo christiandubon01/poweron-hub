@@ -28,6 +28,7 @@
  *   dismissHandoff on subsequent turns.
  */
 
+import { buildDeepProjectContext } from '@/agents/nexus/nexusContextBuilder'
 import { featureFlags } from '../config/featureFlags';
 import {
   getRelevantConclusions,
@@ -552,6 +553,18 @@ Instructions for surfacing these notes:
 - When the user engages with one (asks a follow-up, opens the related project), that item is actioned.
 - When the user says "I handled that", "skip that", or similar, that item is dismissed.`,
     );
+  }
+
+  // -- Live Project Context (from backupDataService via nexusContextBuilder)
+  // Always injected so Claude has real project names, dollar amounts, and
+  // field data rather than hallucinating or asking for clarification.
+  try {
+    const liveContext = buildDeepProjectContext()
+    if (liveContext) {
+      sections.push(`LIVE BUSINESS DATA:\n${liveContext}`)
+    }
+  } catch (ctxErr) {
+    console.warn('[NEXUS] buildDeepProjectContext failed (non-critical):', ctxErr)
   }
 
   // ── Session Context ────────────────────────────────────────────────────────
