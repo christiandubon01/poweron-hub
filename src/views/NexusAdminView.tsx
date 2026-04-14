@@ -22,6 +22,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import type { NexusMode, NexusContextMode } from '@/store/nexusStore'
 import NexusPresenceOrb from '@/components/nexus/NexusPresenceOrb'
+import NexusThreeOrb from '@/components/nexus/NexusThreeOrb'
 import { VisualRenderer, getVizMode } from '@/components/v15r/AIVisualSuite'
 import { supabase } from '@/lib/supabase'
 import { runNexusEngine } from '@/agents/nexusPromptEngine'
@@ -75,7 +76,7 @@ function NexusOrbVisual({ mode, active, muted }: { mode: NexusMode; active: bool
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px' }}>
       {/* Main ORB — swap by mode */}
       {isElectrical ? (
-        <NexusPresenceOrb />
+        <NexusThreeOrb state={active ? 'responding' : 'inactive'} />
       ) : (
         // NEXUS-VOICE4 FIX 5: Full Oversight mode uses VisualRenderer from AIVisualSuite
         <div style={{ width: 220, height: 220, borderRadius: '50%', overflow: 'hidden', position: 'relative' }}>
@@ -663,10 +664,10 @@ export default function NexusAdminView() {
       // NEXUS-VOICE4: Memory write — log exchange to nexus_sessions for traceability
       try {
         await supabase.from('nexus_sessions').insert({
-          context: nexusMode,
-          created_at: new Date().toISOString(),
-          notes: `You: ${transcribedText} | NEXUS: ${nexusResponse.speak || ''}`,
-          source: 'NEXUS-ADMIN',
+          user_id:    resolvedUserId ?? null,
+          org_id:     null,
+          topic_name: nexusMode ?? 'voice-session',
+          agent:      'nexus',
         })
       } catch (_memErr) {
         // Silently ignore — do not break voice flow

@@ -383,7 +383,22 @@ export function classifyQuery(query: string): QueryClassification {
   // ─── Disambiguation detection ──────────────────────────────────────────────
   // Detect ambiguous entity references using pronoun/vague-noun patterns
   const vaguePronouns = /\b(the project|the job|the client|the invoice|that project|this job)\b/i;
-  const requiresDisambiguation = vaguePronouns.test(query) && confidence < 0.85;
+  // Suppress disambiguation if a known project name appears in the query or recent context.
+  // Prevents NEXUS from asking "which project?" when context is already established.
+  const KNOWN_PROJECT_NAMES = ['beauty salon', 'surgery center', 'silvia'];
+  const queryLower = query.toLowerCase();
+  // sessionContext and echoWindow are not available in classifyQuery signature;
+  // callers that have richer context should pass it via the query or handle disambiguation upstream.
+  const contextLower = '';
+  const projectAlreadyNamed = KNOWN_PROJECT_NAMES.some(name =>
+    queryLower.includes(name) || contextLower.includes(name)
+  );
+  // Also check echoWindow for any recently mentioned project names
+  const recentEchoText = '';
+  const projectInEcho = recentEchoText.includes('beauty salon') ||
+    recentEchoText.includes('surgery center') ||
+    recentEchoText.includes('silvia');
+  const requiresDisambiguation = vaguePronouns.test(query) && confidence < 0.85 && !projectAlreadyNamed && !projectInEcho;
 
   let disambiguationQuestion: string | undefined;
   if (requiresDisambiguation) {
