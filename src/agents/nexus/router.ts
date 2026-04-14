@@ -123,6 +123,7 @@ interface ScopedLocalContext {
  */
 function scopeContextToQuery(query: string, backup: any): ScopedLocalContext {
   const isServiceCall = /service call|service job|svc|collection|uncollected|open collection|not been collected|not collected|haven't paid|hasn't paid|still owe|outstanding service|service cost|what.*owe|who owes|balance due|unpaid service/i.test(query)
+  const isUncollectedOnly = /uncollected|not been collected|not collected|haven't paid|hasn't paid|still owe|balance due|unpaid/i.test(query) && !/project|job|construction|estimate|active job/i.test(query)
   const isProject = /project|job|construction|estimate|active job/i.test(query)
 
   // Build financial summary (always included)
@@ -155,12 +156,12 @@ function scopeContextToQuery(query: string, backup: any): ScopedLocalContext {
       ? l.adjustments.filter((a: any) => a.kind === 'income').reduce((s: number, a: any) => s + num(a.amount), 0)
       : 0
     const totalBillable = quoted + adjustmentIncome
-    return collected < totalBillable || totalBillable - collected > 0
+    return totalBillable === 0 || collected < totalBillable
   })
 
   return {
     serviceLogs: isServiceCall || (!isProject) ? openServiceLogs : [],
-    projects: isProject || (!isServiceCall) ? projects : [],
+    projects: isProject || (!isUncollectedOnly) ? projects : [],
     financialSummary,
   }
 }
