@@ -78,7 +78,8 @@ function detectThemes(texts: string[]): string[] {
 
 async function fetchRecentConclusions(userId: string): Promise<SessionConclusion[]> {
   try {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    // Pull last 90 days — memory accumulates from day 1, never resets
+    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
 
     const { data, error } = await supabase
       .from('session_conclusions')
@@ -87,7 +88,7 @@ async function fetchRecentConclusions(userId: string): Promise<SessionConclusion
       .eq('status', 'active')
       .gte('created_at', since)
       .order('created_at', { ascending: false })
-      .limit(20)
+      .limit(100)
 
     if (error) {
       console.warn('[ECHO] fetchRecentConclusions error (non-critical):', error.message)
@@ -142,18 +143,55 @@ function compressToBlock(
   conclusions: SessionConclusion[],
   journalEntries: JournalEntry[],
 ): string {
-  const TOKEN_BUDGET = 200
-  const lines: string[] = ['## ECHO Memory — Last 24 Hours']
+  const TOKEN_BUDGET = 400
+  const lines: string[] = ['## ECHO Memory — Rolling Daily Digest']
 
   // ── Key conclusions ───────────────────────────────────────────────────────
   if (conclusions.length > 0) {
-    const conclusionTexts = conclusions
-      .slice(0, 8) // cap at 8 to stay within budget
-      .map(c => {
+    // Today's conclusions — full detail
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0)
+    const todayConclusions = conclusions.filter(c =>
+      c.created_at && new Date(c.created_at) >= todayStart
+    )
+    // Last 7 days — recent detail (exclude today)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const recentConclusions = conclusions.filter(c =>
+      c.created_at &&
+      new Date(c.created_at) >= sevenDaysAgo &&
+      new Date(c.created_at) < todayStart
+    )
+    // Older conclusions — compressed
+    const olderConclusions = conclusions.filter(c =>
+      c.created_at && new Date(c.created_at) < sevenDaysAgo
+    )
+
+    if (todayConclusions.length > 0) {
+      const texts = todayConclusions.slice(0, 5).map(c => {
         const agentTag = c.agent_refs?.length ? ` [${c.agent_refs[0].toUpperCase()}]` : ''
         return `- ${c.conclusion_text}${agentTag}`
       })
-    lines.push(`Key conclusions:\n${conclusionTexts.join('\n')}`)
+      lines.push(`Today so far:\n${texts.join('\n')}`)
+    }
+
+    if (recentConclusions.length > 0) {
+      const texts = recentConclusions.slice(0, 6).map(c => {
+        const dateStr = c.created_at
+          ? new Date(c.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : ''
+        const agentTag = c.agent_refs?.length ? ` [${c.agent_refs[0].toUpperCase()}]` : ''
+        return `- [${dateStr}] ${c.conclusion_text}${agentTag}`
+      })
+      lines.push(`Last 7 days:\n${texts.join('\n')}`)
+    }
+
+    if (olderConclusions.length > 0) {
+      // Compress older conclusions into a single summary line
+      const themes = detectThemes(olderConclusions.map(c => c.conclusion_text))
+      const dateStr = olderConclusions[olderConclusions.length - 1]?.created_at
+        ? new Date(olderConclusions[olderConclusions.length - 1].created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : 'earlier'
+      lines.push(`Older history (${olderConclusions.length} sessions since ${dateStr}): recurring topics — ${themes.length > 0 ? themes.join(', ') : 'varied'}`)
+    }
   }
 
   // ── Recent journal notes ──────────────────────────────────────────────────
@@ -198,5 +236,5 @@ function compressToBlock(
  * Used when userId is not available or fetching fails entirely.
  */
 export function getEmptyEchoBlock(): string {
-  return '## ECHO Memory — Last 24 Hours\nNo recent session history.'
+  return '## ECHO Memory — Rolling Daily Digest\nNo session history yet.'
 }
