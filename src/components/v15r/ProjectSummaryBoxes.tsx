@@ -66,11 +66,6 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
       color: '#f0f0f0',
     },
     {
-      label: 'Materials $',
-      value: fmtMoney(fin.material_cost),
-      color: '#fb923c',
-    },
-    {
       label: 'Total Miles',
       value: fin.total_miles.toFixed(1),
       color: '#60a5fa',
@@ -105,7 +100,7 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
     <div
       style={{
         display:       'grid',
-        gridTemplateColumns: 'repeat(7, 1fr)',
+        gridTemplateColumns: 'repeat(6, 1fr)',
         gap:           6,
         padding:       '10px 16px 12px',
         backgroundColor: 'rgba(17,24,39,0.5)',
