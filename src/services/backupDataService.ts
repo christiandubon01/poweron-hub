@@ -959,6 +959,37 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
   }
 }
 
+/**
+ * Force-load from Supabase, always accepting remote data.
+ * Used by Realtime event handler — the event itself proves remote changed.
+ * Skips the local-is-newer timestamp check to prevent stale local data
+ * from overwriting incoming Realtime changes.
+ */
+export async function loadFromSupabaseForced(): Promise<{ success: boolean; fromDevice?: string; error?: string }> {
+  if (!isSupabaseConfigured()) return { success: false, error: "Supabase not configured" }
+  try {
+    const { supabase } = await import("@/lib/supabase")
+    const { data: row, error } = await supabase
+      .from("app_state")
+      .select("data, updated_at")
+      .eq("state_key", SUPABASE_STATE_KEY)
+      .single()
+    if (error || !row?.data) {
+      console.warn("[Sync] Force-load failed:", error?.message)
+      return { success: false, error: error?.message }
+    }
+    const remote = row.data as BackupData
+    const remoteMeta = (remote as any)._syncMeta as { savedBy?: string } | undefined
+    const remoteDevice = remoteMeta?.savedBy || "unknown"
+    console.log(`[Sync] Force-loading remote data from ${remoteDevice} (Realtime trigger)`)
+    saveBackupData(remote)
+    return { success: true, fromDevice: remoteDevice }
+  } catch (err: any) {
+    console.error("[Sync] Force-load error:", err)
+    return { success: false, error: err?.message || "Unknown error" }
+  }
+}
+
 /** Enhanced saveBackupData that also syncs to Supabase */
 export function saveBackupDataAndSync(data: BackupData, changedKey?: string): void {
   data._lastSavedAt = new Date().toISOString()
