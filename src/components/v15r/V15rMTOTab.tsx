@@ -39,6 +39,15 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
 
+  // ── Add to Price Book modal state ──────────────────────────────────
+  const [pbModalRowId, setPbModalRowId] = useState<string | null>(null)
+  const [pbFormName, setPbFormName] = useState('')
+  const [pbFormCat, setPbFormCat] = useState('')
+  const [pbFormSupplier, setPbFormSupplier] = useState('')
+  const [pbFormCost, setPbFormCost] = useState<number>(0)
+  const [pbFormPackSize, setPbFormPackSize] = useState<number>(1)
+  const [pbFormUnit, setPbFormUnit] = useState('EA')
+
   // Global mouseup ends drag-select
   const handleMouseUp = useCallback(() => setIsSelecting(false), [])
   useEffect(() => {
@@ -111,6 +120,57 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     return (backup.priceBook || []).some((item: any) =>
       item.name && item.name.toLowerCase().includes(lower)
     )
+  }
+
+  // ── Price Book modal helpers ────────────────────────────────────────
+  const openPbModal = (r: any) => {
+    setPbModalRowId(r.id)
+    setPbFormName(r.name || '')
+    setPbFormCat('')
+    setPbFormSupplier('')
+    setPbFormCost(0)
+    setPbFormPackSize(1)
+    setPbFormUnit('EA')
+  }
+
+  const closePbModal = () => {
+    setPbModalRowId(null)
+  }
+
+  const getPbCategories = (): string[] => {
+    const cats = (backup.priceBook || []).map((x: any) => x.cat).filter(Boolean)
+    return [...new Set<string>(cats)].sort()
+  }
+
+  const findPbDuplicates = (name: string): any[] => {
+    if (!name || !name.trim()) return []
+    const lower = name.toLowerCase().trim()
+    return (backup.priceBook || []).filter((x: any) =>
+      x.name && x.name.toLowerCase().includes(lower)
+    )
+  }
+
+  const confirmAddToPriceBook = (rowId: string) => {
+    const newItem: any = {
+      id: 'pb_' + Date.now(),
+      name: pbFormName.trim(),
+      cat: pbFormCat,
+      src: pbFormSupplier,
+      cost: pbFormCost,
+      packSize: pbFormPackSize,
+      unit: pbFormUnit,
+      waste: 0,
+    }
+    backup.priceBook = backup.priceBook || []
+    backup.priceBook.push(newItem)
+
+    // Link the MTO row to the new price book entry
+    const row = (p.mtoRows || []).find((r: any) => r.id === rowId)
+    if (row) row.matId = newItem.id
+
+    saveBackupData(backup)
+    forceUpdate()
+    closePbModal()
   }
 
   // ── Derived flags ───────────────────────────────────────────────────
@@ -282,6 +342,30 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
               >
                 <Search size={10} />
                 Search
+              </button>
+            )}
+            {/* + Price Book button — visible on hover */}
+            {isRowHovered && (
+              <button
+                title="Add to Price Book"
+                onClick={e => { e.stopPropagation(); openPbModal(r) }}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                  padding: '2px 6px',
+                  background: 'rgba(16,185,129,0.15)',
+                  border: '1px solid rgba(16,185,129,0.3)',
+                  borderRadius: '3px',
+                  color: '#10b981',
+                  cursor: 'pointer',
+                  fontSize: '10px',
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                + Price Book
               </button>
             )}
           </div>
@@ -903,6 +987,265 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
             Material Summary PDF
           </button>
         </div>
+
+        {/* ADD TO PRICE BOOK MODAL */}
+        {pbModalRowId && (() => {
+          const markup = num((backup.settings?.markup) || 0)
+          const customerPrice = pbFormCost * (1 + markup / 100)
+          const duplicates = findPbDuplicates(pbFormName)
+          const pbCategories = getPbCategories()
+          const unitOptions = ['EA', 'RL', 'LF', 'BX', 'FT', 'IN', 'SQ', 'PR', 'HR']
+          return (
+            <div
+              onClick={e => { if (e.target === e.currentTarget) closePbModal() }}
+              style={{
+                position: 'fixed',
+                top: 0, left: 0, right: 0, bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.65)',
+                zIndex: 60,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <div
+                style={{
+                  backgroundColor: '#2d3148',
+                  borderRadius: '10px',
+                  padding: '24px',
+                  maxWidth: '420px',
+                  width: '92%',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.55)',
+                }}
+                onMouseDown={e => e.stopPropagation()}
+              >
+                <h3 style={{ color: '#10b981', margin: '0 0 16px 0', fontSize: '15px', fontWeight: '700' }}>
+                  + Add to Price Book
+                </h3>
+
+                {/* Item Name */}
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                    Item Name
+                  </label>
+                  <input
+                    type="text"
+                    value={pbFormName}
+                    onChange={e => setPbFormName(e.target.value)}
+                    style={{
+                      width: '100%', boxSizing: 'border-box',
+                      background: 'rgba(255,255,255,0.07)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      borderRadius: '5px',
+                      color: 'var(--t1)',
+                      fontSize: '13px',
+                      padding: '6px 10px',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                {/* Duplicate warning */}
+                {duplicates.length > 0 && (
+                  <div style={{
+                    backgroundColor: 'rgba(234,179,8,0.12)',
+                    border: '1px solid rgba(234,179,8,0.35)',
+                    borderRadius: '5px',
+                    padding: '8px 12px',
+                    marginBottom: '12px',
+                    fontSize: '11px',
+                    color: '#fde68a',
+                  }}>
+                    <strong>⚠ Similar items found in Price Book:</strong>
+                    <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                      {duplicates.slice(0, 5).map((d: any) => (
+                        <li key={d.id}>{d.name} {d.cat ? `(${d.cat})` : ''}</li>
+                      ))}
+                    </ul>
+                    <span style={{ color: 'rgba(253,230,138,0.65)', marginTop: '4px', display: 'block' }}>
+                      You can still proceed.
+                    </span>
+                  </div>
+                )}
+
+                {/* Two-column: Category + Supplier */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                      Category
+                    </label>
+                    <select
+                      value={pbFormCat}
+                      onChange={e => setPbFormCat(e.target.value)}
+                      style={{
+                        width: '100%',
+                        background: 'rgba(255,255,255,0.07)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: '5px',
+                        color: 'var(--t1)',
+                        fontSize: '12px',
+                        padding: '6px 8px',
+                        outline: 'none',
+                      }}
+                    >
+                      <option value="">— Select —</option>
+                      {pbCategories.map((c: string) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                      Supplier
+                    </label>
+                    <input
+                      type="text"
+                      value={pbFormSupplier}
+                      onChange={e => setPbFormSupplier(e.target.value)}
+                      placeholder="e.g. Anixter"
+                      style={{
+                        width: '100%', boxSizing: 'border-box',
+                        background: 'rgba(255,255,255,0.07)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: '5px',
+                        color: 'var(--t1)',
+                        fontSize: '12px',
+                        padding: '6px 10px',
+                        outline: 'none',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Internal Cost + Pack Size */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                      Internal Cost (per item)
+                    </label>
+                    <input
+                      type="number"
+                      value={pbFormCost}
+                      onChange={e => setPbFormCost(parseFloat(e.target.value) || 0)}
+                      min="0"
+                      step="0.01"
+                      style={{
+                        width: '100%', boxSizing: 'border-box',
+                        background: 'rgba(255,255,255,0.07)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: '5px',
+                        color: 'var(--t1)',
+                        fontSize: '12px',
+                        padding: '6px 10px',
+                        outline: 'none',
+                        fontFamily: 'monospace',
+                      }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                      Pack Size
+                    </label>
+                    <input
+                      type="number"
+                      value={pbFormPackSize}
+                      onChange={e => setPbFormPackSize(parseInt(e.target.value) || 1)}
+                      min="1"
+                      step="1"
+                      style={{
+                        width: '100%', boxSizing: 'border-box',
+                        background: 'rgba(255,255,255,0.07)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: '5px',
+                        color: 'var(--t1)',
+                        fontSize: '12px',
+                        padding: '6px 10px',
+                        outline: 'none',
+                        fontFamily: 'monospace',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Unit + Customer Price */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                      Unit
+                    </label>
+                    <select
+                      value={pbFormUnit}
+                      onChange={e => setPbFormUnit(e.target.value)}
+                      style={{
+                        width: '100%',
+                        background: 'rgba(255,255,255,0.07)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: '5px',
+                        color: 'var(--t1)',
+                        fontSize: '12px',
+                        padding: '6px 8px',
+                        outline: 'none',
+                      }}
+                    >
+                      {unitOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ color: 'var(--t3)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                      Customer Price ({markup}% markup)
+                    </label>
+                    <div style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '5px',
+                      color: '#10b981',
+                      fontSize: '13px',
+                      padding: '6px 10px',
+                      fontFamily: 'monospace',
+                      fontWeight: '600',
+                    }}>
+                      {fmt(customerPrice)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={closePbModal}
+                    style={{
+                      padding: '8px 16px',
+                      background: 'none',
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      color: 'var(--t2)',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => confirmAddToPriceBook(pbModalRowId)}
+                    style={{
+                      padding: '8px 18px',
+                      backgroundColor: 'rgba(16,185,129,0.25)',
+                      color: '#10b981',
+                      border: '1px solid rgba(16,185,129,0.45)',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                    }}
+                  >
+                    Confirm &amp; Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* AI SUGGEST BUTTON */}
         <button
