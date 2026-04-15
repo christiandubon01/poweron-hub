@@ -95,15 +95,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const labHrs = (p.laborRows || []).reduce((s, r) => s + num(r.hrs), 0)
     const manualOH = (p.ohRows || []).reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
     const opRate = num(backup.settings?.opCost || 42.45)
-    const opC = labHrs * opRate
-    const oh = opC + manualOH
+    const billRate = num(backup.settings?.billRate || 95)
+    const opC = labHrs * opRate           // internal labor cost — informational only, NOT in total
+    const oh = manualOH                   // overhead = manual OH rows only (estimating, pickup, etc.)
     const mi = num(p.mileRT || 0) * num(p.miDays || 0) * num(backup.settings?.mileRate || 0.66)
     const subtotal = lab + matC + oh + mi
     const total = subtotal + taxAmt
     const directCost = matC + oh + mi
     const profit = num(p.contract || 0) - total
-    const marginPct = total > 0 ? (profit / total) * 100 : 0
-    return { lab, matC, taxAmt, matTx: matC + taxAmt, oh, manualOH, mi, subtotal, total, labHrs, opC, opRate, directCost, profit, marginPct, matBreakdown }
+    const marginPct = num(p.contract || 0) > 0 ? (profit / num(p.contract || 0)) * 100 : 0
+    // Internal profit = contract - internal labor cost - materials - mileage - manual OH
+    const internalProfit = num(p.contract || 0) - opC - matC - mi - manualOH - taxAmt
+    return { lab, matC, taxAmt, matTx: matC + taxAmt, oh, manualOH, mi, subtotal, total, labHrs, opC, opRate, billRate, directCost, profit, marginPct, internalProfit, matBreakdown }
   }
 
   const t = estTotals()
@@ -750,7 +753,30 @@ Return ONLY valid JSON, no other text.`
           <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
             <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>⏳ Pending</div>
             <div style={{ fontSize: '18px', fontWeight: '800', color: '#eab308', fontFamily: 'monospace' }}>{fmt(pipelinePending.value)}</div>
-            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelinePending.count} open estimates</div>
+            <div style={{ fontSize: '11px', color: '#6b7280', lineHeight: '1.6', marginTop: '4px' }}>
+              {pipelinePending.count === 0 ? (
+                <span>No pending items</span>
+              ) : (
+                <>
+                  {(() => {
+                    const allProjects = backup.projects || []
+                    const comingCount = allProjects.filter(p => { const s = (p.status||'').toLowerCase(); if (s==='deleted'||s==='lost'||s==='rejected') return false; return resolveProjectBucket(p)==='coming' }).length
+                    const estCount = (backup.serviceEstimates||[]).filter(e => (e.estimateStatus||e.status||'') !== 'lost').length
+                    const activeCallCount = (backup.activeServiceCalls||[]).length
+                    const svcLogs = backup.serviceLogs||[]
+                    const partialCount = svcLogs.filter(l => { const tb = svcTotalBillable(l); return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb }).length
+                    return (
+                      <div>
+                        {comingCount > 0 && <div>{comingCount} coming project{comingCount !== 1 ? 's' : ''}</div>}
+                        {estCount > 0 && <div>{estCount} open estimate{estCount !== 1 ? 's' : ''}</div>}
+                        {activeCallCount > 0 && <div>{activeCallCount} active call{activeCallCount !== 1 ? 's' : ''}</div>}
+                        {partialCount > 0 && <div>{partialCount} partial payment{partialCount !== 1 ? 's' : ''}</div>}
+                      </div>
+                    )
+                  })()}
+                </>
+              )}
+            </div>
           </div>
           {/* Lost / Unpaid — split into two states */}
           <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
@@ -1220,7 +1246,10 @@ Return ONLY valid JSON, no other text.`
               </thead>
               <tbody>
                 {(p.laborRows || []).map(r => {
-                  const emp = (backup.employees || []).find(e => e.id === r.empId) || { name: 'Owner/Me' }
+                  const teamRoster = backup.employees || []
+                  // If empId references a deleted employee, fall back to 'me' to prevent blank dropdown
+                  const empIdValid = r.empId === 'me' || !r.empId || teamRoster.some(e => e.id === r.empId)
+                  const resolvedEmpId = empIdValid ? (r.empId || 'me') : 'me'
                   return (
                     <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
                       <td style={{ padding: '8px' }}>
@@ -1249,34 +1278,26 @@ Return ONLY valid JSON, no other text.`
                         />
                       </td>
                       <td style={{ padding: '8px', fontSize: '12px' }}>
-                        {(() => {
-                          const teamRoster = backup.employees || []
-                          return (
-                            <select
-                              value={r.empId || 'me'}
-                              onChange={e => editLaborRow(r.id, 'empId', e.target.value)}
-                              title={teamRoster.length === 0 ? 'Add crew in Team settings' : undefined}
-                              style={{
-                                background: 'rgba(255,255,255,0.04)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                color: 'var(--t2)',
-                                fontSize: '12px',
-                                borderRadius: '4px',
-                                padding: '2px 4px',
-                                width: '100%',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <option value="me">Owner / Me</option>
-                              {teamRoster.map(e => (
-                                <option key={e.id} value={e.id}>{e.name}</option>
-                              ))}
-                              {teamRoster.length === 0 && (
-                                <option disabled value="">— Add crew in Team settings</option>
-                              )}
-                            </select>
-                          )
-                        })()}
+                        <select
+                          value={resolvedEmpId}
+                          onChange={e => editLaborRow(r.id, 'empId', e.target.value)}
+                          title={teamRoster.length === 0 ? 'Add crew in Team settings' : undefined}
+                          style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            color: 'var(--t2)',
+                            fontSize: '12px',
+                            borderRadius: '4px',
+                            padding: '2px 4px',
+                            width: '100%',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <option value="me">Owner / Me</option>
+                          {teamRoster.map(e => (
+                            <option key={e.id} value={e.id}>{e.name}</option>
+                          ))}
+                        </select>
                       </td>
                       <td style={{ padding: '8px', textAlign: 'right' }}>
                         <input
@@ -1597,9 +1618,9 @@ Return ONLY valid JSON, no other text.`
                 { label: 'Labor', value: t.lab, color: '#3b82f6', pct: t.total > 0 ? (t.lab / t.total) * 100 : 0 },
                 { label: 'Material', value: t.matC, color: '#eab308', pct: t.total > 0 ? (t.matC / t.total) * 100 : 0 },
                 { label: 'Mileage', value: t.mi, color: '#14b8a6', pct: t.total > 0 ? (t.mi / t.total) * 100 : 0 },
-                { label: 'Overhead', value: t.oh, color: '#a855f7', pct: t.total > 0 ? (t.oh / t.total) * 100 : 0 },
+                { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: t.total > 0 ? (t.oh / t.total) * 100 : 0 },
                 { label: 'Profit', value: t.profit, color: '#22c55e', pct: t.total > 0 ? (t.profit / t.total) * 100 : 0 },
-              ].map(item => (
+              ].filter(item => item.value > 0).map(item => (
                 <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
                   <span style={{ color: 'var(--t3)', fontSize: '12px', width: '65px', textAlign: 'left' }}>{item.label}</span>
                   <div style={{ flex: 1, backgroundColor: '#111827', borderRadius: '4px', height: '16px', overflow: 'hidden' }}>
@@ -1660,7 +1681,7 @@ Return ONLY valid JSON, no other text.`
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#a855f7', borderRadius: '2px' }} />
-                    <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Overhead</span>
+                    <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Planning/OH</span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.oh)} ({((t.oh / t.total) * 100).toFixed(0)}%)</div>
                 </div>
@@ -1698,10 +1719,12 @@ Return ONLY valid JSON, no other text.`
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matC)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Overhead</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
-            </div>
+            {t.oh > 0 && (
+              <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning & OH</span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
+              </div>
+            )}
             <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--bdr2)' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Mileage</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
@@ -1777,6 +1800,65 @@ Return ONLY valid JSON, no other text.`
 
         {/* VAULT HEALTH CHECK */}
         <div style={{ marginTop: '16px' }}>
+          {/* INTERNAL COST BREAKDOWN — informational only, does not affect estimate total */}
+          {t.labHrs > 0 && (
+            <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '8px', padding: '14px 16px', marginBottom: '12px' }}>
+              <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>
+                📊 Internal Cost Breakdown <span style={{ color: '#4b5563', fontWeight: '400', textTransform: 'none', fontSize: '9px' }}>(informational · does not affect estimate total)</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ color: 'var(--t3)' }}>Internal Labor ({t.labHrs.toFixed(1)}h × ${t.opRate}/hr)</span>
+                    <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.opC)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ color: 'var(--t3)' }}>Materials</span>
+                    <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matC)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ color: 'var(--t3)' }}>Mileage</span>
+                    <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
+                  </div>
+                  {t.oh > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ color: 'var(--t3)' }}>Planning & OH</span>
+                      <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
+                    </div>
+                  )}
+                  {t.taxAmt > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ color: 'var(--t3)' }}>Tax</span>
+                      <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.taxAmt)}</span>
+                    </div>
+                  )}
+                </div>
+                <div style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', paddingLeft: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ color: 'var(--t3)' }}>Customer Price (bill rate ${t.billRate}/hr)</span>
+                    <span style={{ color: '#10b981', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(t.lab)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ color: 'var(--t3)' }}>Contract Amount</span>
+                    <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(p.contract || 0)}</span>
+                  </div>
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px', marginTop: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ color: 'var(--t3)', fontWeight: '600' }}>Customer Profit</span>
+                      <span style={{ color: t.profit >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(t.profit)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--t3)', fontWeight: '600' }}>Your Internal Profit</span>
+                      <span style={{ color: t.internalProfit >= 0 ? '#a78bfa' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(t.internalProfit)}</span>
+                    </div>
+                    <div style={{ fontSize: '9px', color: '#4b5563', marginTop: '6px' }}>
+                      Contract − internal labor − materials − mileage − planning/OH − tax
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
               onClick={runVaultHealthCheck}
