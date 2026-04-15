@@ -743,12 +743,12 @@ export function getKPIs(d: BackupData) {
       // Exclude explicitly completed, deleted, lost, or rejected projects
       if (s === 'deleted' || s === 'lost' || s === 'rejected') return false
       // Exclude completed bucket (status=completed OR 100% overall completion)
-      return resolveProjectBucket(p) !== 'completed'
+      return resolveProjectBucket(p) === 'active'
     })
     .reduce((s, p) => s + num(p.contract), 0)
   // Service calls total: all calls (open + partial); fully-collected ones still part of pipeline history
   const svcQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
-  const pipeline = projectContract + svcQuoted
+  const pipeline = projectContract + svcUnbilled
   // Paid / Cash Received = project paid + service collected (matches HTML cashReceived)
   const projectPaid = projects.reduce((s, p) => s + getProjectFinancials(p, d).paid, 0)
   const svcCollected = serviceLogs.reduce((s, l) => s + num(l.collected), 0)
@@ -759,7 +759,7 @@ export function getKPIs(d: BackupData) {
     .filter(p => resolveProjectBucket(p) === 'active')
     .map(p => getProjectFinancials(p, d))
   const exposure = activeProjectMoney.reduce((s, m) => s + Math.max(0, m.contract - m.paid), 0)
-  // SVC Unbilled = sum of remaining balance across all service log entries
+  // SVC Unbilled = sum of remaining balance across all service log entriesssS
   // (totalBillable - collected), zeroed for overpaid entries; money math only, never stale payStatus
   const svcUnbilled = serviceLogs.reduce((s, l) => {
     const quoted = num(l.quoted)

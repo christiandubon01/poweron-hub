@@ -9,3 +9,6 @@ poweron-hub-v3-external/
 poweron-hub-v3-external/
 
 dist/
+
+# Local Netlify folder
+.netlify

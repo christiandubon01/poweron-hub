@@ -1,306 +1,360 @@
-# PowerOn App — Handoff Specification
+# PowerOn App - Handoff Specification
 
-Version: V3.0 Production
-Date: 2026-04-07
-Status: **PRODUCTION**
-Sessions Completed: B41–B50
-Recent Commits: B47=2a31db6 · B48=adf4537 · B49=7d80579 · B50=0a0d6db
+Version: V4.0 Production
+Date: 2026-04-12
+Status: PRODUCTION
+Approval: Christian - PIN Confirmed
+Version Source of Truth: VERSION_CHANGELOG_v4_0.md
 
 ---
 
 ## Overview
 
-PowerOn Hub is an intelligent business OS for electrical contractors. The V3 external prototype contains 10 feature views, 13 agent shells, a full NEXUS Prompt Engine, and all service stubs required to wire the app to Supabase, ElevenLabs, and Anthropic Claude.
+PowerOn Hub is an intelligent business OS for electrical contractors.
 
-This spec is the law for V3 → V2 main merge decisions. When in doubt, defer to this document.
+This handoff spec is now governed by the v4.0 law stack. It is no longer a loose merge note. It is a controlled execution reference for all build sessions touching the PowerOn Hub app.
 
----
+If any instruction conflicts with:
+1. Christian's direct instruction
+2. PIN-approved v4.0 laws
+3. POWERON_MASTER_REFERENCE_v4_0
+4. VERSION_CHANGELOG_v4_0
 
-## Architecture
-
-**Frontend:** React 18 + TypeScript + Vite + Tailwind CSS
-**State:** Zustand (V2 main) / `store/index.ts` placeholder (V3 external)
-**Data:** Supabase (PostgreSQL + Storage + Auth)
-**AI Routing:** NEXUS Prompt Engine (`nexusPromptEngine.ts`)
-**Voice:** OpenAI Whisper (transcription, language: `en`) + ElevenLabs (synthesis)
-**Automation:** n8n (webhook-based)
+then this document must defer upward to that authority stack.
 
 ---
 
-## Panel Inventory (All 10 Views)
+## v4.0 Governance Lock
 
-| Panel ID | Label | Section | View File | Status |
-|---|---|---|---|---|
-| `blueprint-ai` | Blueprint AI | Intelligence | `BlueprintAI.tsx` | Full view |
-| `agent-mode-selector` | Agent Mode Selector | Intelligence | `AgentModeSelector.tsx` | Placeholder |
-| `n8n-automation` | n8n Automation | Intelligence | `N8nAutomation.tsx` | Full view |
-| `guardian` | GUARDIAN | Intelligence | `GuardianView.tsx` | Full view |
-| `spark-live-call` | SPARK Live Call | Intelligence | `SparkLiveCall.tsx` | Full view |
-| `lead-rolling-trend` | Lead Rolling Trend | Intelligence | `LeadRollingTrend.tsx` | Full view |
-| `debt-killer` | Debt Killer | Business | `DebtKiller.tsx` | Full view |
-| `voice-journaling-v2` | Voice Journaling V2 | Business | `VoiceJournalingV2.tsx` | Full view |
-| `crew-portal` | Crew Portal | Business | `CrewPortal.tsx` | Full view |
-| `demo-mode` | Demo Mode | Business | `DemoMode.tsx` | Placeholder |
+The following are now permanent execution laws for this handoff flow:
 
-All 10 views are registered in `App.tsx` as lazy-loaded React components wrapped in `<Suspense>`.
+- Only Channel B conducts interviews and writes CHANGE_SPEC documents
+- Only Channel A writes Cowork prompts, inject scripts, post-session sequences, and failure analysis
+- Gemini is code-reading only
+- Any change to laws, prompt format, rules, flows, or master references requires Christian's 4-digit PIN
+- Prompt format is frozen unless Christian changes it with PIN approval
+- Small batch quality protocol is active
+- Codebase isolation architecture is mandatory
+- Versioned changelog tracking is mandatory
+- Feedback loop laws are active across the operating system
+- If any model drifts out of role, stop and report
 
 ---
 
-## Agent Descriptions
+## Channel Roles
 
-### GUARDIAN
-**File:** `src/agents/guardian.ts`
-**Role:** Proactive project health monitor. Evaluates guardian rules against project events and emits `alert_triggered` when violations are detected.
-**Status:** Shell stub — `initGuardianAgent()` wires to agent bus on integration.
-**Events emitted:** `alert_triggered`, `task_completed`
-**View:** `GuardianView.tsx` — shows active rules, violations list, audit log, severity badges
+### Channel B
+Owns:
+- interviews
+- strategic discovery
+- summary
+- alignment check
+- PIN request
+- CHANGE_SPEC lock
 
-### HUNTER
-**Role:** Lead hunting and pipeline intelligence agent (referenced in V2 main roadmap).
-**Status:** Not yet built in V3 external — planned for E17 integration sprint.
-**Expected file:** `src/agents/hunter.ts`
-**Expected events:** `lead_identified`, `lead_updated`
-**Notes:** HUNTER will be wired to SPARK's lead pipeline. NEXUS routes `SPARK` queries to SPARK agent until HUNTER is live.
+Does not own:
+- inject scripts
+- Cowork prompts
+- failure analysis
+- post-session command flow
 
-### SPARK
-**File:** `src/agents/spark.ts` + `src/agents/sparkLiveCall.ts`
-**Role:** Live call intelligence engine. Manages call scripts, stage progression, and outcome capture.
-**Status:** Full call engine built. Scripts are mock; replace with Supabase `call_scripts` on integration.
-**Events emitted:** `voice_note`, `lead_updated`
+### Channel A
+Owns:
+- Gemini audit requests after spec lock
+- Cowork prompt generation
+- inject script generation
+- post-session sequence
+- failure analysis
+- queue and execution support
 
-### NEXUS Prompt Engine
-**File:** `src/agents/nexusPromptEngine.ts`
-**Role:** Orchestration brain for all AI queries in PowerOn Hub. Handles query classification, ECHO context injection, multi-agent routing, prompt assembly, and structured response parsing.
-**Status:** ✅ Full implementation — V3-19 / E16
-**Agent route targets:** VAULT, OHM, LEDGER, BLUEPRINT, CHRONO, SPARK, ATLAS, NEXUS, MULTI
+Does not own:
+- interviews
+- CHANGE_SPEC writing
 
----
+### Gemini
+Owns:
+- code reading
+- route tracing
+- root-cause reporting
+- file-level findings
 
-## NEXUS Prompt Engine — Full Documentation
-
-### Public API
-
-```typescript
-classifyQuery(query: string): QueryClassification
-injectEchoContext(query: string, window: EchoEntry[]): EchoInjection
-buildNexusPrompt(request: NexusRequest): string
-runNexusEngine(request: NexusRequest): Promise<NexusResponse>
-```
-
-### Query Classification
-
-`classifyQuery()` scores each agent target via keyword matching and returns:
-- `primaryTarget`: the best-matching agent route
-- `secondaryTargets`: additional matched agents
-- `confidence`: 0.0–1.0 normalized score
-- `requiresDisambiguation`: true if vague entity references detected (e.g., "the project")
-- `disambiguationQuestion`: a single clarifying question to ask the user
-- `isMultiAgent`: true if BLUEPRINT + CHRONO co-occur, or if two agents tie
-
-**Routing verified (V3-21 audit):**
-- "What's the NEC requirement for kitchen receptacles?" → OHM (100%)
-- "How much do I have in unbilled work?" → LEDGER (100%)
-- "My pipeline is at $66k, should I take on more work?" → NEXUS (75%)
-
-### ECHO Context Window
-
-- Rolling 24-hour memory window per user
-- Relevance scored using Jaccard similarity + tag boost
-- Threshold: 0.6 (entries below threshold are not injected)
-- Token budget: 4,000 tokens max injected per query
-- Format: `[AGENT_SOURCE @ ISO_TIMESTAMP]: content`
-
-### Response Format
-
-NEXUS expects Claude to return raw JSON with this shape:
-
-```json
-{
-  "speak": "Natural voice-ready text, 1–3 sentences",
-  "display": [
-    { "type": "metric_card|alert|chart|action_item|link", "title": "...", "value": "...", "label": "..." }
-  ],
-  "captures": [
-    { "type": "entity|decision|task|financial|note", "label": "...", "value": "...", "agentSource": "...", "timestamp": "ISO" }
-  ]
-}
-```
-
-### Integration Requirements
-
-1. Replace `callClaude()` stub in `claudeService.ts` with real `@anthropic-ai/sdk` call
-2. Wire `echoWindow` parameter to Supabase query for last 24h context entries per user
-3. Wire `agentMode` parameter to user's current AppState.agentMode
-4. Register `runNexusEngine()` as the single entry point for all AI queries in V2 main
+Does not own:
+- fixes
+- specs
+- prompts
+- implementation strategy beyond observed findings
 
 ---
 
-## Whisper Integration
+## Mandatory Approval Sequence
 
-**Language parameter:** `en` (not `en-US` — Whisper uses ISO 639-1 codes)
-**Use case:** VoiceJournalingV2, SparkLiveCall transcription
-**Integration point:** `elevenLabsService.ts` or a new `whisperService.ts`
-**Confirmed:** All `en-US` locale references in source files updated to `en` as of V3-21
+All feature work must follow this sequence:
+
+1. Christian starts with Channel B
+2. Channel B conducts interview
+3. Channel B summarizes proposed change
+4. Channel B asks:
+   "Does this align with your 5/10/15/20 year vision?"
+5. If no: iterate
+6. If yes: Channel B requests PIN
+7. Christian provides PIN
+8. Spec is locked
+9. Channel A takes over
+10. Gemini audit happens if required
+11. Channel A writes inject script / Cowork prompt
+12. Session executes
+13. Post-session sequence runs
+14. Only then can push/deploy happen
+
+No shortcuts are allowed.
 
 ---
 
-## Agent Mode
+## Codebase Isolation Architecture
 
-**Type:**
-```typescript
-type AgentMode = 'standard' | 'field' | 'office' | 'estimating' | 'executive';
-```
+This is active immediately.
 
-**Store field:** `AppState.agentMode` (default: `standard`)
-**Persistence:** `user_preferences.agent_mode` in Supabase
-**NEXUS usage:** Injected as `USER MODE: FIELD` etc. into every NEXUS prompt
+### Rule
+`src/views/` must no longer be treated as a flat shared space.
+
+### Required direction
+Feature views must move into bounded folders such as:
+
+- `src/views/visual-suite/`
+- `src/views/neural-world/`
+- `src/views/orb-lab/`
+
+This pattern mirrors the already-correct modular direction used in `src/services/`.
+
+### Isolation law
+- Each session must have a defined isolation folder
+- No session may edit outside its assigned boundary
+- Parallel sessions must use non-overlapping isolation folders
+- Protected files remain protected
+- Canary files remain enforceable
+- `ignition.js` is the runtime enforcement layer for isolation
+
+If isolation is unclear, stop and report.
 
 ---
 
-## Demo Mode
+## Ownership Boundary Rule
 
-**Store field:** `AppState.demoMode` (default: `false`)
-**UI indicator:** Orange banner at top of app — "⚠ DEMO MODE ACTIVE — Data shown is not real"
-**Gate:** All mock data imports must check `demoMode` flag before loading
-**Persistence:** `user_preferences.demo_mode` in Supabase
+Every agent or workstream must own a specific file boundary.
+
+Examples of required ownership behavior:
+- Visual Suite work should not drift into Neural World files
+- ORB LAB work should not touch unrelated panels
+- Queue/tooling work should not mutate app feature code without explicit scope
+- Parallel sessions must not overlap file boundaries
+
+A formal ownership map is required under v4.0 and should be maintained separately.
+
+---
+
+## Frozen Cowork Prompt Format
+
+The Cowork prompt format is now locked.
+
+### Required Header
+Every execution prompt must include:
+
+- IGNITION CODE
+- SESSION KEY
+- ALLOWED TOOLS
+- WORKING DIR
+- ISOLATION FOLDER
+- PROTECTED FILES
+- CANARY FILE
+
+### Required Footer
+Every execution prompt must end with:
+
+- `npm run build`
+- `git add src/`
+- `git commit`
+- hash only
+- `node done.js`
+
+No changes are allowed without Christian's PIN approval.
+
+---
+
+## Execution Standard
+
+Every execution session must:
+- use the locked prompt format
+- use the correct working directory
+- define isolation boundary
+- define protected files
+- define canary file if needed
+- stay within role law
+- end with build verification
+- end with commit hash only
+- end with `node done.js`
+
+If any of those are missing, the session is not ready to run.
+
+---
+
+## Small Batch Quality Protocol
+
+Scale must be earned.
+
+### Rule
+Start with 1-3 sequential sessions before parallelizing.
+
+### Scale-up threshold
+Target:
+- 20 sessions
+- less than 5% rework
+
+Only after that threshold is achieved may wave size expand flexibly, such as 7-10 sessions depending on scope.
+
+### Priority
+Quality over speed always.
+
+---
+
+## Feedback Loop Law
+
+The following loop structure is mandatory.
+
+### Every 15 minutes
+Each active model must report:
+- Am I performing to my role?
+- Am I aligned with the other models?
+
+Output:
+- `On role`
+- or `Off role + what drifted`
+
+### Every 60 minutes
+Acknowledge all 15-minute checks and ask Christian:
+- "How do you feel about the conversation flow? Is it working?"
+
+Then listen and adjust.
+
+### Every 4 hours
+Detect signs of:
+- fatigue
+- overload
+- frustration
+- context drift
+
+Then report:
+- what was observed
+- whether to continue or pause
+
+### Daily 10 PM checkpoint
+Channel B and Channel A must output:
+- what was attempted
+- what shipped
+- what needs adjustment tomorrow
+
+---
+
+## CrewAI Pre-Spec Dependency
+
+CrewAI is not yet active, but all future CrewAI behavior must inherit v4.0 governance.
+
+CrewAI will be governed by:
+- v4.0 law stack
+- role boundaries
+- feedback loop law
+- isolation law
+- prompt format lock
+- version traceability
+- approval discipline
+
+Reference:
+- `CREWAI_PRESPEC_v4_0.md`
 
 ---
 
 ## Protected Files
 
-The following files must NOT be modified during any merge or integration session:
+The following remain protected unless a session explicitly and validly scopes them:
 
 | File | Reason |
 |---|---|
-| `src/store/authStore.ts` | Auth state — modify only in dedicated auth session |
-| `netlify.toml` | Deployment config — modify only with DevOps approval |
-| `src/services/backupDataService.ts` | Data safety service — modify only in dedicated session |
-| `vite.config.ts` | Build config — frozen for V3 external build |
-| `src/components/v15r/charts/SVGCharts.tsx` | V15R chart components — frozen, do not regress |
+| `src/store/authStore.ts` | Auth state protection |
+| `netlify.toml` | Deployment protection |
+| `src/services/backupDataService.ts` | Data safety protection |
+| `vite.config.ts` | Build config protection |
+| `src/components/v15r/charts/SVGCharts.tsx` | Frozen chart surface |
+
+Additional protected files may be defined per session in the prompt header.
 
 ---
 
-## Supabase Tables Required (V3 additions)
+## Build and Completion Rule
 
-| Table | Feature |
-|---|---|
-| `user_preferences` | Agent Mode, Demo Mode |
-| `guardian_rules` | GUARDIAN |
-| `guardian_violations` | GUARDIAN |
-| `guardian_audit_log` | GUARDIAN |
-| `call_scripts` | SPARK Live Call |
-| `call_sessions` | SPARK Live Call |
-| `expenses` | Debt Killer |
-| `debts` | Debt Killer |
-| `user_financial_profile` | Debt Killer |
-| `leads` | Lead Rolling Trend |
-| `weekly_lead_snapshots` | Lead Rolling Trend |
-| `journal_entries` | Voice Journaling V2 |
-| `blueprint_uploads` | Blueprint AI |
-| `blueprint_outputs` | Blueprint AI |
-| `n8n_workflows` | n8n Automation |
-| `n8n_trigger_log` | n8n Automation |
-| `crew_members` | Crew Portal |
-| `crew_tasks` | Crew Portal |
-| `user_roles` | Crew Portal |
+A session is not complete until all required end conditions are satisfied.
 
-| `hub_platform_events` | Command Center / Hub Platform |
-| `wins_log` | Wins Log (B51) |
-| `guardian_config` | GUARDIAN Config (B51) |
+Required end flow:
+1. `npm run build`
+2. `git add src/`
+3. `git commit`
+4. return hash only
+5. `node done.js`
 
-**Supabase Storage buckets:** `voice-notes`, `blueprints`
-
-**Migrations added (B46–B51 wave):**
-- `059_hub_platform_events.sql`
-- `060_wins_log.sql` (B51)
-- `061_guardian_config.sql` (B51)
+Then run the post-session operational sequence defined by Channel A.
 
 ---
 
-## Agent Bus Events
+## Post-Session Rule
 
-| Event | Emitter | Payload |
-|---|---|---|
-| `mode_switch` | AgentModeSelector | `{ from, to, userId }` |
-| `alert_triggered` | GUARDIAN | `{ ruleId, violationId }` |
-| `task_completed` | GUARDIAN, CrewPortal | `{ taskId }` |
-| `voice_note` | VoiceJournaling, SparkLiveCall | `{ entryId, category, tags }` |
-| `lead_updated` | LeadRollingTrend, SparkLiveCall | `{ leadId, status }` |
-| `lead_identified` | HUNTER (planned) | `{ leadId }` |
-| `field_log_created` | VoiceJournaling, CrewPortal | `{ logId }` |
-| `blueprint_generated` | BlueprintAI | `{ uploadId, projectId }` |
-| `task_created` | BlueprintAI | `{ taskId, projectId }` |
-| `automation_triggered` | n8nAutomation | `{ workflowId, triggerEvent }` |
+After every completed session, the proper sequence must be followed by the established workflow.
+
+This handoff spec does not replace the user daily habit guide, but it recognizes the v4.0 ordered post-session discipline.
+
+Reference:
+- `POWERON_USER_DAILY_HABIT_GUIDE_v4_0.html`
 
 ---
 
-## New Dependencies for V2 Integration
+## Version Traceability
 
-| Package | Feature | Priority |
-|---|---|---|
-| `@anthropic-ai/sdk` | NEXUS / Blueprint AI | P0 |
-| `@supabase/supabase-js` | All features | P0 |
-| `pdfjs-dist` | Blueprint AI PDF extraction | P1 |
-| `react-media-recorder` or `MediaRecorder` API | Voice Journaling | P1 |
-| `elevenlabs` SDK | Voice synthesis | P2 |
-| `eslint` + `@typescript-eslint/*` | Code quality | P1 (before merge) |
+This document is part of the v4.0 governance set.
 
----
+Required companion documents:
+- `POWERON_MASTER_REFERENCE_v4_0.html`
+- `POWERON_USER_DAILY_HABIT_GUIDE_v4_0.html`
+- `VERSION_CHANGELOG_v4_0.md`
+- `CREWAI_PRESPEC_v4_0.md`
 
-## New Files Added (B46–B51 Wave)
-
-| Path | Description |
-|---|---|
-| `src/components/v15r/AIVisualSuite/` | Full AI Visual Suite folder — 15+ files, 43 modes, 3 buckets |
-| `src/components/v15r/WinsLog/` | Wins Log component (B51) |
-| `supabase/migrations/059_hub_platform_events.sql` | Hub Platform Events migration |
-| `supabase/migrations/060_wins_log.sql` | Wins Log migration (B51) |
-| `supabase/migrations/061_guardian_config.sql` | GUARDIAN Config migration (B51) |
-| `POWERON_WORKFLOW.md` | Workflow rules document |
+Older versions must be archived and never deleted.
 
 ---
 
-## AI Visual Suite
+## Stop Conditions
 
-- **Location:** `src/components/v15r/AIVisualSuite/`
-- **Modes:** 43 visual modes across 3 buckets
-- **NEXUS default:** QuantumFoam
-- **Audio pipeline:** `useNEXUSAudio` hook — live FFT wired to visuals
-- **Navigation:** VISUAL SUITE available as a standalone panel; Visualization Lab accessible via admin; NEXUS Voice in sidebar
+Stop immediately and report if any of the following occur:
 
----
-
-## Command Center
-
-- **Tab 12:** Split View — live as of B46–B50 wave
-- **Tab 13:** Unified Command — live as of B46–B50 wave
-
----
-
-## Navigation Updates (B46–B51 Wave)
-
-- VISUAL SUITE: standalone panel in nav
-- Visualization Lab: admin-accessible
-- NEXUS Voice: sidebar integration
-- Collapsible sidebar: implemented
-- Responsive layout: improved across breakpoints
+- model role drift
+- spec written by the wrong role
+- prompt format mutation
+- missing PIN for governance change
+- session touches files outside isolation boundary
+- overlapping parallel session boundaries
+- protected file touched without scope approval
+- build failure
+- unclear ownership
+- verification mismatch between reported fix and visible UI outcome
 
 ---
 
-## Known Remaining Items
+## Final Law
 
-- DaSparkyHub Session 2: pending
-- Beta prep: pending
+This document is no longer just a handoff note.
+It is an execution-control document under v4.0 governance.
+
+If there is ever a conflict between speed and governed process, governed process wins.
 
 ---
 
-## Build Status (V3.0 Production)
+## Status
 
-- **npm run build:** ✅ PASS — zero TypeScript errors, zero Vite errors
-- **ESLint:** Not configured — eslint package missing from devDependencies
-- **All lazy-loaded views:** ✅ Present as separate chunk files in dist/
-- **NEXUS routing:** ✅ 3/3 sample queries route correctly
-- **en-US → en:** ✅ Applied to 5 files
-- **AI Visual Suite:** ✅ 43 modes, QuantumFoam as NEXUS default
-- **Command Center tabs 12+13:** ✅ Live (Split View + Unified Command)
-- **Audio pipeline:** ✅ useNEXUSAudio hook, FFT wired to visuals
+Document Status: Updated for v4.0
+Save Target: `C:\Users\chris\Desktop\Power On Hub\Power On Solutions APP - CoWork\poweron_app_handoff_spec.md`
