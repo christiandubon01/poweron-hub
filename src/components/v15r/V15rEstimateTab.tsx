@@ -711,14 +711,8 @@ Return ONLY valid JSON, no other text.`
       const fin = getProjectFinancials(p, backup)
       return fin.AR > 0
     })
-    // UNPAID: service logs with zero collection (money math, no stale payStatus)
-    const unpaidSvc = svcLogs.filter(l => {
-      const tb = svcTotalBillable(l)
-      return tb > 0 && num(l.collected) === 0
-    })
     const unpaidValue = unpaidProjects.reduce((s, p) => s + getProjectFinancials(p, backup).AR, 0)
-                      + unpaidSvc.reduce((s, l) => s + svcTotalBillable(l), 0)
-    const unpaidCount = unpaidProjects.length + unpaidSvc.length
+    const unpaidCount = unpaidProjects.length
 
     return {
       count: lostCount + unpaidCount,
@@ -771,42 +765,7 @@ Return ONLY valid JSON, no other text.`
         </div>
 
         {/* Pending estimate rows with Mark as Lost */}
-        {(backup.serviceEstimates || []).filter(e => (e.estimateStatus || e.status || '') !== 'lost').length > 0 && (
-          <div style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '10px' }}>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '6px' }}>
-              Open Service Estimates
-            </div>
-            {(backup.serviceEstimates || [])
-              .filter(e => (e.estimateStatus || e.status || '') !== 'lost')
-              .map(est => (
-                <div key={est.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px', marginBottom: '4px' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: '12px', color: '#d1d5db', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                      {est.customer || est.name || 'Unnamed'} — {est.address || ''}
-                    </span>
-                    <span style={{ fontSize: '10px', color: '#6b7280' }}>{fmt(num(est.quoted))} · {est.date || ''}</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (!confirm('Mark this estimate as Lost?')) return
-                      const b = getBackupData()
-                      if (!b) return
-                      const idx = (b.serviceEstimates || []).findIndex(e => e.id === est.id)
-                      if (idx >= 0) {
-                        b.serviceEstimates[idx].estimateStatus = 'lost'
-                        saveBackupData(b)
-                        forceUpdate()
-                      }
-                    }}
-                    style={{ padding: '3px 8px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: '8px' }}
-                  >
-                    Mark Lost
-                  </button>
-                </div>
-              ))
-            }
-          </div>
-        )}
+       
         {/* Pipeline bar visualization */}
         {pipelineTotal > 0 && (
           <div>

@@ -51,7 +51,8 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
 
   // Use canonical formula — same as Field Log panel BUG-3-FIX calculation
   const mileRate = Number(backup?.settings?.mileRate) || VAN_MILE_RATE
-  const fin = calculateProjectFinancials(project, backup.logs || [], mileRate)
+  const laborRate = Number(backup?.settings?.opCost) || 55
+  const fin = calculateProjectFinancials(project, backup.logs || [], mileRate, laborRate)
 
   // Log count = number of field log entries for this project
   const logCount = (backup.logs || []).filter((l: any) => l.projId === projectId || l.projectId === projectId).length
@@ -88,6 +89,12 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
       title: 'Remaining Balance = Quote − Total Costs (Labor + Materials + Transport)',
     },
     {
+      label: 'Mat Purchased',
+      value: fmtMoney(fin.material_cost),
+      color: '#fb923c',
+      title: 'Total materials purchased across all field log entries',
+    },
+    {
       label: 'Collected',
       value: fmtMoney(fin.total_collected),
       color: '#34d399',
@@ -98,7 +105,7 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
     <div
       style={{
         display:       'grid',
-        gridTemplateColumns: 'repeat(6, 1fr)',
+        gridTemplateColumns: 'repeat(7, 1fr)',
         gap:           6,
         padding:       '10px 16px 12px',
         backgroundColor: 'rgba(17,24,39,0.5)',

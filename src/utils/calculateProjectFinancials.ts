@@ -94,7 +94,8 @@ function n(v: unknown): number {
 export function calculateProjectFinancials(
   project: CalcProject,
   allLogs: CalcLog[],
-  mileRate?: number
+  mileRate?: number,
+  laborRate?: number
 ): ProjectFinancials {
   const quote = n(project?.contract)
 
@@ -124,7 +125,7 @@ export function calculateProjectFinancials(
 
     total_hours += hrs
     total_miles += miles
-    labor_cost += hrs * INTERNAL_LABOR_RATE
+    labor_cost += hrs * (laborRate != null && !isNaN(laborRate) && laborRate > 0 ? laborRate : INTERNAL_LABOR_RATE)
     material_cost += mat
     transportation_cost += miles * rate
     total_collected += coll
@@ -158,7 +159,8 @@ export function calculateProjectFinancials(
 export function calculatePortfolioFinancials(
   projects: CalcProject[],
   allLogs: CalcLog[],
-  mileRate?: number
+  mileRate?: number,
+  laborRate?: number
 ): ProjectFinancials {
   const zero: ProjectFinancials = {
     quote: 0,
@@ -174,7 +176,7 @@ export function calculatePortfolioFinancials(
   }
 
   return projects.reduce((acc, p) => {
-    const fin = calculateProjectFinancials(p, allLogs, mileRate)
+    const fin = calculateProjectFinancials(p, allLogs, mileRate, laborRate)
     return {
       quote: acc.quote + fin.quote,
       labor_cost: acc.labor_cost + fin.labor_cost,

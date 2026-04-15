@@ -148,7 +148,7 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
 
         // Per-project detail for active projects (include canonical balance)
         const activeProjectDetails = activeProjects.map(p => {
-          const fin = calculateProjectFinancials(p, backup.logs || [], mileRate)
+          const fin = calculateProjectFinancials(p, backup.logs || [], mileRate, Number(backup?.settings?.opCost) || 55)
           return {
             name: p.name,
             contract: num(p.contract),

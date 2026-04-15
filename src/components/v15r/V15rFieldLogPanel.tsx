@@ -1069,7 +1069,7 @@ export default function V15rFieldLogPanel() {
           } else {
             const proj = projects.find((p: any) => p.id === projFilter)
             if (proj) {
-              canonFin = calculateProjectFinancials(proj, backup.logs || [], canonMileRate)
+              canonFin = calculateProjectFinancials(proj, backup.logs || [], canonMileRate, Number(backup?.settings?.opCost) || 55)
             } else {
               canonFin = { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: canonMileRate }
             }
