@@ -51,7 +51,7 @@ let _lastSyncMeta: { savedBy: string; savedAt: string } | null = null
 
 /** Timestamp of last local save — used to debounce incoming force-pulls */
 let _lastLocalSaveAt = 0
-const FORCE_PULL_DEBOUNCE_MS = 3000 // 3 seconds
+const FORCE_PULL_DEBOUNCE_MS = 5000 // 5 seconds
 
 /** Returns true if a recent local save should block an incoming force-pull */
 export function isWithinSaveDebounce(): boolean {
@@ -860,7 +860,6 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     saveBackupData(data) // persist locally with metadata
 
     // Single upsert to Supabase with all metadata embedded
-    _lastLocalSaveAt = Date.now() // start debounce window
     const { error } = await supabase
       .from('app_state')
       .upsert({
@@ -873,6 +872,7 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
       console.error('[Sync] Supabase write failed:', error.message)
       return { success: false, error: error.message }
     }
+    _lastLocalSaveAt = Date.now() // start debounce window AFTER successful upsert
 
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
     console.log(`[Sync] Synced to Supabase at ${now} by ${deviceId}`)
