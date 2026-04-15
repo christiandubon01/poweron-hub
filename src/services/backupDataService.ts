@@ -748,7 +748,6 @@ export function getKPIs(d: BackupData) {
     .reduce((s, p) => s + num(p.contract), 0)
   // Service calls total: all calls (open + partial); fully-collected ones still part of pipeline history
   const svcQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
-  const pipeline = projectContract + svcUnbilled
   // Paid / Cash Received = project paid + service collected (matches HTML cashReceived)
   const projectPaid = projects.reduce((s, p) => s + getProjectFinancials(p, d).paid, 0)
   const svcCollected = serviceLogs.reduce((s, l) => s + num(l.collected), 0)
@@ -768,9 +767,10 @@ export function getKPIs(d: BackupData) {
     const addIncome = adjustments
       .filter((a: any) => a && a.type === 'income')
       .reduce((ac: number, a: any) => ac + num(a.amount), 0)
-    const totalBillable = (quoted + addIncome) ?? 0
+    const totalBillable = (quoted + addIncome)  0
     return s + Math.max(0, totalBillable - collected)
   }, 0)
+  const pipeline = projectContract + svcUnbilled
   const openRfis = projects.reduce((s, p) => s + (p.rfis || []).filter((r: any) => r.status !== 'answered').length, 0)
   const totalHours = logs.reduce((s, l) => s + num(l.hrs), 0)
   const activeProjects = projects.filter(p => p.status === 'active' || p.status === 'coming').length
