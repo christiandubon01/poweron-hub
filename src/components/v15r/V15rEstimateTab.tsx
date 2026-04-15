@@ -653,7 +653,11 @@ Return ONLY valid JSON, no other text.`
     return {
       count: wonProjects.length + paidSvc.length,
       value: wonProjects.reduce((s, p) => s + num(p.contract), 0)
-             + paidSvc.reduce((s, l) => s + svcTotalBillable(l), 0)
+             + paidSvc.reduce((s, l) => s + svcTotalBillable(l), 0),
+      projectValue: wonProjects.reduce((s, p) => s + num(p.contract), 0),
+      projectCount: wonProjects.length,
+      svcValue: paidSvc.reduce((s, l) => s + svcTotalBillable(l), 0),
+      svcCount: paidSvc.length,
     }
   })()
 
@@ -737,6 +741,10 @@ Return ONLY valid JSON, no other text.`
             <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>✅ Won</div>
             <div style={{ fontSize: '18px', fontWeight: '800', color: '#10b981', fontFamily: 'monospace' }}>{fmt(pipelineWon.value)}</div>
             <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} active/awarded</div>
+            <div style={{ fontSize: '10px', color: '#6ee7b7', marginTop: '6px', lineHeight: '1.6' }}>
+              <div>Projects: {fmt(pipelineWon.projectValue)} · {pipelineWon.projectCount} active</div>
+              <div>Service Calls: {fmt(pipelineWon.svcValue)} · {pipelineWon.svcCount} paid</div>
+            </div>
           </div>
           {/* Pending — coming projects + open service estimates + active calls */}
           <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
