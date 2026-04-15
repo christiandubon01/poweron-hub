@@ -48,6 +48,15 @@ function getDeviceId(): string {
 
 /** Last sync metadata from Supabase (set during loadFromSupabase) */
 let _lastSyncMeta: { savedBy: string; savedAt: string } | null = null
+
+/** Timestamp of last local save — used to debounce incoming force-pulls */
+let _lastLocalSaveAt = 0
+const FORCE_PULL_DEBOUNCE_MS = 3000 // 3 seconds
+
+/** Returns true if a recent local save should block an incoming force-pull */
+export function isWithinSaveDebounce(): boolean {
+  return Date.now() - _lastLocalSaveAt < FORCE_PULL_DEBOUNCE_MS
+}
 export function getLastSyncMeta(): { savedBy: string; savedAt: string } | null {
   return _lastSyncMeta
 }
@@ -851,6 +860,7 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     saveBackupData(data) // persist locally with metadata
 
     // Single upsert to Supabase with all metadata embedded
+    _lastLocalSaveAt = Date.now() // start debounce window
     const { error } = await supabase
       .from('app_state')
       .upsert({
@@ -987,6 +997,10 @@ export async function loadFromSupabaseForced(): Promise<{ success: boolean; from
     const thisDevice = getDeviceId()
     if (remoteDevice === thisDevice) {
       console.log(`[Sync] Force-load skipped — Realtime event was from this device (${thisDevice})`)
+      return { success: true, fromDevice: remoteDevice }
+    }
+    if (isWithinSaveDebounce()) {
+      console.log(`[Sync] Force-load skipped — within ${FORCE_PULL_DEBOUNCE_MS}ms debounce window after local save`)
       return { success: true, fromDevice: remoteDevice }
     }
     console.log(`[Sync] Force-loading remote data from ${remoteDevice} (Realtime trigger)`)
