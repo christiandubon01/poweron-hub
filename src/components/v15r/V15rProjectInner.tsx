@@ -48,6 +48,13 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
     setLocalTab(newTab)
   }, [propActiveTab])
 
+  // Re-render when remote data sync fires (cross-device realtime updates)
+  React.useEffect(() => {
+    const handler = () => forceUpdate()
+    window.addEventListener('poweron-data-saved', handler)
+    return () => window.removeEventListener('poweron-data-saved', handler)
+  }, [forceUpdate])
+
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) return <div className="text-red-400 p-4">No backup data</div>
 
