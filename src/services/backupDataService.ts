@@ -981,6 +981,14 @@ export async function loadFromSupabaseForced(): Promise<{ success: boolean; from
     const remote = row.data as BackupData
     const remoteMeta = (remote as any)._syncMeta as { savedBy?: string } | undefined
     const remoteDevice = remoteMeta?.savedBy || "unknown"
+    // If this device triggered the Realtime event, skip the overwrite —
+    // we already have the latest data and force-pulling would clobber
+    // in-flight local changes (add/delete friction bug)
+    const thisDevice = getDeviceId()
+    if (remoteDevice === thisDevice) {
+      console.log(`[Sync] Force-load skipped — Realtime event was from this device (${thisDevice})`)
+      return { success: true, fromDevice: remoteDevice }
+    }
     console.log(`[Sync] Force-loading remote data from ${remoteDevice} (Realtime trigger)`)
     saveBackupData(remote)
     return { success: true, fromDevice: remoteDevice }
