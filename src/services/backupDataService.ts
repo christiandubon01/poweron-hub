@@ -767,7 +767,7 @@ export function getKPIs(d: BackupData) {
     const addIncome = adjustments
       .filter((a: any) => a && a.type === 'income')
       .reduce((ac: number, a: any) => ac + num(a.amount), 0)
-    const totalBillable = (quoted + addIncome)  0
+    const totalBillable = quoted + addIncome
     return s + Math.max(0, totalBillable - collected)
   }, 0)
   const pipeline = projectContract + svcUnbilled
