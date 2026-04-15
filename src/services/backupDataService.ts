@@ -917,12 +917,14 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
     const remoteDevice = remoteMeta?.savedBy || 'unknown'
 
     // Diagnostic logging
-    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
+    // Use server-side updated_at for conflict resolution — immune to clock skew
+    // and shared localStorage between same-browser tabs (localhost vs Netlify)
+    const remoteTime = row.updated_at ? new Date(row.updated_at).getTime() : new Date(remote._lastSavedAt || 0).getTime()
     const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
 
     console.log(`[Sync] This device: ${thisDevice}`)
     console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
-    console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
+    console.log(`[Sync] Remote timestamp (server): ${row.updated_at || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
 
     // Store sync metadata for UI display
     _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || '' }
