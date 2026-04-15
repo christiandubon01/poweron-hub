@@ -770,7 +770,14 @@ export function getKPIs(d: BackupData) {
     const totalBillable = quoted + addIncome
     return s + Math.max(0, totalBillable - collected)
   }, 0)
-  const svcWithBalanceDue = serviceLogs.reduce((s, l) => {
+  
+  const pipeline = projectContract + svcUnbilled
+  const openRfis = projects.reduce((s, p) => s + (p.rfis || []).filter((r: any) => r.status !== 'answered').length, 0)
+  const totalHours = logs.reduce((s, l) => s + num(l.hrs), 0)
+  const activeProjects = projects.filter(p => p.status === 'active' || p.status === 'coming').length
+  return { pipeline, paid, billed, exposure, svcUnbilled, openRfis, totalHours, activeProjects }
+}
+const svcWithBalanceDue = serviceLogs.reduce((s, l) => {
     const quoted = num(l.quoted)
     const collected = num(l.collected)
     const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
@@ -780,14 +787,7 @@ export function getKPIs(d: BackupData) {
     const totalBillable = quoted + addIncome
     return s + (totalBillable - collected > 0 ? totalBillable : 0)
   }, 0)
-const pipeline = projectContract + svcWithBalanceDue
-  const pipeline = projectContract + svcUnbilled
-  const openRfis = projects.reduce((s, p) => s + (p.rfis || []).filter((r: any) => r.status !== 'answered').length, 0)
-  const totalHours = logs.reduce((s, l) => s + num(l.hrs), 0)
-  const activeProjects = projects.filter(p => p.status === 'active' || p.status === 'coming').length
-  return { pipeline, paid, billed, exposure, svcUnbilled, openRfis, totalHours, activeProjects }
-}
-
+  const pipeline = projectContract + svcWithBalanceDue
 /** Old getProjectHealth kept for backward compat — wraps new health() */
 export function getProjectHealth(p: BackupProject, d?: BackupData): { score: number; label: string; color: string } {
   if (!d) {
