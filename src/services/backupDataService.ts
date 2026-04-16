@@ -53,6 +53,9 @@ let _lastSyncMeta: { savedBy: string; savedAt: string } | null = null
 let _lastLocalSaveAt = 0
 const FORCE_PULL_DEBOUNCE_MS = 5000 // 5 seconds
 
+/** True while this device is actively pushing to Supabase — blocks incoming force-pulls */
+let _syncInFlight = false
+
 /** Returns true if a recent local save should block an incoming force-pull */
 export function isWithinSaveDebounce(): boolean {
   return Date.now() - _lastLocalSaveAt < FORCE_PULL_DEBOUNCE_MS
@@ -855,10 +858,11 @@ const SUPABASE_STATE_KEY = 'poweron_v2'
 export async function syncToSupabase(): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, error: 'Supabase not configured' }
 
+  _syncInFlight = true
   try {
     const { supabase } = await import('@/lib/supabase')
     const data = getBackupData()
-    if (!data) return { success: false, error: 'No local data to sync' }
+    if (!data) { _syncInFlight = false; return { success: false, error: 'No local data to sync' } }
 
     const now = new Date().toISOString()
     const deviceId = getDeviceId()
@@ -879,14 +883,17 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
 
     if (error) {
       console.error('[Sync] Supabase write failed:', error.message)
+      _syncInFlight = false
       return { success: false, error: error.message }
     }
-    _lastLocalSaveAt = Date.now() // start debounce window AFTER successful upsert
 
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
+    _lastLocalSaveAt = Date.now()
     console.log(`[Sync] Synced to Supabase at ${now} by ${deviceId}`)
+    _syncInFlight = false
     return { success: true }
   } catch (err: any) {
+    _syncInFlight = false
     console.error('[Sync] Supabase sync error:', err)
     return { success: false, error: err?.message || 'Unknown error' }
   }
@@ -905,7 +912,7 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
   try {
     const { supabase } = await import('@/lib/supabase')
     const thisDevice = getDeviceId()
-
+      await new Promise(r => setTimeout(r, 1000)) // wait 1s for Supabase to commit
     const { data: row, error } = await supabase
       .from('app_state')
       .select('data, updated_at')
@@ -1003,6 +1010,10 @@ export async function loadFromSupabaseForced(): Promise<{ success: boolean; from
     // If this device triggered the Realtime event, skip the overwrite —
     // we already have the latest data and force-pulling would clobber
     // in-flight local changes (add/delete friction bug)
+    if (_syncInFlight) {
+      console.log('[Sync] Force-load skipped — local sync in flight')
+      return { success: true, fromDevice: remoteDevice }
+    }
     const thisDevice = getDeviceId()
     if (remoteDevice === thisDevice) {
       console.log(`[Sync] Force-load skipped — Realtime event was from this device (${thisDevice})`)
@@ -1220,5 +1231,5 @@ export function restoreSnapshot(snapshotId: string): boolean {
 
 export function deleteSnapshot(snapshotId: string): void {
   const snapshots = getSnapshots().filter(s => s.id !== snapshotId)
-  localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots))
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots))
 }
