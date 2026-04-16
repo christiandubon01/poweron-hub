@@ -1555,7 +1555,7 @@ Return ONLY valid JSON, no other text.`
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Mileage Calculation</h4>
             <span style={{ color: '#f59e0b', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.mi)}</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', fontSize: '13px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', fontSize: '13px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
                 Miles Round Trip
@@ -1596,6 +1596,17 @@ Return ONLY valid JSON, no other text.`
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                Total Miles
+              </label>
+              <div style={{ color: '#22d3ee', fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', padding: '6px', backgroundColor: 'rgba(6,182,212,0.08)', borderRadius: '4px', border: '1px solid rgba(6,182,212,0.2)' }}>
+                {num(p.mileRT || 0) * num(p.miDays || 0)} mi
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '3px' }}>
+                {p.mileRT || 0} RT × {p.miDays || 0} days
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
                 Rate (per mile)
               </label>
               <div style={{ color: 'var(--t2)', fontFamily: 'monospace', fontSize: '13px', padding: '6px' }}>
@@ -1613,13 +1624,40 @@ Return ONLY valid JSON, no other text.`
               <p style={{ color: '#22c55e', fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', margin: '0 0 4px 0' }}>{fmt(t.profit)}</p>
               <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>Projected Profit ({t.marginPct.toFixed(1)}%)</p>
             </div>
+            {/* Editable Contract Amount */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', padding: '10px 14px', backgroundColor: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '6px' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '12px', fontWeight: '600' }}>Total Contract Amount</span>
+              <span style={{ color: 'var(--t3)', fontSize: '12px' }}>$</span>
+              <input
+                type="number"
+                value={num(p.contract || 0)}
+                onChange={e => {
+                  pushState()
+                  p.contract = num(e.target.value)
+                  saveBackupDataAndSync(backup)
+                  forceUpdate()
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(16,185,129,0.4)',
+                  color: '#10b981',
+                  fontFamily: 'monospace',
+                  fontWeight: '700',
+                  fontSize: '18px',
+                  width: '120px',
+                  textAlign: 'right',
+                  outline: 'none',
+                }}
+              />
+            </div>
             <div style={{ space: '8px' }}>
               {[
-                { label: 'Labor', value: t.lab, color: '#3b82f6', pct: t.total > 0 ? (t.lab / t.total) * 100 : 0 },
-                { label: 'Material', value: t.matC, color: '#eab308', pct: t.total > 0 ? (t.matC / t.total) * 100 : 0 },
-                { label: 'Mileage', value: t.mi, color: '#14b8a6', pct: t.total > 0 ? (t.mi / t.total) * 100 : 0 },
-                { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: t.total > 0 ? (t.oh / t.total) * 100 : 0 },
-                { label: 'Profit', value: t.profit, color: '#22c55e', pct: t.total > 0 ? (t.profit / t.total) * 100 : 0 },
+                { label: 'Labor', value: t.lab, color: '#3b82f6', pct: (num(p.contract) > 0) ? (t.lab / num(p.contract)) * 100 : 0 },
+                { label: 'Material', value: t.matC, color: '#eab308', pct: (num(p.contract) > 0) ? (t.matC / num(p.contract)) * 100 : 0 },
+                { label: 'Mileage', value: t.mi, color: '#14b8a6', pct: (num(p.contract) > 0) ? (t.mi / num(p.contract)) * 100 : 0 },
+                { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: (num(p.contract) > 0) ? (t.oh / num(p.contract)) * 100 : 0 },
+                { label: 'Profit', value: t.profit, color: '#22c55e', pct: (num(p.contract) > 0) ? (t.profit / num(p.contract)) * 100 : 0 },
               ].filter(item => item.value > 0).map(item => (
                 <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
                   <span style={{ color: 'var(--t3)', fontSize: '12px', width: '65px', textAlign: 'left' }}>{item.label}</span>
