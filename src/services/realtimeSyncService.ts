@@ -19,7 +19,7 @@
  *   return () => cleanup()
  */
 
-import { isSupabaseConfigured, loadFromSupabase, loadFromSupabaseForced, getBackupData } from './backupDataService'
+import { isSupabaseConfigured, loadFromSupabase, getBackupData } from './backupDataService'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -68,10 +68,10 @@ function notifyDataRefreshed(source: string): void {
 /**
  * Pull latest data from Supabase and notify components if something changed.
  */
-async function pullAndRefresh(source: string, force = false): Promise<void> {
+async function pullAndRefresh(source: string): Promise<void> {
   if (!isSupabaseConfigured()) return
   try {
-    const result = force ? await loadFromSupabaseForced() : await loadFromSupabase()
+    const result = await loadFromSupabase()
     if (result.success) {
       notifyDataRefreshed(source)
     }
@@ -141,7 +141,7 @@ export function subscribeToRealtimeChanges(
               { event: '*', schema: 'public', table },
               async (payload: any) => {
                 console.log(`[RealtimeSync] Change detected on table "${table}":`, payload.eventType)
-                await pullAndRefresh(`realtime:${table}`, true)
+                await pullAndRefresh(`realtime:${table}`)
                 onRefresh?.(table)
               }
             )
