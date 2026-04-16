@@ -124,7 +124,7 @@ function computeHealthScore(
   if (daysSinceMove > 14) score -= 20
   const openRFIs = (p.rfis || []).filter((r: any) => r.status !== 'answered')
   if (openRFIs.length > 0) score -= 15
-  const contract = num(p.finance?.contractOverride || p.contract)
+  const contract = num(p.contract)
   // Exposure approximated from logged labor cost — may be 0 if not tracked
   const exposure = num(p.actual_cost || 0)
   if (contract > 0 && exposure > contract * 0.5) score -= 10
@@ -137,8 +137,8 @@ function computeHealthScore(
 function getFinancials(p: any): {
   contract: number; billed: number; paid: number; outstanding: number
 } {
-  const contract    = num(p.finance?.contractOverride) || num(p.contract)
-  const billed      = num(p.finance?.billedOverride)   || num(p.billed)
+  const contract    = num(p.contract)
+  const billed      = num(p.billed)
   const paid        = num(p.paid) + num(p.finance?.manualPaidAdjustment)
   const outstanding = contract - paid
   return { contract, billed, paid, outstanding }

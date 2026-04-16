@@ -568,8 +568,8 @@ export function getProjectFinancials(p: BackupProject, d: BackupData): {
 } {
   if (!p) return { contract: 0, billed: 0, paid: 0, loggedPaid: 0, manualPaidAdjustment: 0, ar: 0, unbilled: 0, risk: 0, matCost: 0, lastCollectedAt: '', lastCollectedAmount: 0 }
   const fin = ensureProjectFinanceBucket(p)
-  const contract = num(fin.contractOverride != null ? fin.contractOverride : p.contract)
-  const billed = num(fin.billedOverride != null ? fin.billedOverride : p.billed)
+  const contract = num(p.contract)
+  const billed = num(p.billed)
   const logs = projectLogsFor(d, p.id)
   const loggedPaid = logs.reduce((s, l) => s + num(l.collected), 0)
   const manualPaidAdjustment = num(fin.manualPaidAdjustment || 0)
@@ -578,7 +578,7 @@ export function getProjectFinancials(p: BackupProject, d: BackupData): {
   const unbilled = Math.max(0, contract - billed)
   const risk = Math.max(0, contract - paid)
   const estMat = Array.isArray(p.matRows) ? p.matRows.reduce((s: number, r: any) => s + (num(r.cost) * num(r.qty || 1)), 0) : 0
-  const matCost = fin.matCostOverride != null ? num(fin.matCostOverride) : estMat
+  const matCost = estMat
   const paidLogs = logs.filter(l => num(l.collected) > 0).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
   const lastCollectedAt = fin.lastCollectedAt || (paidLogs[0] ? paidLogs[0].date : '') || p.lastCollectedAt || ''
   const lastCollectedAmount = paidLogs[0] ? num(paidLogs[0].collected) : num(p.lastCollectedAmount || 0)
@@ -954,8 +954,15 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
     // ── Case 3: Local is newer ──────────────────────────────────────
     if (localTime > remoteTime) {
       if (forceRemote) {
-        // Realtime event triggered this pull — always accept remote regardless of timestamp.
-        // The Realtime event itself proves remote changed; pushing local would overwrite it.
+        // Realtime event triggered this pull. Normally we accept remote regardless
+        // of timestamp — the Realtime event proves remote changed, so pushing local
+        // would overwrite it. Exception: if remote was saved by THIS device, the
+        // Realtime event is just echoing our own push, and our local is genuinely
+        // newer. Skip the pull to avoid clobbering unsaved in-memory state.
+        if (remoteDevice === thisDevice) {
+          console.log(`[Sync] forceRemote skipped — remote is from this device (${thisDevice})`)
+          return { success: true, merged: false }
+        }
         saveBackupDataSilent(remote)
         console.log(`[Sync] forceRemote=true — accepting remote data (saved by ${remoteDevice})`)
         return { success: true, merged: true, fromDevice: remoteDevice }

@@ -7,7 +7,7 @@
  * chips (stale days, completion %, open RFIs), edit/delete/move-status buttons.
  */
 
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X } from 'lucide-react'
 import {
   getBackupData,
@@ -50,6 +50,11 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+  useEffect(() => {
+    const handler = () => forceUpdate()
+    window.addEventListener('poweron-data-saved', handler)
+    return () => window.removeEventListener('poweron-data-saved', handler)
+  }, [forceUpdate])
   const [showQBImport, setShowQBImport] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
 

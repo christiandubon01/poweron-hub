@@ -1632,15 +1632,15 @@ Return ONLY valid JSON, no other text.`
                 type="number"
                 value={num(p.contract || 0)}
                 onChange={e => {
-                p.contract = num(e.target.value)
-                forceUpdate()
-               }}
+                  p.contract = num(e.target.value)
+                  forceUpdate()
+                }}
                 onBlur={e => {
-                pushState()
-                p.contract = num(e.target.value)
-                saveBackupDataAndSync(backup)
-                forceUpdate()
-              }}
+                  pushState()
+                  p.contract = num(e.target.value)
+                  saveBackupDataAndSync(backup)
+                  forceUpdate()
+                }}
                 style={{
                   background: 'transparent',
                   border: 'none',
