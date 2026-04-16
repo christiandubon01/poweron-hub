@@ -335,26 +335,23 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }).catch(() => setSyncStatus('failed'))
   }, [])
 
-  // Periodic sync to Supabase (30s via startPeriodicSync + legacy fallback)
+  // Periodic sync to Supabase — startPeriodicSync handles the 30s debounced push.
+  // The status polling interval ONLY updates UI indicators, never calls syncToSupabase.
   useEffect(() => {
     if (!isSupabaseConfigured()) return
 
-    // Start the new 30s debounced periodic sync from Issue 5
+    // Start the 30s debounced periodic sync — this is the ONLY sync timer
     const stopSync = startPeriodicSync()
 
-    // Also keep a status-polling interval for UI indicators
+    // Status polling — UI only, no Supabase push
     const interval = setInterval(() => {
-      syncToSupabase().then(result => {
-        if (result.success) {
-          setSyncStatus('synced')
-          setLastSyncTime(new Date().toLocaleTimeString())
-          const meta = getLastSyncMeta()
-          if (meta?.savedBy) setLastSyncDevice(meta.savedBy.split('_')[0] || '')
-        } else {
-          setSyncStatus('failed')
-        }
-      }).catch(() => setSyncStatus('failed'))
-    }, 30000) // every 30 seconds (aligned with new sync interval)
+      const meta = getLastSyncMeta()
+      if (meta?.savedBy) {
+        setSyncStatus('synced')
+        setLastSyncTime(new Date().toLocaleTimeString())
+        setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+      }
+    }, 30000)
 
     return () => { stopSync(); clearInterval(interval) }
   }, [])
