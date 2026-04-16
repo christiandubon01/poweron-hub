@@ -57,7 +57,7 @@ export function getLastSyncMeta(): { savedBy: string; savedAt: string } | null {
 let _saveDebounceTimer: any = null
 let _dataChanged = false
 let _lastSyncedAt = 0
-const SYNC_INTERVAL_MS = 10_000 // 30 seconds
+const SYNC_INTERVAL_MS = 13_000 // 13 seconds
 const SAVE_DEBOUNCE_MS = 100
 
 /** Track which top-level keys changed since last sync */
