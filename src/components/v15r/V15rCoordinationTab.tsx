@@ -27,6 +27,8 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['light', 'main', 'urgent']))
   const [journalLinks, setJournalLinks] = useState<JournalEntry[]>([])
   const [journalLinksOpen, setJournalLinksOpen] = useState(true)
+  const [addingSection, setAddingSection] = useState<string | null>(null)
+  const [addingText, setAddingText] = useState("")
 
   const backup = initialBackup || getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
@@ -71,17 +73,27 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
   }
 
   const addItem = (key) => {
-    const text = prompt(`Add ${coordSections.find(s => s.key === key)?.label || 'item'}:`)
-    if (!text) return
+    setAddingSection(key)
+    setAddingText("")
+  }
+
+  const confirmAdd = (key) => {
+    const text = addingText.trim()
+    if (!text) { setAddingSection(null); return }
     pushState()
-    if (!p.coord) p.coord = {}
-    if (!p.coord[key]) p.coord[key] = []
-    p.coord[key].push({
-      id: 'ci' + Date.now(),
+    const freshBackup = getBackupData()
+    const freshP = freshBackup?.projects?.find(x => x.id === projectId)
+    if (!freshP) { setAddingSection(null); return }
+    if (!freshP.coord) freshP.coord = {}
+    if (!freshP.coord[key]) freshP.coord[key] = []
+    freshP.coord[key].push({
+      id: "ci" + Date.now(),
       text: String(text),
-      status: 'pending',
+      status: "pending",
     })
-    saveBackupData(backup)
+    saveBackupData(freshBackup)
+    setAddingSection(null)
+    setAddingText("")
     forceUpdate()
   }
 
@@ -99,10 +111,13 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
 
   const delItem = (key, itemId) => {
     pushState()
-    if (p.coord && p.coord[key]) {
-      p.coord[key] = p.coord[key].filter(i => i.id !== itemId)
+    const freshBackup = getBackupData()
+    const freshP = freshBackup?.projects?.find(x => x.id === projectId)
+    if (!freshP) return
+    if (freshP.coord && freshP.coord[key]) {
+      freshP.coord[key] = freshP.coord[key].filter(i => i.id !== itemId)
     }
-    saveBackupData(backup)
+    saveBackupData(freshBackup)
     forceUpdate()
   }
 
@@ -218,22 +233,57 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
                       </div>
                     )}
 
-                    <button
-                      onClick={() => addItem(section.key)}
-                      style={{
-                        width: '100%',
-                        padding: '6px 12px',
-                        backgroundColor: 'rgba(59,130,246,0.2)',
-                        color: '#3b82f6',
-                        border: '1px solid rgba(59,130,246,0.3)',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                        fontWeight: '600',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      + Add Item
-                    </button>
+                    {addingSection === section.key ? (
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={addingText}
+                          onChange={e => setAddingText(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") confirmAdd(section.key)
+                            if (e.key === "Escape") { setAddingSection(null); setAddingText("") }
+                          }}
+                          placeholder="Type and press Enter..."
+                          style={{
+                            flex: 1,
+                            padding: "6px 10px",
+                            backgroundColor: "#1e2130",
+                            border: "1px solid rgba(59,130,246,0.4)",
+                            borderRadius: "4px",
+                            color: "var(--t1)",
+                            fontSize: "12px",
+                            fontFamily: "inherit",
+                            outline: "none",
+                          }}
+                        />
+                        <button
+                          onClick={() => confirmAdd(section.key)}
+                          style={{ padding: "6px 10px", backgroundColor: "rgba(59,130,246,0.3)", color: "#3b82f6", border: "1px solid rgba(59,130,246,0.4)", borderRadius: "4px", fontSize: "12px", fontWeight: "600", cursor: "pointer" }}
+                        >Add</button>
+                        <button
+                          onClick={() => { setAddingSection(null); setAddingText("") }}
+                          style={{ padding: "6px 8px", backgroundColor: "rgba(239,68,68,0.15)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "4px", fontSize: "12px", cursor: "pointer" }}
+                        >✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => addItem(section.key)}
+                        style={{
+                          width: "100%",
+                          padding: "6px 12px",
+                          backgroundColor: "rgba(59,130,246,0.2)",
+                          color: "#3b82f6",
+                          border: "1px solid rgba(59,130,246,0.3)",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          fontWeight: "600",
+                          cursor: "pointer",
+                        }}
+                      >
+                        + Add Item
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
