@@ -1617,7 +1617,7 @@ Return ONLY valid JSON, no other text.`
         </div>
 
         {/* DEAL OVERVIEW CHART */}
-        {num(p.contract || 0) > 0 && (
+        {hasAnyData && (
           <div style={{ backgroundColor: '#1f2937', borderRadius: '8px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 16px 0' }}>Deal Overview</h4>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
@@ -1632,11 +1632,15 @@ Return ONLY valid JSON, no other text.`
                 type="number"
                 value={num(p.contract || 0)}
                 onChange={e => {
-                  pushState()
-                  p.contract = num(e.target.value)
-                  saveBackupDataAndSync(backup)
-                  forceUpdate()
-                }}
+                p.contract = num(e.target.value)
+                forceUpdate()
+               }}
+                onBlur={e => {
+                pushState()
+                p.contract = num(e.target.value)
+                saveBackupDataAndSync(backup)
+                forceUpdate()
+              }}
                 style={{
                   background: 'transparent',
                   border: 'none',
