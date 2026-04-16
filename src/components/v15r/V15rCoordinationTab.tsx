@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback, useEffect } from 'react'
 import { Sparkles, ChevronDown, BookOpen } from 'lucide-react'
-import { getBackupData, saveBackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { getJournalEntriesForProject, type JournalEntry } from '@/services/voiceJournalService'
 
@@ -91,7 +91,7 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
       text: String(text),
       status: "pending",
     })
-    saveBackupData(freshBackup)
+    saveBackupDataAndSync(freshBackup)
     setAddingSection(null)
     setAddingText("")
     forceUpdate()
@@ -117,7 +117,7 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
     if (freshP.coord && freshP.coord[key]) {
       freshP.coord[key] = freshP.coord[key].filter(i => i.id !== itemId)
     }
-    saveBackupData(freshBackup)
+    saveBackupDataAndSync(freshBackup)
     forceUpdate()
   }
 
