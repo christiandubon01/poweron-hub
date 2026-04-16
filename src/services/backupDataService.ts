@@ -366,6 +366,15 @@ export function saveBackupData(data: BackupData): void {
   } catch { /* ignore poweron_v2 sync errors */ }
 }
 
+/**
+ * Write remote data to localStorage silently — no event dispatch, no sync trigger.
+ * Used exclusively by loadFromSupabaseForced() to break the Realtime re-sync loop.
+ * Regular saves must always use saveBackupData() or saveBackupDataAndSync().
+ */
+function saveBackupDataSilent(data: BackupData): void {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch { /* ignore */ }
+}
+
 export function clearBackupData(): void {
   try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
 }
@@ -1004,7 +1013,9 @@ export async function loadFromSupabaseForced(): Promise<{ success: boolean; from
       return { success: true, fromDevice: remoteDevice }
     }
     console.log(`[Sync] Force-loading remote data from ${remoteDevice} (Realtime trigger)`)
-    saveBackupData(remote)
+    saveBackupDataSilent(remote)
+    // Notify UI components once — silent write skips the auto-dispatch
+    try { window.dispatchEvent(new CustomEvent("poweron-data-saved")) } catch { /* ignore */ }
     return { success: true, fromDevice: remoteDevice }
   } catch (err: any) {
     console.error("[Sync] Force-load error:", err)
