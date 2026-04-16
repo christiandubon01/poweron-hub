@@ -880,7 +880,7 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
  *
  * Returns { merged: true, fromDevice } when remote data was loaded.
  */
-export async function loadFromSupabase(): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string }> {
+export async function loadFromSupabase(forceRemote = false): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, merged: false, error: 'Supabase not configured' }
 
   try {
@@ -941,8 +941,15 @@ export async function loadFromSupabase(): Promise<{ success: boolean; merged: bo
       return { success: true, merged: true, fromDevice: remoteDevice }
     }
 
-    // ── Case 3: Local is newer — push to Supabase ───────────────────
+    // ── Case 3: Local is newer ──────────────────────────────────────
     if (localTime > remoteTime) {
+      if (forceRemote) {
+        // Realtime event triggered this pull — always accept remote regardless of timestamp.
+        // The Realtime event itself proves remote changed; pushing local would overwrite it.
+        saveBackupData(remote)
+        console.log(`[Sync] forceRemote=true — accepting remote data (saved by ${remoteDevice})`)
+        return { success: true, merged: true, fromDevice: remoteDevice }
+      }
       console.log('[Sync] Local is newer — pushing to Supabase, Loading: local')
       await syncToSupabase()
       return { success: true, merged: false }
