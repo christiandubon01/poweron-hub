@@ -357,6 +357,16 @@ export function saveBackupData(data: BackupData): void {
   } catch { /* ignore poweron_v2 sync errors */ }
 }
 
+/**
+ * Write data to localStorage silently.
+ * No poweron-data-saved dispatch. Does not set _dataChanged.
+ * Use ONLY for internal sync operations (embedding metadata, saving remote pulls)
+ * to prevent re-triggering the sync loop.
+ */
+function saveBackupDataSilent(data: BackupData): void {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch { /* ignore */ }
+}
+
 export function clearBackupData(): void {
   try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
 }
@@ -848,7 +858,7 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     // Embed device metadata + update timestamp
     data._lastSavedAt = now
     data._syncMeta = { savedBy: deviceId, savedAt: now }
-    saveBackupData(data) // persist locally with metadata
+    saveBackupDataSilent(data) // persist locally with metadata — silent to avoid re-sync loop
 
     // Single upsert to Supabase with all metadata embedded
     const { error } = await supabase
@@ -929,14 +939,14 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
 
     // ── Case 1: No local data — use remote ──────────────────────────
     if (!local) {
-      saveBackupData(remote)
+      saveBackupDataSilent(remote)
       console.log('[Sync] No local data — Loading: remote')
       return { success: true, merged: true, fromDevice: remoteDevice }
     }
 
     // ── Case 2: Remote is newer — ALWAYS use remote (no richness guard) ──
     if (remoteTime > localTime) {
-      saveBackupData(remote)
+      saveBackupDataSilent(remote)
       console.log(`[Sync] Remote is newer — Loading: remote (saved by ${remoteDevice})`)
       return { success: true, merged: true, fromDevice: remoteDevice }
     }
@@ -946,7 +956,7 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
       if (forceRemote) {
         // Realtime event triggered this pull — always accept remote regardless of timestamp.
         // The Realtime event itself proves remote changed; pushing local would overwrite it.
-        saveBackupData(remote)
+        saveBackupDataSilent(remote)
         console.log(`[Sync] forceRemote=true — accepting remote data (saved by ${remoteDevice})`)
         return { success: true, merged: true, fromDevice: remoteDevice }
       }
