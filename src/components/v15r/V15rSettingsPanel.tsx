@@ -451,7 +451,7 @@ export default function V15rSettingsPanel() {
         dayTarget: 361,
         amBlock: 420,
         pmBlock: 260,
-        opCost: 42.45,
+        opCost: 0,
         salaryTarget: 12000,
         billableHrsYear: 936,
         annualTarget: 120000,
@@ -684,7 +684,7 @@ export default function V15rSettingsPanel() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Labor Rate ($/hr)</label>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Bill Rate ($/hr)</label>
                   <input
                     type="number"
                     value={settings.billRate || 95}
@@ -715,6 +715,27 @@ export default function V15rSettingsPanel() {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Owner Labor Cost ($/hr)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={settings.opCost || ''}
+                    onChange={(e) => {
+                      const data = getBackupData()
+                      if (data) {
+                        pushState(data)
+                        data.settings.opCost = parseFloat(e.target.value) || 0
+                        persist()
+                      }
+                    }}
+                    className="w-full px-3 py-2 border rounded text-sm theme-input"
+                  />
+                </div>
+                <div />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
