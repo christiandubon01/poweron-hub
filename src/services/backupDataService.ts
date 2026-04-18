@@ -671,7 +671,7 @@ export function getAgendaProjectName(d: BackupData, projectId: string): string {
 /** Build cumulative log rollup for a project.
  *  Sorted oldest-to-newest so cumulative fields accumulate correctly.
  *  Spec:
- *    Labor cost = hours × billing rate (settings.billRate, default $95/hr)
+ *    Labor cost = hours × internal overhead rate (settings.opCost, NaN if missing)
  *    Material cost = mat as entered
  *    Mileage cost = miles × mileRate (settings.mileRate, default $0.67/mi)
  *    Running balance = contract − cumulative collected − cumulative total cost
@@ -686,9 +686,15 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
     if (da !== db) return da.localeCompare(db)
     return String(a.id || '').localeCompare(String(b.id || ''))
   })
-  // Spec: billing rate for labor (not opCost/overhead rate)
-  const billRate = num((d.settings && d.settings.billRate) || 95)
-  const mileRate = num((d.settings && d.settings.mileRate) || 0.67)
+  // Spec: internal overhead rate for labor cost (opCost/OH_RATE, NOT billRate)
+  const opCost = num(d.settings && d.settings.opCost)
+  const mileRate = num(d.settings && d.settings.mileRate)
+  if (!opCost) {
+    console.error('[buildProjectLogRollup] Settings opCost missing — returning NaN costs')
+  }
+  if (!mileRate) {
+    console.error('[buildProjectLogRollup] Settings mileRate missing — returning NaN costs')
+  }
   let cumHours = 0, cumMiles = 0
   let cumLaborCost = 0, cumMaterialCost = 0, cumMileageCost = 0, cumCollected = 0
   const byId: Record<string, any> = {}
@@ -697,8 +703,8 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
     cumMiles += num(l.miles)
     cumCollected += num(l.collected)
 
-    // Per-entry cost (spec: Labor=hrs×billRate, Material=mat, Mileage=milesRT×mileRate)
-    const entryLaborCost = num(l.hrs) * billRate
+    // Per-entry cost (spec: Labor=hrs×opCost, Material=mat, Mileage=milesRT×mileRate)
+    const entryLaborCost = num(l.hrs) * opCost
     const entryMaterialCost = num(l.mat)
     const entryMileageCost = num(l.miles) * mileRate
     const entryTotalCost = entryLaborCost + entryMaterialCost + entryMileageCost
@@ -733,6 +739,67 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
   return { quote, logs, byId }
 }
 
+/**
+ * buildServiceLogRollup — service log cost rollup.
+ * Mirrors buildProjectLogRollup for service logs.
+ * Precedence: per-log opCost override wins over settings opCost
+ * (handles subcontractor/helper calls with different internal rates).
+ * Formula: hours × effectiveOpCost + materials + miles × mileRate
+ */
+export function buildServiceLogRollup(d: BackupData) {
+  const settingsOpCost = num(d.settings && d.settings.opCost)
+  const mileRate = num(d.settings && d.settings.mileRate)
+  if (!settingsOpCost) {
+    console.error('[buildServiceLogRollup] Settings opCost missing — returning NaN costs')
+  }
+  if (!mileRate) {
+    console.error('[buildServiceLogRollup] Settings mileRate missing — returning NaN costs')
+  }
+
+  const serviceLogs = d.serviceLogs || []
+  const byId: Record<string, any> = {}
+  let cumLaborCost = 0
+  let cumMaterialCost = 0
+  let cumMileageCost = 0
+  let cumTotalCost = 0
+
+  for (const l of serviceLogs) {
+    const logOpCost = num(l.opCost)
+    const effectiveOpCost = logOpCost > 0 ? logOpCost : settingsOpCost
+    const entryLaborCost = num(l.hrs) * effectiveOpCost
+    const entryMaterialCost = num(l.mat)
+    const entryMileageCost = num(l.miles) * mileRate
+    const entryTotalCost = entryLaborCost + entryMaterialCost + entryMileageCost
+
+    cumLaborCost += entryLaborCost
+    cumMaterialCost += entryMaterialCost
+    cumMileageCost += entryMileageCost
+    cumTotalCost += entryTotalCost
+
+    byId[l.id] = {
+      entryLaborCost,
+      entryMaterialCost,
+      entryMileageCost,
+      entryTotalCost,
+      cumLaborCost,
+      cumMaterialCost,
+      cumMileageCost,
+      cumTotalCost,
+      effectiveOpCost
+    }
+  }
+
+  return {
+    logs: serviceLogs,
+    byId,
+    totals: {
+      cumLaborCost,
+      cumMaterialCost,
+      cumMileageCost,
+      cumTotalCost
+    }
+  }
+}
 /** Sync all project finance buckets */
 export function syncAllProjectFinanceBuckets(d: BackupData): void {
   ;(d.projects || []).forEach(p => ensureProjectFinanceBucket(p))
