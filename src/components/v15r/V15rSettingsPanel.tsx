@@ -325,15 +325,15 @@ export default function V15rSettingsPanel() {
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
 
-  const persist = useCallback(() => {
-    const data = getBackupData()
-    if (data) {
-      pushState(data)
-      data._lastSavedAt = new Date().toISOString()
-      saveBackupData(data)
-      forceUpdate()
-    }
-  }, [forceUpdate])
+const persist = useCallback((mutatedData?: BackupData) => {
+  const data = mutatedData || getBackupData()
+  if (data) {
+    if (!mutatedData) pushState(data)
+    data._lastSavedAt = new Date().toISOString()
+    saveBackupData(data)
+    forceUpdate()
+  }
+}, [forceUpdate])
 
   const settings = backup.settings || {} as any
 
@@ -378,7 +378,7 @@ export default function V15rSettingsPanel() {
       timestamp: new Date().toISOString(),
       data: deepClone
     }
-    persist()
+    persist(data)
     alert(`Snapshot "${name}" saved ✓`)
   }, [persist])
 
@@ -401,7 +401,7 @@ export default function V15rSettingsPanel() {
     if (data && (data as any).snapshots) {
       pushState(data)
       delete (data as any).snapshots[snapId]
-      persist()
+      persist(data)
     }
   }, [persist])
 
@@ -460,7 +460,7 @@ export default function V15rSettingsPanel() {
         overhead: { essential: [], extra: [], loans: [], vehicle: [] },
         gcalUrl: '',
       } as any
-      persist()
+      persist(data)
       alert('Settings reset ✓')
     }
   }, [persist])
@@ -641,7 +641,7 @@ export default function V15rSettingsPanel() {
                     if (data) {
                       pushState(data)
                       data.settings.company = e.target.value
-                      persist()
+                      persist(data)
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
@@ -658,7 +658,7 @@ export default function V15rSettingsPanel() {
                     if (data) {
                       pushState(data)
                       data.settings.ownerName = e.target.value
-                      persist()
+                      persist(data)
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
@@ -675,7 +675,7 @@ export default function V15rSettingsPanel() {
                     if (data) {
                       pushState(data)
                       data.settings.license = e.target.value
-                      persist()
+                      persist(data)
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
@@ -693,7 +693,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.billRate = parseFloat(e.target.value) || 95
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -709,7 +709,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.defaultOHRate = parseFloat(e.target.value) || 55
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -729,7 +729,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.opCost = parseFloat(e.target.value) || 0
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -750,7 +750,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.mileRate = parseFloat(e.target.value) || 0.66
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -766,7 +766,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.markup = parseFloat(e.target.value) || 50
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -786,7 +786,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.tax = parseFloat(e.target.value) || 8.75
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -802,7 +802,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.wasteDefault = parseFloat(e.target.value) || 10
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -821,7 +821,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.dayTarget = parseFloat(e.target.value) || 361
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -837,7 +837,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.billableHrsYear = parseFloat(e.target.value) || 936
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -856,7 +856,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.amBlock = parseFloat(e.target.value) || 420
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -872,7 +872,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.pmBlock = parseFloat(e.target.value) || 260
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -890,7 +890,7 @@ export default function V15rSettingsPanel() {
                     if (data) {
                       pushState(data)
                       data.settings.salaryTarget = parseFloat(e.target.value) || 12000
-                      persist()
+                      persist(data)
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -907,7 +907,7 @@ export default function V15rSettingsPanel() {
                     if (data) {
                       pushState(data)
                       data.settings.annualTarget = parseFloat(e.target.value) || 120000
-                      persist()
+                      persist(data)
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -1064,7 +1064,7 @@ export default function V15rSettingsPanel() {
                           if (!data.settings.overhead) data.settings.overhead = { essential: [], extra: [], loans: [], vehicle: [] }
                           if (!data.settings.overhead[key]) data.settings.overhead[key] = []
                           data.settings.overhead[key].push({ id: Date.now().toString(), name, monthly })
-                          persist()
+                          persist(data)
                         }
                       }}
                       className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40"
@@ -1088,7 +1088,7 @@ export default function V15rSettingsPanel() {
                                 const idx = data.settings.overhead[key].findIndex((x: any) => x.id === item.id)
                                 if (idx >= 0) {
                                   data.settings.overhead[key][idx].monthly = parseFloat(e.target.value) || 0
-                                  persist()
+                                  persist(data)
                                 }
                               }
                             }}
@@ -1101,7 +1101,7 @@ export default function V15rSettingsPanel() {
                               if (data && data.settings.overhead && data.settings.overhead[key]) {
                                 pushState(data)
                                 data.settings.overhead[key] = data.settings.overhead[key].filter((x: any) => x.id !== item.id)
-                                persist()
+                                persist(data)
                               }
                             }}
                             className="text-xs text-red-400 hover:text-red-300"
@@ -1193,7 +1193,7 @@ export default function V15rSettingsPanel() {
                   if (data) {
                     pushState(data)
                     data.settings.gcalUrl = e.target.value
-                    persist()
+                    persist(data)
                   }
                 }}
                 placeholder="Paste Google Calendar embed URL"
@@ -1505,7 +1505,7 @@ export default function V15rSettingsPanel() {
                       if (data) {
                         pushState(data)
                         data.settings.mtoPhases = data.settings.mtoPhases.filter((_: string, idx: number) => idx !== i)
-                        persist()
+                        persist(data)
                       }
                     }}
                     className="text-red-400 hover:text-red-300"
@@ -1523,7 +1523,7 @@ export default function V15rSettingsPanel() {
                     pushState(data)
                     if (!data.settings.mtoPhases) data.settings.mtoPhases = []
                     data.settings.mtoPhases.push(name)
-                    persist()
+                    persist(data)
                   }
                 }}
                 className="w-full text-xs px-2 py-2 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 border border-blue-500/30"
