@@ -247,7 +247,7 @@ export interface FieldObservationCard {
 export interface BackupData {
   logs: BackupLog[]
   projects: BackupProject[]
-  priceBook: Record<string, BackupPriceBookItem>
+  priceBook: BackupPriceBookItem[]
   weeklyData: BackupWeeklyData[]
   serviceLogs: BackupServiceLog[]
   triggerRules: BackupTriggerRule[]
@@ -307,7 +307,7 @@ export function getBackupData(): BackupData | null {
           if (localPBArr.length === 0 && v2PB.length > 0) {
             // Hydrate from poweron_v2
             console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2PB.length, 'items')
-            data.priceBook = v2Data.priceBook
+            data.priceBook = Array.isArray(v2Data.priceBook) ? v2Data.priceBook : Object.values(v2Data.priceBook || {})
           } else if (localPBArr.length > v2PB.length && v2PB.length >= 0) {
             // Step 2: One-time migration — local has MORE items, merge into poweron_v2
             const v2Ids = new Set(v2PB.map((i: any) => i.id).filter(Boolean))
@@ -321,13 +321,34 @@ export function getBackupData(): BackupData | null {
           }
         }
       } catch { /* ignore poweron_v2 parse errors */ }
+      // Runtime migration: if legacy object-shape priceBook found, convert once and re-save silently
+      if (data && data.priceBook && !Array.isArray(data.priceBook) && typeof data.priceBook === 'object') {
+        console.warn('[backupDataService] Migrating legacy object-shape priceBook to array — one-time conversion')
+        data.priceBook = Object.values(data.priceBook as Record<string, BackupPriceBookItem>)
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+        } catch (e) {
+          console.error('[backupDataService] Failed to persist migrated priceBook:', e)
+        }
+      }
       return data
     }
     // If no data under STORAGE_KEY, try poweron_v2 as fallback
     const v2Raw = localStorage.getItem('poweron_v2')
     if (v2Raw) {
       console.log('[backupDataService] No data in', STORAGE_KEY, '— loading from poweron_v2')
-      return JSON.parse(v2Raw) as BackupData
+      const v2Parsed = JSON.parse(v2Raw) as BackupData
+      // Runtime migration: legacy poweron_v2 may be object-shape too
+      if (v2Parsed && v2Parsed.priceBook && !Array.isArray(v2Parsed.priceBook) && typeof v2Parsed.priceBook === 'object') {
+        console.warn('[backupDataService] Migrating legacy object-shape priceBook (from poweron_v2) to array — one-time conversion')
+        v2Parsed.priceBook = Object.values(v2Parsed.priceBook as Record<string, BackupPriceBookItem>)
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(v2Parsed))
+        } catch (e) {
+          console.error('[backupDataService] Failed to persist migrated priceBook:', e)
+        }
+      }
+      return v2Parsed
     }
     return null
   } catch (err) {
@@ -382,7 +403,7 @@ export interface ImportMergeSummary {
 
 function createEmptyBackup(): BackupData {
   return {
-    logs: [], projects: [], priceBook: {}, weeklyData: [], serviceLogs: [],
+    logs: [], projects: [], priceBook: [], weeklyData: [], serviceLogs: [],
     triggerRules: [], calcRefs: {}, customers: [], settings: {} as any,
     employees: [], templates: [], gcContacts: [], serviceLeads: [],
     agendaSections: [], customAlerts: [], completedArchive: [], projectDashboards: {},
@@ -436,26 +457,24 @@ export async function importBackupFromFile(file: File): Promise<{ data: BackupDa
     }
   }
 
-  // Special handling for priceBook — accepts both array and Record formats from HTML app
+  // PriceBook merge — array shape canonical. Accepts legacy object-shape on import only (one-way).
   if (raw.priceBook) {
     const incomingItems: BackupPriceBookItem[] = Array.isArray(raw.priceBook)
       ? raw.priceBook
-      : Object.values(raw.priceBook)
+      : Object.values(raw.priceBook as Record<string, BackupPriceBookItem>)
     if (incomingItems.length > 0) {
-      // Normalize existing to Record if it's an array
-      if (Array.isArray(existing.priceBook)) {
-        const asRecord: Record<string, any> = {}
-        for (const item of existing.priceBook as any[]) {
-          if (item.id) asRecord[item.id] = item
-        }
-        existing.priceBook = asRecord
+      // Normalize existing to array (tolerate legacy object-shape in existing localStorage)
+      if (!Array.isArray(existing.priceBook)) {
+        existing.priceBook = existing.priceBook && typeof existing.priceBook === 'object'
+          ? Object.values(existing.priceBook as Record<string, BackupPriceBookItem>)
+          : []
       }
-      if (!existing.priceBook || typeof existing.priceBook !== 'object') existing.priceBook = {}
-      const existingIds = new Set(Object.keys(existing.priceBook))
+      const existingIds = new Set((existing.priceBook as BackupPriceBookItem[]).map(it => it.id))
       let added = 0
       for (const item of incomingItems) {
         if (item.id && !existingIds.has(item.id)) {
-          existing.priceBook[item.id] = item
+          (existing.priceBook as BackupPriceBookItem[]).push(item)
+          existingIds.add(item.id)
           added++
         }
       }
@@ -870,7 +889,7 @@ export function getProjectHealth(p: BackupProject, d?: BackupData): { score: num
     // fallback: try to get backup data
     const backup = getBackupData()
     if (backup) d = backup
-    else d = { projects: [], logs: [], serviceLogs: [], priceBook: {}, weeklyData: [], triggerRules: [], calcRefs: {}, customers: [], settings: {} as any, employees: [], templates: [], gcContacts: [], serviceLeads: [], agendaSections: [], completedArchive: [], projectDashboards: {}, blueprintSummaries: {}, activeServiceCalls: [], serviceEstimates: [], taskSchedule: [], dailyJobs: [], weeklyReviews: [], _lastSavedAt: '', _schemaVersion: 0 }
+    else d = { projects: [], logs: [], serviceLogs: [], priceBook: [], weeklyData: [], triggerRules: [], calcRefs: {}, customers: [], settings: {} as any, employees: [], templates: [], gcContacts: [], serviceLeads: [], agendaSections: [], completedArchive: [], projectDashboards: {}, blueprintSummaries: {}, activeServiceCalls: [], serviceEstimates: [], taskSchedule: [], dailyJobs: [], weeklyReviews: [], _lastSavedAt: '', _schemaVersion: 0 }
   }
   const h = health(p, d)
   const label = h.sc >= 70 ? 'Healthy' : h.sc >= 50 ? 'Watch' : h.sc >= 30 ? 'At Risk' : 'Critical'

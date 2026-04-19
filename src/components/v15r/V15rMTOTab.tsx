@@ -158,7 +158,11 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       unit: pbFormUnit,
       waste: 0,
     }
-    backup.priceBook = backup.priceBook || []
+    if (!Array.isArray(backup.priceBook)) {
+      backup.priceBook = backup.priceBook && typeof backup.priceBook === 'object'
+        ? Object.values(backup.priceBook) as any[]
+        : []
+    }
     backup.priceBook.push(newItem)
 
     // Link the MTO row to the new price book entry

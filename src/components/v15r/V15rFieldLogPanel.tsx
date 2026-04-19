@@ -874,7 +874,7 @@ export default function V15rFieldLogPanel() {
               <VoiceMaterialCapture
                 value={flMat}
                 onChange={setFlMat}
-                priceBook={backup.priceBook || []}
+                priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
                 onConfirm={(total, note) => {
                   setFlMat(total > 0 ? total.toFixed(2) : flMat)
                   setFlNotes(prev => prev ? `${prev}\n${note}` : note)
@@ -1970,7 +1970,7 @@ export default function V15rFieldLogPanel() {
               <VoiceMaterialCapture
                 value={slMat}
                 onChange={setSlMat}
-                priceBook={backup.priceBook || []}
+                priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
                 onConfirm={(total, note) => {
                   setSlMat(total > 0 ? total.toFixed(2) : slMat)
                   setSlNotes(prev => prev ? `${prev}\n${note}` : note)

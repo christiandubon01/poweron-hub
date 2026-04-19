@@ -748,13 +748,9 @@ export default function V15rPriceBookPanel() {
 
   const saveNotes = (id: string) => {
     pushState()
-    if (Array.isArray(backup.priceBook)) {
-      const idx = (backup.priceBook as any[]).findIndex((item: any) => item.id === id)
-      if (idx >= 0) (backup.priceBook as any[])[idx].notes = editNotes
-    } else {
-      if (!backup.priceBook[id]) return
-      backup.priceBook[id].notes = editNotes
-    }
+    if (!Array.isArray(backup.priceBook)) backup.priceBook = []
+    const idx = (backup.priceBook as any[]).findIndex((item: any) => item.id === id)
+    if (idx >= 0) (backup.priceBook as any[])[idx].notes = editNotes
     persistPriceBook()
     setEditingId(null)
     refreshBackup()
@@ -763,11 +759,8 @@ export default function V15rPriceBookPanel() {
   const deleteItem = (id: string) => {
     if (!confirm('Delete this item?')) return
     pushState()
-    if (Array.isArray(backup.priceBook)) {
-      backup.priceBook = (backup.priceBook as any[]).filter((item: any) => item.id !== id)
-    } else {
-      delete backup.priceBook[id]
-    }
+    if (!Array.isArray(backup.priceBook)) backup.priceBook = []
+    backup.priceBook = (backup.priceBook as any[]).filter((item: any) => item.id !== id)
     persistPriceBook()
     refreshBackup()
   }
