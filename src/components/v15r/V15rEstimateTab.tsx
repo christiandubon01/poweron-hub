@@ -64,6 +64,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     // Show ALL MTO phases that have rows — matches HTML renderMTO() which shows all phases
     const allPhases = backup.settings?.mtoPhases || ['Underground', 'Rough In', 'Trim', 'Finish']
     const taxRate = num(backup.settings?.tax || 0) / 100
+    const markupRate = num(backup.settings?.markup || 0) / 100
     return (proj.mtoRows || [])
       .filter(r => allPhases.includes(r.phase))
       .reduce((acc, r) => {
@@ -73,15 +74,19 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         const lineRaw = num(r.qty || 0) * costUnit * (1 + waste)
         const lineTax = lineRaw * taxRate
         const hasCost = costUnit > 0
+        const lineSelling = hasCost ? lineRaw * (1 + markupRate) : lineRaw
+        const lineSellingTax = lineSelling * taxRate
         const existing = acc.find(x => x.phase === r.phase)
         if (existing) {
           existing.raw += lineRaw
           existing.tax += lineTax
+          existing.selling += lineSelling
+          existing.sellingTax += lineSellingTax
           existing.total = existing.raw + existing.tax
           existing.count += 1
           if (hasCost) existing.hasCostData = true
         } else {
-          acc.push({ phase: r.phase, raw: lineRaw, tax: lineTax, total: lineRaw + lineTax, count: 1, hasCostData: hasCost })
+          acc.push({ phase: r.phase, raw: lineRaw, tax: lineTax, selling: lineSelling, sellingTax: lineSellingTax, total: lineRaw + lineTax, count: 1, hasCostData: hasCost })
         }
         return acc
       }, [])
@@ -91,22 +96,47 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const matBreakdown = getMTOActivePhaseBreakdown(p)
     const lab = (p.laborRows || []).reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
     const matC = matBreakdown.reduce((s, r) => s + num(r.raw), 0)
-    const taxAmt = matBreakdown.reduce((s, r) => s + num(r.tax), 0)
+    const matSellingC = matBreakdown.reduce((s, r) => s + num(r.selling), 0)
+    const taxOnMatRaw = matBreakdown.reduce((s, r) => s + num(r.tax), 0)
+    const taxOnMatSelling = matBreakdown.reduce((s, r) => s + num(r.sellingTax), 0)
     const labHrs = (p.laborRows || []).reduce((s, r) => s + num(r.hrs), 0)
     const manualOH = (p.ohRows || []).reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
     const opRate = num(backup.settings?.opCost || 42.45)
     const billRate = num(backup.settings?.billRate || 95)
-    const opC = labHrs * opRate           // internal labor cost — informational only, NOT in total
-    const oh = manualOH                   // overhead = manual OH rows only (estimating, pickup, etc.)
+    const opC = labHrs * opRate           // internal labor cost
+    const oh = manualOH                   // planning & OH rows from estimate tab
     const mi = num(p.mileRT || 0) * num(p.miDays || 0) * num(backup.settings?.mileRate || 0.66)
+    const taxPct = num(backup.settings?.tax || 0) / 100
+    const taxOnMileage = mi * taxPct
+
+    // Customer side — what customer-facing numbers look like
+    const customerTax = taxOnMatSelling + taxOnMileage
+    const customerCost = lab + oh + matSellingC + mi + customerTax
+    const customerProfit = num(p.contract || 0) - customerCost
+    const customerMarginPct = num(p.contract || 0) > 0 ? (customerProfit / num(p.contract || 0)) * 100 : 0
+
+    // Internal side — what it actually costs Christian
+    const internalTax = taxOnMatRaw + taxOnMileage
+    const internalCost = opC + oh + matC + mi + internalTax
+
+    // Keep legacy fields referenced elsewhere (chart, etc.)
+    const taxAmt = internalTax
     const subtotal = lab + matC + oh + mi
     const total = subtotal + taxAmt
     const directCost = matC + oh + mi
     const profit = num(p.contract || 0) - total
     const marginPct = num(p.contract || 0) > 0 ? (profit / num(p.contract || 0)) * 100 : 0
-    // Internal profit = contract - internal labor cost - materials - mileage - manual OH
-    const internalProfit = num(p.contract || 0) - opC - matC - mi - manualOH - taxAmt
-    return { lab, matC, taxAmt, matTx: matC + taxAmt, oh, manualOH, mi, subtotal, total, labHrs, opC, opRate, billRate, directCost, profit, marginPct, internalProfit, matBreakdown }
+
+    // Primary margin = contract - internal cost
+    const internalProfit = num(p.contract || 0) - internalCost
+    const internalMarginPct = num(p.contract || 0) > 0 ? (internalProfit / num(p.contract || 0)) * 100 : 0
+
+    return {
+      lab, matC, matSellingC, taxAmt, taxOnMatRaw, taxOnMatSelling, taxOnMileage,
+      customerTax, customerCost, customerProfit, customerMarginPct, internalTax, internalCost, internalProfit, internalMarginPct,
+      matTx: matC + taxAmt, oh, manualOH, mi, subtotal, total, labHrs, opC, opRate, billRate,
+      directCost, profit, marginPct, matBreakdown
+    }
   }
 
   const t = estTotals()
@@ -1386,19 +1416,18 @@ Return ONLY valid JSON, no other text.`
             }}
           >
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Materials by Phase (from MTO)</h4>
-            <span style={{ color: '#10b981', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.matTx)}</span>
+            <span style={{ color: '#10b981', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.matSellingC)}</span>
           </div>
           <div style={{ padding: '12px', fontSize: '13px', color: 'var(--t2)' }}>
             {t.matBreakdown.length > 0 ? (
               <>
                 {/* Phase header row */}
                 <div style={{ overflowX: 'auto' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', fontWeight: '600', fontSize: '11px', color: 'var(--t3)', minWidth: '720px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', fontWeight: '600', fontSize: '11px', color: 'var(--t3)', minWidth: '630px' }}>
                   <div>Phase</div>
                   <div style={{ textAlign: 'right' }}>Items</div>
                   <div style={{ textAlign: 'right' }}>Raw Cost</div>
                   <div style={{ textAlign: 'right' }}>Tax</div>
-                  <div style={{ textAlign: 'right' }}>Phase Total</div>
                   <div style={{ textAlign: 'right' }}>Supplier Cost</div>
                   <div style={{ textAlign: 'right' }}>Selling Price</div>
                   <div style={{ textAlign: 'right' }}>Margin %</div>
@@ -1408,12 +1437,11 @@ Return ONLY valid JSON, no other text.`
                   const sellingPrice = r.hasCostData ? r.raw * (1 + markupRate) : 0
                   const marginPct = sellingPrice > 0 ? ((sellingPrice - r.raw) / sellingPrice * 100) : 0
                   return (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', minWidth: '720px' }}>
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', minWidth: '630px' }}>
                     <div>{r.phase}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>{r.count}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>{fmt(r.raw)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#ef4444' }}>{fmt(r.tax)}</div>
-                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: '600', color: '#10b981' }}>{fmt(r.total)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: 'var(--t2)' }}>{r.hasCostData ? fmt(r.raw) : '—'}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#60a5fa' }}>{r.hasCostData ? fmt(sellingPrice) : '—'}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: marginPct > 0 ? '#10b981' : 'var(--t3)' }}>{r.hasCostData ? marginPct.toFixed(1) + '%' : '—'}</div>
@@ -1621,8 +1649,8 @@ Return ONLY valid JSON, no other text.`
           <div style={{ backgroundColor: '#1f2937', borderRadius: '8px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 16px 0' }}>Deal Overview</h4>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <p style={{ color: '#22c55e', fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', margin: '0 0 4px 0' }}>{fmt(t.profit)}</p>
-              <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>Projected Profit ({t.marginPct.toFixed(1)}%)</p>
+              <p style={{ color: t.customerProfit > 0 ? '#22c55e' : '#ef4444', fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', margin: '0 0 4px 0' }}>{fmt(t.customerProfit)}</p>
+              <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>Projected Profit ({t.customerMarginPct.toFixed(1)}%)</p>
             </div>
             {/* Editable Contract Amount */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', padding: '10px 14px', backgroundColor: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '6px' }}>
@@ -1658,10 +1686,10 @@ Return ONLY valid JSON, no other text.`
             <div style={{ space: '8px' }}>
               {[
                 { label: 'Labor', value: t.lab, color: '#3b82f6', pct: (num(p.contract) > 0) ? (t.lab / num(p.contract)) * 100 : 0 },
-                { label: 'Material', value: t.matC, color: '#eab308', pct: (num(p.contract) > 0) ? (t.matC / num(p.contract)) * 100 : 0 },
-                { label: 'Mileage', value: t.mi, color: '#14b8a6', pct: (num(p.contract) > 0) ? (t.mi / num(p.contract)) * 100 : 0 },
+                { label: 'Material', value: t.matSellingC + t.taxOnMatSelling, color: '#eab308', pct: (num(p.contract) > 0) ? ((t.matSellingC + t.taxOnMatSelling) / num(p.contract)) * 100 : 0 },
+                { label: 'Mileage', value: t.mi + t.taxOnMileage, color: '#14b8a6', pct: (num(p.contract) > 0) ? ((t.mi + t.taxOnMileage) / num(p.contract)) * 100 : 0 },
                 { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: (num(p.contract) > 0) ? (t.oh / num(p.contract)) * 100 : 0 },
-                { label: 'Profit', value: t.profit, color: '#22c55e', pct: (num(p.contract) > 0) ? (t.profit / num(p.contract)) * 100 : 0 },
+                { label: 'Profit', value: t.customerProfit, color: '#22c55e', pct: (num(p.contract) > 0) ? (t.customerProfit / num(p.contract)) * 100 : 0 },
               ].filter(item => item.value > 0).map(item => (
                 <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
                   <span style={{ color: 'var(--t3)', fontSize: '12px', width: '65px', textAlign: 'left' }}>{item.label}</span>
@@ -1683,19 +1711,16 @@ Return ONLY valid JSON, no other text.`
             {/* Segmented bar: each category as proportion */}
             <div style={{ display: 'flex', height: '24px', borderRadius: '4px', overflow: 'hidden', marginBottom: '16px', gap: '1px', backgroundColor: '#1e2130' }}>
               {t.lab > 0 && (
-                <div style={{ flex: t.lab / t.total, backgroundColor: '#3b82f6', minWidth: '2px' }} title={`Labor: ${fmt(t.lab)}`} />
+                <div style={{ flex: t.lab / t.customerCost, backgroundColor: '#3b82f6', minWidth: '2px' }} title={`Labor: ${fmt(t.lab)}`} />
               )}
-              {t.matC > 0 && (
-                <div style={{ flex: t.matC / t.total, backgroundColor: '#f59e0b', minWidth: '2px' }} title={`Material: ${fmt(t.matC)}`} />
+              {(t.matSellingC + t.taxOnMatSelling) > 0 && (
+                <div style={{ flex: (t.matSellingC + t.taxOnMatSelling) / t.customerCost, backgroundColor: '#f59e0b', minWidth: '2px' }} title={`Material: ${fmt(t.matSellingC + t.taxOnMatSelling)}`} />
               )}
               {t.oh > 0 && (
-                <div style={{ flex: t.oh / t.total, backgroundColor: '#a855f7', minWidth: '2px' }} title={`Overhead: ${fmt(t.oh)}`} />
+                <div style={{ flex: t.oh / t.customerCost, backgroundColor: '#a855f7', minWidth: '2px' }} title={`Overhead: ${fmt(t.oh)}`} />
               )}
-              {t.mi > 0 && (
-                <div style={{ flex: t.mi / t.total, backgroundColor: '#06b6d4', minWidth: '2px' }} title={`Mileage: ${fmt(t.mi)}`} />
-              )}
-              {t.taxAmt > 0 && (
-                <div style={{ flex: t.taxAmt / t.total, backgroundColor: '#ef4444', minWidth: '2px' }} title={`Tax: ${fmt(t.taxAmt)}`} />
+              {(t.mi + t.taxOnMileage) > 0 && (
+                <div style={{ flex: (t.mi + t.taxOnMileage) / t.customerCost, backgroundColor: '#06b6d4', minWidth: '2px' }} title={`Mileage: ${fmt(t.mi + t.taxOnMileage)}`} />
               )}
             </div>
 
@@ -1707,16 +1732,16 @@ Return ONLY valid JSON, no other text.`
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#3b82f6', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Labor</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.lab)} ({((t.lab / t.total) * 100).toFixed(0)}%)</div>
+                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.lab)} ({((t.lab / t.customerCost) * 100).toFixed(0)}%)</div>
                 </div>
               )}
-              {t.matC > 0 && (
+              {(t.matSellingC + t.taxOnMatSelling) > 0 && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#f59e0b', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Material</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.matC)} ({((t.matC / t.total) * 100).toFixed(0)}%)</div>
+                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.matSellingC + t.taxOnMatSelling)} ({(((t.matSellingC + t.taxOnMatSelling) / t.customerCost) * 100).toFixed(0)}%)</div>
                 </div>
               )}
               {t.oh > 0 && (
@@ -1725,25 +1750,16 @@ Return ONLY valid JSON, no other text.`
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#a855f7', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Planning/OH</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.oh)} ({((t.oh / t.total) * 100).toFixed(0)}%)</div>
+                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.oh)} ({((t.oh / t.customerCost) * 100).toFixed(0)}%)</div>
                 </div>
               )}
-              {t.mi > 0 && (
+              {(t.mi + t.taxOnMileage) > 0 && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#06b6d4', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Mileage</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.mi)} ({((t.mi / t.total) * 100).toFixed(0)}%)</div>
-                </div>
-              )}
-              {t.taxAmt > 0 && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                    <div style={{ width: '8px', height: '8px', backgroundColor: '#ef4444', borderRadius: '2px' }} />
-                    <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Tax</span>
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.taxAmt)} ({((t.taxAmt / t.total) * 100).toFixed(0)}%)</div>
+                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.mi + t.taxOnMileage)} ({(((t.mi + t.taxOnMileage) / t.customerCost) * 100).toFixed(0)}%)</div>
                 </div>
               )}
             </div>
@@ -1751,156 +1767,208 @@ Return ONLY valid JSON, no other text.`
         )}
 
         {/* SUMMARY */}
-        <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        {/* SUMMARY */}
+        <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+          {/* LEFT — Internal Cost */}
           <div>
+            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid var(--bdr2)' }}>
+              Customer Rate Cost
+            </div>
             <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Labor Total</span>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Labor Total ({t.labHrs.toFixed(1)} hrs × ${t.labHrs > 0 ? (t.lab / t.labHrs).toFixed(2) : '0.00'})</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.lab)}</span>
             </div>
             <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matC)}</span>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning &amp; OH</span>
+              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
             </div>
-            {t.oh > 0 && (
-              <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning & OH</span>
-                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
-              </div>
-            )}
-            <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--bdr2)' }}>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
+              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matSellingC)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Mileage</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Subtotal</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.subtotal)}</span>
-            </div>
             <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 Tax (
                 <input
                   type="number"
+                  step="0.01"
                   value={num(backup.settings?.tax || 0)}
                   onChange={e => editTax(e.target.value)}
                   style={{
-                    width: '52px',
-                    minHeight: '44px',
-                    padding: '10px 8px',
+                    width: '60px',
+                    height: '22px',
+                    padding: '0 6px',
                     backgroundColor: 'rgba(255,255,255,0.05)',
                     border: '1px solid rgba(255,255,255,0.15)',
-                    borderRadius: '6px',
+                    borderRadius: '4px',
                     color: 'var(--t1)',
                     fontFamily: 'monospace',
-                    fontSize: '14px',
+                    fontSize: '12px',
+                    textAlign: 'right',
                     boxSizing: 'border-box',
                   }}
                 />
-                %)
+                % · mat + mileage)
               </span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.taxAmt)}</span>
+              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.customerTax)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '6px', borderTop: '1px solid var(--bdr2)' }}>
+              <span style={{ color: 'var(--t2)', fontSize: '13px', fontWeight: '700' }}>Sub Total</span>
+              <span style={{ color: '#f87171', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.customerCost)}</span>
             </div>
           </div>
+
+          {/* RIGHT — Margin Breakdown */}
           <div>
-            <div style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid var(--bdr2)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <span style={{ color: 'var(--t3)', fontSize: '13px', fontWeight: '600' }}>TOTAL</span>
-                <span style={{ color: '#10b981', fontFamily: 'monospace', fontWeight: '700', fontSize: '16px' }}>
-                  {fmt(t.total)}
-                </span>
-              </div>
+            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid var(--bdr2)' }}>
+              Margin Breakdown
             </div>
             <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Contract Amount</span>
               <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(p.contract || 0)}</span>
             </div>
             <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Profit</span>
-              <span
-                style={{
-                  color: t.profit > 0 ? '#10b981' : '#ef4444',
-                  fontFamily: 'monospace',
-                  fontWeight: '600',
-                }}
-              >
-                {fmt(t.profit)}
-              </span>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Customer Cost</span>
+              <span style={{ color: '#f87171', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.customerCost)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid var(--bdr2)' }}>
+              <span style={{ color: 'var(--t2)', fontSize: '13px', fontWeight: '700' }}>Profit</span>
+              <span style={{ color: t.customerProfit > 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.customerProfit)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Margin %</span>
-              <span
-                style={{
-                  color: t.marginPct >= 20 ? '#10b981' : t.marginPct >= 10 ? '#f59e0b' : '#ef4444',
-                  fontFamily: 'monospace',
-                  fontWeight: '600',
-                }}
-              >
-                {t.marginPct.toFixed(1)}%
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Margin</span>
+              <span style={{ color: t.customerMarginPct >= 40 ? '#10b981' : t.customerMarginPct >= 20 ? '#f59e0b' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>
+                {t.customerMarginPct.toFixed(1)}%
               </span>
+            </div>
+          </div>
+        </div>
+
+        {/* SELF-PERFORM ADVANTAGE — gap between customer-rate view and internal view */}
+        <div style={{
+          marginTop: '12px',
+          padding: '12px 16px',
+          backgroundColor: 'rgba(99, 102, 241, 0.08)',
+          border: '1px dashed rgba(167, 139, 250, 0.35)',
+          borderRadius: '8px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '16px',
+        }}>
+          <div>
+            <div style={{ fontSize: '11px', color: '#c4b5fd', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Self-Perform Advantage
+            </div>
+            <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontFamily: 'monospace' }}>
+              Labor value {fmt(t.lab - t.opC)} &nbsp;+&nbsp; Material markup {fmt(t.matSellingC - t.matC)} &nbsp;+&nbsp; Tax delta {fmt(t.customerTax - t.internalTax)}
+            </div>
+            <div style={{ fontSize: '9px', color: '#6b7280', marginTop: '3px', fontStyle: 'italic' }}>
+              What you captured by doing the work in-house and marking up materials
+            </div>
+          </div>
+          <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+            <div style={{ color: '#a78bfa', fontFamily: 'monospace', fontWeight: '700', fontSize: '20px', lineHeight: '1.1' }}>
+              {fmt(t.internalProfit - t.customerProfit)}
+            </div>
+            <div style={{ fontSize: '9px', color: '#9ca3af', marginTop: '3px' }}>
+              vs quoting at bill rate
             </div>
           </div>
         </div>
 
         {/* VAULT HEALTH CHECK */}
         <div style={{ marginTop: '16px' }}>
-          {/* INTERNAL COST BREAKDOWN — informational only, does not affect estimate total */}
-          {t.labHrs > 0 && (
-            <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '8px', padding: '14px 16px', marginBottom: '12px' }}>
-              <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>
-                📊 Internal Cost Breakdown <span style={{ color: '#4b5563', fontWeight: '400', textTransform: 'none', fontSize: '9px' }}>(informational · does not affect estimate total)</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ color: 'var(--t3)' }}>Internal Labor ({t.labHrs.toFixed(1)}h × ${t.opRate}/hr)</span>
-                    <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.opC)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ color: 'var(--t3)' }}>Materials</span>
-                    <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matC)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ color: 'var(--t3)' }}>Mileage</span>
-                    <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
-                  </div>
-                  {t.oh > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span style={{ color: 'var(--t3)' }}>Planning & OH</span>
-                      <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
-                    </div>
-                  )}
-                  {t.taxAmt > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span style={{ color: 'var(--t3)' }}>Tax</span>
-                      <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.taxAmt)}</span>
-                    </div>
-                  )}
-                </div>
-                <div style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', paddingLeft: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ color: 'var(--t3)' }}>Customer Price (bill rate ${t.billRate}/hr)</span>
-                    <span style={{ color: '#10b981', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(t.lab)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ color: 'var(--t3)' }}>Contract Amount</span>
-                    <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(p.contract || 0)}</span>
-                  </div>
-                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px', marginTop: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ color: 'var(--t3)', fontWeight: '600' }}>Customer Profit</span>
-                      <span style={{ color: t.profit >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(t.profit)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--t3)', fontWeight: '600' }}>Your Internal Profit</span>
-                      <span style={{ color: t.internalProfit >= 0 ? '#a78bfa' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(t.internalProfit)}</span>
-                    </div>
-                    <div style={{ fontSize: '9px', color: '#4b5563', marginTop: '6px' }}>
-                      Contract − internal labor − materials − mileage − planning/OH − tax
-                    </div>
-                  </div>
-                </div>
-              </div>
+         {/* INTERNAL DEAL OVERVIEW — mirrors top Deal Overview using internal values */}
+        {hasAnyData && (
+          <div style={{ backgroundColor: '#1a1f2e', borderRadius: '8px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(99,102,241,0.25)', marginTop: '16px' }}>
+            <h4 style={{ color: '#a78bfa', fontWeight: '600', margin: '0 0 16px 0' }}>📊 Internal Deal Overview</h4>
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <p style={{ color: t.internalProfit > 0 ? '#22c55e' : '#ef4444', fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', margin: '0 0 4px 0' }}>{fmt(t.internalProfit)}</p>
+              <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>Internal Profit ({t.internalMarginPct.toFixed(1)}%)</p>
             </div>
-          )}
+            <div>
+              {[
+                { label: 'Labor', value: t.opC, color: '#3b82f6', pct: (num(p.contract) > 0) ? (t.opC / num(p.contract)) * 100 : 0 },
+                { label: 'Material', value: t.matC + t.taxOnMatRaw, color: '#eab308', pct: (num(p.contract) > 0) ? ((t.matC + t.taxOnMatRaw) / num(p.contract)) * 100 : 0 },
+                { label: 'Mileage', value: t.mi + t.taxOnMileage, color: '#14b8a6', pct: (num(p.contract) > 0) ? ((t.mi + t.taxOnMileage) / num(p.contract)) * 100 : 0 },
+                { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: (num(p.contract) > 0) ? (t.oh / num(p.contract)) * 100 : 0 },
+                { label: 'Profit', value: t.internalProfit, color: '#22c55e', pct: (num(p.contract) > 0) ? (t.internalProfit / num(p.contract)) * 100 : 0 },
+              ].filter(item => item.value > 0).map(item => (
+                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                  <span style={{ color: 'var(--t3)', fontSize: '12px', width: '65px', textAlign: 'left' }}>{item.label}</span>
+                  <div style={{ flex: 1, backgroundColor: '#111827', borderRadius: '4px', height: '16px', overflow: 'hidden' }}>
+                    <div style={{ backgroundColor: item.color, height: '100%', borderRadius: '4px', width: Math.max(0, Math.min(100, item.pct)) + '%', transition: 'width 0.2s' }} />
+                  </div>
+                  <span style={{ color: 'var(--t2)', fontSize: '11px', width: '90px', textAlign: 'right', fontFamily: 'monospace' }}>{fmt(item.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* INTERNAL COST BREAKDOWN — mirrors top Summary, labor at internal opCost */}
+        <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '16px' }}>
+          {/* LEFT — Internal Cost */}
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#a78bfa', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid rgba(99,102,241,0.2)' }}>
+              📊 Internal Cost Breakdown
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Labor Total ({t.labHrs.toFixed(1)} labHrs × ${t.opRate.toFixed(2)})</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.opC)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning &amp; OH</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matC)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Mileage</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Tax ({(num(backup.settings?.tax || 0)).toFixed(2)}% · mat + mileage)</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.taxAmt)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '6px', borderTop: '1px solid rgba(99,102,241,0.2)' }}>
+              <span style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: '700' }}>Sub Total</span>
+              <span style={{ color: '#a78bfa', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.internalCost)}</span>
+            </div>
+          </div>
+
+          {/* RIGHT — Margin Breakdown (internal basis) */}
+          <div style={{ borderLeft: '1px solid rgba(99,102,241,0.15)', paddingLeft: '24px' }}>
+            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#a78bfa', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid rgba(99,102,241,0.2)' }}>
+              Margin Breakdown
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Contract Amount</span>
+              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(p.contract || 0)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Internal Cost</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.internalCost)}</span>
+            </div>
+            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid rgba(99,102,241,0.2)' }}>
+              <span style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: '700' }}>Profit</span>
+              <span style={{ color: t.internalProfit > 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.internalProfit)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Margin</span>
+              <span style={{ color: t.internalMarginPct >= 40 ? '#10b981' : t.internalMarginPct >= 20 ? '#f59e0b' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>
+                {t.internalMarginPct.toFixed(1)}%
+              </span>
+            </div>
+          </div>
+        </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
               onClick={runVaultHealthCheck}

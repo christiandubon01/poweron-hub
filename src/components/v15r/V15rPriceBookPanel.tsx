@@ -474,7 +474,7 @@ export default function V15rPriceBookPanel() {
   if (!backup) return <NoData />
 
   const settings = backup.settings || {}
-  const markup = settings.markup ?? 150 // 150% = 2.5x markup (cost × 1.5 = client price)
+  const markup = settings.markup ?? 30 // pulled from Settings tab; 30% default only if unset
 
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
@@ -969,15 +969,51 @@ export default function V15rPriceBookPanel() {
                           <div className="col-span-2 text-gray-100 font-medium">{item.name || '—'}</div>
                           <div className="col-span-1.5">
                             <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getSourceColor(item.src)}`}>
-                              {item.src || 'Unknown'}
+                              {(!item.src || item.src === 'PDF Import' || item.src === 'PDF Imported') ? 'N/A' : item.src}
                             </span>
                           </div>
-                          <div className="col-span-0.75 text-gray-300 text-xs">{item.unit || 'ea'}</div>
                           <div className="col-span-0.75">
-                            {num(item.cost) === 0 ? (
-                              <span className="text-xs px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">No price</span>
+                            {editingPriceId === item.id ? (
+                              <input
+                                autoFocus
+                                type="number"
+                                value={editingPrice}
+                                onChange={(e) => setEditingPrice(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, cost: num(editingPrice) } : pb)
+                                    saveBackupData({ ...backup, priceBook: updated })
+                                    setEditingPriceId(null)
+                                    refreshBackup()
+                                  }
+                                  if (e.key === 'Escape') setEditingPriceId(null)
+                                }}
+                                onBlur={() => {
+                                  if (editingPrice !== '') {
+                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, cost: num(editingPrice) } : pb)
+                                    saveBackupData({ ...backup, priceBook: updated })
+                                  }
+                                  setEditingPriceId(null)
+                                }}
+                                className="w-20 px-2 py-0.5 bg-gray-900 border border-cyan-500/50 rounded text-gray-200 text-xs"
+                                placeholder="$0.00"
+                              />
+                            ) : num(item.cost) === 0 ? (
+                              <span
+                                onClick={() => { setEditingPriceId(item.id); setEditingPrice('') }}
+                                className="text-xs px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded cursor-pointer hover:bg-yellow-500/30"
+                                title="Click to set price"
+                              >
+                                No price
+                              </span>
                             ) : (
-                              <div className="text-blue-400 font-medium text-xs">${clientPrice.toFixed(2)}</div>
+                              <div
+                                onClick={() => { setEditingPriceId(item.id); setEditingPrice(String(item.cost)) }}
+                                className="text-blue-400 font-medium text-xs cursor-pointer hover:text-blue-300"
+                                title="Click to edit cost"
+                              >
+                                ${clientPrice.toFixed(2)}
+                              </div>
                             )}
                           </div>
                           <div className="col-span-3">
@@ -1007,37 +1043,6 @@ export default function V15rPriceBookPanel() {
                           </div>
                           <div className="col-span-1.5 text-gray-400 font-mono text-xs break-all">{pidDisplay}</div>
                           <div className="col-span-2.25 flex items-center gap-1.5">
-                            {num(item.cost) === 0 && !editingPriceId && (
-                              <button
-                                onClick={() => {
-                                  setEditingPriceId(item.id)
-                                  setEditingPrice('')
-                                }}
-                                className="text-xs text-cyan-400 hover:text-cyan-300 ml-2"
-                              >
-                                Set Price
-                              </button>
-                            )}
-                            {editingPriceId === item.id && (
-                              <input
-                                autoFocus
-                                type="number"
-                                value={editingPrice}
-                                onChange={(e) => setEditingPrice(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && editingPrice) {
-                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, cost: num(editingPrice) } : pb)
-                                    saveBackupData({ ...backup, priceBook: updated })
-                                    setEditingPriceId(null)
-                                    refreshBackup()
-                                  }
-                                  if (e.key === 'Escape') setEditingPriceId(null)
-                                }}
-                                onBlur={() => setEditingPriceId(null)}
-                                className="w-20 px-2 py-0.5 bg-gray-900 border border-cyan-500/50 rounded text-gray-200 text-xs"
-                                placeholder="$0.00"
-                              />
-                            )}
                             <button
                               onClick={() => handleSupplierLink(item)}
                               className="p-1.5 hover:bg-[var(--bg-secondary)] rounded transition text-gray-400 hover:text-blue-400"

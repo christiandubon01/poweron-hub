@@ -17,8 +17,6 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
 
   // ── Multi-select state ──────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [isSelecting, setIsSelecting] = useState(false)
-  const anchorIdRef = useRef<string | null>(null)
 
   // ── Bulk assign state ───────────────────────────────────────────────
   const [bulkPlacement, setBulkPlacement] = useState('')
@@ -30,6 +28,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   // onChange updates ONLY this local state — no data write, no grouping re-trigger.
   // onBlur and onEnter commit the value to the actual row data.
   const [localPlacements, setLocalPlacements] = useState<Record<string, string>>({})
+  const [localUnitCosts, setLocalUnitCosts] = useState<Record<string, string>>({})
 
   // ── Row focus / hover tracking (Bug 4) ─────────────────────────────
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
@@ -48,12 +47,6 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [pbFormPackSize, setPbFormPackSize] = useState<number>(1)
   const [pbFormUnit, setPbFormUnit] = useState('EA')
 
-  // Global mouseup ends drag-select
-  const handleMouseUp = useCallback(() => setIsSelecting(false), [])
-  useEffect(() => {
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => document.removeEventListener('mouseup', handleMouseUp)
-  }, [handleMouseUp])
 
   // ── Data ────────────────────────────────────────────────────────────
   const backup = initialBackup || getBackupData()
@@ -74,6 +67,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       else if (field === 'name') row.name = String(value)
       else if (field === 'placement') row.placement = String(value)
       else if (field === 'note') row.note = String(value)
+      else if (field === 'unitCost') {
+        // Empty string = clear override (fall back to priceBook suggestion)
+        row.unitCost = value === '' || value === null || value === undefined ? undefined : num(value)
+      }
     }
     saveBackupData(backup)
     forceUpdate()
@@ -180,33 +177,21 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const existingPlacements: string[] = [...new Set(allRows.map(r => r.placement).filter(Boolean))]
 
   // ── Selection helpers ───────────────────────────────────────────────
+  // Click handle = toggle that one row. No drag-range, no hover expansion.
   const handleRowMouseDown = (e: React.MouseEvent, rowId: string) => {
     if (e.button !== 0) return
-    if (e.ctrlKey || e.metaKey) {
-      // Non-contiguous toggle
-      setSelectedIds(prev => {
-        const n = new Set(prev)
-        if (n.has(rowId)) n.delete(rowId)
-        else n.add(rowId)
-        return n
-      })
-    } else {
-      // Start drag-range selection
-      setIsSelecting(true)
-      anchorIdRef.current = rowId
-      setSelectedIds(new Set([rowId]))
-    }
+    e.stopPropagation()
+    setSelectedIds(prev => {
+      const n = new Set(prev)
+      if (n.has(rowId)) n.delete(rowId)
+      else n.add(rowId)
+      return n
+    })
   }
 
-  const handleRowMouseEnter = (rowId: string) => {
-    if (!isSelecting || !anchorIdRef.current) return
-    const ids = allRows.map(r => r.id)
-    const anchorIdx = ids.indexOf(anchorIdRef.current)
-    const currIdx = ids.indexOf(rowId)
-    if (anchorIdx < 0 || currIdx < 0) return
-    const start = Math.min(anchorIdx, currIdx)
-    const end = Math.max(anchorIdx, currIdx)
-    setSelectedIds(new Set(ids.slice(start, end + 1)))
+  // No-op kept for signature compatibility (tr still calls it)
+  const handleRowMouseEnter = (_rowId: string) => {
+    // Drag-range-select disabled — handles only toggle individual rows on click
   }
 
   // ── Bulk assign ─────────────────────────────────────────────────────
@@ -235,12 +220,15 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const renderTableHead = () => (
     <thead>
       <tr style={{ borderBottom: '1px solid var(--bdr2)' }}>
+        <th style={{ width: '20px' }}></th>
         <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600' }}>Item Title</th>
-        <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '100px' }}>Source</th>
+        <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '100px' }}>Supplier</th>
+        <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '110px' }}>Family</th>
         <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '60px' }}>Qty</th>
         <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '60px' }}>Unit</th>
         <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Unit Cost</th>
-        <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Total</th>
+        <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Sell Price</th>
+        <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '90px' }}>Total</th>
         <th style={{ textAlign: 'center', padding: '8px', fontWeight: '600', width: '40px' }}></th>
       </tr>
     </thead>
@@ -248,10 +236,26 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
 
   const renderRow = (r: any) => {
     const pbItem = getPBItem(r.matId)
-    const cu = num(pbItem?.cost || 0)
+    // cu = row-level override if present, otherwise priceBook suggestion
+    const cu = r.unitCost !== undefined && r.unitCost !== null
+      ? num(r.unitCost)
+      : num(pbItem?.cost || 0)
     const waste = num(pbItem?.waste || 0)
-    const lt = num(r.qty || 0) * cu * (1 + waste)
+    const markupPct = num(backup.settings?.markup || 0) / 100
+    const sellPrice = cu * (1 + markupPct)
+    const lt = num(r.qty || 0) * sellPrice * (1 + waste)
     const isSelected = selectedIds.has(r.id)
+    // Normalize supplier display: empty or legacy "PDF Import" → N/A
+    const supplierDisplay = (!pbItem?.src || pbItem.src === 'PDF Import' || pbItem.src === 'PDF Imported')
+      ? 'N/A'
+      : pbItem.src
+    const familyDisplay = (!pbItem?.cat || pbItem.cat === 'PDF Imported')
+      ? '—'
+      : pbItem.cat
+    // Unit cost input — local state for smooth typing, commits on blur
+    const localCostVal = localUnitCosts[r.id] !== undefined
+      ? localUnitCosts[r.id]
+      : (cu > 0 ? String(cu) : '')
 
     // ── Bug 1+2+3: local placement value ────────────────────────────
     // localVal shows the typed value; committed r.placement is the source of truth for grouping.
@@ -284,8 +288,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     return (
       <tr
         key={r.id}
-        onMouseDown={e => handleRowMouseDown(e, r.id)}
-        onMouseEnter={() => { handleRowMouseEnter(r.id); setHoveredRowId(r.id) }}
+        onMouseEnter={() => setHoveredRowId(r.id)}
         onMouseLeave={() => setHoveredRowId(null)}
         style={{
           borderBottom: '1px solid var(--bdr2)',
@@ -296,6 +299,23 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
           transition: 'background-color 0.1s, border-left-color 0.1s',
         }}
       >
+        {/* Drag handle — only this cell initiates selection */}
+        <td
+          onMouseDown={e => handleRowMouseDown(e, r.id)}
+          title="Drag to select range, Ctrl+click for multi-select"
+          style={{
+            padding: '8px 4px',
+            width: '20px',
+            textAlign: 'center',
+            cursor: 'grab',
+            color: 'var(--t3)',
+            fontSize: '14px',
+            lineHeight: '1',
+            userSelect: 'none',
+          }}
+        >
+          ⋮⋮
+        </td>
         {/* Item Title + inline placement/note fields */}
         <td style={{ padding: '8px' }}>
           {/* Name input + optional Google search button — inline flex row */}
@@ -575,8 +595,11 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
           </div>
         </td>
 
+        <td style={{ padding: '8px', fontSize: '11px', color: supplierDisplay === 'N/A' ? 'var(--t3)' : 'var(--t2)' }}>
+          {supplierDisplay}
+        </td>
         <td style={{ padding: '8px', fontSize: '11px', color: 'var(--t3)' }}>
-          {pbItem?.src || '—'}
+          {familyDisplay}
         </td>
         <td style={{ padding: '8px', textAlign: 'right' }}>
           <input
@@ -609,7 +632,50 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
           {pbItem?.unit || 'EA'}
         </td>
         <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>
-          {cu > 0 ? fmt(cu) : '—'}
+          <input
+            type="number"
+            value={localCostVal}
+            placeholder="—"
+            step="0.01"
+            onMouseDown={e => e.stopPropagation()}
+            onChange={e => {
+              // Local only — smooth typing, no save until blur/Enter
+              setLocalUnitCosts(prev => ({ ...prev, [r.id]: e.target.value }))
+            }}
+            onBlur={e => {
+              const v = e.target.value
+              editMTORow(r.id, 'unitCost', v)
+              setLocalUnitCosts(prev => {
+                const n = { ...prev }
+                delete n[r.id]
+                return n
+              })
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              if (e.key === 'Escape') {
+                setLocalUnitCosts(prev => {
+                  const n = { ...prev }
+                  delete n[r.id]
+                  return n
+                })
+                ;(e.target as HTMLInputElement).blur()
+              }
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: r.unitCost !== undefined ? '#fbbf24' : 'var(--t1)', // yellow = overridden
+              width: '100%',
+              textAlign: 'right',
+              fontFamily: 'monospace',
+              fontSize: '12px',
+            }}
+            title={r.unitCost !== undefined ? 'Overridden — clear field to revert to Price Book suggestion' : 'Price Book suggestion — edit to override for this row'}
+          />
+        </td>
+        <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#60a5fa' }}>
+          {cu > 0 ? fmt(sellPrice) : '—'}
         </td>
         <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: '#10b981', fontFamily: 'monospace' }}>
           {cu > 0 ? fmt(lt) : '—'}
@@ -643,7 +709,8 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
         const pbItem = getPBItem(r.matId)
         const cu = num(pbItem?.cost || 0)
         const waste = num(pbItem?.waste || 0)
-        phTotal += num(r.qty || 0) * cu * (1 + waste)
+        const markupPct = num(backup.settings?.markup || 0) / 100
+        phTotal += num(r.qty || 0) * cu * (1 + markupPct) * (1 + waste)
       })
 
       return (
@@ -708,9 +775,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       let grpTotal = 0
       rows.forEach(r => {
         const pbItem = getPBItem(r.matId)
-        const cu = num(pbItem?.cost || 0)
+        const cu = r.unitCost !== undefined && r.unitCost !== null ? num(r.unitCost) : num(pbItem?.cost || 0)
         const waste = num(pbItem?.waste || 0)
-        grpTotal += num(r.qty || 0) * cu * (1 + waste)
+        const markupPct = num(backup.settings?.markup || 0) / 100
+        grpTotal += num(r.qty || 0) * cu * (1 + markupPct) * (1 + waste)
       })
 
       return (
@@ -798,7 +866,6 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   return (
     <div
       style={{ backgroundColor: '#1a1d27', padding: '0' }}
-      onMouseLeave={() => setIsSelecting(false)}
     >
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
 

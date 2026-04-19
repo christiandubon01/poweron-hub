@@ -125,7 +125,7 @@ export function calculateProjectFinancials(
 
     total_hours += hrs
     total_miles += miles
-    labor_cost += hrs * (laborRate != null && !isNaN(laborRate) && laborRate > 0 ? laborRate : INTERNAL_LABOR_RATE)
+    labor_cost += hrs * (laborRate != null && !isNaN(laborRate) && laborRate > 0 ? laborRate : 0)
     material_cost += mat
     transportation_cost += miles * rate
     total_collected += coll

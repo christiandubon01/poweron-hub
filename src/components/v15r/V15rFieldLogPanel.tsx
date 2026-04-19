@@ -62,14 +62,42 @@ function getServiceRollup(l: any): any {
   const totalAddedCost = addExpense + addMileage
   const baseQuoted = num(l?.quoted)
   const totalBillable = baseQuoted + addIncome
-  const baseActual = num(l?.mat) + (num(l?.mileCost) || 0) + (num(l?.opCost) || 0)
+
+  // Read current Settings fresh from localStorage — stored l.opCost / l.mileCost are unreliable
+  // (persist() bug corrupted those values historically; compute from raw hrs/miles instead)
+  let settings: any = {}
+  try {
+    const bd = JSON.parse(localStorage.getItem('poweron_backup_data') || '{}')
+    settings = bd.settings || {}
+  } catch { /* fall through to defaults */ }
+  const opCost = num(settings.opCost) || 43
+  const mileRate = num(settings.mileRate) || 0.66
+
+  const hrs = num(l?.hrs)
+  const miles = num(l?.miles)
+  const matCost = num(l?.mat)
+  const laborCost = hrs * opCost
+  const mileCost = miles * mileRate
+  const baseActual = matCost + mileCost + laborCost
+
   const totalActual = baseActual + totalAddedCost
   const collected = num(l?.collected)
   const remaining = Math.max(0, totalBillable - collected)
-  const projectedProfit = totalBillable - totalActual
+  const projectedProfit = totalBillable - totalActual  // kept name for back-compat — this is ACTUAL profit
+
+  // Estimated profit: cost using quoted hrs (mat + miles treated as actual — they are what they are)
+  const estHrs = num(l?.estHrs) || hrs
+  const estLaborCost = estHrs * opCost
+  const estBaseCost = matCost + mileCost + estLaborCost
+  const estimatedTotalCost = estBaseCost + totalAddedCost
+  const estimatedProfit = totalBillable - estimatedTotalCost
+  const hasEstimate = num(l?.estHrs) > 0 && num(l?.estHrs) !== hrs  // delta exists
+
   return {
     baseQuoted, addIncome, addExpense, addMileage, totalAddedCost, totalBillable,
-    baseActual, totalActual, collected, remaining, projectedProfit, adjustments
+    baseActual, totalActual, collected, remaining, projectedProfit, adjustments,
+    hrs, miles, matCost, laborCost, mileCost, opCost, mileRate,
+    estHrs, estLaborCost, estBaseCost, estimatedTotalCost, estimatedProfit, hasEstimate
   }
 }
 
@@ -271,6 +299,7 @@ export default function V15rFieldLogPanel() {
   const [slAddr, setSlAddr] = useState('')
   const [slDate, setSlDate] = useState(today())
   const [slHrs, setSlHrs] = useState('')
+  const [slEstHrs, setSlEstHrs] = useState('')
   const [slMi, setSlMi] = useState('')
   const [slQuoted, setSlQuoted] = useState('')
   const [slMat, setSlMat] = useState('')
@@ -568,7 +597,7 @@ export default function V15rFieldLogPanel() {
   // ── Service log CRUD ───────────────────────────────────────────────────
 
   function resetSvcForm() {
-    setSlCust(''); setSlAddr(''); setSlDate(today()); setSlHrs(''); setSlMi('')
+    setSlCust(''); setSlAddr(''); setSlDate(today()); setSlHrs(''); setSlEstHrs(''); setSlMi('')
     setSlQuoted(''); setSlMat(''); setSlCollected(''); setSlStore(''); setSlJtype(JOB_TYPES[0])
     setSlPayStatus('Y'); setSlEmatInfo(''); setSlDetailLink(''); setSlNotes('')
     setEditSvcId(null); setShowSvcForm(false)
@@ -600,6 +629,7 @@ export default function V15rFieldLogPanel() {
       address: slAddr,
       jtype: slJtype,
       hrs, miles: mi, quoted, mat,
+      estHrs: parseFloat(slEstHrs) || hrs,
       collected, payStatus, balanceDue,
       store: slStore,
       notes: slNotes,
@@ -628,6 +658,7 @@ export default function V15rFieldLogPanel() {
     if (!l) return
     setEditSvcId(l.id)
     setSlCust(l.customer); setSlAddr(l.address || ''); setSlDate(l.date); setSlHrs(String(l.hrs))
+    setSlEstHrs(String((l as any).estHrs ?? l.hrs ?? ''))
     setSlMi(String(l.miles)); setSlQuoted(String(l.quoted)); setSlMat(String(l.mat))
     setSlCollected(String(l.collected)); setSlStore(l.store || ''); setSlJtype(l.jtype || JOB_TYPES[0])
     setSlPayStatus(l.payStatus || 'N'); setSlEmatInfo(l.emergencyMatInfo || '')
@@ -955,15 +986,17 @@ export default function V15rFieldLogPanel() {
             return isNaN(d.getTime()) ? null : d
           }
 
-          // Filter project logs by date range
+          // Filter project logs by date range AND active project filter
           const recentProjectLogs = (backup.logs || []).filter((log: any) => {
             const logDate = parseLogDate(log.date || log.logDate)
             if (!logDate) return false
-            return logDate >= sevenDaysAgo
+            if (logDate < sevenDaysAgo) return false
+            if (projFilter !== 'all' && log.projId !== projFilter) return false
+            return true
           })
 
-          // Filter service logs by date range
-          const recentServiceLogs = (backup.serviceLogs || []).filter((log: any) => {
+          // Filter service logs — excluded entirely when a specific project is filtered (service logs aren't project-bound)
+          const recentServiceLogs = projFilter !== 'all' ? [] : (backup.serviceLogs || []).filter((log: any) => {
             const logDate = parseLogDate(log.date)
             if (!logDate) return false
             return logDate >= sevenDaysAgo
@@ -976,7 +1009,33 @@ export default function V15rFieldLogPanel() {
                                    recentServiceLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0)
           const totalMiles = recentProjectLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0) +
                             recentServiceLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0)
+          const totalCollected7d = recentProjectLogs.reduce((s, l) => s + num(l.collected), 0) +
+                                  recentServiceLogs.reduce((s, l) => s + num(l.collected), 0)
           const logCount = recentProjectLogs.length + recentServiceLogs.length
+
+          // Derived cost totals using Settings
+          const opCost7d = Number(backup.settings?.opCost) || 55
+          const mileRate7d = num(backup.settings?.mileRate) || VAN_MILE_RATE
+          const totalLaborCost7d = totalHours * opCost7d
+          const totalMileageCost7d = totalMiles * mileRate7d
+          const totalCost7d = totalLaborCost7d + totalMaterialCost + totalMileageCost7d
+
+          // Project-level remaining balance (current state, not 7-day-sliced)
+          let remainingBalNow = 0
+          let projQuoteNow = 0
+          if (projFilter === 'all') {
+            const finAll = calculatePortfolioFinancials(projects, backup.logs || [], mileRate7d, opCost7d)
+            remainingBalNow = finAll.remaining_balance
+            projQuoteNow = finAll.quote
+          } else {
+            const proj = projects.find((p: any) => p.id === projFilter)
+            if (proj) {
+              const finProj = calculateProjectFinancials(proj, backup.logs || [], mileRate7d, opCost7d)
+              remainingBalNow = finProj.remaining_balance
+              projQuoteNow = finProj.quote
+            }
+          }
+          const balColor7d = getBalanceColor(remainingBalNow, projQuoteNow)
 
           // Build per-day breakdown from both log types
           const perDayData: Record<string, number> = {}
@@ -1009,41 +1068,63 @@ export default function V15rFieldLogPanel() {
               {/* Summary metrics */}
               <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-3">
                 <div className="text-[9px] font-bold text-gray-400 uppercase mb-3">Last 7 Days Summary</div>
-                <div className="grid grid-cols-4 gap-3 text-center">
+                <div className="grid grid-cols-7 gap-3 text-center">
                   <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Total Hours</div>
                     <div className="text-sm font-bold font-mono text-white">{totalHours.toFixed(1)}h</div>
                   </div>
                   <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Labor Cost</div>
+                    <div className="text-[9px] text-gray-600">Hrs × ${opCost7d.toFixed(2)}/hr</div>
+                    <div className="text-sm font-bold font-mono text-red-400">{fmt(totalLaborCost7d)}</div>
+                  </div>
+                  <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Material Cost</div>
-                    <div className="text-sm font-bold font-mono text-orange-400">{fmt(totalMaterialCost)}</div>
+                    <div className="text-sm font-bold font-mono" style={{ color: '#fcd34d' }}>{fmt(totalMaterialCost)}</div>
                   </div>
                   <div>
-                    <div className="text-[9px] text-gray-500 uppercase font-bold">Total Miles</div>
-                    <div className="text-sm font-bold font-mono text-blue-400">{totalMiles.toFixed(1)}</div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Mileage Cost</div>
+                    <div className="text-[9px] text-gray-600">Miles × ${mileRate7d.toFixed(2)}</div>
+                    <div className="text-sm font-bold font-mono" style={{ color: '#60a5fa' }}>{fmt(totalMileageCost7d)}</div>
                   </div>
                   <div>
-                    <div className="text-[9px] text-gray-500 uppercase font-bold">Log Count</div>
-                    <div className="text-sm font-bold font-mono text-gray-300">{logCount}</div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Total Costs</div>
+                    <div className="text-[9px] text-gray-600">L+M+T</div>
+                    <div className="text-sm font-bold font-mono text-red-400">{fmt(totalCost7d)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Remaining Balance</div>
+                    <div className="text-[9px] text-gray-600">project, current</div>
+                    <div className="text-sm font-bold font-mono" style={{ color: balColor7d }}>{fmt(remainingBalNow)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Collected</div>
+                    <div className="text-sm font-bold font-mono text-emerald-400">{fmt(totalCollected7d)}</div>
                   </div>
                 </div>
               </div>
 
               {/* Per-day breakdown bar chart */}
               <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-3">
-                <div className="text-[9px] font-bold text-gray-400 uppercase mb-2">Daily Hours</div>
-                <div className="flex items-end gap-1 h-12">
+                <div className="text-[9px] font-bold text-gray-400 uppercase mb-3">Daily Hours — Last 7 Days</div>
+                <div className="flex items-end gap-2 h-24">
                   {Object.entries(perDayData).reverse().map(([date, hours]) => {
                     const pct = maxDailyHoursLast7 > 0 ? (hours / maxDailyHoursLast7) * 100 : 0
                     const isToday = date === today()
+                    const d = new Date(date + 'T00:00:00')
+                    const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]
                     return (
-                      <div key={date} className="flex-1 flex flex-col items-center gap-1 text-[9px]">
+                      <div key={date} className="flex-1 flex flex-col items-center gap-1 text-[10px]">
+                        <div className="font-mono font-bold" style={{ color: isToday ? '#6ee7b7' : '#e5e7eb' }}>
+                          {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
+                        </div>
                         <div
-                          className={`w-full rounded-t transition-all ${isToday ? 'bg-emerald-500' : 'bg-emerald-600/60'}`}
-                          style={{ height: `${Math.max(2, pct)}%` }}
+                          className={`w-full rounded-t transition-all ${isToday ? 'bg-emerald-300' : 'bg-emerald-600/50'}`}
+                          style={{ height: `${Math.max(hours > 0 ? 4 : 1, pct)}%`, minHeight: hours > 0 ? '8px' : '2px' }}
                           title={`${date}: ${hours.toFixed(1)}h`}
                         />
-                        <span className="text-gray-500">{date.slice(5).replace('-', '/')}</span>
+                        <span className="text-gray-300 font-semibold">{dow}</span>
+                        <span className="text-gray-500 text-[9px]">{date.slice(5).replace('-', '/')}</span>
                       </div>
                     )
                   })}
@@ -1065,11 +1146,11 @@ export default function V15rFieldLogPanel() {
           const canonMileRate = num(backup.settings?.mileRate) || VAN_MILE_RATE
           let canonFin: ReturnType<typeof calculateProjectFinancials>
           if (projFilter === 'all') {
-            canonFin = calculatePortfolioFinancials(projects, backup.logs || [], canonMileRate)
+            canonFin = calculatePortfolioFinancials(projects, sorted, canonMileRate, Number(backup?.settings?.opCost) || 55)
           } else {
             const proj = projects.find((p: any) => p.id === projFilter)
             if (proj) {
-              canonFin = calculateProjectFinancials(proj, backup.logs || [], canonMileRate, Number(backup?.settings?.opCost) || 55)
+              canonFin = calculateProjectFinancials(proj, sorted, canonMileRate, Number(backup?.settings?.opCost) || 55)
             } else {
               canonFin = { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: canonMileRate }
             }
@@ -1078,27 +1159,37 @@ export default function V15rFieldLogPanel() {
 
           return (
             <div className="sticky top-0 z-10 bg-[var(--bg-input)] border border-gray-700 rounded-lg p-3 mb-3 shadow-lg">
-              <div className="grid grid-cols-5 gap-2 text-center">
+              <div className="grid grid-cols-7 gap-2 text-center">
                 <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Total Hours</div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Total Hours Used to Date</div>
                   <div className="text-sm font-bold font-mono text-white">{totalHours.toFixed(1)}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Material Cost</div>
-                  <div className="text-sm font-bold font-mono text-orange-400">{fmt(canonFin.material_cost)}</div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Labor Cost to Date</div>
+                  <div className="text-[9px] text-gray-400">Hrs × ${(Number(backup?.settings?.opCost) || 55).toFixed(2)}/hr</div>
+                  <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.labor_cost)}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Total Costs</div>
-                  <div className="text-[9px] text-gray-600">L+M+T @$43/hr</div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Material Cost to Date</div>
+                  <div className="text-sm font-bold font-mono" style={{ color: '#fcd34d' }}>{fmt(canonFin.material_cost)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Mileage Cost to Date</div>
+                  <div className="text-[9px] text-gray-400">Miles × ${(Number(backup?.settings?.mileRate) || 0.66).toFixed(2)}</div>
+                  <div className="text-sm font-bold font-mono" style={{ color: '#60a5fa' }}>{fmt(canonFin.transportation_cost)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Total Costs to Date</div>
+                  <div className="text-[9px] text-gray-400">Lbr+Mat+Mil</div>
                   <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.total_costs)}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Remaining Bal</div>
-                  <div className="text-[9px] text-gray-600">Quote−Costs</div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Remaining Balance</div>
+                  <div className="text-[9px] text-gray-400">Quote−Current Total Cost</div>
                   <div className="text-sm font-bold font-mono" style={{ color: canonBalColor }}>{fmt(canonFin.remaining_balance)}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] text-gray-500 uppercase font-bold">Collected</div>
+                  <div className="text-[9px] text-gray-300 uppercase font-bold">Total Collected to Date</div>
                   <div className="text-sm font-bold font-mono text-emerald-400">{fmt(canonFin.total_collected)}</div>
                 </div>
               </div>
@@ -1161,30 +1252,33 @@ export default function V15rFieldLogPanel() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] text-gray-500 font-mono">{l.date}</span>
-                          <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
-                          <span className="text-[10px] text-gray-500">{l.phase}</span>
-                          <span className="text-[10px] text-gray-500">{l.emp || 'Me'}</span>
+                          <span className="text-[10px] text-gray-150 font-mono">{l.date}</span>
+                          <span className="text-xs font-semibold text-gray-150">{l.projName}</span>
+                          <span className="text-[10px] text-gray-200">{l.phase}</span>
+                          <span className="text-[10px] text-gray-200">{l.emp || 'Me'}</span>
                           {hasPay && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold">💵 Collected</span>}
                         </div>
-                        {l.notes && <div className="text-[10px] text-gray-500 mt-1">{l.notes}</div>}
-                        {l.store && <div className="text-[10px] text-gray-500 mt-0.5">🏪 {l.store}</div>}
+                        {l.notes && <div className="text-[10px] text-gray-300 mt-1">{l.notes}</div>}
+                        {l.store && <div className="text-[10px] text-gray-300 mt-0.5">🏪 {l.store}</div>}
                         {/* Spec: Daily preview line below description */}
-                        <div className="text-[10px] text-gray-600 mt-1 font-mono">
-                          H: {num(l.hrs).toFixed(1)} &nbsp;Mat: {fmt(num(l.mat))} &nbsp;Coll: {fmt(num(l.collected))} &nbsp;
-                          P: <span style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</span>
+                        <div className="text-[10px] text-gray-200 mt-1 font-mono">
+                          Hrs: <span style={{ color: '#e5e7eb' }}>{num(l.hrs).toFixed(1)}</span> &nbsp;
+                          Miles: <span style={{ color: '#60a5fa' }}>{num(l.miles)}</span> &nbsp;
+                          Mat: <span style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</span> &nbsp;
+                          Coll: <span style={{ color: '#6ee7b7' }}>{fmt(num(l.collected))}</span> &nbsp;
+                          Remaining Bal: <span style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</span>
                         </div>
                         <div className="flex gap-2 mt-1.5">
                           <button onClick={() => beginLogEdit(l.id)} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
-                          <button onClick={() => deleteLogEntry(l.id)} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400">Delete</button>
+                          <button onClick={() => deleteLogEntry(l.id)} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-red-400 hover:text-red-500">Delete</button>
                         </div>
                       </div>
                       {/* Spec: Top right of card — cumHours, entry mat cost, running balance, cumMiles */}
-                      <div className="text-right text-[11px] space-y-0.5 min-w-[80px]">
-                        <div className="font-mono font-bold text-white">{num(rr.cumHours).toFixed(1)}h</div>
-                        <div style={{ color: '#f97316', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(l.mat))} mat</div>
-                        <div style={{ color: balanceColor, fontFamily: 'monospace', fontSize: '12px', fontWeight: 700 }}>{fmt(num(rr.remainingAfter))} net</div>
-                        <div className="font-mono text-gray-500 text-[10px]">{num(rr.cumMiles)}mi</div>
+                      <div className="text-right text-[11px] space-y-0.5 min-w-[110px]">
+                        <div style={{ color: '#e5e7eb', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(rr.entryLaborCost))} lab</div>
+                        <div style={{ color: '#fcd34d', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(l.mat))} mat</div>
+                        <div style={{ color: '#60a5fa', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(rr.entryMileageCost))} mi</div>
+                        <div style={{ color: '#ef4444', fontFamily: 'monospace', fontSize: '12px', fontWeight: 700 }}>{fmt(num(rr.entryTotalCost))} total</div>
                       </div>
                     </div>
                   </div>
@@ -1192,10 +1286,10 @@ export default function V15rFieldLogPanel() {
                   {/* Running totals sub-row — cumulative data from rollup */}
                   <div className="bg-[var(--bg-input)] border border-gray-800 rounded px-3 py-2 text-[10px] flex justify-between gap-3">
                     <div className="flex gap-4 flex-wrap">
-                      <span><span className="text-gray-500">Cum Hours:</span> <span className="font-mono text-gray-300">{num(rr.cumHours).toFixed(1)}h</span></span>
-                      <span><span className="text-gray-500">Cum Mat:</span> <span className="font-mono text-gray-300">{fmt(num(rr.cumMaterialCost))}</span></span>
-                      <span><span className="text-gray-500">Cum Collected:</span> <span className="font-mono text-emerald-400">{fmt(num(rr.cumCollected))}</span></span>
-                      <span><span className="text-gray-500">Cum Cost:</span> <span className="font-mono text-red-400">{fmt(num(rr.cumTotalCost))}</span></span>
+                      <span><span className="text-gray-300">Cum Hours:</span> <span className="font-mono text-gray-300">{num(rr.cumHours).toFixed(1)}h</span></span>
+                      <span><span className="text-gray-300">Cum Mat:</span> <span className="font-mono" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span></span>
+                      <span><span className="text-gray-300">Cum Collected:</span> <span className="font-mono text-emerald-400">{fmt(num(rr.cumCollected))}</span></span>
+                      <span><span className="text-gray-300">Cum Cost:</span> <span className="font-mono text-red-400">{fmt(num(rr.cumTotalCost))}</span></span>
                     </div>
                     <div className="flex gap-3 items-center">
                       <span style={{ color: balanceColor, fontFamily: 'monospace', fontWeight: 700 }}>Net: {fmt(num(rr.remainingAfter))}</span>
@@ -1264,20 +1358,27 @@ export default function V15rFieldLogPanel() {
 
         {/* Running Totals Bar at bottom - Project Log */}
         {sorted.length > 0 && (() => {
-          const projId = projFilter === 'all' ? null : projFilter;
-          const roll = projId ? buildProjectLogRollup(backup, projId) : null;
-          const totalHours = sorted.reduce((s, l) => s + num(l.hrs), 0);
-          const totalMat = sorted.reduce((s, l) => s + num(l.mat), 0);
-          const totalCollected = sorted.reduce((s, l) => s + num(l.collected), 0);
-          // Spec: labor cost = hours × billing rate
-          const bottomBillRate = num(settings.billRate) || 95
-          const bottomMileRate = num(settings.mileRate) || 0.67
-          const totalLaborCost = sorted.reduce((s, l) => s + (num(l.hrs) * bottomBillRate), 0);
-          const totalMileCost = sorted.reduce((s, l) => s + (num(l.miles || 0) * bottomMileRate), 0);
-          const totalCost = totalLaborCost + totalMat + totalMileCost;
-          const projQuote = roll ? num(roll.quote) : 0;
-          // Spec: balance = contract − collected − total cost
-          const balanceLeft = projQuote > 0 ? projQuote - totalCollected - totalCost : 0;
+          // Single source of truth — same function and same inputs as top summary card
+          const footMileRate = num(backup.settings?.mileRate) || VAN_MILE_RATE
+          const footOpCost = Number(backup?.settings?.opCost) || 55
+          let footFin: ReturnType<typeof calculateProjectFinancials>
+          if (projFilter === 'all') {
+            footFin = calculatePortfolioFinancials(projects, sorted, footMileRate, footOpCost)
+          } else {
+            const proj = projects.find((p: any) => p.id === projFilter)
+            if (proj) {
+              footFin = calculateProjectFinancials(proj, sorted, footMileRate, footOpCost)
+            } else {
+              footFin = { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: footMileRate }
+            }
+          }
+          const totalHours = footFin.total_hours
+          const totalMat = footFin.material_cost
+          const totalCollected = footFin.total_collected
+          const totalCost = footFin.total_costs
+          const projQuote = footFin.quote
+          // Canonical formula: balance = quote − total_costs (collected tracked separately)
+          const balanceLeft = footFin.remaining_balance
           const bottomBalanceColor = getBalanceColor(balanceLeft, projQuote)
           return (
             <div style={{
@@ -1300,8 +1401,14 @@ export default function V15rFieldLogPanel() {
                 <span style={{ color: '#9ca3af' }}>
                   Total Hours: <span className="font-mono" style={{ color: '#e5e7eb' }}>{totalHours.toFixed(1)}h</span>
                 </span>
+                <span style={{ color: '#9ca3af' }}>
+                  Total Labor: <span className="font-mono" style={{ color: '#e5e7eb' }}>{fmt(footFin.labor_cost)}</span>
+                </span>
                 <span style={{ color: '#f59e0b' }}>
                   Total Mat: <span className="font-mono" style={{ color: '#fcd34d' }}>{fmt(totalMat)}</span>
+                </span>
+                <span style={{ color: '#60a5fa' }}>
+                  Total Mileage: <span className="font-mono" style={{ color: '#60a5fa' }}>{fmt(footFin.transportation_cost)}</span>
                 </span>
                 <span style={{ color: '#10b981' }}>
                   Total Collected: <span className="font-mono" style={{ color: '#6ee7b7' }}>{fmt(totalCollected)}</span>
@@ -1845,6 +1952,10 @@ export default function V15rFieldLogPanel() {
                 <input type="date" value={slDate} onChange={e => setSlDate(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
+                <label className="text-[9px] text-gray-500 uppercase font-bold">Est Hrs</label>
+                <input type="number" step="0.25" value={slEstHrs} onChange={e => setSlEstHrs(e.target.value)} placeholder="quoted hrs" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+              </div>
+              <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Hours</label>
                 <input type="number" step="0.5" value={slHrs} onChange={e => setSlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
@@ -1998,14 +2109,20 @@ export default function V15rFieldLogPanel() {
                         </div>
                       )}
                     </div>
-                    <div className="text-right text-[10px]" style={{ minWidth: '100px' }}>
-                      <div className="font-mono text-gray-300">{num(l.hrs)}h · {num(l.miles)}mi</div>
-                      <div className="font-mono text-orange-400">{fmt(num(l.mat))} mat</div>
-                      {/* Large profit number */}
+                    <div className="text-right text-[10px]" style={{ minWidth: '160px' }}>
+                      <div className="font-mono" style={{ color: '#e5e7eb' }}>
+                        {num(roll.hrs).toFixed(1)}h × ${num(roll.opCost).toFixed(2)} = <span style={{ fontWeight: 700, color: '#f87171' }}>{fmt(roll.laborCost)} lab</span>
+                      </div>
+                      <div className="font-mono" style={{ color: '#fcd34d' }}>
+                        <span style={{ fontWeight: 700 }}>{fmt(roll.matCost)}</span> mat
+                      </div>
+                      <div className="font-mono" style={{ color: '#e5e7eb' }}>
+                        {num(roll.miles)}mi × ${num(roll.mileRate).toFixed(2)} = <span style={{ fontWeight: 700, color: '#60a5fa' }}>{fmt(roll.mileCost)} mi</span>
+                      </div>
                       <div style={{ color: roll.projectedProfit >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: 800, fontSize: '16px', lineHeight: '1.2', marginTop: '4px' }}>
                         {fmt(roll.projectedProfit)}
                       </div>
-                      <div style={{ fontSize: '8px', color: 'var(--t3)' }}>projected</div>
+                      <div style={{ fontSize: '8px', color: 'var(--t3)' }}>actual ({num(l.hrs).toFixed(1)}h)</div>
                     </div>
                   </div>
 
@@ -2015,51 +2132,21 @@ export default function V15rFieldLogPanel() {
                       <span className="text-gray-500">Base Quote:</span>
                       <span className="font-mono text-gray-300">{fmt(roll.baseQuoted)}</span>
                     </div>
-                    {roll.addIncome > 0.009 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">+ Added Income:</span>
-                        <span className="font-mono text-emerald-400">{fmt(roll.addIncome)}</span>
-                      </div>
-                    )}
                     <div className="flex justify-between font-bold text-gray-200 border-t border-gray-700 pt-1">
                       <span>Total Billable:</span>
                       <span className="font-mono">{fmt(roll.totalBillable)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Base Cost (mat + labor + miles):</span>
-                      <span className="font-mono text-orange-400">{fmt(roll.baseActual)}</span>
-                    </div>
-                    {roll.addExpense > 0.009 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">+ Added Expense:</span>
-                        <span className="font-mono text-orange-400">{fmt(roll.addExpense)}</span>
-                      </div>
-                    )}
-                    {roll.addMileage > 0.009 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">+ Added Mileage:</span>
-                        <span className="font-mono text-orange-400">{fmt(roll.addMileage)}</span>
-                      </div>
-                    )}
                     <div className="flex justify-between font-bold border-t border-gray-700 pt-1">
                       <span className="text-gray-500">Total Cost:</span>
-                      <span className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>{fmt(roll.totalActual)}</span>
+                      <span className="font-mono" style={{ color: '#f87171' }}>{fmt(roll.totalActual)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Collected:</span>
-                      <span className="font-mono" style={{ color: '#1D9E75' }}>{fmt(roll.collected)}</span>
-                    </div>
-                    <div className="flex justify-between font-bold">
-                      <span className="text-gray-500">Remaining Balance:</span>
-                      <span className="font-mono" style={{ color: roll.remaining <= 0 ? '#1D9E75' : (roll.remaining > 0 && daysSince(l.date) >= 30 ? '#D85A30' : '#EF9F27') }}>{fmt(roll.remaining)}</span>
+                      <span className="text-gray-500">Projected Margin (Quoted {num(roll.estHrs).toFixed(1)} hr):</span>
+                      <span className="font-mono font-bold" style={{ color: roll.estimatedProfit >= 0 ? '#378ADD' : '#E24B4A' }}>{fmt(roll.estimatedProfit)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Projected Margin:</span>
-                      <span className="font-mono font-bold" style={{ color: '#378ADD' }}>{fmt(roll.projectedProfit)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Cash-Real Margin:</span>
-                      <span className="font-mono font-bold" style={{ color: (() => { const v = roll.collected - roll.totalActual; return v > 0 ? '#1D9E75' : v < 0 ? '#E24B4A' : 'var(--color-text-secondary)'; })() }}>{fmt(roll.collected - roll.totalActual)}</span>
+                      <span className="text-gray-500">Cash Real Margin (Actual {num(l.hrs).toFixed(1)} hr):</span>
+                      <span className="font-mono font-bold" style={{ color: roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{fmt(roll.projectedProfit)}</span>
                     </div>
                   </div>
 
@@ -2417,7 +2504,7 @@ export default function V15rFieldLogPanel() {
       <div className="bg-[var(--bg-card)] border-b border-gray-700 p-3">
         <div className="grid grid-cols-4 gap-4 text-center">
           <div>
-            <div className="text-[9px] text-gray-500 uppercase font-bold">Hours This Week</div>
+            <div className="text-[9px] text-gray-500 uppercase font-bold">Labor Hours This Week</div>
             <div className="text-sm font-bold text-emerald-400">{hoursThisWeek.toFixed(1)}h</div>
           </div>
           <div>
@@ -2425,11 +2512,11 @@ export default function V15rFieldLogPanel() {
             <div className="text-sm font-bold text-blue-400">{fmt(revenueThisWeek)}</div>
           </div>
           <div>
-            <div className="text-[9px] text-gray-500 uppercase font-bold">Mat Cost This Week</div>
+            <div className="text-[9px] text-gray-500 uppercase font-bold">Materials Cost This Week</div>
             <div className="text-sm font-bold text-orange-400">{fmt(matThisWeek)}</div>
           </div>
           <div>
-            <div className="text-[9px] text-gray-500 uppercase font-bold">Net This Week</div>
+            <div className="text-[9px] text-gray-500 uppercase font-bold">Net Revenue This Week</div>
             <div className={`text-sm font-bold ${netThisWeek >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmt(netThisWeek)}</div>
           </div>
         </div>
