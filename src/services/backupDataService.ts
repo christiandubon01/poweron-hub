@@ -715,8 +715,8 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
     cumMileageCost += entryMileageCost
     const cumTotalCost = cumLaborCost + cumMaterialCost + cumMileageCost
 
-    // Spec: Running balance = Contract Amount − Collected (cumulative) − Cumulative Total Cost
-    const remainingAfter = quote - cumCollected - cumTotalCost
+    // Spec: Running balance = Contract − Cumulative Total Cost (collected is tracked separately, not subtracted)
+    const remainingAfter = quote - cumTotalCost
 
     byId[l.id] = {
       cumHours,
