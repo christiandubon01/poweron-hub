@@ -516,6 +516,7 @@ export default function V15rPriceBookPanel() {
   const [editingPidId, setEditingPidId] = useState<string | null>(null)
   const [editingPid, setEditingPid] = useState('')
   const [isMatrixExpanded, setIsMatrixExpanded] = useState(true)
+  const [showSummaryModal, setShowSummaryModal] = useState(false)
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [editingPrice, setEditingPrice] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -968,6 +969,41 @@ export default function V15rPriceBookPanel() {
     persistIdMatrix(updated)
   }
 
+  // ── METRICS ──────────────────────────────────────────────────────────────
+
+  const isNoSource = (i: any) => {
+    const s = (i.src || '').trim()
+    return !s || s === 'PDF Import' || s === 'PDF Imported'
+  }
+
+  const getBucketMetrics = (cat: string) => {
+    const items = priceBookItems.filter((i: any) => resolveCategory(i) === cat)
+    const noCost = items.filter((i: any) => !num(i.cost)).length
+    const noSource = items.filter(isNoSource).length
+    const noName = items.filter((i: any) => !(i.name || '').trim()).length
+    const matrix = getIdMatrix()
+    const matrixEntry = matrix.find((m: any) => (m.cat || '').toLowerCase() === cat.toLowerCase())
+    const range = matrixEntry ? `${matrixEntry.rangeStart}–${matrixEntry.rangeEnd}` : '—'
+    return { total: items.length, noCost, noSource, noName, range, hasRange: !!matrixEntry }
+  }
+
+  const getTotalMetrics = () => {
+    const total = priceBookItems.length
+    const noCost = priceBookItems.filter((i: any) => !num(i.cost)).length
+    const noSource = priceBookItems.filter(isNoSource).length
+    const noName = priceBookItems.filter((i: any) => !(i.name || '').trim()).length
+    const bucketsInBook = new Set(priceBookItems.map((i: any) => resolveCategory(i))).size
+    const matrix = getIdMatrix()
+    const bucketsInMatrixSet = new Set(matrix.map((m: any) => (m.cat || '').toLowerCase()))
+    const bucketsWithRange = Array.from(new Set(priceBookItems.map((i: any) => resolveCategory(i).toLowerCase()))).filter(c => bucketsInMatrixSet.has(c)).length
+    return {
+      total, noCost, noSource, noName,
+      bucketsInBook, bucketsWithRange,
+      matrixTotal: matrix.length,
+      timestamp: new Date().toLocaleString(),
+    }
+  }
+
   // ── DRAG-AND-DROP ────────────────────────────────────────────────────────
 
   const sensors = useSensors(
@@ -1013,6 +1049,14 @@ export default function V15rPriceBookPanel() {
           <h1 className="text-3xl font-bold text-gray-100 mb-1">Price Book</h1>
           <p className="text-sm text-gray-400">{priceBookItems.length} total items</p>
         </div>
+        <button
+          onClick={() => setShowSummaryModal(true)}
+          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+          title="View overall Price Book health summary"
+        >
+          <FileText className="w-4 h-4" />
+          Summary
+        </button>
       </div>
 
       {/* HIDDEN FILE INPUTS */}
@@ -1076,6 +1120,67 @@ export default function V15rPriceBookPanel() {
           {importLoading && <span className="ml-2 text-yellow-400 animate-pulse">Parsing file...</span>}
         </p>
       </div>
+
+      {/* SUMMARY MODAL */}
+      {showSummaryModal && (() => {
+        const m = getTotalMetrics()
+        return (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowSummaryModal(false)}>
+            <div className="bg-[var(--bg-card)] rounded-lg p-6 max-w-lg w-full space-y-4 border border-gray-700" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-100">Price Book Summary</h2>
+                  <p className="text-xs text-gray-500">Generated {m.timestamp}</p>
+                </div>
+                <button onClick={() => setShowSummaryModal(false)} className="p-1.5 hover:bg-gray-700 rounded text-gray-400">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="bg-[var(--bg-secondary)] rounded p-3">
+                  <div className="text-[10px] text-gray-500 uppercase font-semibold">Total Item Entries</div>
+                  <div className="text-2xl font-bold text-gray-100 font-mono">{m.total}</div>
+                </div>
+                <div className="bg-[var(--bg-secondary)] rounded p-3">
+                  <div className="text-[10px] text-gray-500 uppercase font-semibold">Buckets in Book</div>
+                  <div className="text-2xl font-bold text-gray-100 font-mono">{m.bucketsInBook}</div>
+                </div>
+                <div className="bg-[var(--bg-secondary)] rounded p-3">
+                  <div className="text-[10px] text-gray-500 uppercase font-semibold">Matrix Ranges Defined</div>
+                  <div className="text-2xl font-bold text-gray-100 font-mono">{m.matrixTotal}</div>
+                  <div className="text-[10px] text-gray-500 mt-1">{m.bucketsWithRange} of {m.bucketsInBook} buckets mapped</div>
+                </div>
+                <div className="bg-[var(--bg-secondary)] rounded p-3">
+                  <div className="text-[10px] text-gray-500 uppercase font-semibold">Health</div>
+                  <div className={`text-2xl font-bold font-mono ${(m.noCost + m.noSource + m.noName) === 0 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                    {m.total === 0 ? '—' : `${Math.round(((m.total * 3 - m.noCost - m.noSource - m.noName) / (m.total * 3)) * 100)}%`}
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-1">fields populated</div>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-gray-700 space-y-2">
+                <div className="text-[10px] text-gray-500 uppercase font-semibold">Missing Fields</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className={`rounded p-2 ${m.noCost > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-[var(--bg-secondary)] text-gray-500'}`}>
+                    <div className="text-[10px] uppercase font-semibold">No Cost</div>
+                    <div className="text-lg font-mono">{m.noCost}</div>
+                  </div>
+                  <div className={`rounded p-2 ${m.noSource > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-[var(--bg-secondary)] text-gray-500'}`}>
+                    <div className="text-[10px] uppercase font-semibold">No Source</div>
+                    <div className="text-lg font-mono">{m.noSource}</div>
+                  </div>
+                  <div className={`rounded p-2 ${m.noName > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-[var(--bg-secondary)] text-gray-500'}`}>
+                    <div className="text-[10px] uppercase font-semibold">No Name</div>
+                    <div className="text-lg font-mono">{m.noName}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* IMPORT TOAST */}
       {importToast && (
@@ -1176,6 +1281,20 @@ export default function V15rPriceBookPanel() {
                 {/* CATEGORY ITEMS */}
                 {isExpanded && (
                   <div className="border-t border-gray-700">
+                    {/* PER-BUCKET METRICS */}
+                    {(() => {
+                      const m = getBucketMetrics(cat)
+                      return (
+                        <div className="px-4 py-2 bg-[var(--bg-secondary)]/40 border-b border-gray-700/50 flex items-center gap-4 text-[11px] flex-wrap">
+                          <span className="text-gray-400">Range: <span className={m.hasRange ? 'text-gray-200 font-mono' : 'text-gray-600'}>{m.range}</span></span>
+                          <span className="text-gray-400">Entries: <span className="text-gray-200 font-mono">{m.total}</span></span>
+                          <span className={m.noCost > 0 ? 'text-yellow-400' : 'text-gray-500'}>No cost: <span className="font-mono">{m.noCost}</span></span>
+                          <span className={m.noSource > 0 ? 'text-yellow-400' : 'text-gray-500'}>No source: <span className="font-mono">{m.noSource}</span></span>
+                          <span className={m.noName > 0 ? 'text-yellow-400' : 'text-gray-500'}>No name: <span className="font-mono">{m.noName}</span></span>
+                        </div>
+                      )
+                    })()}
+
                     {/* TABLE HEADER */}
                     <div className="px-4 py-2 bg-[var(--bg-secondary)] grid grid-cols-12 gap-3 text-xs font-semibold text-gray-400 uppercase">
                       <div className="col-span-2">Name</div>
