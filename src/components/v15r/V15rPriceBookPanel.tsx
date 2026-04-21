@@ -767,6 +767,34 @@ export default function V15rPriceBookPanel() {
     refreshBackup()
   }
 
+  const handleAddItem = (cat: string) => {
+    pushState()
+    if (!Array.isArray(backup.priceBook)) backup.priceBook = []
+    const newId = `manual_${Date.now()}`
+    const newItem: BackupPriceBookItem = {
+      id: newId,
+      cat,
+      name: '',
+      cost: 0,
+      src: '',
+      unit: 'EA',
+      pack: 1,
+      waste: 0,
+      link: '',
+      pidBand: '',
+      pidBlock: '',
+      legacyId: newId,
+      notes: '',
+    }
+    backup.priceBook = [...(backup.priceBook as any[]), newItem]
+    persistPriceBook()
+    markChanged('priceBook')
+    refreshBackup()
+    setExpandedCategories(prev => new Set(prev).add(cat))
+    setEditingNameId(newId)
+    setEditingName('')
+  }
+
   return (
     <div className="space-y-4 p-5 min-h-screen bg-[var(--bg-secondary)]">
       {/* HEADER */}
@@ -775,10 +803,6 @@ export default function V15rPriceBookPanel() {
           <h1 className="text-3xl font-bold text-gray-100 mb-1">Price Book</h1>
           <p className="text-sm text-gray-400">{priceBookItems.length} total items</p>
         </div>
-        <button className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition">
-          <Plus className="w-4 h-4" />
-          Add Item
-        </button>
       </div>
 
       {/* HIDDEN FILE INPUTS */}
@@ -1119,6 +1143,17 @@ export default function V15rPriceBookPanel() {
                         </div>
                       )
                     })}
+
+                    {/* Per-category Add Item footer */}
+                    <div className="px-4 py-3 border-t border-gray-700 flex justify-center">
+                      <button
+                        onClick={() => handleAddItem(cat)}
+                        className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded text-xs font-medium flex items-center gap-1.5 transition"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add Item to {cat}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
