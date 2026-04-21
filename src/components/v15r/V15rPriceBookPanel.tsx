@@ -17,10 +17,38 @@
  */
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download, RefreshCw, GripVertical } from 'lucide-react'
 import { getBackupData, saveBackupData, markChanged, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+
+/** Sortable row wrapper — drag handle floats on left edge, inner grid layout unaffected */
+function SortableRow({ id, className, children }: { id: string; className?: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className={`relative ${className || ''}`}>
+      <button
+        {...attributes}
+        {...listeners}
+        type="button"
+        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 p-1 cursor-grab active:cursor-grabbing text-gray-400 hover:text-emerald-400 z-10"
+        title="Drag to reorder"
+        aria-label="Drag to reorder"
+      >
+        <GripVertical className="w-8 h-6" />
+      </button>
+      {children}
+    </div>
+  )
+}
 
 // ── CDN LOADERS ──────────────────────────────────────────────────────────────
 
@@ -940,6 +968,43 @@ export default function V15rPriceBookPanel() {
     persistIdMatrix(updated)
   }
 
+  // ── DRAG-AND-DROP ────────────────────────────────────────────────────────
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  const handleItemDragEnd = (cat: string, event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const allItems = [...((backup.priceBook as any[]) || [])]
+    const catIndices: number[] = []
+    allItems.forEach((item, idx) => { if (resolveCategory(item) === cat) catIndices.push(idx) })
+    const catItems = catIndices.map(i => allItems[i])
+    const oldIdx = catItems.findIndex((i: any) => i.id === active.id)
+    const newIdx = catItems.findIndex((i: any) => i.id === over.id)
+    if (oldIdx === -1 || newIdx === -1) return
+    const reordered = arrayMove(catItems, oldIdx, newIdx)
+    catIndices.forEach((backupIdx, i) => { allItems[backupIdx] = reordered[i] })
+    pushState()
+    backup.priceBook = allItems
+    persistPriceBook()
+    markChanged('priceBook')
+    refreshBackup()
+  }
+
+  const handleMatrixDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const matrix = getIdMatrix()
+    const oldIdx = matrix.findIndex((m: any) => m.id === active.id)
+    const newIdx = matrix.findIndex((m: any) => m.id === over.id)
+    if (oldIdx === -1 || newIdx === -1) return
+    const reordered = arrayMove(matrix, oldIdx, newIdx)
+    persistIdMatrix(reordered)
+  }
+
   return (
     <div className="space-y-4 p-5 min-h-screen bg-[var(--bg-secondary)]">
       {/* HEADER */}
@@ -1123,13 +1188,15 @@ export default function V15rPriceBookPanel() {
                     </div>
 
                     {/* TABLE ROWS */}
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => handleItemDragEnd(cat, e)}>
+                    <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
                     {items.map((item) => {
                       const clientPrice = getClientPrice(item.cost || 0)
                       const pidDisplay = item.pidBlock || item.pidBand || item.id || '—'
                       const isEditing = editingId === item.id
 
                       return (
-                        <div key={item.id} className="px-4 py-3 border-t border-gray-700 grid grid-cols-12 gap-3 items-center text-sm hover:bg-[var(--bg-card)] hover:brightness-110 transition">
+                        <SortableRow key={item.id} id={item.id} className="pl-6 pr-4 py-3 border-t border-gray-700 grid grid-cols-12 gap-3 items-center text-sm hover:bg-[var(--bg-card)] hover:brightness-110 transition">
                           <div className="col-span-2 text-gray-100 font-medium">
                             {editingNameId === item.id ? (
                               <input
@@ -1327,9 +1394,11 @@ export default function V15rPriceBookPanel() {
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
-                        </div>
+                        </SortableRow>
                       )
                     })}
+                    </SortableContext>
+                    </DndContext>
 
                     {/* Per-category Add Item footer */}
                     <div className="px-4 py-3 border-t border-gray-700 flex justify-center">
@@ -1387,10 +1456,12 @@ export default function V15rPriceBookPanel() {
         {getIdMatrix().length === 0 ? (
           <div className="px-3 py-4 text-center text-sm text-gray-500">No ranges defined yet. Add one below or click "Seed from existing items".</div>
         ) : (
-          getIdMatrix().map((entry: any) => {
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMatrixDragEnd}>
+          <SortableContext items={getIdMatrix().map((m: any) => m.id)} strategy={verticalListSortingStrategy}>
+          {getIdMatrix().map((entry: any) => {
             const isEditingRow = editingMatrixId === entry.id
             return (
-              <div key={entry.id} className="px-3 py-2 grid grid-cols-12 gap-3 items-center text-sm border-t border-gray-700">
+              <SortableRow key={entry.id} id={entry.id} className="pl-5 pr-3 py-2 grid grid-cols-12 gap-3 items-center text-sm border-t border-gray-700">
                 {isEditingRow ? (
                   <>
                     <input autoFocus className="col-span-3 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={editMatrixDraft.cat} onChange={e => setEditMatrixDraft({ ...editMatrixDraft, cat: e.target.value })} />
@@ -1435,9 +1506,11 @@ export default function V15rPriceBookPanel() {
                     </div>
                   </>
                 )}
-              </div>
+              </SortableRow>
             )
-          })
+          })}
+          </SortableContext>
+          </DndContext>
         )}
 
         {/* Add new row */}
