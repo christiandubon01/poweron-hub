@@ -517,6 +517,29 @@ export default function V15rPriceBookPanel() {
   const [editingPid, setEditingPid] = useState('')
   const [isMatrixExpanded, setIsMatrixExpanded] = useState(true)
   const [showSummaryModal, setShowSummaryModal] = useState(false)
+  const [isSuppliersExpanded, setIsSuppliersExpanded] = useState(true)
+  const [editingSrcId, setEditingSrcId] = useState<string | null>(null)
+  const [supplierModalMode, setSupplierModalMode] = useState<null | 'add' | 'edit'>(null)
+  const [supplierModalEditingId, setSupplierModalEditingId] = useState<string | null>(null)
+  const [supplierModalTargetItemId, setSupplierModalTargetItemId] = useState<string | null>(null)
+  const SUPPLIER_COLORS = [
+    { id: 'gray', label: 'Gray', cls: 'bg-gray-500/20 text-gray-300 border-gray-500/40' },
+    { id: 'orange', label: 'Orange', cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' },
+    { id: 'blue', label: 'Blue', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' },
+    { id: 'cyan', label: 'Cyan', cls: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40' },
+    { id: 'green', label: 'Green', cls: 'bg-green-500/20 text-green-400 border-green-500/40' },
+    { id: 'emerald', label: 'Emerald', cls: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' },
+    { id: 'yellow', label: 'Yellow', cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' },
+    { id: 'amber', label: 'Amber', cls: 'bg-amber-500/20 text-amber-400 border-amber-500/40' },
+    { id: 'red', label: 'Red', cls: 'bg-red-500/20 text-red-400 border-red-500/40' },
+    { id: 'pink', label: 'Pink', cls: 'bg-pink-500/20 text-pink-400 border-pink-500/40' },
+    { id: 'purple', label: 'Purple', cls: 'bg-purple-500/20 text-purple-400 border-purple-500/40' },
+    { id: 'indigo', label: 'Indigo', cls: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' },
+    { id: 'teal', label: 'Teal', cls: 'bg-teal-500/20 text-teal-400 border-teal-500/40' },
+    { id: 'lime', label: 'Lime', cls: 'bg-lime-500/20 text-lime-400 border-lime-500/40' },
+  ]
+
+  const [supplierDraft, setSupplierDraft] = useState({ name: '', location: '', contact: '', phone: '', email: '', website: '', taxId: '', paymentTerms: '', notes: '', color: '' })
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [editingPrice, setEditingPrice] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -737,9 +760,15 @@ export default function V15rPriceBookPanel() {
     return cost * (1 + markup / 100)
   }
 
-  // Get source badge color
+  // Get source badge color — supplier.color takes precedence, falls back to name-based rule
   const getSourceColor = (src: string) => {
-    const s = (src || '').toLowerCase()
+    const s = (src || '').toLowerCase().trim()
+    if (!s) return 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+    const sup = getSuppliers().find((x: any) => (x.name || '').toLowerCase().trim() === s)
+    if (sup && sup.color) {
+      const match = SUPPLIER_COLORS.find(c => c.id === sup.color)
+      if (match) return match.cls
+    }
     if (s.includes('crawford')) return 'bg-green-500/20 text-green-400 border-green-500/30'
     if (s.includes('home depot')) return 'bg-orange-500/20 text-orange-400 border-orange-500/30'
     if (s.includes('lowes') || s.includes('lowe')) return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
@@ -1000,8 +1029,149 @@ export default function V15rPriceBookPanel() {
       total, noCost, noSource, noName,
       bucketsInBook, bucketsWithRange,
       matrixTotal: matrix.length,
+      suppliersTotal: getSuppliers().length,
       timestamp: new Date().toLocaleString(),
     }
+  }
+
+  // ── SUPPLIERS ────────────────────────────────────────────────────────────
+
+  const getSuppliers = (): any[] => {
+    const s = (backup as any).suppliers
+    return Array.isArray(s) ? s : []
+  }
+
+  const persistSuppliers = (updated: any[]) => {
+    pushState()
+    ;(backup as any).suppliers = updated
+    saveBackupData(backup)
+    markChanged('suppliers')
+    refreshBackup()
+  }
+
+  const openAddSupplierModal = (targetItemId?: string) => {
+    setSupplierModalMode('add')
+    setSupplierModalEditingId(null)
+    setSupplierModalTargetItemId(targetItemId || null)
+    setSupplierDraft({ name: '', location: '', contact: '', phone: '', email: '', website: '', taxId: '', paymentTerms: '', notes: '' })
+  }
+
+  const openEditSupplierModal = (entry: any) => {
+    setSupplierModalMode('edit')
+    setSupplierModalEditingId(entry.id)
+    setSupplierModalTargetItemId(null)
+    setSupplierDraft({
+      name: entry.name || '',
+      location: entry.location || '',
+      contact: entry.contact || '',
+      phone: entry.phone || '',
+      email: entry.email || '',
+      website: entry.website || '',
+      taxId: entry.taxId || '',
+      paymentTerms: entry.paymentTerms || '',
+      notes: entry.notes || '',
+      color: entry.color || '',
+    })
+  }
+
+  const closeSupplierModal = () => {
+    setSupplierModalMode(null)
+    setSupplierModalEditingId(null)
+    setSupplierModalTargetItemId(null)
+  }
+
+  const handleSaveSupplier = () => {
+    const name = supplierDraft.name.trim()
+    const location = supplierDraft.location.trim()
+    if (!name) { alert('Name is required'); return }
+    if (!location) { alert('Location is required — use "(unspecified)" if not known'); return }
+    const suppliers = getSuppliers()
+    if (supplierModalMode === 'add') {
+      if (suppliers.some((s: any) => (s.name || '').toLowerCase() === name.toLowerCase() && (s.location || '').toLowerCase() === location.toLowerCase())) {
+        alert(`Supplier "${name}" at "${location}" already exists`); return
+      }
+      const newEntry = {
+        id: `sup_${Date.now()}`,
+        name,
+        location,
+        contact: supplierDraft.contact.trim(),
+        phone: supplierDraft.phone.trim(),
+        email: supplierDraft.email.trim(),
+        website: supplierDraft.website.trim(),
+        taxId: supplierDraft.taxId.trim(),
+        paymentTerms: supplierDraft.paymentTerms.trim(),
+        notes: supplierDraft.notes.trim(),
+        color: supplierDraft.color || '',
+        createdAt: new Date().toISOString(),
+      }
+      const updatedSuppliers = [...suppliers, newEntry]
+      ;(backup as any).suppliers = updatedSuppliers
+      if (supplierModalTargetItemId) {
+        const updatedItems = (backup.priceBook || []).map((pb: any) => pb.id === supplierModalTargetItemId ? { ...pb, src: name } : pb)
+        backup.priceBook = updatedItems
+      }
+      pushState()
+      saveBackupData(backup)
+      markChanged('suppliers')
+      refreshBackup()
+    } else if (supplierModalMode === 'edit' && supplierModalEditingId) {
+      const updated = suppliers.map((s: any) => s.id === supplierModalEditingId ? {
+        ...s,
+        name, location,
+        contact: supplierDraft.contact.trim(),
+        phone: supplierDraft.phone.trim(),
+        email: supplierDraft.email.trim(),
+        website: supplierDraft.website.trim(),
+        taxId: supplierDraft.taxId.trim(),
+        paymentTerms: supplierDraft.paymentTerms.trim(),
+        notes: supplierDraft.notes.trim(),
+        color: supplierDraft.color || '',
+      } : s)
+      persistSuppliers(updated)
+    }
+    closeSupplierModal()
+  }
+
+  const handleDeleteSupplier = (id: string) => {
+    const sup = getSuppliers().find((s: any) => s.id === id)
+    if (!sup) return
+    const usageCount = priceBookItems.filter((i: any) => (i.src || '').toLowerCase() === (sup.name || '').toLowerCase()).length
+    const msg = usageCount > 0
+      ? `Delete "${sup.name}"? ${usageCount} item(s) reference this supplier — their Source will stay as plain text "${sup.name}" but won't link to a registered supplier anymore.`
+      : `Delete "${sup.name}"?`
+    if (!confirm(msg)) return
+    persistSuppliers(getSuppliers().filter((s: any) => s.id !== id))
+  }
+
+  const handleSeedSuppliersFromExisting = () => {
+    const existing = getSuppliers()
+    const existingNames = new Set(existing.map((s: any) => (s.name || '').toLowerCase()))
+    const found = new Set<string>()
+    for (const item of priceBookItems) {
+      const raw = (item.src || '').trim()
+      if (!raw) continue
+      if (raw === 'PDF Import' || raw === 'PDF Imported') continue
+      if (existingNames.has(raw.toLowerCase())) continue
+      found.add(raw)
+    }
+    if (found.size === 0) { alert('No new suppliers to seed — all existing src values are already registered or empty'); return }
+    const seeded = Array.from(found).map((name, idx) => ({
+      id: `sup_${Date.now()}_${idx}`,
+      name,
+      location: '(unspecified)',
+      contact: '', phone: '', email: '', website: '', taxId: '', paymentTerms: '',
+      notes: 'Seeded from existing items',
+      createdAt: new Date().toISOString(),
+    }))
+    persistSuppliers([...existing, ...seeded])
+    alert(`Seeded ${seeded.length} suppliers. Edit them to add location/contact details.`)
+  }
+
+  const handleSetItemSource = (itemId: string, src: string) => {
+    const updated = (backup.priceBook || []).map((pb: any) => pb.id === itemId ? { ...pb, src } : pb)
+    saveBackupData({ ...backup, priceBook: updated })
+    refreshBackup()
+    setEditingSrcId(null)
   }
 
   // ── DRAG-AND-DROP ────────────────────────────────────────────────────────
@@ -1182,6 +1352,90 @@ export default function V15rPriceBookPanel() {
         )
       })()}
 
+      {/* SUPPLIER MODAL */}
+      {supplierModalMode && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={closeSupplierModal}>
+          <div className="bg-[var(--bg-card)] rounded-lg p-6 max-w-xl w-full max-h-[90vh] overflow-y-auto border border-gray-700" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-100">{supplierModalMode === 'add' ? 'Add Supplier' : 'Edit Supplier'}</h2>
+              <button onClick={closeSupplierModal} className="p-1.5 hover:bg-gray-700 rounded text-gray-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Name *</label>
+                <input autoFocus value={supplierDraft.name} onChange={(e) => setSupplierDraft({ ...supplierDraft, name: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" placeholder="e.g., CED" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Location *</label>
+                <input value={supplierDraft.location} onChange={(e) => setSupplierDraft({ ...supplierDraft, location: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" placeholder="e.g., Palm Desert" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Contact Person</label>
+                <input value={supplierDraft.contact} onChange={(e) => setSupplierDraft({ ...supplierDraft, contact: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Phone</label>
+                <input value={supplierDraft.phone} onChange={(e) => setSupplierDraft({ ...supplierDraft, phone: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Email</label>
+                <input value={supplierDraft.email} onChange={(e) => setSupplierDraft({ ...supplierDraft, email: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Website</label>
+                <input value={supplierDraft.website} onChange={(e) => setSupplierDraft({ ...supplierDraft, website: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Tax ID</label>
+                <input value={supplierDraft.taxId} onChange={(e) => setSupplierDraft({ ...supplierDraft, taxId: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" placeholder="N/A if not known" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Payment Terms</label>
+                <input value={supplierDraft.paymentTerms} onChange={(e) => setSupplierDraft({ ...supplierDraft, paymentTerms: e.target.value })} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" placeholder="e.g., Net 30" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Notes</label>
+                <textarea value={supplierDraft.notes} onChange={(e) => setSupplierDraft({ ...supplierDraft, notes: e.target.value })} rows={2} className="w-full mt-1 px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[10px] text-gray-400 uppercase font-semibold">Badge Color</label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSupplierDraft({ ...supplierDraft, color: '' })}
+                    className={`px-2 py-1 rounded text-xs border ${!supplierDraft.color ? 'border-emerald-400 ring-1 ring-emerald-400' : 'border-gray-600'} bg-gray-500/10 text-gray-400`}
+                    title="Auto — falls back to name-based rule"
+                  >
+                    Auto
+                  </button>
+                  {SUPPLIER_COLORS.map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setSupplierDraft({ ...supplierDraft, color: c.id })}
+                      className={`px-2 py-1 rounded text-xs border ${c.cls} ${supplierDraft.color === c.id ? 'ring-2 ring-white/60' : ''}`}
+                      title={c.label}
+                    >
+                      {supplierDraft.name || c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-gray-700">
+              <button onClick={closeSupplierModal} className="px-4 py-2 hover:bg-gray-700 rounded text-sm text-gray-400">Cancel</button>
+              <button onClick={handleSaveSupplier} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded text-sm text-white font-medium flex items-center gap-1">
+                <Check className="w-4 h-4" /> Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* IMPORT TOAST */}
       {importToast && (
         <div className="fixed top-4 right-4 z-50 bg-emerald-600/90 text-white px-4 py-3 rounded-lg text-sm font-medium shadow-lg flex items-center gap-2 animate-fade-in">
@@ -1357,9 +1611,37 @@ export default function V15rPriceBookPanel() {
                             )}
                           </div>
                           <div className="col-span-1.5">
-                            <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getSourceColor(item.src)}`}>
-                              {(!item.src || item.src === 'PDF Import' || item.src === 'PDF Imported') ? 'N/A' : item.src}
-                            </span>
+                            {editingSrcId === item.id ? (
+                              <select
+                                autoFocus
+                                value={(!item.src || item.src === 'PDF Import' || item.src === 'PDF Imported') ? '' : item.src}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  if (v === '__ADD__') {
+                                    openAddSupplierModal(item.id)
+                                    setEditingSrcId(null)
+                                    return
+                                  }
+                                  handleSetItemSource(item.id, v)
+                                }}
+                                onBlur={() => setEditingSrcId(null)}
+                                className="w-full px-2 py-1 bg-[var(--bg-secondary)] border border-cyan-500/50 rounded text-xs text-gray-100"
+                              >
+                                <option value="">— None —</option>
+                                {getSuppliers().map((s: any) => (
+                                  <option key={s.id} value={s.name}>{s.name}{s.location && s.location !== '(unspecified)' ? ` — ${s.location}` : ''}</option>
+                                ))}
+                                <option value="__ADD__">+ Add new supplier...</option>
+                              </select>
+                            ) : (
+                              <span
+                                onClick={() => setEditingSrcId(item.id)}
+                                className={`inline-block px-2 py-1 rounded text-xs font-medium border cursor-pointer hover:brightness-125 transition ${getSourceColor(item.src)}`}
+                                title="Click to change source"
+                              >
+                                {(!item.src || item.src === 'PDF Import' || item.src === 'PDF Imported') ? 'N/A' : item.src}
+                              </span>
+                            )}
                           </div>
                           <div className="col-span-0.75">
                             {editingPriceId === item.id ? (
@@ -1535,6 +1817,77 @@ export default function V15rPriceBookPanel() {
             )
           })
         )}
+      </div>
+
+      {/* SUPPLIERS SECTION */}
+      <div className="bg-[var(--bg-card)] rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setIsSuppliersExpanded(!isSuppliersExpanded)}
+            className="flex items-center gap-3 flex-1 text-left hover:brightness-110 transition"
+          >
+            {isSuppliersExpanded ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-gray-100">Suppliers</h2>
+              <p className="text-xs text-gray-400">Registered vendor list. Item Source column pulls from here.</p>
+            </div>
+            <span className="text-xs text-gray-500 whitespace-nowrap">{getSuppliers().length} registered</span>
+          </button>
+          {isSuppliersExpanded && (
+            <>
+              <button
+                onClick={handleSeedSuppliersFromExisting}
+                className="ml-3 px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded text-xs font-medium flex-shrink-0"
+                title="Scan item Source fields and auto-create supplier entries from distinct values"
+              >
+                Seed from existing items
+              </button>
+              <button
+                onClick={() => openAddSupplierModal()}
+                className="ml-2 px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 rounded text-xs font-medium flex items-center gap-1 flex-shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Supplier
+              </button>
+            </>
+          )}
+        </div>
+
+        {isSuppliersExpanded && (<>
+          <div className="px-3 py-2 bg-[var(--bg-secondary)] grid grid-cols-12 gap-3 text-xs font-semibold text-gray-400 uppercase rounded">
+            <div className="col-span-3">Name</div>
+            <div className="col-span-2">Location</div>
+            <div className="col-span-2">Contact</div>
+            <div className="col-span-2">Phone</div>
+            <div className="col-span-1">Terms</div>
+            <div className="col-span-2 text-right">Actions</div>
+          </div>
+
+          {getSuppliers().length === 0 ? (
+            <div className="px-3 py-4 text-center text-sm text-gray-500">No suppliers registered yet. Add one or click "Seed from existing items".</div>
+          ) : (
+            getSuppliers().map((s: any) => (
+              <div key={s.id} className="px-3 py-2 grid grid-cols-12 gap-3 items-center text-sm border-t border-gray-700">
+                <div className="col-span-3">
+                  <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getSourceColor(s.name)}`}>
+                    {s.name}
+                  </span>
+                </div>
+                <div className="col-span-2 text-gray-300 text-xs">{s.location || '—'}</div>
+                <div className="col-span-2 text-gray-400 text-xs">{s.contact || '—'}</div>
+                <div className="col-span-2 text-gray-400 text-xs font-mono">{s.phone || '—'}</div>
+                <div className="col-span-1 text-gray-400 text-xs">{s.paymentTerms || '—'}</div>
+                <div className="col-span-2 flex items-center justify-end gap-1">
+                  <button onClick={() => openEditSupplierModal(s)} className="p-1.5 hover:bg-[var(--bg-secondary)] rounded text-gray-400 hover:text-gray-300" title="Edit supplier">
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => handleDeleteSupplier(s.id)} className="p-1.5 hover:bg-red-500/10 rounded text-gray-400 hover:text-red-400" title="Delete supplier">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </>)}
       </div>
 
       {/* ID MATRIX SECTION */}
