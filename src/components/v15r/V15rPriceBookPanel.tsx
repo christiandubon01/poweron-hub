@@ -480,6 +480,8 @@ export default function V15rPriceBookPanel() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editNotes, setEditNotes] = useState('')
+  const [editingNameId, setEditingNameId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [editingPrice, setEditingPrice] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -944,7 +946,7 @@ export default function V15rPriceBookPanel() {
                     <div className="px-4 py-2 bg-[var(--bg-secondary)] grid grid-cols-12 gap-3 text-xs font-semibold text-gray-400 uppercase">
                       <div className="col-span-2">Name</div>
                       <div className="col-span-1.5">Source</div>
-                      <div className="col-span-0.75">Unit</div>
+                      <div className="col-span-0.75">Cost</div>
                       <div className="col-span-0.75">Client Price</div>
                       <div className="col-span-3">Notes / Spec</div>
                       <div className="col-span-1.5">Product ID</div>
@@ -959,7 +961,46 @@ export default function V15rPriceBookPanel() {
 
                       return (
                         <div key={item.id} className="px-4 py-3 border-t border-gray-700 grid grid-cols-12 gap-3 items-center text-sm hover:bg-[var(--bg-card)] hover:brightness-110 transition">
-                          <div className="col-span-2 text-gray-100 font-medium">{item.name || '—'}</div>
+                          <div className="col-span-2 text-gray-100 font-medium">
+                            {editingNameId === item.id ? (
+                              <input
+                                autoFocus
+                                type="text"
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const trimmed = editingName.trim()
+                                    if (trimmed !== '') {
+                                      const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, name: trimmed } : pb)
+                                      saveBackupData({ ...backup, priceBook: updated })
+                                      refreshBackup()
+                                    }
+                                    setEditingNameId(null)
+                                  }
+                                  if (e.key === 'Escape') setEditingNameId(null)
+                                }}
+                                onBlur={() => {
+                                  const trimmed = editingName.trim()
+                                  if (trimmed !== '' && trimmed !== (item.name || '')) {
+                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, name: trimmed } : pb)
+                                    saveBackupData({ ...backup, priceBook: updated })
+                                    refreshBackup()
+                                  }
+                                  setEditingNameId(null)
+                                }}
+                                className="w-full px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+                              />
+                            ) : (
+                              <span
+                                onClick={() => { setEditingNameId(item.id); setEditingName(item.name || '') }}
+                                className="cursor-pointer hover:text-emerald-400 transition"
+                                title="Click to edit name"
+                              >
+                                {item.name || '—'}
+                              </span>
+                            )}
+                          </div>
                           <div className="col-span-1.5">
                             <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getSourceColor(item.src)}`}>
                               {(!item.src || item.src === 'PDF Import' || item.src === 'PDF Imported') ? 'N/A' : item.src}
@@ -1005,9 +1046,12 @@ export default function V15rPriceBookPanel() {
                                 className="text-blue-400 font-medium text-xs cursor-pointer hover:text-blue-300"
                                 title="Click to edit cost"
                               >
-                                ${clientPrice.toFixed(2)}
+                                ${(item.cost || 0).toFixed(2)}
                               </div>
                             )}
+                          </div>
+                          <div className="col-span-0.75 text-emerald-400 font-medium text-xs">
+                            {num(item.cost) > 0 ? `$${clientPrice.toFixed(2)}` : '—'}
                           </div>
                           <div className="col-span-3">
                             {isEditing ? (
@@ -1023,7 +1067,6 @@ export default function V15rPriceBookPanel() {
                                 onBlur={() => saveNotes(item.id)}
                                 placeholder="e.g., outdoor rated, 20A only, SKU #12345"
                                 className="w-full px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-emerald-500"
-                                autoFocus
                               />
                             ) : (
                               <span
