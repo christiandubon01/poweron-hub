@@ -24,6 +24,8 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 /** Sortable row wrapper — drag handle floats on left edge, inner grid layout unaffected */
 function SortableRow({ id, className, children }: { id: string; className?: string; children: React.ReactNode }) {
@@ -1174,6 +1176,211 @@ export default function V15rPriceBookPanel() {
     setEditingSrcId(null)
   }
 
+  // ── PDF EXPORT ───────────────────────────────────────────────────────────
+
+  const handleExportPdf = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' })
+    const pageW = doc.internal.pageSize.getWidth()
+    const pageH = doc.internal.pageSize.getHeight()
+    const margin = 40
+    const contentW = pageW - margin * 2
+    const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    const todayIso = new Date().toISOString().slice(0, 10)
+
+    const drawHeader = () => {
+      doc.setFontSize(18)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(20)
+      doc.text('Power On Solutions, LLC', margin, margin)
+      doc.text('PRICE BOOK', pageW - margin, margin, { align: 'right' })
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(110)
+      doc.text('Price Book export · full breakdown by category', margin, margin + 14)
+      doc.text(`Date: ${todayStr}`, pageW - margin, margin + 14, { align: 'right' })
+      doc.setDrawColor(30)
+      doc.setLineWidth(0.5)
+      doc.line(margin, margin + 24, pageW - margin, margin + 24)
+      doc.setTextColor(0)
+    }
+
+    const drawFooter = (pageNum: number, pageCount: number) => {
+      doc.setFontSize(8)
+      doc.setTextColor(120)
+      doc.text('Power On Solutions, LLC · C-10 Electrical Contractor · Desert Hot Springs, CA · (760) 623-8962', margin, pageH - 24)
+      doc.text(`Price Book · ${todayStr}`, pageW - margin, pageH - 24, { align: 'right' })
+      doc.text(`Page ${pageNum} of ${pageCount}`, pageW - margin, pageH - 12, { align: 'right' })
+      doc.setTextColor(0)
+    }
+
+    // ─── PAGE 1: COVER / SUMMARY ───────────────────────────────────
+    drawHeader()
+    let y = margin + 50
+
+    // Stats cards
+    const m = getTotalMetrics()
+    const healthPct = m.total === 0 ? '—' : `${Math.round(((m.total * 3 - m.noCost - m.noSource - m.noName) / (m.total * 3)) * 100)}%`
+    const cards = [
+      { label: 'TOTAL ITEMS', value: String(m.total), sub: `across ${m.bucketsInBook} buckets` },
+      { label: 'SUPPLIERS', value: String(m.suppliersTotal), sub: `${m.noSource} items unassigned` },
+      { label: 'MATRIX RANGES', value: String(m.matrixTotal), sub: `${m.bucketsWithRange} of ${m.bucketsInBook} mapped` },
+      { label: 'HEALTH', value: healthPct, sub: 'fields populated' },
+    ]
+    const cardW = (contentW - 30) / 4
+    const cardH = 68
+    for (let i = 0; i < cards.length; i++) {
+      const c = cards[i]
+      const x = margin + i * (cardW + 10)
+      doc.setDrawColor(210); doc.setFillColor(250); doc.setLineWidth(0.5)
+      doc.roundedRect(x, y, cardW, cardH, 4, 4, 'FD')
+      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(110)
+      doc.text(c.label, x + 10, y + 14)
+      doc.setFontSize(22); doc.setTextColor(20)
+      doc.text(c.value, x + 10, y + 40)
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(110)
+      doc.text(c.sub, x + 10, y + 58)
+    }
+    doc.setTextColor(0)
+    y += cardH + 26
+
+    // Items by Supplier bar chart
+    const counts: Record<string, number> = {}
+    for (const item of priceBookItems) {
+      const raw = (item.src || '').trim()
+      const key = (!raw || raw === 'PDF Import' || raw === 'PDF Imported') ? '(unassigned)' : raw
+      counts[key] = (counts[key] || 0) + 1
+    }
+    const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    if (sortedCounts.length > 0) {
+      doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
+      doc.text('ITEMS BY SUPPLIER', margin, y)
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(110)
+      doc.text(`${sortedCounts.length} sources`, pageW - margin, y, { align: 'right' })
+      y += 6
+      doc.setDrawColor(220); doc.line(margin, y, pageW - margin, y)
+      y += 14
+      const maxCount = sortedCounts[0][1] || 1
+      const labelW = 180
+      const barMaxW = contentW - labelW - 35
+      doc.setFontSize(9)
+      for (const [name, count] of sortedCounts) {
+        if (y > pageH - 160) break
+        const lbl = name.length > 40 ? name.slice(0, 37) + '…' : name
+        doc.setTextColor(40); doc.text(lbl, margin, y + 9)
+        const pct = count / maxCount
+        doc.setFillColor(240, 240, 240); doc.rect(margin + labelW, y + 2, barMaxW, 10, 'F')
+        doc.setFillColor(90, 160, 120); doc.rect(margin + labelW, y + 2, barMaxW * pct, 10, 'F')
+        doc.setTextColor(20); doc.text(String(count), margin + labelW + barMaxW + 5, y + 9)
+        y += 15
+      }
+      doc.setTextColor(0)
+      y += 12
+    }
+
+    // Missing fields cards
+    if (y < pageH - 120) {
+      doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
+      doc.text('MISSING FIELDS', margin, y)
+      y += 6
+      doc.setDrawColor(220); doc.line(margin, y, pageW - margin, y)
+      y += 14
+      const missing = [
+        { label: 'NO COST', value: m.noCost },
+        { label: 'NO SOURCE', value: m.noSource },
+        { label: 'NO NAME', value: m.noName },
+      ]
+      const missCardW = (contentW - 20) / 3
+      const missCardH = 48
+      for (let i = 0; i < missing.length; i++) {
+        const mc = missing[i]
+        const warn = mc.value > 0
+        const x = margin + i * (missCardW + 10)
+        doc.setFillColor(warn ? 254 : 250, warn ? 245 : 250, warn ? 230 : 250)
+        doc.setDrawColor(warn ? 220 : 210, warn ? 180 : 210, warn ? 80 : 210)
+        doc.roundedRect(x, y, missCardW, missCardH, 4, 4, 'FD')
+        doc.setFontSize(8); doc.setFont('helvetica', 'bold')
+        doc.setTextColor(warn ? 160 : 110, warn ? 120 : 110, warn ? 20 : 110)
+        doc.text(mc.label, x + 10, y + 14)
+        doc.setFontSize(18)
+        doc.setTextColor(warn ? 180 : 40, warn ? 130 : 40, warn ? 30 : 40)
+        doc.text(String(mc.value), x + 10, y + 36)
+      }
+      doc.setTextColor(0)
+    }
+
+    // ─── PAGE 2+: BUCKET BREAKDOWN ─────────────────────────────────
+    doc.addPage()
+    drawHeader()
+    y = margin + 50
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
+    doc.text('BUCKET BREAKDOWN', margin, y)
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(110)
+    doc.text(`${Object.keys(groupedItems).length} buckets · ${m.total} items`, pageW - margin, y, { align: 'right' })
+    y += 6
+    doc.setDrawColor(30); doc.line(margin, y, pageW - margin, y)
+    y += 14
+    doc.setTextColor(0)
+
+    const cats = Object.keys(groupedItems)
+    for (const cat of cats) {
+      const bm = getBucketMetrics(cat)
+      const items = groupedItems[cat]
+
+      if (y > pageH - 140) {
+        doc.addPage(); drawHeader(); y = margin + 50
+      }
+
+      autoTable(doc, {
+        startY: y,
+        margin: { left: margin, right: margin, top: margin + 50, bottom: 50 },
+        showHead: 'everyPage',
+        head: [
+          [
+            { content: cat, colSpan: 4, styles: { fillColor: [220, 220, 220], textColor: 20, fontSize: 11, halign: 'left', fontStyle: 'bold', cellPadding: 6 } },
+            { content: `${bm.total} items · Range ${bm.range} · ${bm.noCost} no-cost · ${bm.noSource} no-source`, colSpan: 2, styles: { fillColor: [220, 220, 220], textColor: 90, fontSize: 8, halign: 'right', fontStyle: 'normal', cellPadding: 6 } },
+          ],
+          ['Name', 'Source', 'Cost', 'Client', 'Notes', 'PID'],
+        ],
+        body: items.map((it: any) => {
+          const cost = num(it.cost) || 0
+          const clientPrice = cost * (1 + (markup || 0) / 100)
+          const srcRaw = (it.src || '').trim()
+          const srcDisplay = (!srcRaw || srcRaw === 'PDF Import' || srcRaw === 'PDF Imported') ? 'N/A' : srcRaw
+          return [
+            it.name || '—',
+            srcDisplay,
+            cost ? `$${cost.toFixed(2)}` : '—',
+            cost ? `$${clientPrice.toFixed(2)}` : '—',
+            it.notes || '',
+            it.pidBlock || it.pidBand || '',
+          ]
+        }),
+        styles: { fontSize: 8, cellPadding: 4, overflow: 'linebreak', valign: 'top', textColor: 30, lineColor: 220, lineWidth: 0.25 },
+        headStyles: { fillColor: [240, 240, 240], textColor: 40, fontStyle: 'bold', fontSize: 8, cellPadding: 4 },
+        alternateRowStyles: { fillColor: [250, 250, 250] },
+        columnStyles: {
+          0: { cellWidth: 150 },
+          1: { cellWidth: 82 },
+          2: { cellWidth: 50, halign: 'right' },
+          3: { cellWidth: 55, halign: 'right' },
+          4: { cellWidth: 150 },
+          5: { cellWidth: 45, halign: 'right' },
+        },
+        didDrawPage: () => drawHeader(),
+      })
+
+      y = (doc as any).lastAutoTable.finalY + 15
+    }
+
+    const pageCount = doc.getNumberOfPages()
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i)
+      drawFooter(i, pageCount)
+    }
+
+    doc.save(`PowerOn_PriceBook_${todayIso}.pdf`)
+  }
+
   // ── DRAG-AND-DROP ────────────────────────────────────────────────────────
 
   const sensors = useSensors(
@@ -1219,14 +1426,24 @@ export default function V15rPriceBookPanel() {
           <h1 className="text-3xl font-bold text-gray-100 mb-1">Price Book</h1>
           <p className="text-sm text-gray-400">{priceBookItems.length} total items</p>
         </div>
-        <button
-          onClick={() => setShowSummaryModal(true)}
-          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
-          title="View overall Price Book health summary"
-        >
-          <FileText className="w-4 h-4" />
-          Summary
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportPdf}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+            title="Export full Price Book as PDF"
+          >
+            <Download className="w-4 h-4" />
+            Export PDF
+          </button>
+          <button
+            onClick={() => setShowSummaryModal(true)}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+            title="View overall Price Book health summary"
+          >
+            <FileText className="w-4 h-4" />
+            Summary
+          </button>
+        </div>
       </div>
 
       {/* HIDDEN FILE INPUTS */}
