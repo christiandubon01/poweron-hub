@@ -482,6 +482,11 @@ export default function V15rPriceBookPanel() {
   const [editNotes, setEditNotes] = useState('')
   const [editingNameId, setEditingNameId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [newMatrixDraft, setNewMatrixDraft] = useState({ cat: '', rangeStart: '', rangeEnd: '', description: '' })
+  const [editingMatrixId, setEditingMatrixId] = useState<string | null>(null)
+  const [editMatrixDraft, setEditMatrixDraft] = useState({ cat: '', rangeStart: '', rangeEnd: '', description: '' })
+  const [editingPidId, setEditingPidId] = useState<string | null>(null)
+  const [editingPid, setEditingPid] = useState('')
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [editingPrice, setEditingPrice] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -771,6 +776,7 @@ export default function V15rPriceBookPanel() {
     pushState()
     if (!Array.isArray(backup.priceBook)) backup.priceBook = []
     const newId = `manual_${Date.now()}`
+    const autoPid = getNextIdInRange(cat)
     const newItem: BackupPriceBookItem = {
       id: newId,
       cat,
@@ -781,8 +787,8 @@ export default function V15rPriceBookPanel() {
       pack: 1,
       waste: 0,
       link: '',
-      pidBand: '',
-      pidBlock: '',
+      pidBand: autoPid,
+      pidBlock: autoPid,
       legacyId: newId,
       notes: '',
     }
@@ -793,6 +799,123 @@ export default function V15rPriceBookPanel() {
     setExpandedCategories(prev => new Set(prev).add(cat))
     setEditingNameId(newId)
     setEditingName('')
+  }
+
+  // ── ID MATRIX HELPERS ─────────────────────────────────────────────────────
+
+  const getIdMatrix = (): any[] => {
+    const m = (backup as any).idMatrix
+    return Array.isArray(m) ? m : []
+  }
+
+  const persistIdMatrix = (updated: any[]) => {
+    pushState()
+    ;(backup as any).idMatrix = updated
+    saveBackupData(backup)
+    markChanged('idMatrix')
+    refreshBackup()
+  }
+
+  const getNextIdInRange = (cat: string): string => {
+    const matrix = getIdMatrix()
+    const entry = matrix.find((m: any) => (m.cat || '').toLowerCase() === cat.toLowerCase())
+    if (!entry) return ''
+    const itemsInCat = priceBookItems.filter((i: any) => (i.cat || '').toLowerCase() === cat.toLowerCase())
+    const used = new Set(
+      itemsInCat
+        .map((i: any) => Number(i.pidBlock || i.pidBand))
+        .filter((n: number) => Number.isFinite(n))
+    )
+    for (let n = entry.rangeStart; n <= entry.rangeEnd; n++) {
+      if (!used.has(n)) return String(n)
+    }
+    return ''
+  }
+
+  const isPidOutOfRange = (cat: string, pid: string | number): boolean => {
+    const n = Number(pid)
+    if (!Number.isFinite(n)) return false
+    const matrix = getIdMatrix()
+    const entry = matrix.find((m: any) => (m.cat || '').toLowerCase() === (cat || '').toLowerCase())
+    if (!entry) return false
+    return n < entry.rangeStart || n > entry.rangeEnd
+  }
+
+  const countOutOfRangeForCat = (cat: string, rangeStart: number, rangeEnd: number): number => {
+    return priceBookItems.filter((i: any) => {
+      if ((i.cat || '').toLowerCase() !== (cat || '').toLowerCase()) return false
+      const n = Number(i.pidBlock || i.pidBand)
+      if (!Number.isFinite(n)) return false
+      return n < rangeStart || n > rangeEnd
+    }).length
+  }
+
+  const handleAddMatrixRow = () => {
+    const cat = newMatrixDraft.cat.trim()
+    const s = Number(newMatrixDraft.rangeStart)
+    const e = Number(newMatrixDraft.rangeEnd)
+    if (!cat) { alert('Category required'); return }
+    if (!Number.isFinite(s) || !Number.isFinite(e) || s > e) { alert('Invalid range: start must be a number ≤ end'); return }
+    const matrix = getIdMatrix()
+    if (matrix.some((m: any) => (m.cat || '').toLowerCase() === cat.toLowerCase())) { alert(`Range for "${cat}" already exists — edit the existing row`); return }
+    const newEntry = { id: `mtx_${Date.now()}`, cat, rangeStart: s, rangeEnd: e, description: newMatrixDraft.description.trim() || '' }
+    persistIdMatrix([...matrix, newEntry])
+    setNewMatrixDraft({ cat: '', rangeStart: '', rangeEnd: '', description: '' })
+  }
+
+  const handleStartEditMatrix = (entry: any) => {
+    setEditingMatrixId(entry.id)
+    setEditMatrixDraft({
+      cat: entry.cat || '',
+      rangeStart: String(entry.rangeStart ?? ''),
+      rangeEnd: String(entry.rangeEnd ?? ''),
+      description: entry.description || '',
+    })
+  }
+
+  const handleSaveMatrixRow = (id: string) => {
+    const cat = editMatrixDraft.cat.trim()
+    const s = Number(editMatrixDraft.rangeStart)
+    const e = Number(editMatrixDraft.rangeEnd)
+    if (!cat) { alert('Category required'); return }
+    if (!Number.isFinite(s) || !Number.isFinite(e) || s > e) { alert('Invalid range: start must be a number ≤ end'); return }
+    const matrix = getIdMatrix()
+    if (matrix.some((m: any) => m.id !== id && (m.cat || '').toLowerCase() === cat.toLowerCase())) { alert(`Range for "${cat}" already exists — edit that row instead`); return }
+    const updated = matrix.map((m: any) => m.id === id ? { ...m, cat, rangeStart: s, rangeEnd: e, description: editMatrixDraft.description.trim() || '' } : m)
+    persistIdMatrix(updated)
+    setEditingMatrixId(null)
+  }
+
+  const handleCancelEditMatrix = () => setEditingMatrixId(null)
+
+  const handleDeleteMatrixRow = (id: string) => {
+    if (!confirm('Delete this ID range?')) return
+    const matrix = getIdMatrix()
+    persistIdMatrix(matrix.filter((m: any) => m.id !== id))
+  }
+
+  const handleSeedMatrixFromExisting = () => {
+    const existing = getIdMatrix()
+    const existingCats = new Set(existing.map((m: any) => (m.cat || '').toLowerCase()))
+    const byCat: Record<string, number[]> = {}
+    for (const item of priceBookItems) {
+      const cat = item.cat || 'Uncategorized'
+      if (existingCats.has(cat.toLowerCase())) continue
+      const pid = Number(item.pidBlock || item.pidBand)
+      if (!Number.isFinite(pid)) continue
+      if (!byCat[cat]) byCat[cat] = []
+      byCat[cat].push(pid)
+    }
+    const seeded = Object.entries(byCat).map(([cat, pids]) => ({
+      id: `mtx_${Date.now()}_${cat.replace(/\s+/g, '_')}`,
+      cat,
+      rangeStart: Math.min(...pids),
+      rangeEnd: Math.max(...pids),
+      description: 'Seeded from existing items',
+    }))
+    if (seeded.length === 0) { alert('No new categories to seed — all already have ranges or no items have numeric Product IDs'); return }
+    persistIdMatrix([...existing, ...seeded])
+    alert(`Seeded ${seeded.length} ranges. Review and edit as needed.`)
   }
 
   return (
@@ -1101,7 +1224,49 @@ export default function V15rPriceBookPanel() {
                               </span>
                             )}
                           </div>
-                          <div className="col-span-1.5 text-gray-400 font-mono text-xs break-all">{pidDisplay}</div>
+                          <div className="col-span-1.5 font-mono text-xs break-all">
+                            {editingPidId === item.id ? (
+                              <input
+                                autoFocus
+                                type="text"
+                                value={editingPid}
+                                onChange={(e) => setEditingPid(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const trimmed = editingPid.trim()
+                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, pidBlock: trimmed, pidBand: trimmed } : pb)
+                                    saveBackupData({ ...backup, priceBook: updated })
+                                    setEditingPidId(null)
+                                    refreshBackup()
+                                  }
+                                  if (e.key === 'Escape') setEditingPidId(null)
+                                }}
+                                onBlur={() => {
+                                  const trimmed = editingPid.trim()
+                                  if (trimmed !== (item.pidBlock || item.pidBand || '')) {
+                                    const updated = (backup.priceBook || []).map(pb => pb.id === item.id ? { ...pb, pidBlock: trimmed, pidBand: trimmed } : pb)
+                                    saveBackupData({ ...backup, priceBook: updated })
+                                    refreshBackup()
+                                  }
+                                  setEditingPidId(null)
+                                }}
+                                className="w-full px-2 py-0.5 bg-gray-900 border border-cyan-500/50 rounded text-gray-200 text-xs font-mono"
+                              />
+                            ) : (
+                              <span className="flex items-center gap-1">
+                                <span
+                                  onClick={() => { setEditingPidId(item.id); setEditingPid(item.pidBlock || item.pidBand || '') }}
+                                  className="text-gray-400 cursor-pointer hover:text-emerald-400 transition"
+                                  title="Click to edit Product ID"
+                                >
+                                  {pidDisplay}
+                                </span>
+                                {isPidOutOfRange(item.cat, item.pidBlock || item.pidBand || '') && (
+                                  <AlertCircle className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" aria-label="Outside matrix range" />
+                                )}
+                              </span>
+                            )}
+                          </div>
                           <div className="col-span-2.25 flex items-center gap-1.5">
                             <button
                               onClick={() => handleSupplierLink(item)}
@@ -1160,6 +1325,97 @@ export default function V15rPriceBookPanel() {
             )
           })
         )}
+      </div>
+
+      {/* ID MATRIX SECTION */}
+      <div className="bg-[var(--bg-card)] rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-100">ID Matrix</h2>
+            <p className="text-xs text-gray-400">Category → Product ID range. Auto-assigns pidBlock when adding items to a mapped category.</p>
+          </div>
+          <button
+            onClick={handleSeedMatrixFromExisting}
+            className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded text-xs font-medium"
+            title="Scan price book and create matrix entries from categories with existing numeric Product IDs"
+          >
+            Seed from existing items
+          </button>
+        </div>
+
+        <div className="px-3 py-2 bg-[var(--bg-secondary)] grid grid-cols-12 gap-3 text-xs font-semibold text-gray-400 uppercase rounded">
+          <div className="col-span-3">Category</div>
+          <div className="col-span-2">Range Start</div>
+          <div className="col-span-2">Range End</div>
+          <div className="col-span-3">Description</div>
+          <div className="col-span-2 text-right">Actions</div>
+        </div>
+
+        {getIdMatrix().length === 0 ? (
+          <div className="px-3 py-4 text-center text-sm text-gray-500">No ranges defined yet. Add one below or click "Seed from existing items".</div>
+        ) : (
+          getIdMatrix().map((entry: any) => {
+            const isEditingRow = editingMatrixId === entry.id
+            return (
+              <div key={entry.id} className="px-3 py-2 grid grid-cols-12 gap-3 items-center text-sm border-t border-gray-700">
+                {isEditingRow ? (
+                  <>
+                    <input autoFocus className="col-span-3 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={editMatrixDraft.cat} onChange={e => setEditMatrixDraft({ ...editMatrixDraft, cat: e.target.value })} />
+                    <input type="number" className="col-span-2 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={editMatrixDraft.rangeStart} onChange={e => setEditMatrixDraft({ ...editMatrixDraft, rangeStart: e.target.value })} />
+                    <input type="number" className="col-span-2 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={editMatrixDraft.rangeEnd} onChange={e => setEditMatrixDraft({ ...editMatrixDraft, rangeEnd: e.target.value })} />
+                    <input className="col-span-3 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={editMatrixDraft.description} onChange={e => setEditMatrixDraft({ ...editMatrixDraft, description: e.target.value })} placeholder="Optional notes" />
+                    <div className="col-span-2 flex items-center justify-end gap-1">
+                      <button onClick={() => handleSaveMatrixRow(entry.id)} className="p-1.5 bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 rounded" title="Save">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button onClick={handleCancelEditMatrix} className="p-1.5 hover:bg-gray-700 rounded text-gray-400" title="Cancel">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="col-span-3 text-gray-100 text-xs font-medium">{entry.cat}</div>
+                    <div className="col-span-2 text-gray-300 font-mono text-xs">{entry.rangeStart}</div>
+                    <div className="col-span-2 text-gray-300 font-mono text-xs">{entry.rangeEnd}</div>
+                    <div className="col-span-3 text-gray-400 text-xs flex items-center gap-2">
+                      {(() => {
+                        const oor = countOutOfRangeForCat(entry.cat, entry.rangeStart, entry.rangeEnd)
+                        return oor > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-[10px] font-medium" title="Items in this category with Product IDs outside the declared range">
+                            <AlertCircle className="w-3 h-3" /> {oor} out of range
+                          </span>
+                        ) : null
+                      })()}
+                      <span>{entry.description || '—'}</span>
+                    </div>
+                    <div className="col-span-2 flex items-center justify-end gap-1">
+                      <button onClick={() => handleStartEditMatrix(entry)} className="p-1.5 hover:bg-[var(--bg-secondary)] rounded text-gray-400 hover:text-gray-300" title="Edit range">
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDeleteMatrixRow(entry.id)} className="p-1.5 hover:bg-red-500/10 rounded text-gray-400 hover:text-red-400" title="Delete range">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          })
+        )}
+
+        {/* Add new row */}
+        <div className="px-3 py-2 grid grid-cols-12 gap-3 items-center text-sm border-t border-gray-700 bg-[var(--bg-secondary)]/30 rounded">
+          <input className="col-span-3 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={newMatrixDraft.cat} onChange={e => setNewMatrixDraft({ ...newMatrixDraft, cat: e.target.value })} placeholder="e.g., Conduit - EMT" />
+          <input type="number" className="col-span-2 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={newMatrixDraft.rangeStart} onChange={e => setNewMatrixDraft({ ...newMatrixDraft, rangeStart: e.target.value })} placeholder="3700" />
+          <input type="number" className="col-span-2 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={newMatrixDraft.rangeEnd} onChange={e => setNewMatrixDraft({ ...newMatrixDraft, rangeEnd: e.target.value })} placeholder="3799" />
+          <input className="col-span-3 px-2 py-1 bg-[var(--bg-secondary)] border border-gray-600 rounded text-gray-100 text-xs" value={newMatrixDraft.description} onChange={e => setNewMatrixDraft({ ...newMatrixDraft, description: e.target.value })} placeholder="Optional notes" />
+          <div className="col-span-2 flex items-center justify-end">
+            <button onClick={handleAddMatrixRow} className="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 rounded text-xs flex items-center gap-1">
+              <Plus className="w-3.5 h-3.5" /> Add Range
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* FOOTER INFO */}
