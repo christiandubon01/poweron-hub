@@ -620,24 +620,97 @@ function V15rDashboardInner() {
   const weeklyData = backup.weeklyData || []
 
   // ── CFOT: Cash Flow Over Time ──
-  // Compute running accum in case weeklyData[].accum is 0/missing
-  let cfotRunningAccum = 0
-  const cfotData = weeklyData.slice(-52).map(w => {
-    const svc = num(w.svc || 0)
-    const proj = num(w.proj || 0)
-    const storedAccum = num(w.accum || 0)
-    if (storedAccum > cfotRunningAccum) cfotRunningAccum = storedAccum
-    else cfotRunningAccum += svc + proj
-    return {
-      wk: w.wk,
-      svc,
-      proj,
-      accum: storedAccum > 0 ? storedAccum : cfotRunningAccum,
-      start: w.start,
-      unbilled: num(w.unbilled || 0),
-      pendingInv: num(w.pendingInv || 0),
+  // Mirrors the canonical formula in V15rMoneyPanel.tsx recalcWeeklyFromData():
+  //   proj       = sum of log.collected (or log.paymentsCollected) dated in week
+  //   svc        = sum of serviceLog.collected dated in week
+  //   unbilled   = sum of max(0, contract-billed) across ACTIVE projects (current snapshot)
+  //   pendingInv = sum of serviceLog.quoted where collected=0 & quoted>0 (current snapshot)
+  //   exposure   = unbilled + pendingInv  (stamped on every past week — same as Money Tab)
+  //   accum      = running total of proj+svc
+  // Window: 40 past/current weeks + 12 future projection weeks = 52 total.
+  // Current week at index 39 = ~77% from left. Future 12 weeks are null so the data
+  // lines terminate at "Now"; chart component renders a dashed boundary there.
+  const cfotData = (() => {
+    const getWeekStart = (raw: any): Date | null => {
+      if (!raw) return null
+      const d = new Date(raw)
+      if (isNaN(d.getTime())) return null
+      const start = new Date(d)
+      start.setDate(d.getDate() - d.getDay())
+      start.setHours(0, 0, 0, 0)
+      return start
     }
-  })
+    const fmtIso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+    const allLogs = (backup.logs || []) as any[]
+    const allSvcLogs = (backup.serviceLogs || []) as any[]
+    const allProjects = (backup.projects || []) as any[]
+
+    const svcByWeek: Record<number, number> = {}
+    const projByWeek: Record<number, number> = {}
+
+    for (const l of allLogs) {
+      const ws = getWeekStart(l.date || l.logDate)
+      if (!ws) continue
+      const k = ws.getTime()
+      projByWeek[k] = (projByWeek[k] || 0) + num(l.paymentsCollected || l.collected || 0)
+    }
+    for (const sl of allSvcLogs) {
+      const ws = getWeekStart(sl.date)
+      if (!ws) continue
+      const k = ws.getTime()
+      svcByWeek[k] = (svcByWeek[k] || 0) + num(sl.collected)
+    }
+
+    // Current-snapshot exposure components (match Money Tab: stamped on every past week)
+    const activeUnbilled = allProjects
+      .filter((p: any) => p.status === 'active' || p.status === 'in_progress')
+      .reduce((s: number, p: any) => s + Math.max(0, num(p.contract) - num(p.billed)), 0)
+    const pendingInv = allSvcLogs
+      .filter((l: any) => num(l.collected) === 0 && num(l.quoted) > 0)
+      .reduce((s: number, l: any) => s + num(l.quoted), 0)
+
+    const todayWs = getWeekStart(new Date())
+    if (!todayWs) return []
+    const weeks: any[] = []
+    let accum = 0
+    for (let i = 39; i >= 0; i--) {
+      const wStart = new Date(todayWs)
+      wStart.setDate(todayWs.getDate() - i * 7)
+      const k = wStart.getTime()
+      const svc = svcByWeek[k] || 0
+      const proj = projByWeek[k] || 0
+      accum += svc + proj
+      weeks.push({
+        wk: 40 - i,
+        svc,
+        proj,
+        accum,
+        start: fmtIso(wStart),
+        unbilled: activeUnbilled,
+        pendingInv,
+        totalExposure: activeUnbilled + pendingInv,
+        isProjection: false,
+      })
+    }
+    for (let i = 1; i <= 12; i++) {
+      const wStart = new Date(todayWs)
+      wStart.setDate(todayWs.getDate() + i * 7)
+      weeks.push({
+        wk: 40 + i,
+        svc: null,
+        proj: null,
+        accum: null,
+        start: fmtIso(wStart),
+        unbilled: null,
+        pendingInv: null,
+        totalExposure: null,
+        isProjection: true,
+      })
+    }
+    return weeks
+  })()
 
   // ── CFOT Summary Boxes — computed directly from backup data ──
   const serviceLogs = backup.serviceLogs || []
