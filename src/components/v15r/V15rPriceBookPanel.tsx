@@ -1347,6 +1347,44 @@ export default function V15rPriceBookPanel() {
                   </div>
                 </div>
               </div>
+
+              <div className="pt-2 border-t border-gray-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] text-gray-500 uppercase font-semibold">Items by Supplier</div>
+                  <div className="text-[10px] text-gray-500">{m.suppliersTotal} registered</div>
+                </div>
+                {(() => {
+                  const counts: Record<string, number> = {}
+                  for (const item of priceBookItems) {
+                    const raw = (item.src || '').trim()
+                    const key = (!raw || raw === 'PDF Import' || raw === 'PDF Imported') ? '(unassigned)' : raw
+                    counts[key] = (counts[key] || 0) + 1
+                  }
+                  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1])
+                  if (rows.length === 0) return <div className="text-xs text-gray-500">No items.</div>
+                  const max = rows[0][1]
+                  return (
+                    <div className="space-y-1.5">
+                      {rows.map(([name, count]) => {
+                        const pct = max === 0 ? 0 : (count / max) * 100
+                        const isUnassigned = name === '(unassigned)'
+                        const badgeCls = isUnassigned ? 'bg-gray-500/20 text-gray-400 border-gray-500/30' : getSourceColor(name)
+                        return (
+                          <div key={name} className="flex items-center gap-2 text-xs">
+                            <div className="w-40 flex-shrink-0">
+                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium border ${badgeCls} truncate max-w-full`}>{name}</span>
+                            </div>
+                            <div className="flex-1 bg-[var(--bg-secondary)] rounded h-4 relative overflow-hidden">
+                              <div className={`h-full ${isUnassigned ? 'bg-gray-500/40' : 'bg-emerald-500/40'}`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="w-10 text-right font-mono text-gray-300">{count}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
           </div>
         )
@@ -1828,7 +1866,7 @@ export default function V15rPriceBookPanel() {
           >
             {isSuppliersExpanded ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
             <div className="flex-1">
-              <h2 className="text-lg font-bold text-gray-100">Suppliers</h2>
+              <h2 className="text-lg font-bold text-orange-400">Suppliers</h2>
               <p className="text-xs text-gray-400">Registered vendor list. Item Source column pulls from here.</p>
             </div>
             <span className="text-xs text-gray-500 whitespace-nowrap">{getSuppliers().length} registered</span>
@@ -1899,7 +1937,7 @@ export default function V15rPriceBookPanel() {
           >
             {isMatrixExpanded ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
             <div className="flex-1">
-              <h2 className="text-lg font-bold text-gray-100">ID Matrix</h2>
+              <h2 className="text-lg font-bold text-cyan-400">ID Matrix</h2>
               <p className="text-xs text-gray-400">Category → Product ID range. Auto-assigns pidBlock when adding items to a mapped category.</p>
             </div>
             <span className="text-xs text-gray-500 whitespace-nowrap">{getIdMatrix().length} ranges</span>
