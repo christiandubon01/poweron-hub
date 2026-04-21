@@ -17,7 +17,7 @@
  */
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download } from 'lucide-react'
+import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download, RefreshCw } from 'lucide-react'
 import { getBackupData, saveBackupData, markChanged, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
@@ -487,6 +487,7 @@ export default function V15rPriceBookPanel() {
   const [editMatrixDraft, setEditMatrixDraft] = useState({ cat: '', rangeStart: '', rangeEnd: '', description: '' })
   const [editingPidId, setEditingPidId] = useState<string | null>(null)
   const [editingPid, setEditingPid] = useState('')
+  const [isMatrixExpanded, setIsMatrixExpanded] = useState(true)
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [editingPrice, setEditingPrice] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -918,6 +919,27 @@ export default function V15rPriceBookPanel() {
     alert(`Seeded ${seeded.length} ranges. Review and edit as needed.`)
   }
 
+  const handleReseedMatrixRow = (entry: any) => {
+    const itemsInCat = priceBookItems.filter((i: any) => (i.cat || '').toLowerCase() === (entry.cat || '').toLowerCase())
+    const pids = itemsInCat
+      .map((i: any) => Number(i.pidBlock || i.pidBand))
+      .filter((n: number) => Number.isFinite(n))
+    if (pids.length === 0) {
+      alert(`No items in "${entry.cat}" have numeric Product IDs — nothing to reseed from`)
+      return
+    }
+    const newStart = Math.min(...pids)
+    const newEnd = Math.max(...pids)
+    if (newStart === entry.rangeStart && newEnd === entry.rangeEnd) {
+      alert(`Range is already tight — current items span ${newStart}–${newEnd}`)
+      return
+    }
+    if (!confirm(`Retighten "${entry.cat}" range from ${entry.rangeStart}–${entry.rangeEnd} to ${newStart}–${newEnd}?`)) return
+    const matrix = getIdMatrix()
+    const updated = matrix.map((m: any) => m.id === entry.id ? { ...m, rangeStart: newStart, rangeEnd: newEnd } : m)
+    persistIdMatrix(updated)
+  }
+
   return (
     <div className="space-y-4 p-5 min-h-screen bg-[var(--bg-secondary)]">
       {/* HEADER */}
@@ -1330,18 +1352,29 @@ export default function V15rPriceBookPanel() {
       {/* ID MATRIX SECTION */}
       <div className="bg-[var(--bg-card)] rounded-lg p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-gray-100">ID Matrix</h2>
-            <p className="text-xs text-gray-400">Category → Product ID range. Auto-assigns pidBlock when adding items to a mapped category.</p>
-          </div>
           <button
-            onClick={handleSeedMatrixFromExisting}
-            className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded text-xs font-medium"
-            title="Scan price book and create matrix entries from categories with existing numeric Product IDs"
+            onClick={() => setIsMatrixExpanded(!isMatrixExpanded)}
+            className="flex items-center gap-3 flex-1 text-left hover:brightness-110 transition"
           >
-            Seed from existing items
+            {isMatrixExpanded ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-gray-100">ID Matrix</h2>
+              <p className="text-xs text-gray-400">Category → Product ID range. Auto-assigns pidBlock when adding items to a mapped category.</p>
+            </div>
+            <span className="text-xs text-gray-500 whitespace-nowrap">{getIdMatrix().length} ranges</span>
           </button>
+          {isMatrixExpanded && (
+            <button
+              onClick={handleSeedMatrixFromExisting}
+              className="ml-3 px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded text-xs font-medium flex-shrink-0"
+              title="Scan price book and create matrix entries from categories with existing numeric Product IDs"
+            >
+              Seed from existing items
+            </button>
+          )}
         </div>
+
+        {isMatrixExpanded && (<>
 
         <div className="px-3 py-2 bg-[var(--bg-secondary)] grid grid-cols-12 gap-3 text-xs font-semibold text-gray-400 uppercase rounded">
           <div className="col-span-3">Category</div>
@@ -1390,6 +1423,9 @@ export default function V15rPriceBookPanel() {
                       <span>{entry.description || '—'}</span>
                     </div>
                     <div className="col-span-2 flex items-center justify-end gap-1">
+                      <button onClick={() => handleReseedMatrixRow(entry)} className="p-1.5 hover:bg-[var(--bg-secondary)] rounded text-gray-400 hover:text-cyan-400" title="Retighten range to current items min/max">
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
                       <button onClick={() => handleStartEditMatrix(entry)} className="p-1.5 hover:bg-[var(--bg-secondary)] rounded text-gray-400 hover:text-gray-300" title="Edit range">
                         <Edit2 className="w-4 h-4" />
                       </button>
@@ -1416,6 +1452,7 @@ export default function V15rPriceBookPanel() {
             </button>
           </div>
         </div>
+        </>)}
       </div>
 
       {/* FOOTER INFO */}
