@@ -519,6 +519,14 @@ export default function V15rPriceBookPanel() {
   const [editingPid, setEditingPid] = useState('')
   const [isMatrixExpanded, setIsMatrixExpanded] = useState(true)
   const [showSummaryModal, setShowSummaryModal] = useState(false)
+  const [showPdfModal, setShowPdfModal] = useState(false)
+  const [pdfModalMode, setPdfModalMode] = useState<'download' | 'upload'>('download')
+  const [pdfDragActive, setPdfDragActive] = useState(false)
+  const [showDataModal, setShowDataModal] = useState(false)
+  const [dataModalMode, setDataModalMode] = useState<'download' | 'upload'>('download')
+  const [dataExportFormat, setDataExportFormat] = useState<'csv' | 'json' | 'excel'>('csv')
+  const [dataDragActive, setDataDragActive] = useState(false)
+  const jsonInputRef = useRef<HTMLInputElement>(null)
   const [isSuppliersExpanded, setIsSuppliersExpanded] = useState(true)
   const [editingSrcId, setEditingSrcId] = useState<string | null>(null)
   const [supplierModalMode, setSupplierModalMode] = useState<null | 'add' | 'edit'>(null)
@@ -1381,6 +1389,132 @@ export default function V15rPriceBookPanel() {
     doc.save(`PowerOn_PriceBook_${todayIso}.pdf`)
   }
 
+  // ── DATA EXPORT / IMPORT ─────────────────────────────────────────────────
+
+  const handleCsvExport = () => {
+    const items = backup.priceBook || []
+    const headers = ['id', 'cat', 'name', 'cost', 'clientPrice', 'src', 'unit', 'pidBlock', 'notes']
+    const escape = (v: any) => {
+      const s = String(v ?? '')
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`
+      return s
+    }
+    const rows = items.map((i: any) => {
+      const cost = num(i.cost) || 0
+      const clientPrice = cost * (1 + (markup || 0) / 100)
+      return [i.id, i.cat, i.name, cost, clientPrice.toFixed(2), i.src, i.unit, i.pidBlock || i.pidBand || '', i.notes || '']
+    })
+    const csv = [headers.join(','), ...rows.map((r: any[]) => r.map(escape).join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pricebook_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleJsonExport = () => {
+    const data = JSON.stringify({ priceBook: backup.priceBook || [] }, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pricebook_${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExcelExport = async () => {
+    const XLSX = await loadSheetJS()
+    const items = backup.priceBook || []
+    const rows = items.map((i: any) => {
+      const cost = num(i.cost) || 0
+      const clientPrice = cost * (1 + (markup || 0) / 100)
+      return {
+        id: i.id,
+        cat: i.cat,
+        name: i.name,
+        cost,
+        clientPrice: Number(clientPrice.toFixed(2)),
+        src: i.src,
+        unit: i.unit,
+        pidBlock: i.pidBlock || i.pidBand || '',
+        notes: i.notes || '',
+      }
+    })
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Price Book')
+    XLSX.writeFile(wb, `pricebook_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
+  const handleJsonImport = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(String(e.target?.result || ''))
+        const items = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.priceBook) ? parsed.priceBook : null)
+        if (!items) { alert('JSON must be an array or { priceBook: [...] }'); return }
+        if (!confirm(`Import ${items.length} items from JSON? Duplicates (same name+src) will be skipped.`)) return
+        const existing = new Set((priceBookItems || []).map((i: any) => `${(i.name || '').toLowerCase()}|${(i.src || '').toLowerCase()}`))
+        const toAdd: any[] = []
+        for (const it of items) {
+          const key = `${(it.name || '').toLowerCase()}|${(it.src || '').toLowerCase()}`
+          if (existing.has(key)) continue
+          existing.add(key)
+          toAdd.push({
+            id: it.id || `json_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            cat: it.cat || 'Uncategorized',
+            name: it.name || '',
+            cost: num(it.cost),
+            src: it.src || '',
+            unit: it.unit || 'EA',
+            pack: it.pack || 1,
+            waste: it.waste || 0,
+            link: it.link || '',
+            pidBand: it.pidBand || '',
+            pidBlock: it.pidBlock || '',
+            legacyId: it.legacyId || '',
+            notes: it.notes || '',
+          })
+        }
+        if (toAdd.length === 0) { alert('Nothing to import — all items already present or file empty'); return }
+        pushState()
+        backup.priceBook = [...(backup.priceBook as any[]), ...toAdd]
+        persistPriceBook()
+        markChanged('priceBook')
+        refreshBackup()
+        alert(`Imported ${toAdd.length} new items (${items.length - toAdd.length} duplicates skipped)`)
+        setShowDataModal(false)
+      } catch (err: any) {
+        alert('Failed to parse JSON: ' + err.message)
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  const handleDataFileUpload = (file: File) => {
+    const ext = (file.name.toLowerCase().split('.').pop() || '')
+    if (ext === 'json') {
+      handleJsonImport(file)
+    } else if (ext === 'csv' || ext === 'tsv' || ext === 'xlsx' || ext === 'xls') {
+      const evt = { target: { files: [file], value: '' } } as any
+      handleCsvExcelImport(evt)
+      setShowDataModal(false)
+    } else {
+      alert(`Unsupported format: .${ext}. Use CSV, Excel, or JSON.`)
+    }
+  }
+
+  const handlePdfFileUpload = (file: File) => {
+    const ext = (file.name.toLowerCase().split('.').pop() || '')
+    if (ext !== 'pdf') { alert(`Expected a PDF file, got .${ext}`); return }
+    const evt = { target: { files: [file], value: '' } } as any
+    handlePdfImport(evt)
+    setShowPdfModal(false)
+  }
+
   // ── DRAG-AND-DROP ────────────────────────────────────────────────────────
 
   const sensors = useSensors(
@@ -1426,29 +1560,38 @@ export default function V15rPriceBookPanel() {
           <h1 className="text-3xl font-bold text-gray-100 mb-1">Price Book</h1>
           <p className="text-sm text-gray-400">{priceBookItems.length} total items</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportPdf}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
-            title="Export full Price Book as PDF"
-          >
-            <Download className="w-4 h-4" />
-            Export PDF
-          </button>
-          <button
-            onClick={() => setShowSummaryModal(true)}
-            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
-            title="View overall Price Book health summary"
-          >
-            <FileText className="w-4 h-4" />
-            Summary
-          </button>
         </div>
+
+      {/* IMPORT / EXPORT ROW */}
+      <div className="flex items-center gap-3 mb-4">
+        <button
+          onClick={() => { setPdfModalMode('download'); setShowPdfModal(true) }}
+          className="px-4 py-2 bg-red-600/90 hover:bg-red-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+        >
+          <FileText className="w-4 h-4" />
+          Import / Export PDF
+        </button>
+        <button
+          onClick={() => { setDataModalMode('download'); setShowDataModal(true) }}
+          className="px-4 py-2 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          Import / Export Data
+        </button>
+        <button
+          onClick={() => setShowSummaryModal(true)}
+          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition"
+          title="View overall Price Book health summary"
+        >
+          <FileText className="w-4 h-4" />
+          Summary
+        </button>
       </div>
 
       {/* HIDDEN FILE INPUTS */}
       <input ref={pdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handlePdfImport} />
       <input ref={csvInputRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden" onChange={handleCsvExcelImport} />
+      <input ref={jsonInputRef} type="file" accept=".json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { handleJsonImport(f); if (jsonInputRef.current) jsonInputRef.current.value = '' } }} />
 
       {/* SEARCH + CONTROLS */}
       <div className="bg-[var(--bg-card)] rounded-lg p-4 space-y-3">
@@ -1469,37 +1612,6 @@ export default function V15rPriceBookPanel() {
           >
             {expandedCategories.size === categories.length ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             {expandedCategories.size === categories.length ? 'Collapse' : 'Expand'} All
-          </button>
-          <button
-            onClick={() => pdfInputRef.current?.click()}
-            disabled={importLoading}
-            className="px-3 py-2 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 rounded-lg text-sm text-blue-300 transition flex items-center gap-1.5 disabled:opacity-40"
-          >
-            <FileText className="w-4 h-4" />
-            Import PDF
-          </button>
-          <button
-            onClick={() => csvInputRef.current?.click()}
-            disabled={importLoading}
-            className="px-3 py-2 bg-purple-600/20 border border-purple-500/30 hover:bg-purple-600/30 rounded-lg text-sm text-purple-300 transition flex items-center gap-1.5 disabled:opacity-40"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Import CSV / Excel
-          </button>
-          <button
-            onClick={() => {
-              const data = JSON.stringify({ priceBook: backup.priceBook || [] }, null, 2)
-              const blob = new Blob([data], { type: 'application/json' })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a')
-              a.href = url
-              a.download = `pricebook_backup_${new Date().toISOString().slice(0, 10)}.json`
-              a.click()
-              URL.revokeObjectURL(url)
-            }}
-            className="px-3 py-2 bg-gray-700/50 text-gray-300 rounded-lg text-xs hover:bg-gray-600/50 flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5" /> Export
           </button>
         </div>
         <p className="text-xs text-gray-400">
@@ -1687,6 +1799,136 @@ export default function V15rPriceBookPanel() {
                 <Check className="w-4 h-4" /> Save
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF MODAL */}
+      {showPdfModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowPdfModal(false)}>
+          <div className="bg-[var(--bg-card)] rounded-lg p-6 max-w-lg w-full border border-gray-700" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-100">Import / Export PDF</h2>
+              <button onClick={() => setShowPdfModal(false)} className="p-1.5 hover:bg-gray-700 rounded text-gray-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex gap-2 mb-4 border-b border-gray-700">
+              <button onClick={() => setPdfModalMode('download')} className={`px-4 py-2 text-sm font-medium transition ${pdfModalMode === 'download' ? 'text-red-400 border-b-2 border-red-400 -mb-[2px]' : 'text-gray-400 hover:text-gray-200'}`}>
+                Download
+              </button>
+              <button onClick={() => setPdfModalMode('upload')} className={`px-4 py-2 text-sm font-medium transition ${pdfModalMode === 'upload' ? 'text-red-400 border-b-2 border-red-400 -mb-[2px]' : 'text-gray-400 hover:text-gray-200'}`}>
+                Upload
+              </button>
+            </div>
+
+            {pdfModalMode === 'download' ? (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-400">Generates a full Price Book PDF with cover summary, supplier bar chart, missing-field flags, and per-bucket breakdown tables.</p>
+                <button onClick={() => { handleExportPdf(); setShowPdfModal(false) }} className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition">
+                  <Download className="w-4 h-4" /> Download PDF
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-400">Drop a PDF price list here or click to select. Parsed items will appear in an import preview before anything is saved.</p>
+                <div
+                  onDragEnter={(e) => { e.preventDefault(); setPdfDragActive(true) }}
+                  onDragOver={(e) => { e.preventDefault(); setPdfDragActive(true) }}
+                  onDragLeave={() => setPdfDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setPdfDragActive(false)
+                    const f = e.dataTransfer.files?.[0]
+                    if (f) handlePdfFileUpload(f)
+                  }}
+                  onClick={() => pdfInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition ${pdfDragActive ? 'border-red-400 bg-red-500/10' : 'border-gray-600 hover:border-gray-500 bg-[var(--bg-secondary)]/40'}`}
+                >
+                  <Upload className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm text-gray-300 font-medium">Drop PDF here or click to browse</p>
+                  <p className="text-xs text-gray-500 mt-1">Accepts .pdf only</p>
+                </div>
+                <button onClick={() => pdfInputRef.current?.click()} className="w-full px-4 py-2 bg-[var(--bg-secondary)] hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition">
+                  <FileText className="w-4 h-4" /> Choose File Manually
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* DATA MODAL */}
+      {showDataModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowDataModal(false)}>
+          <div className="bg-[var(--bg-card)] rounded-lg p-6 max-w-lg w-full border border-gray-700" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-100">Import / Export Data</h2>
+              <button onClick={() => setShowDataModal(false)} className="p-1.5 hover:bg-gray-700 rounded text-gray-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex gap-2 mb-4 border-b border-gray-700">
+              <button onClick={() => setDataModalMode('download')} className={`px-4 py-2 text-sm font-medium transition ${dataModalMode === 'download' ? 'text-emerald-400 border-b-2 border-emerald-400 -mb-[2px]' : 'text-gray-400 hover:text-gray-200'}`}>
+                Download
+              </button>
+              <button onClick={() => setDataModalMode('upload')} className={`px-4 py-2 text-sm font-medium transition ${dataModalMode === 'upload' ? 'text-emerald-400 border-b-2 border-emerald-400 -mb-[2px]' : 'text-gray-400 hover:text-gray-200'}`}>
+                Upload
+              </button>
+            </div>
+
+            {dataModalMode === 'download' ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] text-gray-400 uppercase font-semibold block mb-1">Format</label>
+                  <select value={dataExportFormat} onChange={(e) => setDataExportFormat(e.target.value as any)} className="w-full px-3 py-2 bg-[var(--bg-secondary)] border border-gray-600 rounded text-sm text-gray-100">
+                    <option value="csv">CSV (.csv) — spreadsheet compatible, text</option>
+                    <option value="excel">Excel (.xlsx) — native Excel workbook</option>
+                    <option value="json">JSON (.json) — full backup, re-importable</option>
+                  </select>
+                </div>
+                <p className="text-xs text-gray-500">Exports all {priceBookItems.length} items. CSV/Excel include computed Client Price. JSON preserves everything for re-import.</p>
+                <button onClick={() => {
+                  if (dataExportFormat === 'csv') handleCsvExport()
+                  else if (dataExportFormat === 'excel') handleExcelExport()
+                  else handleJsonExport()
+                  setShowDataModal(false)
+                }} className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition">
+                  <Download className="w-4 h-4" /> Download {dataExportFormat.toUpperCase()}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-400">Drop a CSV, Excel, or JSON file to import. Format is auto-detected by file extension.</p>
+                <div
+                  onDragEnter={(e) => { e.preventDefault(); setDataDragActive(true) }}
+                  onDragOver={(e) => { e.preventDefault(); setDataDragActive(true) }}
+                  onDragLeave={() => setDataDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setDataDragActive(false)
+                    const f = e.dataTransfer.files?.[0]
+                    if (f) handleDataFileUpload(f)
+                  }}
+                  onClick={() => csvInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition ${dataDragActive ? 'border-emerald-400 bg-emerald-500/10' : 'border-gray-600 hover:border-gray-500 bg-[var(--bg-secondary)]/40'}`}
+                >
+                  <Upload className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm text-gray-300 font-medium">Drop CSV / Excel / JSON here or click to browse</p>
+                  <p className="text-xs text-gray-500 mt-1">Accepts .csv .tsv .xlsx .xls .json</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => csvInputRef.current?.click()} className="flex-1 px-3 py-2 bg-[var(--bg-secondary)] hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition">
+                    <FileSpreadsheet className="w-3.5 h-3.5" /> CSV / Excel
+                  </button>
+                  <button onClick={() => jsonInputRef.current?.click()} className="flex-1 px-3 py-2 bg-[var(--bg-secondary)] hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition">
+                    <FileText className="w-3.5 h-3.5" /> JSON
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
