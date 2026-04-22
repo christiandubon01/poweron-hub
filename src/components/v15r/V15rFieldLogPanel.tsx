@@ -451,6 +451,8 @@ export default function V15rFieldLogPanel() {
     est.status = 'active'
     if (!Array.isArray(backup.activeServiceCalls)) backup.activeServiceCalls = []
     backup.activeServiceCalls = [...activeServiceCalls, { ...est, status: 'active' }]
+    // Note: per spec, Confirm Job does NOT mark as invoiced — that happens when work is performed
+    // and service log is created. This is just a lead-confirmation milestone.
     persist()
   }
 
@@ -640,8 +642,18 @@ export default function V15rFieldLogPanel() {
 
     if (editSvcId) {
       const idx = serviceLogs.findIndex(l => l.id === editSvcId)
-      if (idx >= 0) backup.serviceLogs[idx] = entry
+      if (idx >= 0) {
+        // Preserve prior statusEvents on edit, append the new state
+        const prior = backup.serviceLogs[idx] as any
+        ;(entry as any).statusEvents = Array.isArray(prior?.statusEvents) ? [...prior.statusEvents] : []
+        const wasInvoicedEdit = !!((entry as any).statusEvents.length && (entry as any).statusEvents[(entry as any).statusEvents.length - 1].invoiced)
+        stampStatusEvent(entry as any, payStatus, collected, wasInvoicedEdit)
+        backup.serviceLogs[idx] = entry
+      }
     } else {
+      // New entry — seed initial statusEvent (not invoiced yet, that requires Confirm Job)
+      ;(entry as any).statusEvents = []
+      stampStatusEvent(entry as any, payStatus, collected, false)
       backup.serviceLogs = [...serviceLogs, entry]
     }
     persist()
@@ -673,15 +685,33 @@ export default function V15rFieldLogPanel() {
     persist()
   }
 
+  /**
+   * Append a statusEvent to a service log for historical exposure tracking.
+   * Called from every write site that changes collected amount or invoice state.
+   * Events are append-only; never mutated, never removed.
+   */
+  function stampStatusEvent(log: any, nextStatus: string, nextCollected: number, invoiced: boolean) {
+    if (!Array.isArray(log.statusEvents)) log.statusEvents = []
+    log.statusEvents.push({
+      date: today(),
+      status: nextStatus,
+      collected: Math.max(0, num(nextCollected) || 0),
+      invoiced: !!invoiced,
+    })
+  }
+
   function quickSetSvcPayment(logId: string, status: string) {
     const l = serviceLogs.find(x => x.id === logId)
     if (!l) return
     pushState(backup)
     const roll = getServiceRollup(l)
+    // Preserve prior invoiced flag — quick-pay doesn't change invoicing, only collection
+    const wasInvoiced = !!(Array.isArray(l.statusEvents) && l.statusEvents.length && l.statusEvents[l.statusEvents.length - 1].invoiced)
     if (status === 'Y') {
       l.collected = roll.totalBillable
       l.payStatus = 'Y'
       l.balanceDue = 0
+      stampStatusEvent(l, 'Y', l.collected, wasInvoiced)
     } else if (status === 'P') {
       const amt = prompt('Partial amount collected:', String(num(l.collected) || 0))
       if (amt === null) return
@@ -689,6 +719,7 @@ export default function V15rFieldLogPanel() {
       const newMeta = getServicePaymentMeta(l)
       l.payStatus = newMeta.status
       l.balanceDue = newMeta.remaining
+      stampStatusEvent(l, newMeta.status, l.collected, wasInvoiced)
     }
     persist()
   }
@@ -720,6 +751,8 @@ export default function V15rFieldLogPanel() {
     if (l.payStatus === 'Y' && payMeta.remaining > 0.009) {
       l.payStatus = 'P'
     }
+    const wasInvoicedAdj = !!(Array.isArray(l.statusEvents) && l.statusEvents.length && l.statusEvents[l.statusEvents.length - 1].invoiced)
+    stampStatusEvent(l, l.payStatus, l.collected, wasInvoicedAdj)
     persist()
   }
 

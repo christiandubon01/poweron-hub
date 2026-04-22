@@ -382,6 +382,16 @@ export default function V15rHome() {
     pushState(backup)
     const balanceDue = getServiceBalanceDue(log)
     log.collected = num(log.collected || 0) + balanceDue
+    // Append statusEvent for historical exposure tracking (mirrors V15rFieldLogPanel.stampStatusEvent)
+    if (!Array.isArray((log as any).statusEvents)) (log as any).statusEvents = []
+    const prior = (log as any).statusEvents
+    const wasInvoiced = !!(prior.length && prior[prior.length - 1].invoiced)
+    prior.push({
+      date: new Date().toISOString().slice(0, 10),
+      status: 'Y',
+      collected: Math.max(0, num(log.collected) || 0),
+      invoiced: wasInvoiced,
+    })
     persist()
   }
 

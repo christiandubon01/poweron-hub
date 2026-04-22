@@ -60,8 +60,8 @@ export default function CFOTChart({ data, backup }: { data: any[]; backup: Backu
           />
         )}
 
-        <Line type="monotone" dataKey="exposure" name="Total Exposure" stroke="#ef4444" strokeWidth={3} dot={false} connectNulls={false} />
-        <Line type="monotone" dataKey="unbilled" name="Unbilled" stroke="#f87171" strokeWidth={2} dot={false} connectNulls={false} />
+        <Line type="monotone" dataKey="exposure" name="Total Exposure" stroke="#dc2626" strokeWidth={3} dot={false} connectNulls={false} />
+        <Line type="monotone" dataKey="unbilled" name="Unbilled" stroke="#fca5a5" strokeWidth={2} dot={false} connectNulls={false} />
         <Line type="monotone" dataKey="pending" name="Pending Invoice" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls={false} />
         <Line type="monotone" dataKey="svcPay" name="Service Payment" stroke="#86efac" strokeWidth={2} dot={false} connectNulls={false} />
         <Line type="monotone" dataKey="projPay" name="Project Payment" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls={false} />

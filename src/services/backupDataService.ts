@@ -331,6 +331,31 @@ export function getBackupData(): BackupData | null {
           console.error('[backupDataService] Failed to persist migrated priceBook:', e)
         }
       }
+      // Runtime migration: backfill serviceLog.statusEvents for historical exposure tracking (DASHBOARD-EXPOSURE-EVENTS-APR21-2026-1).
+      // Idempotent via per-log presence check. Seeds a single event dated to log.date with current payStatus/collected/invoiced=false.
+      // Chart reader (Dashboard CFOT) reads statusEvents to reconstruct Unbilled vs Pending Invoice over time.
+      if (data && Array.isArray(data.serviceLogs)) {
+        let backfilled = 0
+        for (const sl of data.serviceLogs as any[]) {
+          if (!sl) continue
+          if (Array.isArray(sl.statusEvents) && sl.statusEvents.length > 0) continue
+          sl.statusEvents = [{
+            date: sl.date || new Date().toISOString().slice(0, 10),
+            status: sl.payStatus || 'N',
+            collected: Math.max(0, Number(sl.collected) || 0),
+            invoiced: false,
+          }]
+          backfilled++
+        }
+        if (backfilled > 0) {
+          console.log(`[backupDataService] Backfilled statusEvents on ${backfilled} service log(s) — one-time migration`)
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+          } catch (e) {
+            console.error('[backupDataService] Failed to persist backfilled statusEvents:', e)
+          }
+        }
+      }
       return data
     }
     // If no data under STORAGE_KEY, try poweron_v2 as fallback

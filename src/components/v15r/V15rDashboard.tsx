@@ -620,16 +620,32 @@ function V15rDashboardInner() {
   const weeklyData = backup.weeklyData || []
 
   // ── CFOT: Cash Flow Over Time ──
-  // Mirrors the canonical formula in V15rMoneyPanel.tsx recalcWeeklyFromData():
-  //   proj       = sum of log.collected (or log.paymentsCollected) dated in week
-  //   svc        = sum of serviceLog.collected dated in week
-  //   unbilled   = sum of max(0, contract-billed) across ACTIVE projects (current snapshot)
-  //   pendingInv = sum of serviceLog.quoted where collected=0 & quoted>0 (current snapshot)
-  //   exposure   = unbilled + pendingInv  (stamped on every past week — same as Money Tab)
-  //   accum      = running total of proj+svc
-  // Window: 40 past/current weeks + 12 future projection weeks = 52 total.
-  // Current week at index 39 = ~77% from left. Future 12 weeks are null so the data
-  // lines terminate at "Now"; chart component renders a dashed boundary there.
+  // Historical event-sourced exposure (DASHBOARD-EXPOSURE-EVENTS-APR21-2026-1).
+  //
+  //   Projects:
+  //     collected(W)  = sum of log.collected (or log.paymentsCollected) dated ≤ W end for this project
+  //     uncollected(W,p) = max(0, p.contract - collected(W,p)) for every project whose start is ≤ W end
+  //                         and status != 'completed'/'cancelled' at W (or, if no completion date, still active)
+  //
+  //   Service logs (event-driven via statusEvents):
+  //     Replay each log's events in chronological order, take the last event with date ≤ W end.
+  //     uncollected(W,sl) = max(0, sl.quoted - event.collected)
+  //     invoiced(W,sl) = event.invoiced
+  //
+  //   Total Exposure(W) = sum of project uncollected + sum of service uncollected
+  //   Unbilled(W)       = Total Exposure minus (service uncollected where invoiced = true)
+  //                       = everything not yet invoiced through the service log flow. Projects
+  //                         stay fully in Unbilled until we add a per-project invoicing event;
+  //                         for now project exposure is treated as entirely Unbilled.
+  //   Gap (rendered) = Total Exposure − Unbilled = service logs that have been invoiced but not yet collected.
+  //
+  //   Income bars:
+  //     proj (weekly) = sum of log.collected dated in week
+  //     svc (weekly)  = sum of serviceLog.collected dated in week  (kept for backward compat with chart)
+  //     accum         = running total of proj+svc
+  //
+  //   Window: 40 past/current weeks + 12 future projection weeks = 52 total.
+  //   Current week at index 39 = ~77% from left. Future 12 weeks are null.
   const cfotData = (() => {
     const getWeekStart = (raw: any): Date | null => {
       if (!raw) return null
@@ -647,9 +663,9 @@ function V15rDashboardInner() {
     const allSvcLogs = (backup.serviceLogs || []) as any[]
     const allProjects = (backup.projects || []) as any[]
 
+    // Weekly income (unchanged from prior fix)
     const svcByWeek: Record<number, number> = {}
     const projByWeek: Record<number, number> = {}
-
     for (const l of allLogs) {
       const ws = getWeekStart(l.date || l.logDate)
       if (!ws) continue
@@ -663,13 +679,74 @@ function V15rDashboardInner() {
       svcByWeek[k] = (svcByWeek[k] || 0) + num(sl.collected)
     }
 
-    // Current-snapshot exposure components (match Money Tab: stamped on every past week)
-    const activeUnbilled = allProjects
-      .filter((p: any) => p.status === 'active' || p.status === 'in_progress')
-      .reduce((s: number, p: any) => s + Math.max(0, num(p.contract) - num(p.billed)), 0)
-    const pendingInv = allSvcLogs
-      .filter((l: any) => num(l.collected) === 0 && num(l.quoted) > 0)
-      .reduce((s: number, l: any) => s + num(l.quoted), 0)
+    // Precompute per-project log payments sorted by date (for historical collected sums)
+    const projectPayments = new Map<string, Array<{ date: Date; amount: number }>>()
+    for (const l of allLogs) {
+      const pid = l.projId || l.projectId
+      if (!pid) continue
+      const d = l.date ? new Date(l.date) : null
+      if (!d || isNaN(d.getTime())) continue
+      const amt = num(l.paymentsCollected || l.collected || 0)
+      if (amt <= 0) continue
+      if (!projectPayments.has(pid)) projectPayments.set(pid, [])
+      projectPayments.get(pid)!.push({ date: d, amount: amt })
+    }
+    for (const arr of projectPayments.values()) arr.sort((a, b) => a.date.getTime() - b.date.getTime())
+
+    // Precompute per-service-log statusEvents sorted by date
+    const svcEvents = new Map<string, Array<{ date: Date; collected: number; invoiced: boolean; status: string }>>()
+    for (const sl of allSvcLogs) {
+      if (!sl.id) continue
+      const ev = Array.isArray(sl.statusEvents) ? sl.statusEvents : []
+      const parsed: Array<{ date: Date; collected: number; invoiced: boolean; status: string }> = []
+      for (const e of ev) {
+        const d = e?.date ? new Date(e.date) : null
+        if (!d || isNaN(d.getTime())) continue
+        parsed.push({
+          date: d,
+          collected: num(e.collected),
+          invoiced: !!e.invoiced,
+          status: e.status || 'N',
+        })
+      }
+      parsed.sort((a, b) => a.date.getTime() - b.date.getTime())
+      svcEvents.set(sl.id, parsed)
+    }
+
+    const isProjectActiveAsOf = (p: any, asOf: Date): boolean => {
+      // Must exist by asOf
+      const startRaw = p.startDate || p.plannedStart || p.createdAt || p.start
+      const startD = startRaw ? new Date(startRaw) : null
+      if (startD && !isNaN(startD.getTime()) && startD > asOf) return false
+      // Drop out of exposure once marked completed/cancelled
+      const status = (p.status || '').toLowerCase()
+      if (status === 'completed' || status === 'cancelled' || status === 'archived' || status === 'canceled') return false
+      return true
+    }
+
+    const collectedAsOf = (pid: string, asOf: Date): number => {
+      const arr = projectPayments.get(pid)
+      if (!arr) return 0
+      let s = 0
+      for (const p of arr) {
+        if (p.date <= asOf) s += p.amount
+        else break
+      }
+      return s
+    }
+
+    const svcStateAsOf = (slId: string, asOf: Date): { collected: number; invoiced: boolean } => {
+      const arr = svcEvents.get(slId)
+      if (!arr || arr.length === 0) return { collected: 0, invoiced: false }
+      let latest = arr[0]
+      for (const e of arr) {
+        if (e.date <= asOf) latest = e
+        else break
+      }
+      // If even the first event is after asOf, the service log didn't exist yet
+      if (arr[0].date > asOf) return { collected: 0, invoiced: false }
+      return { collected: latest.collected, invoiced: latest.invoiced }
+    }
 
     const todayWs = getWeekStart(new Date())
     if (!todayWs) return []
@@ -678,7 +755,41 @@ function V15rDashboardInner() {
     for (let i = 39; i >= 0; i--) {
       const wStart = new Date(todayWs)
       wStart.setDate(todayWs.getDate() - i * 7)
+      const wEnd = new Date(wStart)
+      wEnd.setDate(wStart.getDate() + 6)
+      wEnd.setHours(23, 59, 59, 999)
       const k = wStart.getTime()
+
+      // Project uncollected as of week end
+      let projExposure = 0
+      for (const p of allProjects) {
+        if (!isProjectActiveAsOf(p, wEnd)) continue
+        const contract = num(p.contract)
+        if (contract <= 0) continue
+        const collected = collectedAsOf(p.id, wEnd)
+        projExposure += Math.max(0, contract - collected)
+      }
+
+      // Service uncollected, split by invoiced flag
+      let svcUncollectedUninvoiced = 0
+      let svcUncollectedInvoiced = 0
+      for (const sl of allSvcLogs) {
+        const quoted = num(sl.quoted)
+        if (quoted <= 0) continue
+        const state = svcStateAsOf(sl.id, wEnd)
+        // If log hasn't happened yet as of wEnd, skip
+        const slDate = sl.date ? new Date(sl.date) : null
+        if (slDate && !isNaN(slDate.getTime()) && slDate > wEnd) continue
+        const remaining = Math.max(0, quoted - state.collected)
+        if (remaining <= 0) continue
+        if (state.invoiced) svcUncollectedInvoiced += remaining
+        else svcUncollectedUninvoiced += remaining
+      }
+
+      const totalExposure = projExposure + svcUncollectedInvoiced + svcUncollectedUninvoiced
+      const unbilled = projExposure + svcUncollectedUninvoiced
+      const pendingInv = svcUncollectedInvoiced
+
       const svc = svcByWeek[k] || 0
       const proj = projByWeek[k] || 0
       accum += svc + proj
@@ -688,9 +799,9 @@ function V15rDashboardInner() {
         proj,
         accum,
         start: fmtIso(wStart),
-        unbilled: activeUnbilled,
+        unbilled,
         pendingInv,
-        totalExposure: activeUnbilled + pendingInv,
+        totalExposure,
         isProjection: false,
       })
     }
