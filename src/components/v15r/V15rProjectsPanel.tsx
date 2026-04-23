@@ -227,51 +227,68 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // ── Collection payment handlers ───────────────────────────────────────────
 
   function handleMarkFullPayment(p: BackupProject) {
+    // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
+    // Writes to backup.logs stream (the single source of truth for collected amounts).
+    // Drops the p.paid scalar write — getProjectFinancials derives paid from logs,
+    // and both health() and mapBackupInvoices now read from getProjectFinancials too.
+    // Amount collected = remaining balance (contract − paid), not full contract.
     const fin = getProjectFinancials(p, backup)
+    const amount = Math.max(0, num(fin.contract) - num(fin.paid))
+    if (amount <= 0) { setCollectProject(null); return }
     pushState()
-    p.paid = num(fin.contract)
+    const today = new Date().toISOString().slice(0, 10)
+    const entry: any = {
+      id: 'log' + Date.now(),
+      projId: p.id,
+      projName: p.name,
+      phase: 'Payment',
+      date: today,
+      emp: 'Me',
+      empId: '',
+      hrs: 0,
+      miles: 0,
+      mat: 0,
+      collected: amount,
+      store: '',
+      emergencyMatInfo: '',
+      detailLink: '',
+      notes: 'Full payment received',
+    }
+    backup.logs = [...(backup.logs || []), entry]
     p.lastCollectedAt = new Date().toISOString()
-    p.lastCollectedAmount = num(fin.contract)
-
-    // Sync to any service log entries linked to this project via project_id field.
-    // BackupServiceLog has no project_id by default — this handles future-linked entries.
-    // No direct link exists in current schema; project_id must be set when creating service logs.
-    const svcLogs = backup.serviceLogs || []
-    svcLogs.forEach((sl: any) => {
-      if (sl.project_id === p.id) {
-        sl.collected = num(fin.contract)
-        sl.payStatus = 'Y'
-        sl.balanceDue = 0
-        if (!sl.project_name) sl.project_name = p.name
-      }
-    })
-
+    p.lastCollectedAmount = amount
     saveBackupData(backup)
     setCollectProject(null)
     forceUpdate()
   }
 
   function handleLogPartialPayment(p: BackupProject) {
+    // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
+    // Writes partial payment to backup.logs stream. See handleMarkFullPayment for rationale.
     const amount = num(collectPartialInput)
     if (!amount || amount <= 0) return
     pushState()
-    p.paid = num(p.paid || 0) + amount
+    const today = new Date().toISOString().slice(0, 10)
+    const entry: any = {
+      id: 'log' + Date.now(),
+      projId: p.id,
+      projName: p.name,
+      phase: 'Payment',
+      date: today,
+      emp: 'Me',
+      empId: '',
+      hrs: 0,
+      miles: 0,
+      mat: 0,
+      collected: amount,
+      store: '',
+      emergencyMatInfo: '',
+      detailLink: '',
+      notes: 'Partial payment received',
+    }
+    backup.logs = [...(backup.logs || []), entry]
     p.lastCollectedAt = new Date().toISOString()
     p.lastCollectedAmount = amount
-
-    // Sync partial payment to linked service log entries (linked via project_id field).
-    const svcLogs = backup.serviceLogs || []
-    svcLogs.forEach((sl: any) => {
-      if (sl.project_id === p.id) {
-        const prevCollected = num(sl.collected || 0)
-        const newCollected = prevCollected + amount
-        sl.collected = newCollected
-        sl.balanceDue = Math.max(0, num(sl.quoted || 0) - newCollected)
-        sl.payStatus = sl.balanceDue <= 0 ? 'Y' : (newCollected > 0 ? 'P' : 'N')
-        if (!sl.project_name) sl.project_name = p.name
-      }
-    })
-
     saveBackupData(backup)
     setCollectPartialInput('')
     setCollectLoggingPartial(false)

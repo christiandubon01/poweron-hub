@@ -799,7 +799,24 @@ function V15rDashboardInner() {
     const todayWs = getWeekStart(new Date())
     if (!todayWs) return []
     const weeks: any[] = []
+    // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
+    // Pre-seed accum with all collections dated BEFORE the 40-week window.
+    // Without this the green Accumulative Income line starts at $0 and under-reports
+    // total lifetime collected by the sum of any pre-window logs. With this, the line
+    // starts at the correct baseline and its right-edge value matches the PAID header.
+    const windowStart = new Date(todayWs)
+    windowStart.setDate(todayWs.getDate() - 39 * 7)
     let accum = 0
+    for (const l of allLogs) {
+      const ld = (l.date || l.logDate) ? new Date((l.date || l.logDate) + 'T00:00:00') : null
+      if (!ld || isNaN(ld.getTime())) continue
+      if (ld < windowStart) accum += num(l.paymentsCollected || l.collected || 0)
+    }
+    for (const sl of allSvcLogs) {
+      const ld = sl.date ? new Date(sl.date + 'T00:00:00') : null
+      if (!ld || isNaN(ld.getTime())) continue
+      if (ld < windowStart) accum += num(sl.collected)
+    }
     for (let i = 39; i >= 0; i--) {
       const wStart = new Date(todayWs)
       wStart.setDate(todayWs.getDate() - i * 7)

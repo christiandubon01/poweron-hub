@@ -356,6 +356,63 @@ export function getBackupData(): BackupData | null {
           }
         }
       }
+
+      // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
+      // Close the gap between p.paid scalar and log-stream collections.
+      // Legacy payment handlers wrote p.paid directly without creating a d.logs[] entry,
+      // so the Dashboard CFOT chart (which reads logs) under-reported historical collections.
+      // This backfill synthesizes one log entry per project to close the scalar gap.
+      // Idempotent via p._paidScalarBackfilledAt flag — never runs twice on the same project.
+      if (data && Array.isArray(data.projects) && Array.isArray(data.logs)) {
+        let paidBackfilled = 0
+        for (const p of data.projects as any[]) {
+          if (!p) continue
+          if (p._paidScalarBackfilledAt) continue
+          const scalarPaid = Number(p.paid) || 0
+          if (scalarPaid <= 0) {
+            p._paidScalarBackfilledAt = new Date().toISOString()
+            continue
+          }
+          const loggedSum = (data.logs as any[])
+            .filter(l => l && l.projId === p.id)
+            .reduce((s, l) => s + (Number(l.collected) || 0), 0)
+          const manualAdj = Number((p.finance && p.finance.manualPaidAdjustment) || 0)
+          const gap = scalarPaid - (loggedSum + manualAdj)
+          if (gap > 0.005) {
+            // Pick the best historical date we have: lastCollectedAt, else _lastSavedAt, else today.
+            const gapDate = (p.lastCollectedAt && String(p.lastCollectedAt).slice(0, 10))
+              || (data._lastSavedAt && String(data._lastSavedAt).slice(0, 10))
+              || new Date().toISOString().slice(0, 10)
+            ;(data.logs as any[]).push({
+              id: 'log-paidbackfill-' + p.id + '-' + Date.now(),
+              projId: p.id,
+              projName: p.name || '',
+              phase: 'Payment',
+              date: gapDate,
+              emp: 'Me',
+              empId: '',
+              hrs: 0,
+              miles: 0,
+              mat: 0,
+              collected: gap,
+              store: '',
+              emergencyMatInfo: '',
+              detailLink: '',
+              notes: 'Backfilled from p.paid scalar (CFOT-COLLECTION-PATH-PARITY migration)',
+            })
+            paidBackfilled++
+          }
+          p._paidScalarBackfilledAt = new Date().toISOString()
+        }
+        if (paidBackfilled > 0) {
+          console.log(`[backupDataService] Backfilled paid-scalar gap on ${paidBackfilled} project(s) — one-time migration`)
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+          } catch (e) {
+            console.error('[backupDataService] Failed to persist paid-scalar backfill:', e)
+          }
+        }
+      }
       return data
     }
     // If no data under STORAGE_KEY, try poweron_v2 as fallback
@@ -636,9 +693,12 @@ export function health(p: BackupProject, d: BackupData): {
   const o = getOverallCompletion(p, d)
   const ds = daysSince(p.lastMove)
   const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
+  // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1 — read derived paid from logs,
+  // not the p.paid scalar (scalar is no longer written to; logs are the source of truth).
+  const paidDerived = getProjectFinancials(p, d).paid
   let sc = 50 + o * 0.28 + (ds < 7 ? 15 : ds < 14 ? 5 : -20) - openR * 5
     + ((p.logs || []).length ? 10 : 0)
-    + (num(p.paid) / Math.max(num(p.contract), 1)) * 8
+    + (paidDerived / Math.max(num(p.contract), 1)) * 8
 
   // Schedule variance component (only applies if plannedEnd is set)
   const reasons: string[] = []
@@ -1162,14 +1222,22 @@ export function mapBackupPriceBook(backup: BackupData): BackupPriceBookItem[] {
 export function getBackupKPIs(backup: BackupData) { return getKPIs(backup) }
 export function mapBackupWeeklyData(backup: BackupData) { return backup.weeklyData || [] }
 export function mapBackupInvoices(backup: BackupData) {
-  return (backup.projects || []).filter(p => p.billed > 0 || p.paid > 0).map((p, i) => ({
-    id: `inv-${p.id}`, invoice_number: `INV-${String(i + 1).padStart(4, '0')}`,
-    client_id: null, total: p.billed || p.contract || 0,
-    balance_due: (p.billed || 0) - (p.paid || 0),
-    status: p.paid >= p.billed && p.billed > 0 ? 'paid' : p.paid > 0 ? 'partial' : 'sent',
-    days_overdue: 0, due_date: null, created_at: backup._lastSavedAt || new Date().toISOString(),
-    project_name: p.name,
-  }))
+  // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1 — read paid from logs via
+  // getProjectFinancials, not the p.paid scalar. Scalar is no longer written to.
+  return (backup.projects || []).filter(p => {
+    const paidDerived = getProjectFinancials(p, backup).paid
+    return p.billed > 0 || paidDerived > 0
+  }).map((p, i) => {
+    const paidDerived = getProjectFinancials(p, backup).paid
+    return {
+      id: `inv-${p.id}`, invoice_number: `INV-${String(i + 1).padStart(4, '0')}`,
+      client_id: null, total: p.billed || p.contract || 0,
+      balance_due: (p.billed || 0) - paidDerived,
+      status: paidDerived >= p.billed && p.billed > 0 ? 'paid' : paidDerived > 0 ? 'partial' : 'sent',
+      days_overdue: 0, due_date: null, created_at: backup._lastSavedAt || new Date().toISOString(),
+      project_name: p.name,
+    }
+  })
 }
 
 // ── Snapshot System ──────────────────────────────────────────────────────────
