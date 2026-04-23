@@ -66,7 +66,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [npStartDate, setNpStartDate] = useState(new Date().toISOString().slice(0, 10))
   const [npStatus, setNpStatus] = useState('active')
   const [npNotes, setNpNotes] = useState('')
-  const [npPlannedStart, setNpPlannedStart] = useState('')
+  // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" input is the single
+  // source of truth for project start and now writes to p.plannedStart. The old
+  // npPlannedStart state is retired; Planned Start is no longer a separate user field.
   const [npPlannedEnd, setNpPlannedEnd] = useState('')
 
   // Collect modal state
@@ -84,7 +86,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [epStartDate, setEpStartDate] = useState('')
   const [epStatus, setEpStatus] = useState('active')
   const [epNotes, setEpNotes] = useState('')
-  const [epPlannedStart, setEpPlannedStart] = useState('')
+  // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — epPlannedStart retired; "Start Date" now writes to plannedStart.
   const [epPlannedEnd, setEpPlannedEnd] = useState('')
 
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
@@ -103,7 +105,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   function openNewProjectModal() {
     setNpName(''); setNpClient(''); setNpContract(''); setNpType('Residential')
     setNpStartDate(new Date().toISOString().slice(0, 10)); setNpStatus('active'); setNpNotes('')
-    setNpPlannedStart(''); setNpPlannedEnd('')
+    setNpPlannedEnd('')
     setShowNewProject(true)
   }
 
@@ -113,10 +115,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setEpClient((p as any).client || '')
     setEpContract(String(p.contract || 0))
     setEpType(p.type || 'Residential')
-    setEpStartDate(p.lastMove ? p.lastMove.slice(0, 10) : new Date().toISOString().slice(0, 10))
+    // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" reads from plannedStart,
+    // not lastMove. lastMove is the auto-updated movement timestamp; plannedStart is the
+    // user-entered project start date that feeds the CFOT chart gate.
+    setEpStartDate(p.plannedStart ? p.plannedStart.slice(0, 10) : '')
     setEpStatus(p.status || 'active')
     setEpNotes((p as any).notes || '')
-    setEpPlannedStart(p.plannedStart || '')
     setEpPlannedEnd(p.plannedEnd || '')
     setShowEditProject(true)
   }
@@ -150,7 +154,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       lastMove: npStartDate,
       notes: npNotes.trim(),
       created: new Date().toISOString(),
-      plannedStart: npPlannedStart || undefined,
+      // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" input writes here.
+      plannedStart: npStartDate || undefined,
       plannedEnd: npPlannedEnd || undefined,
     }
     // If converted from a lead, add conversion tracking fields
@@ -177,7 +182,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.status = epStatus
     p.lastMove = epStartDate
     ;(p as any).notes = epNotes.trim()
-    p.plannedStart = epPlannedStart || undefined
+    // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" input writes to plannedStart.
+    p.plannedStart = epStartDate || undefined
     p.plannedEnd = epPlannedEnd || undefined
     saveBackupDataAndSync(backup)
     setShowEditProject(false)
@@ -503,26 +509,23 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                   <input type="number" value={npContract} onChange={e => setNpContract(e.target.value)} className={inputCls} placeholder="0" />
                 </div>
               </div>
+              {/* DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — L1 layout: dates top row, categoricals bottom row */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned Start</label>
-                  <input type="date" value={npPlannedStart} onChange={e => setNpPlannedStart(e.target.value)} className={inputCls} />
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
+                  <input type="date" value={npStartDate} onChange={e => setNpStartDate(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned End</label>
                   <input type="date" value={npPlannedEnd} onChange={e => setNpPlannedEnd(e.target.value)} className={inputCls} />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job Type</label>
                   <select value={npType} onChange={e => setNpType(e.target.value)} className={inputCls}>
                     {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
-                  <input type="date" value={npStartDate} onChange={e => setNpStartDate(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Status</label>
@@ -567,26 +570,23 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                   <input type="number" value={epContract} onChange={e => setEpContract(e.target.value)} className={inputCls} placeholder="0" />
                 </div>
               </div>
+              {/* DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — L1 layout: dates top row, categoricals bottom row */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned Start</label>
-                  <input type="date" value={epPlannedStart} onChange={e => setEpPlannedStart(e.target.value)} className={inputCls} />
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
+                  <input type="date" value={epStartDate} onChange={e => setEpStartDate(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Planned End</label>
                   <input type="date" value={epPlannedEnd} onChange={e => setEpPlannedEnd(e.target.value)} className={inputCls} />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job Type</label>
                   <select value={epType} onChange={e => setEpType(e.target.value)} className={inputCls}>
                     {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Start Date</label>
-                  <input type="date" value={epStartDate} onChange={e => setEpStartDate(e.target.value)} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Status</label>

@@ -603,6 +603,50 @@ function TeamHoursChart({ backup }: { backup: BackupData }) {
   )
 }
 
+// ── StartDateWarningPill — DASHBOARD-START-DATE-GATE-APR22-2026-1 ──
+// Flags projects that are active/coming but have no Start Date.
+// Those projects are excluded from the historical CFOT chart entirely
+// (see isProjectActiveAsOf). Pill is deterministic — no AI, no tokens.
+// Logic must stay in sync with the gate's status filter and date fallback.
+function StartDateWarningPill({ projects }: { projects: any[] }) {
+  const [open, setOpen] = useState(false)
+  const missing = (projects || []).filter(p => {
+    // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — must stay in sync with isProjectActiveAsOf
+    const status = (p.status || '').toLowerCase()
+    if (status === 'completed' || status === 'cancelled' || status === 'archived' || status === 'canceled') return false
+    if (!p.plannedStart) return true
+    const d = new Date(p.plannedStart)
+    return isNaN(d.getTime())
+  })
+  if (missing.length === 0) return null
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-yellow-600/50 bg-yellow-900/20 text-yellow-300 text-xs font-medium hover:bg-yellow-900/30 transition-colors"
+      >
+        <span>⚠</span>
+        <span>{missing.length} project{missing.length === 1 ? '' : 's'} missing Start Date — not shown on chart</span>
+        <span className="text-yellow-500/70">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 px-3 py-2 rounded-md border border-yellow-600/30 bg-yellow-900/10 text-yellow-200/90 text-xs">
+          <div className="mb-1 text-yellow-400/70 uppercase tracking-wide text-[10px] font-semibold">Set Start Date in Projects tab:</div>
+          <ul className="space-y-0.5">
+            {missing.map((p: any) => (
+              <li key={p.id} className="flex justify-between gap-4">
+                <span>{p.name || '(unnamed)'}</span>
+                <span className="text-yellow-500/60">${(Number(p.contract) || 0).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
   const { isDemoMode, hasHydrated } = useDemoMode()
@@ -714,13 +758,17 @@ function V15rDashboardInner() {
     }
 
     const isProjectActiveAsOf = (p: any, asOf: Date): boolean => {
-      // Must exist by asOf
-      const startRaw = p.startDate || p.plannedStart || p.createdAt || p.start
-      const startD = startRaw ? new Date(startRaw) : null
-      if (startD && !isNaN(startD.getTime()) && startD > asOf) return false
-      // Drop out of exposure once marked completed/cancelled
+      // DASHBOARD-START-DATE-GATE-APR22-2026-1
+      // Start Date is required. Projects without a valid start date are excluded
+      // from historical exposure entirely (shown as a warning pill above the chart).
+      // Drop out of exposure once marked completed/cancelled.
       const status = (p.status || '').toLowerCase()
       if (status === 'completed' || status === 'cancelled' || status === 'archived' || status === 'canceled') return false
+      const startRaw = p.startDate || p.plannedStart || p.createdAt || p.start
+      if (!startRaw) return false
+      const startD = new Date(startRaw)
+      if (isNaN(startD.getTime())) return false
+      if (startD > asOf) return false
       return true
     }
 
@@ -970,6 +1018,8 @@ function V15rDashboardInner() {
             <div className="mb-4">
               <h2 className="text-[30px] font-bold text-gray-100 leading-tight">Projects Cash Flow Over Time</h2>
               <p className="text-sm text-gray-400 italic mt-1">Accumulative vs Total Exposure — Detailed with Unbilled, Invoiced and Received</p>
+              {/* DASHBOARD-START-DATE-GATE-APR22-2026-1 — warning pill for projects missing Start Date */}
+              <StartDateWarningPill projects={projects} />
             </div>
             {cfotData.length > 0 ? (
               <div
