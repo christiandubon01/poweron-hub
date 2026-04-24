@@ -30,7 +30,7 @@ export interface HunterPanelProps {
 }
 
 type SortOption = 'score' | 'date' | 'value' | 'distance'
-type ScoreTier = 'hot' | 'warm' | 'cool' | 'expansion'
+type ScoreTier = 'elite' | 'strong' | 'qualified' | 'expansion' | 'archived'
 
 interface FilterState {
   jobType: string
@@ -53,10 +53,11 @@ const DEFAULT_FILTERS: FilterState = {
 }
 
 function getScoreTierLabel(score: number): ScoreTier {
-  if (score >= 90) return 'hot'
-  if (score >= 75) return 'warm'
-  if (score >= 60) return 'cool'
-  return 'expansion'
+  if (score >= 85) return 'elite'
+  if (score >= 75) return 'strong'
+  if (score >= 60) return 'qualified'
+  if (score >= 40) return 'expansion'
+  return 'archived'
 }
 
 // HUNTER-B3-PANEL-STORE-REWIRE-APR23-2026-1
@@ -349,9 +350,11 @@ export function HunterPanel({
     return result
   }, [leads, filters, sortBy])
 
-  // Separate hot/warm/cool from expansion opportunities
-  const hotLeads = filteredAndSortedLeads.filter((l) => l.score >= 75)
-  const expansionLeads = filteredAndSortedLeads.filter((l) => l.score >= 40 && l.score < 75)
+  // Tier thresholds per canonical HUNTER scoring: elite 85+, strong 75-84,
+  // qualified 60-74, expansion 40-59, archived <40.
+  // "Top Leads" section spans elite+strong+qualified (score >= 60).
+  const topLeads = filteredAndSortedLeads.filter((l) => l.score >= 60)
+  const expansionLeads = filteredAndSortedLeads.filter((l) => l.score >= 40 && l.score < 60)
 
   // Metrics
   const totalPipeline = leads.reduce((sum, lead) => {
@@ -488,10 +491,11 @@ export function HunterPanel({
                 className="w-full mt-1 px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none focus:border-blue-500"
               >
                 <option value="all">All Tiers</option>
-                <option value="hot">🔥 Hot (90+)</option>
-                <option value="warm">🌡️ Warm (75-89)</option>
-                <option value="cool">❄️ Cool (60-74)</option>
-                <option value="expansion">📈 Expansion (40-59)</option>
+                <option value="elite">Elite (85+)</option>
+                <option value="strong">Strong (75-84)</option>
+                <option value="qualified">Qualified (60-74)</option>
+                <option value="expansion">Expansion (40-59)</option>
+                <option value="archived">Archived</option>
               </select>
             </div>
 
@@ -576,15 +580,15 @@ export function HunterPanel({
           </div>
         ) : (
           <>
-            {/* Hot/Warm/Cool Leads */}
-            {hotLeads.length > 0 && (
+            {/* Top Leads (Elite + Strong + Qualified) */}
+            {topLeads.length > 0 && (
               <div>
                 <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
-                  Hot Leads ({hotLeads.length})
+                  Top Leads ({topLeads.length})
                 </h2>
                 <div className="space-y-2">
-                  {hotLeads.map((lead) => (
+                  {topLeads.map((lead) => (
                     <HunterLeadCard
                       key={lead.id}
                       lead={lead}
