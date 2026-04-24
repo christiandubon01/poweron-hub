@@ -1,4 +1,9 @@
-// @ts-nocheck
+// HUNTER-E1-NOCHECK-PORTFOLIOSERVICE-APR23-2026-1: @ts-nocheck removed;
+// duplicate buildTestimonialEmailTemplate and buildTestimonialSMSTemplate
+// bodies deleted (were silently shadowing typed versions - A2 audit).
+// Conservative as-any casts applied at remaining error sites.
+// requestClientTestimonial return-type mismatch (Promise<void> vs actual
+// return) flagged for separate session (requires caller audit).
 /**
  * src/services/hunter/HunterPortfolioService.ts
  * HUNTER Portfolio Showcase Service
@@ -124,7 +129,7 @@ export async function createPortfolioEntry(
 
   // Save to Supabase if available
   try {
-    await supabase
+    await (supabase as any)
       .from('hunter_portfolio_entries')
       .insert([entry]);
   } catch (error) {
@@ -182,7 +187,7 @@ export async function updatePortfolioEntry(
   };
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from('hunter_portfolio_entries')
       .update(updatedEntry)
       .eq('id', entryId)
@@ -223,7 +228,7 @@ export async function requestClientTestimonial(
   clientEmail?: string,
   clientPhone?: string
 ): Promise<void> {
-  const entry = await supabase
+  const entry = await (supabase as any)
     .from('hunter_portfolio_entries')
     .select('*')
     .eq('id', entryId)
@@ -236,7 +241,7 @@ export async function requestClientTestimonial(
 
   // Store request for tracking
   try {
-    await supabase
+    await (supabase as any)
       .from('hunter_testimonial_requests')
       .insert([
         {
@@ -474,7 +479,7 @@ export async function exportForSocialMedia(
   entryId: string,
   platform: SocialPlatform
 ): Promise<SocialMediaExport> {
-  const entry = await supabase
+  const entry = await (supabase as any)
     .from('hunter_portfolio_entries')
     .select('*')
     .eq('id', entryId)
@@ -769,25 +774,6 @@ This project showcases our team's commitment to technical excellence and custome
 
 #ElectricalConstruction #ProjectDelivery #ProfessionalServices
   `;
-}
-
-function buildTestimonialEmailTemplate(entry: any): string {
-  return `
-Subject: Share Your Experience - Testimonial Request
-
-Hi [Client Name],
-
-We hope you're enjoying your new installation! We'd love to hear about your experience.
-
-Would you be willing to share a brief testimonial about working with us? Your feedback helps other customers learn about our commitment to quality and service.
-
-Thank you,
-[Your Company]
-  `;
-}
-
-function buildTestimonialSMSTemplate(entry: any): string {
-  return `Hi [Name]! How happy are you with your work? Reply with 1-2 sentences and a rating (1-5 stars).`;
 }
 
 function formatDate(dateString: string): string {
