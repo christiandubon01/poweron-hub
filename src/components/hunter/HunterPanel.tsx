@@ -402,18 +402,6 @@ export function HunterPanel({
   // Archived bucket: lost/deferred/archived leads, hidden behind toggle.
   const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
 
-  // TEMP DEBUG — remove after diagnosis
-  if (typeof window !== 'undefined') {
-    (window as any).__hunterDebug = {
-      storeLeadsCount: storeLeads.length,
-      leadsCount: leads.length,
-      filteredAndSortedCount: filteredAndSortedLeads.length,
-      activeCount: activeLeads.length,
-      archivedCount: archivedLeads.length,
-      statusByLead: leads.map((l) => ({ id: l.id, score: l.score, status: (l as any).status })),
-    }
-  }
-
   // TEMP DEBUG
   console.log('[HUNTER-DEBUG]', {
     totalStoreLeads: storeLeads.length,
@@ -628,28 +616,43 @@ export function HunterPanel({
 
             {/* Urgency Toggle */}
             <div className="col-span-2">
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filters.urgencyOnly}
-                  onChange={(e) => setFilters({ ...filters, urgencyOnly: e.target.checked })}
-                  className="w-4 h-4"
-                />
-                <span className="text-gray-400">Show urgent leads only (score 75+)</span>
-              </label>
+              <button
+                type="button"
+                onClick={() => setFilters({ ...filters, urgencyOnly: !filters.urgencyOnly })}
+                className={clsx(
+                  'inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition',
+                  filters.urgencyOnly
+                    ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+                )}
+                aria-pressed={filters.urgencyOnly}
+              >
+                <span className={clsx(
+                  'w-1.5 h-1.5 rounded-full',
+                  filters.urgencyOnly ? 'bg-orange-400' : 'bg-gray-600'
+                )} />
+                Urgent only (score 75+)
+              </button>
             </div>
-
             {/* Show Archived Leads Toggle */}
             <div className="col-span-2">
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showArchived}
-                  onChange={(e) => setShowArchived(e.target.checked)}
-                  className="w-4 h-4 accent-emerald-500"
-                />
-                <span className="text-gray-400">Show archived leads (lost, deferred)</span>
-              </label>
+              <button
+                type="button"
+                onClick={() => setShowArchived(!showArchived)}
+                className={clsx(
+                  'inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition',
+                  showArchived
+                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+                )}
+                aria-pressed={showArchived}
+              >
+                <span className={clsx(
+                  'w-1.5 h-1.5 rounded-full',
+                  showArchived ? 'bg-emerald-400' : 'bg-gray-600'
+                )} />
+                Show archived (lost, deferred)
+              </button>
             </div>
           </div>
 
