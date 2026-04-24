@@ -192,27 +192,38 @@ export const useHunterStore = create<HunterStoreState>()(
             return;
           }
 
-          const { data, error } = await (supabase as any)
-            .from('hunter_leads')
-            .update({ status, last_updated: new Date().toISOString() })
-            .eq('id', leadId)
-            .select()
-            .single();
+          const now = new Date().toISOString();
 
-          if (error || !data) {
+          // Perform the UPDATE without requesting the row back.
+          // .select().single() was causing HTTP 406 when RLS filtered the
+          // return set to 0 rows (update succeeded, SELECT returned nothing).
+          // We have all the info we need locally: the leadId and the new status.
+          const { error } = await (supabase as any)
+            .from('hunter_leads')
+            .update({ status, last_updated: now })
+            .eq('id', leadId);
+
+          if (error) {
             console.error('Failed to update lead status:', error);
-            set({ lastError: error?.message ?? 'Update returned no row' });
+            set({ lastError: error.message });
             return;
           }
 
-          const updated = data as HunterLead;
+          // Optimistically update local state with the known new values.
           set((state) => ({
-            leads: state.leads.map((lead) => (lead.id === leadId ? updated : lead)),
+            leads: state.leads.map((lead) =>
+              lead.id === leadId
+                ? ({ ...lead, status, last_updated: now } as HunterLead)
+                : lead
+            ),
             lastError: null,
           }));
 
           const { leads, activeFilters, sortBy } = get();
           get().applyFiltersAndSort(leads, activeFilters, sortBy);
+        } catch (err: any) {
+          console.error('updateLeadStatus error:', err);
+          set({ lastError: err?.message || 'Unknown error updating lead status' });
         } finally {
           set({ isLoading: false });
         }
