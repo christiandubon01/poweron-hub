@@ -233,6 +233,10 @@ export interface HunterStoreState {
   sortBy: LeadSortBy;
   isScanning: boolean;
 
+  // CRUD lifecycle state (populated by Supabase-backed actions)
+  isLoading: boolean;
+  lastError: string | null;
+
   // Computed
   leadsFiltered: HunterLead[];
   topLeads: HunterLead[]; // score >= 75

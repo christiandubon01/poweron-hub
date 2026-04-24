@@ -5,6 +5,7 @@
 
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
+import { supabase } from '@/lib/supabase';
 import {
   HunterLead,
   HunterRule,
@@ -19,6 +20,29 @@ import {
   HunterStoreState,
   RuleType,
 } from '@/services/hunter/HunterTypes';
+
+/**
+ * Resolves the current user's tenant_id by joining auth to user_tenants.
+ * Returns null if user is not authenticated or has no tenant membership.
+ * All Hunter CRUD actions scope by this tenant_id.
+ */
+async function getCurrentTenantId(): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data, error } = await (supabase as any)
+    .from('user_tenants')
+    .select('tenant_id')
+    .eq('user_id', user.id)
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  return data.tenant_id;
+}
+
+async function getCurrentUserId(): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? null;
+}
 
 /**
  * Create the HUNTER Zustand store
@@ -37,6 +61,10 @@ export const useHunterStore = create<HunterStoreState>()(
       sortBy: LeadSortBy.SCORE_DESC,
       isScanning: false,
 
+      // CRUD lifecycle state
+      isLoading: false,
+      lastError: null,
+
       // Computed selectors (empty initially, updated via actions)
       leadsFiltered: [],
       topLeads: [],
@@ -45,162 +73,337 @@ export const useHunterStore = create<HunterStoreState>()(
       // ===== Actions =====
 
       /**
-       * Fetch leads from Supabase
+       * Fetch leads from Supabase (RLS auto-scopes to current tenant via user_tenants).
        */
       fetchLeads: async () => {
+        set({ isLoading: true });
         try {
-          // Placeholder for actual Supabase fetch
-          // In integration, this will call supabase client
-          console.log('HunterStore: fetching leads...');
-          
-          // For now, just update computed selectors
-          const { leads, activeFilters, sortBy } = get();
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership for current user; cannot fetch leads.',
+              isLoading: false,
+            });
+            return;
+          }
+
+          const { data, error } = await (supabase as any)
+            .from('hunter_leads')
+            .select('*')
+            .order('discovered_at', { ascending: false });
+
+          if (error) {
+            console.error('Failed to fetch leads:', error);
+            set({ lastError: error.message, isLoading: false });
+            return;
+          }
+
+          const leads = (data ?? []) as HunterLead[];
+          set({ leads, lastError: null });
+
+          const { activeFilters, sortBy } = get();
           get().applyFiltersAndSort(leads, activeFilters, sortBy);
-        } catch (error) {
+        } catch (error: any) {
           console.error('Failed to fetch leads:', error);
+          set({ lastError: error?.message ?? String(error) });
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       /**
-       * Add a new lead
+       * Add a new lead - INSERT into hunter_leads scoped to current tenant + user.
+       * Postgres generates id (UUID) and timestamp defaults.
        */
       addLead: async (leadData) => {
+        set({ isLoading: true });
         try {
-          // Placeholder: in integration, POST to Supabase
-          const newLead: HunterLead = {
-            id: `lead_${Date.now()}`,
-            user_id: '', // Will be set on integration
-            created_at: new Date().toISOString(),
-            last_updated: new Date().toISOString(),
-            discovered_at: new Date().toISOString(),
-            ...leadData,
-            score: leadData.score || 0,
-            score_tier: leadData.score_tier || ScoreTier.QUALIFIED,
-            status: leadData.status || LeadStatus.NEW,
+          const [tenantId, userId] = await Promise.all([
+            getCurrentTenantId(),
+            getCurrentUserId(),
+          ]);
+          if (!tenantId || !userId) {
+            const msg = 'Not authenticated or no tenant membership; cannot add lead.';
+            set({ lastError: msg, isLoading: false });
+            throw new Error(msg);
+          }
+
+          // Strip any client-provided id / created_at / last_updated / discovered_at
+          // so Postgres defaults take over.
+          const {
+            id: _ignoredId,
+            created_at: _ignoredCreated,
+            last_updated: _ignoredUpdated,
+            discovered_at: _ignoredDiscovered,
+            user_id: _ignoredUserId,
+            ...cleanData
+          } = leadData as any;
+
+          const insertPayload = {
+            tenant_id: tenantId,
+            user_id: userId,
+            ...cleanData,
+            score: leadData.score ?? 0,
+            score_tier: leadData.score_tier ?? ScoreTier.QUALIFIED,
+            status: leadData.status ?? LeadStatus.NEW,
           };
 
+          const { data, error } = await (supabase as any)
+            .from('hunter_leads')
+            .insert(insertPayload)
+            .select()
+            .single();
+
+          if (error || !data) {
+            const msg = error?.message ?? 'Insert returned no row';
+            console.error('Failed to add lead:', error);
+            set({ lastError: msg, isLoading: false });
+            throw new Error(msg);
+          }
+
+          const inserted = data as HunterLead;
           set((state) => ({
-            leads: [...state.leads, newLead],
+            leads: [...state.leads, inserted],
+            lastError: null,
           }));
 
-          // Recompute filtered leads
           const { leads, activeFilters, sortBy } = get();
           get().applyFiltersAndSort(leads, activeFilters, sortBy);
 
-          return newLead;
-        } catch (error) {
-          console.error('Failed to add lead:', error);
-          throw error;
+          return inserted;
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       /**
-       * Update lead status
+       * Update lead status - UPDATE hunter_leads (RLS auto-scopes to current tenant).
+       * Errors are surfaced via lastError; UI can recover (no throw).
        */
       updateLeadStatus: async (leadId, status) => {
+        set({ isLoading: true });
         try {
-          // Placeholder: PATCH to Supabase
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership; cannot update lead status.',
+              isLoading: false,
+            });
+            return;
+          }
+
+          const { data, error } = await (supabase as any)
+            .from('hunter_leads')
+            .update({ status, last_updated: new Date().toISOString() })
+            .eq('id', leadId)
+            .select()
+            .single();
+
+          if (error || !data) {
+            console.error('Failed to update lead status:', error);
+            set({ lastError: error?.message ?? 'Update returned no row' });
+            return;
+          }
+
+          const updated = data as HunterLead;
           set((state) => ({
-            leads: state.leads.map((lead) =>
-              lead.id === leadId
-                ? { ...lead, status, last_updated: new Date().toISOString() }
-                : lead
-            ),
+            leads: state.leads.map((lead) => (lead.id === leadId ? updated : lead)),
+            lastError: null,
           }));
 
           const { leads, activeFilters, sortBy } = get();
           get().applyFiltersAndSort(leads, activeFilters, sortBy);
-        } catch (error) {
-          console.error('Failed to update lead status:', error);
-          throw error;
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       /**
-       * Update lead score with factors
+       * Update lead score with factors - UPDATE hunter_leads + INSERT audit row in hunter_scores.
+       * Errors set lastError; do not throw (UI can recover).
        */
       updateLeadScore: async (leadId, score, factors) => {
+        set({ isLoading: true });
         try {
-          // Placeholder: PATCH to Supabase
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership; cannot update lead score.',
+              isLoading: false,
+            });
+            return;
+          }
+
           const scoreTier = get().computeScoreTier(score);
 
+          const { data, error } = await (supabase as any)
+            .from('hunter_leads')
+            .update({
+              score,
+              score_tier: scoreTier,
+              score_factors: factors,
+              last_updated: new Date().toISOString(),
+            })
+            .eq('id', leadId)
+            .select()
+            .single();
+
+          if (error || !data) {
+            console.error('Failed to update lead score:', error);
+            set({ lastError: error?.message ?? 'Update returned no row' });
+            return;
+          }
+
+          // Audit-trail insert into hunter_scores (best-effort; surface but don't abort).
+          const { error: auditError } = await (supabase as any)
+            .from('hunter_scores')
+            .insert({
+              tenant_id: tenantId,
+              lead_id: leadId,
+              score,
+              factors,
+            });
+          if (auditError) {
+            console.error('Failed to write hunter_scores audit row:', auditError);
+            set({ lastError: auditError.message });
+          }
+
+          const updated = data as HunterLead;
           set((state) => ({
-            leads: state.leads.map((lead) =>
-              lead.id === leadId
-                ? {
-                    ...lead,
-                    score,
-                    score_tier: scoreTier,
-                    score_factors: factors,
-                    last_updated: new Date().toISOString(),
-                  }
-                : lead
-            ),
+            leads: state.leads.map((lead) => (lead.id === leadId ? updated : lead)),
+            lastError: auditError ? auditError.message : null,
           }));
 
           const { leads, activeFilters, sortBy } = get();
           get().applyFiltersAndSort(leads, activeFilters, sortBy);
-        } catch (error) {
-          console.error('Failed to update lead score:', error);
-          throw error;
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       /**
-       * Add a new rule (pitch, suppression, urgency, etc.)
+       * Add a new rule (pitch, suppression, urgency, etc.) -
+       * INSERT into hunter_rules scoped to current tenant + user.
        */
       addRule: async (ruleData) => {
+        set({ isLoading: true });
         try {
-          // Placeholder: POST to Supabase
-          const newRule: HunterRule = {
-            id: `rule_${Date.now()}`,
-            user_id: '', // Set on integration
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            ...ruleData,
-            version: ruleData.version || 1,
-            status: ruleData.status || RuleStatus.ACTIVE,
+          const [tenantId, userId] = await Promise.all([
+            getCurrentTenantId(),
+            getCurrentUserId(),
+          ]);
+          if (!tenantId || !userId) {
+            const msg = 'Not authenticated or no tenant membership; cannot add rule.';
+            set({ lastError: msg, isLoading: false });
+            throw new Error(msg);
+          }
+
+          const insertPayload = {
+            tenant_id: tenantId,
+            user_id: userId,
+            rule_type: ruleData.rule_type,
+            rule_text: ruleData.rule_text,
+            source_lead_id: ruleData.source_lead_id ?? null,
+            version: ruleData.version ?? 1,
+            status: ruleData.status ?? RuleStatus.ACTIVE,
           };
 
+          const { data, error } = await (supabase as any)
+            .from('hunter_rules')
+            .insert(insertPayload)
+            .select()
+            .single();
+
+          if (error || !data) {
+            const msg = error?.message ?? 'Insert returned no row';
+            console.error('Failed to add rule:', error);
+            set({ lastError: msg, isLoading: false });
+          }
+
+          const inserted = data as HunterRule;
           set((state) => ({
-            rules: [...state.rules, newRule],
+            rules: [...state.rules, inserted],
+            lastError: null,
           }));
 
-          return newRule;
-        } catch (error) {
-          console.error('Failed to add rule:', error);
-          throw error;
+          return inserted;
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       /**
-       * Archive a rule
+       * Archive a rule - UPDATE hunter_rules SET status='archived' (RLS auto-scopes).
        */
       archiveRule: async (ruleId) => {
+        set({ isLoading: true });
         try {
-          // Placeholder: PATCH to Supabase
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership; cannot archive rule.',
+              isLoading: false,
+            });
+            return;
+          }
+
+          const { data, error } = await (supabase as any)
+            .from('hunter_rules')
+            .update({
+              status: RuleStatus.ARCHIVED,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', ruleId)
+            .select()
+            .single();
+
+          if (error || !data) {
+            console.error('Failed to archive rule:', error);
+            set({ lastError: error?.message ?? 'Update returned no row' });
+            return;
+          }
+
+          const updated = data as HunterRule;
           set((state) => ({
-            rules: state.rules.map((rule) =>
-              rule.id === ruleId
-                ? { ...rule, status: RuleStatus.ARCHIVED, updated_at: new Date().toISOString() }
-                : rule
-            ),
+            rules: state.rules.map((rule) => (rule.id === ruleId ? updated : rule)),
+            lastError: null,
           }));
-        } catch (error) {
-          console.error('Failed to archive rule:', error);
-          throw error;
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       /**
-       * Fetch study queue items
+       * Fetch study queue items - SELECT pending rows from hunter_study_queue.
        */
       fetchStudyQueue: async () => {
+        set({ isLoading: true });
         try {
-          // Placeholder: GET from Supabase
-          console.log('HunterStore: fetching study queue...');
-        } catch (error) {
-          console.error('Failed to fetch study queue:', error);
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership; cannot fetch study queue.',
+              isLoading: false,
+            });
+            return;
+          }
+
+          const { data, error } = await (supabase as any)
+            .from('hunter_study_queue')
+            .select('*')
+            .eq('status', 'pending')
+            .order('scheduled_for', { ascending: true, nullsFirst: false })
+            .order('created_at', { ascending: false });
+
+          if (error) {
+            console.error('Failed to fetch study queue:', error);
+            set({ lastError: error.message });
+            return;
+          }
+
+          set({ studyQueue: (data ?? []) as StudyTopic[], lastError: null });
+        } finally {
+          set({ isLoading: false });
         }
       },
 
