@@ -374,6 +374,111 @@ export const useHunterStore = create<HunterStoreState>()(
       },
 
       /**
+       * Hard delete a lead. Removes from Supabase and from store state.
+       * Tenant RLS auto-scopes; no explicit tenant filter needed.
+       */
+      deleteLead: async (leadId) => {
+        set({ isLoading: true });
+        try {
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership; cannot delete lead.',
+              isLoading: false,
+            });
+            return;
+          }
+
+          const { error } = await (supabase as any)
+            .from('hunter_leads')
+            .delete()
+            .eq('id', leadId);
+
+          if (error) {
+            console.error('Failed to delete lead:', error);
+            set({ lastError: error.message });
+            return;
+          }
+
+          // Remove from local state
+          const currentLeads = get().leads;
+          set({ leads: currentLeads.filter((l) => l.id !== leadId) });
+
+          // Re-apply filters if the helper exists in this store
+          const applyFilters = (get() as any).applyFiltersAndSort;
+          if (typeof applyFilters === 'function') {
+            applyFilters();
+          }
+
+          set({ lastError: null });
+        } catch (err: any) {
+          console.error('deleteLead error:', err);
+          set({ lastError: err?.message || 'Unknown error deleting lead' });
+        } finally {
+          set({ isLoading: false });
+        }
+      },
+
+      /**
+       * Save a debrief row to hunter_debriefs.
+       * Per D0 decision, this uses the canonical full-shape schema so it stays
+       * compatible with HunterDebriefEngine.startDebrief.
+       * Called when a lead is marked Lost (and optionally Won) with debrief details.
+       */
+      saveDebrief: async (leadId, outcome, payload) => {
+        set({ isLoading: true });
+        try {
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) {
+            set({
+              lastError: 'No tenant membership; cannot save debrief.',
+              isLoading: false,
+            });
+            return;
+          }
+
+          const lessonsArray = Array.isArray(payload.lessons) ? payload.lessons : [];
+          const transcriptText = (payload.transcript || '').trim();
+
+          // Compose transcript with structured context if competitor info provided
+          let fullTranscript = transcriptText;
+          if (payload.wentWithCompetitor) {
+            fullTranscript = (fullTranscript ? fullTranscript + '\n\n' : '')
+              + '[Lost to competitor'
+              + (payload.competitorName ? ': ' + payload.competitorName : '')
+              + ']';
+          }
+
+          const insertPayload: Record<string, any> = {
+            tenant_id: tenantId,
+            lead_id: leadId,
+            outcome,
+            transcript: fullTranscript || null,
+            lessons: lessonsArray.length > 0 ? lessonsArray : null,
+            factor_scores: payload.factor_scores || null,
+            final_score: typeof payload.final_score === 'number' ? payload.final_score : null,
+          };
+
+          const { error } = await (supabase as any)
+            .from('hunter_debriefs')
+            .insert(insertPayload);
+
+          if (error) {
+            console.error('Failed to save debrief:', error);
+            set({ lastError: error.message });
+            return;
+          }
+
+          set({ lastError: null });
+        } catch (err: any) {
+          console.error('saveDebrief error:', err);
+          set({ lastError: err?.message || 'Unknown error saving debrief' });
+        } finally {
+          set({ isLoading: false });
+        }
+      },
+
+      /**
        * Fetch study queue items - SELECT pending rows from hunter_study_queue.
        */
       fetchStudyQueue: async () => {
