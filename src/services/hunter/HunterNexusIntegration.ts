@@ -271,7 +271,7 @@ export function publishLeadsReadyEvent(scanTriggered: boolean = false): void {
     ? `HUNTER scan triggered — found ${topLeads.length} top leads`
     : `HUNTER morning brief ready — top ${topLeads.length} leads available`;
   
-  publish('HIGH_VALUE_LEAD' as any, 'hunter', payload, summary);
+  publish('hunter:leads_ready', 'hunter', payload, summary);
 }
 
 /**
@@ -280,7 +280,7 @@ export function publishLeadsReadyEvent(scanTriggered: boolean = false): void {
  */
 export function initHunterSparkIntegration(): () => void {
   // Subscribe to hunter leads ready event
-  return subscribe('HIGH_VALUE_LEAD' as any, (event: AgentEvent) => {
+  return subscribe('hunter:leads_ready', (event: AgentEvent) => {
     if (event.source === 'hunter') {
       console.log('[HunterSpark] Received leads ready event:', event.payload);
       

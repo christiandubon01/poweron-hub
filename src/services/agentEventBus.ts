@@ -50,6 +50,7 @@ export type AgentEventType =
   | 'PATTERN_LEARNED'
   | 'PROPOSAL_APPROVED'
   | 'PROPOSAL_REJECTED'
+  | 'hunter:leads_ready'
 
 export interface AgentEvent {
   id:        string
