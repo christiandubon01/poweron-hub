@@ -222,9 +222,26 @@ function SparkHunterTabShell() {
           <Suspense fallback={<PanelLoading />}><PortalLeadInboxView /></Suspense>
         )}
         {tab === 'hunter-leads' && (
+          // HUNTER-B1-NAV-ENTRY-APR23-2026-1 — canonical HUNTER path is Sales Intelligence → Leads.
+          // This sub-tab redirects; actual rendering lives in src/components/salesIntel/tabs/LeadsTab.tsx.
           <div style={{ padding: '40px 24px', color: '#6b7280', textAlign: 'center' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#9ca3af' }}>Hunter Leads</div>
-            <div style={{ fontSize: 12 }}>Wire HUNTER agent to populate leads here.</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#9ca3af' }}>Hunter Leads moved</div>
+            <div style={{ fontSize: 12, marginBottom: 16 }}>HUNTER leads now live in Sales Intelligence → Leads tab.</div>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('poweron:show-sales-intelligence'))}
+              style={{
+                padding: '8px 16px',
+                fontSize: 12,
+                fontWeight: 600,
+                backgroundColor: 'var(--accent, #10b981)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >
+              Take me there
+            </button>
           </div>
         )}
         {tab === 'scripts' && (
@@ -530,6 +547,15 @@ export function AppShell({ children }: AppShellProps) {
     }
     window.addEventListener('poweron:show-journal', handleShowJournal)
     return () => window.removeEventListener('poweron:show-journal', handleShowJournal)
+  }, [])
+
+  // HUNTER-B1-NAV-ENTRY-APR23-2026-1 — route SparkHunterTabShell "Hunter Leads moved" button → Sales Intelligence.
+  useEffect(() => {
+    function handleShowSalesIntelligence() {
+      setActiveView('sales-intelligence')
+    }
+    window.addEventListener('poweron:show-sales-intelligence', handleShowSalesIntelligence)
+    return () => window.removeEventListener('poweron:show-sales-intelligence', handleShowSalesIntelligence)
   }, [])
 
   // Collection routing "need to follow up" → navigate to Money panel

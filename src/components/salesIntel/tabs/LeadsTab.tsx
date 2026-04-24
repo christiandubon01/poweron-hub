@@ -1,10 +1,9 @@
 import React from 'react';
+import { HunterPanel } from '@/components/hunter';
 
+// HUNTER-B1-NAV-ENTRY-APR23-2026-1 — canonical HUNTER entry point.
+// Renders HunterPanel with no props; component uses its own defaults
+// (includes SAMPLE_LEADS mock data — removed in B3 when Panel subscribes to store).
 export const LeadsTab: React.FC = () => {
-  return (
-    <div className="p-6 text-gray-300">
-      <h3 className="text-lg font-semibold mb-4">Leads Management</h3>
-      <p>Lead hunting and pipeline intelligence</p>
-    </div>
-  );
+  return <HunterPanel />;
 };
