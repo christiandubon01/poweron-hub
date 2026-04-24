@@ -12,10 +12,12 @@
  * - Empty state with manual trigger button
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical } from 'lucide-react'
 import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
+import { useHunterStore } from '@/store/hunterStore'
+import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
 
 export interface HunterPanelProps {
   leads?: HunterLead[]
@@ -55,6 +57,57 @@ function getScoreTierLabel(score: number): ScoreTier {
   if (score >= 75) return 'warm'
   if (score >= 60) return 'cool'
   return 'expansion'
+}
+
+// HUNTER-B3-PANEL-STORE-REWIRE-APR23-2026-1
+// Translator: converts store-shaped HunterLead (canonical HunterTypes) to
+// panel-shaped HunterLead (HunterLeadCard local type). Quick-and-dirty bridge;
+// B4 MANAGED-3 session unifies the types so this function can be deleted.
+function translateStoreToPanel(storeLead: StoreHunterLead): HunterLead {
+  const estValue = typeof storeLead.estimated_value === 'number' ? storeLead.estimated_value : null
+  const valueRange = estValue && estValue > 0
+    ? { min: Math.round(estValue * 0.85), max: Math.round(estValue * 1.15) }
+    : undefined
+
+  const discoveredDate = storeLead.discovered_at ? new Date(storeLead.discovered_at) : null
+  const freshness = discoveredDate ? formatFreshness(discoveredDate) : undefined
+  const dateDiscovered = discoveredDate
+    ? discoveredDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '—'
+
+  return {
+    id: storeLead.id,
+    score: typeof storeLead.score === 'number' ? storeLead.score : 0,
+    scoringFactors: Array.isArray(storeLead.score_factors) ? storeLead.score_factors : undefined,
+    contactName: storeLead.contact_name || 'Unknown',
+    jobType: storeLead.lead_type || 'electrical',
+    jobTypeCategory: (storeLead.lead_type || 'electrical').toLowerCase(),
+    pitchPreview: storeLead.description || storeLead.pitch_script || '',
+    distance: undefined,
+    dateDiscovered,
+    sourceTag: storeLead.source_tag || storeLead.source || 'manual',
+    freshness,
+    phone: storeLead.phone || undefined,
+    email: storeLead.email || undefined,
+    company: storeLead.company_name || undefined,
+    bestContactMethod: undefined,
+    valueRange,
+    marginEstimate: typeof storeLead.estimated_margin === 'number' ? storeLead.estimated_margin : undefined,
+    comparableJobs: undefined,
+    pitchScript: undefined, // store holds scalar text; structured pitch lives on pitchPreview until B4
+    pitchAngles: undefined,
+  } as HunterLead
+}
+
+function formatFreshness(date: Date): string {
+  const diffMs = Date.now() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 const SAMPLE_LEADS: HunterLead[] = [
@@ -199,10 +252,10 @@ const SAMPLE_LEADS: HunterLead[] = [
 ]
 
 export function HunterPanel({
-  leads = SAMPLE_LEADS,
-  leadsDiscoveredToday = 4,
-  pipelineValue = 41800,
-  averageScore = 74,
+  leads: leadsFromProps,
+  leadsDiscoveredToday: leadsDiscoveredTodayFromProps,
+  pipelineValue: _pipelineValueFromProps, // dead prop — not rendered; B4 removes from interface
+  averageScore: _averageScoreFromProps,   // dead prop — not rendered; B4 removes from interface
   onTriggerHunterScan,
   onViewStudyQueue,
   onLeadAction,
@@ -210,6 +263,37 @@ export function HunterPanel({
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
+
+  // HUNTER-B3-PANEL-STORE-REWIRE-APR23-2026-1
+  // Subscribe to hunterStore and fetch real leads on mount. If caller passes
+  // leads prop (e.g., tests or external wrappers), prop wins. Otherwise the
+  // store's tenant-scoped Supabase data feeds the panel via translator.
+  const storeLeads = useHunterStore((s) => s.leads)
+  const storeIsLoading = useHunterStore((s) => s.isLoading)
+  const storeLastError = useHunterStore((s) => s.lastError)
+  const fetchLeads = useHunterStore((s) => s.fetchLeads)
+
+  useEffect(() => {
+    if (!leadsFromProps) {
+      fetchLeads().catch((err) => {
+        console.error('[HunterPanel] fetchLeads failed:', err)
+      })
+    }
+  }, [leadsFromProps, fetchLeads])
+
+  const translatedStoreLeads = useMemo(
+    () => storeLeads.map(translateStoreToPanel),
+    [storeLeads],
+  )
+
+  const leads: HunterLead[] = leadsFromProps ?? translatedStoreLeads
+
+  // Real computation for leadsDiscoveredToday if not provided as prop.
+  // "Today" = leads whose dateDiscovered renders a string matching today's format.
+  // Until B4 unifies types we rely on the translator's formatted string — close enough.
+  const todayString = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const leadsDiscoveredToday = leadsDiscoveredTodayFromProps
+    ?? leads.filter((l) => l.dateDiscovered === todayString).length
   const [showMoreMenu, setShowMoreMenu] = useState(false)
 
   // Filter and sort leads
