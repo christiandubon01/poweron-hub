@@ -316,8 +316,11 @@ export function HunterPanel({
   // Filter and sort leads
   const filteredAndSortedLeads = useMemo(() => {
     let result = leads.filter((lead) => {
-      // Score tier filter
-      if (filters.scoreTier !== 'all') {
+      // Score tier filter — bypass for archived-status leads so they
+      // always reach the isArchivedLead bucket regardless of score.
+      const leadStatus = (lead as any).status
+      const isArchivedByStatus = leadStatus === 'lost' || leadStatus === 'deferred' || leadStatus === 'archived'
+      if (filters.scoreTier !== 'all' && !isArchivedByStatus) {
         const tier = getScoreTierLabel(lead.score)
         if (tier !== filters.scoreTier) return false
       }
@@ -398,6 +401,16 @@ export function HunterPanel({
 
   // Archived bucket: lost/deferred/archived leads, hidden behind toggle.
   const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
+
+  // TEMP DEBUG
+  console.log('[HUNTER-DEBUG]', {
+    totalStoreLeads: storeLeads.length,
+    totalLeads: leads.length,
+    filteredAndSorted: filteredAndSortedLeads.length,
+    active: activeLeads.length,
+    archived: archivedLeads.length,
+    allStatuses: leads.map(l => ({ id: l.id, status: (l as any).status, score: l.score })),
+  })
 
   // Metrics
   const totalPipeline = leads.reduce((sum, lead) => {
