@@ -23,9 +23,11 @@
  */
 
 import React, { useState } from 'react'
-import { ChevronDown, ChevronUp, Phone, Mail, MapPin, Copy, Zap, BookOpen, CheckCircle, XCircle, Clock, Edit2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, Phone, Mail, MapPin, Copy, Zap, BookOpen, CheckCircle, XCircle, Clock, Edit2, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import { HunterScoreBadge, type ScoreFactor } from './HunterScoreBadge'
+import { useHunterStore } from '@/store/hunterStore'
+import { LostDebriefModal } from './LostDebriefModal'
 
 // Re-export canonical HunterLead so consumers (e.g. HunterPanel) can keep
 // their existing 'import { type HunterLead } from ./HunterLeadCard' path.
@@ -67,6 +69,12 @@ export function HunterLeadCard({
   const [expanded, setExpanded] = useState(false)
   const [editingNotes, setEditingNotes] = useState(false)
   const [notes, setNotes] = useState(lead.notes || '')
+  const [lostModalOpen, setLostModalOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  
+  const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
+  const deleteLead = useHunterStore((s) => s.deleteLead)
+  
   const jobTypeColor = getJobTypeColor(lead.jobTypeCategory)
 
   const handleCopyPitch = () => {
@@ -392,7 +400,14 @@ export function HunterLeadCard({
             {/* Status Change Buttons */}
             <div className="flex gap-2 ml-auto">
               <button
-                onClick={() => onStatusChange && onStatusChange(lead.id, 'won')}
+                onClick={() => {
+                  if (window.confirm('Mark this lead as Won? It will move to Pipeline.')) {
+                    updateLeadStatus(lead.id, 'won').catch((err) => {
+                      console.error('Failed to mark lead as Won:', err);
+                    });
+                  }
+                }}
+                aria-label="Mark as Won"
                 className={clsx(
                   'flex items-center gap-1 px-2 py-2 rounded transition-colors',
                   lead.status === 'won'
@@ -405,7 +420,8 @@ export function HunterLeadCard({
               </button>
 
               <button
-                onClick={() => onStatusChange && onStatusChange(lead.id, 'lost')}
+                onClick={() => setLostModalOpen(true)}
+                aria-label="Mark as Lost"
                 className={clsx(
                   'flex items-center gap-1 px-2 py-2 rounded transition-colors',
                   lead.status === 'lost'
@@ -418,7 +434,12 @@ export function HunterLeadCard({
               </button>
 
               <button
-                onClick={() => onStatusChange && onStatusChange(lead.id, 'deferred')}
+                onClick={() => {
+                  updateLeadStatus(lead.id, 'deferred').catch((err) => {
+                    console.error('Failed to mark lead as Deferred:', err);
+                  });
+                }}
+                aria-label="Mark as Deferred"
                 className={clsx(
                   'flex items-center gap-1 px-2 py-2 rounded transition-colors',
                   lead.status === 'deferred'
@@ -429,6 +450,15 @@ export function HunterLeadCard({
               >
                 <Clock size={14} />
               </button>
+
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="p-2 rounded text-gray-500 hover:text-red-400 hover:bg-gray-800 transition"
+                title="Delete lead (permanent)"
+                aria-label="Delete lead"
+              >
+                <Trash2 size={16} />
+              </button>
             </div>
           </div>
 
@@ -438,6 +468,54 @@ export function HunterLeadCard({
               Last activity: {lead.lastActivity}
             </div>
           )}
+        </div>
+      )}
+
+      {lostModalOpen && (
+        <LostDebriefModal
+          lead={lead}
+          isOpen={lostModalOpen}
+          onClose={() => setLostModalOpen(false)}
+        />
+      )}
+
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70"
+          onClick={() => setConfirmDelete(false)}
+        >
+          <div
+            className="bg-gray-900 border border-red-800 rounded-lg p-6 max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-white font-bold mb-2">Delete lead?</h3>
+            <p className="text-sm text-gray-400 mb-4">
+              This permanently removes the lead from HUNTER. Use Archive or Mark
+              as Lost if you want to preserve history. This action cannot be
+              undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="px-3 py-2 text-sm text-gray-300 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await deleteLead(lead.id);
+                    setConfirmDelete(false);
+                  } catch (err) {
+                    console.error('Failed to delete lead:', err);
+                  }
+                }}
+                className="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded"
+              >
+                Delete permanently
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

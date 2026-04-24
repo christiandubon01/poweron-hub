@@ -321,6 +321,17 @@ export interface HunterStoreState {
   updateLeadScore: (leadId: string, score: number, factors: Record<string, number>) => Promise<void>;
   addRule: (rule: Omit<HunterRule, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => Promise<HunterRule>;
   archiveRule: (ruleId: string) => Promise<void>;
+  /** Hard delete a lead row. Removes from Supabase and store state. */
+  deleteLead: (leadId: string) => Promise<void>;
+  /** Save a debrief (won/lost outcome details) to hunter_debriefs table. */
+  saveDebrief: (leadId: string, outcome: 'won' | 'lost', payload: {
+    transcript?: string;
+    lessons?: string[];
+    wentWithCompetitor?: boolean;
+    competitorName?: string;
+    factor_scores?: Record<string, number>;
+    final_score?: number;
+  }) => Promise<void>;
   fetchStudyQueue: () => Promise<void>;
   setActiveFilters: (filters: LeadFilter) => void;
   setSortBy: (sortBy: LeadSortBy) => void;
