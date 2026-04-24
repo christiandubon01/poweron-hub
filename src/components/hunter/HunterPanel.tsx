@@ -367,8 +367,16 @@ export function HunterPanel({
   // Tier thresholds per canonical HUNTER scoring: elite 85+, strong 75-84,
   // qualified 60-74, expansion 40-59, archived <40.
   // "Top Leads" section spans elite+strong+qualified (score >= 60).
-  const topLeads = filteredAndSortedLeads.filter((l) => l.score >= 60)
-  const expansionLeads = filteredAndSortedLeads.filter((l) => l.score >= 40 && l.score < 60)
+  // Unscored leads: score null/undefined/0 - typically manual adds pending
+  // automated scoring. Rendered in a distinct section above tiered leads so
+  // operator can see them immediately after creation even before scoring runs.
+  const unscoredLeads = filteredAndSortedLeads.filter(
+    (l) => l.score === 0 || l.score == null
+  )
+  const topLeads = filteredAndSortedLeads.filter((l) => (l.score ?? 0) >= 60)
+  const expansionLeads = filteredAndSortedLeads.filter(
+    (l) => (l.score ?? 0) >= 40 && (l.score ?? 0) < 60
+  )
 
   // Metrics
   const totalPipeline = leads.reduce((sum, lead) => {
@@ -611,6 +619,39 @@ export function HunterPanel({
           </div>
         ) : (
           <>
+            {/* Unscored Leads (score 0 or null - pending automated scoring) */}
+            {unscoredLeads.length > 0 && (
+              <div>
+                <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-sky-400"></span>
+                  Unscored Leads ({unscoredLeads.length})
+                  <span className="ml-2 text-xs text-gray-400 font-normal">
+                    pending automated scoring
+                  </span>
+                </h2>
+                <div className="space-y-2">
+                  {unscoredLeads.map((lead) => (
+                    <HunterLeadCard
+                      key={lead.id}
+                      lead={lead}
+                      onStatusChange={(id, status) => {
+                        onLeadAction?.(id, 'status_change', status)
+                      }}
+                      onNotesChange={(id, notes) => {
+                        onLeadAction?.(id, 'update_notes', notes)
+                      }}
+                      onCall={(lead) => {
+                        onLeadAction?.(lead.id, 'call', lead.phone)
+                      }}
+                      onPractice={(lead) => {
+                        onLeadAction?.(lead.id, 'practice', lead)
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Top Leads (Elite + Strong + Qualified) */}
             {topLeads.length > 0 && (
               <div>
@@ -669,7 +710,7 @@ export function HunterPanel({
             )}
 
             {/* No results message */}
-            {filteredAndSortedLeads.length === 0 && (
+            {filteredAndSortedLeads.length === 0 && unscoredLeads.length === 0 && (
               <div className="text-center text-gray-400 text-sm p-8">
                 No leads match the current filters.{' '}
                 <button
