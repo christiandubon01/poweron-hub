@@ -65,7 +65,7 @@ function getScoreTierLabel(score: number): ScoreTier {
 // Translator: converts store-shaped HunterLead (canonical HunterTypes) to
 // panel-shaped HunterLead (HunterLeadCard local type). Quick-and-dirty bridge;
 // B4 MANAGED-3 session unifies the types so this function can be deleted.
-function translateStoreToPanel(storeLead: StoreHunterLead): HunterLead {
+function translateStoreToPanel(storeLead: StoreHunterLead): any {
   const estValue = typeof storeLead.estimated_value === 'number' ? storeLead.estimated_value : null
   const valueRange = estValue && estValue > 0
     ? { min: Math.round(estValue * 0.85), max: Math.round(estValue * 1.15) }
@@ -98,7 +98,8 @@ function translateStoreToPanel(storeLead: StoreHunterLead): HunterLead {
     comparableJobs: undefined,
     pitchScript: undefined, // store holds scalar text; structured pitch lives on pitchPreview until B4
     pitchAngles: undefined,
-  } as HunterLead
+    status: (storeLead as any).status || undefined,
+  }
 }
 
 function formatFreshness(date: Date): string {
