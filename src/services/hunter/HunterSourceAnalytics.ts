@@ -1,4 +1,6 @@
-// @ts-nocheck
+// HUNTER-E1-NOCHECK-SOURCEANALYTICS-APR23-2026-1: @ts-nocheck removed;
+// conservative as-any casts applied at Supabase row access sites.
+// Hard-coded cost assumption at costPerLead noted for soak-week cleanup.
 /**
  * src/services/hunter/HunterSourceAnalytics.ts
  * HUNTER Source Analytics — HT14
