@@ -13,9 +13,10 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical } from 'lucide-react'
+import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus } from 'lucide-react'
 import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
+import AddLeadModal from './AddLeadModal'
 import { useHunterStore } from '@/store/hunterStore'
 import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
 
@@ -265,6 +266,19 @@ export function HunterPanel({
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
 
+  // HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1
+  // Modal open/close state and inline success banner state. Banner clears
+  // itself via setTimeout after ~3 seconds.
+  const [isAddLeadOpen, setIsAddLeadOpen] = useState(false)
+  const [addLeadSuccessVisible, setAddLeadSuccessVisible] = useState(false)
+
+  const handleAddLeadSuccess = () => {
+    setAddLeadSuccessVisible(true)
+    window.setTimeout(() => {
+      setAddLeadSuccessVisible(false)
+    }, 3000)
+  }
+
   // HUNTER-B3-PANEL-STORE-REWIRE-APR23-2026-1
   // Subscribe to hunterStore and fetch real leads on mount. If caller passes
   // leads prop (e.g., tests or external wrappers), prop wins. Otherwise the
@@ -380,6 +394,15 @@ export function HunterPanel({
             <p className="text-xs text-gray-400 mt-1">Lead discovery and pipeline intelligence</p>
           </div>
           <div className="flex gap-2">
+            {/* HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1 */}
+            <button
+              onClick={() => setIsAddLeadOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors"
+              title="Manually add a new lead"
+            >
+              <Plus size={14} />
+              Add Lead
+            </button>
             <button
               onClick={onTriggerHunterScan}
               className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
@@ -425,6 +448,14 @@ export function HunterPanel({
             <div className="text-xs text-gray-500 mt-1">Quality index</div>
           </div>
         </div>
+
+        {/* HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1 — inline success confirmation */}
+        {addLeadSuccessVisible && (
+          <div className="bg-emerald-900 border border-emerald-700 rounded p-3 text-sm text-emerald-100 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+            Lead added
+          </div>
+        )}
 
         {/* Empty State Message */}
         {leads.length === 0 && (
@@ -652,6 +683,13 @@ export function HunterPanel({
           </>
         )}
       </div>
+
+      {/* HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1 */}
+      <AddLeadModal
+        isOpen={isAddLeadOpen}
+        onClose={() => setIsAddLeadOpen(false)}
+        onSuccess={handleAddLeadSuccess}
+      />
     </div>
   )
 }
