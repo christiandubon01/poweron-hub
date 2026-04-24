@@ -27,59 +27,10 @@ import { ChevronDown, ChevronUp, Phone, Mail, MapPin, Copy, Zap, BookOpen, Check
 import clsx from 'clsx'
 import { HunterScoreBadge, type ScoreFactor } from './HunterScoreBadge'
 
-export interface HunterLead {
-  id: string
-  score: number
-  scoringFactors?: ScoreFactor[]
-  contactName: string
-  jobType: string
-  jobTypeCategory?: string
-  pitchPreview: string
-  distance?: number
-  dateDiscovered: string
-  sourceTag: string
-  freshness?: string
-  
-  // Contact details
-  phone?: string
-  email?: string
-  company?: string
-  bestContactMethod?: 'phone' | 'email' | 'text'
-  
-  // Job Intel
-  triggerReason?: string
-  estimatedScope?: string
-  valueRange?: { min: number; max: number }
-  marginEstimate?: number
-  comparableJobs?: Array<{
-    id: string
-    name: string
-    value: number
-    margin: number
-  }>
-  
-  // Pitch Script
-  pitchScript?: {
-    opener: string
-    valueProp: string
-    socialProof: string
-    softAsk: string
-    objectionAnticipation: string
-    close: string
-  }
-  
-  // Pitch Angles
-  pitchAngles?: Array<{
-    angle: 'urgency' | 'pain' | 'opportunity' | 'efficiency' | 'safety'
-    applied: boolean
-    reasoning?: string
-  }>
-  
-  // Status and notes
-  status?: 'new' | 'contacted' | 'won' | 'lost' | 'deferred'
-  notes?: string
-  lastActivity?: string
-}
+// Re-export canonical HunterLead so consumers (e.g. HunterPanel) can keep
+// their existing 'import { type HunterLead } from ./HunterLeadCard' path.
+// Source of truth: src/services/hunter/HunterTypes.ts
+export type { HunterLead } from '@/services/hunter/HunterTypes'
 
 export interface HunterLeadCardProps {
   lead: HunterLead
