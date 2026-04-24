@@ -265,6 +265,7 @@ export function HunterPanel({
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
 
   // HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1
   // Modal open/close state and inline success banner state. Banner clears
@@ -370,13 +371,32 @@ export function HunterPanel({
   // Unscored leads: score null/undefined/0 - typically manual adds pending
   // automated scoring. Rendered in a distinct section above tiered leads so
   // operator can see them immediately after creation even before scoring runs.
-  const unscoredLeads = filteredAndSortedLeads.filter(
+  
+  // Status-aware filter helpers
+  // Statuses that disqualify a lead from appearing in Leads tab by default.
+  // 'won' is permanently excluded (Pipeline tab owns won leads).
+  // 'lost', 'deferred', 'archived' are hidden by default but surfaced when
+  // showArchived toggle is on.
+  const isArchivedStatus = (status: string | null | undefined) =>
+    status === 'lost' || status === 'deferred' || status === 'archived'
+  const isActiveLead = (lead: any) => {
+    const s = (lead as any).status
+    return s !== 'won' && !isArchivedStatus(s)
+  }
+  const isArchivedLead = (lead: any) => isArchivedStatus((lead as any).status)
+
+  const activeLeads = filteredAndSortedLeads.filter(isActiveLead)
+
+  const unscoredLeads = activeLeads.filter(
     (l) => l.score === 0 || l.score == null
   )
-  const topLeads = filteredAndSortedLeads.filter((l) => (l.score ?? 0) >= 60)
-  const expansionLeads = filteredAndSortedLeads.filter(
+  const topLeads = activeLeads.filter((l) => (l.score ?? 0) >= 60)
+  const expansionLeads = activeLeads.filter(
     (l) => (l.score ?? 0) >= 40 && (l.score ?? 0) < 60
   )
+
+  // Archived bucket: lost/deferred/archived leads, hidden behind toggle.
+  const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
 
   // Metrics
   const totalPipeline = leads.reduce((sum, lead) => {
@@ -592,6 +612,19 @@ export function HunterPanel({
                 <span className="text-gray-400">Show urgent leads only (score 75+)</span>
               </label>
             </div>
+
+            {/* Show Archived Leads Toggle */}
+            <div className="col-span-2">
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                  className="w-4 h-4 accent-emerald-500"
+                />
+                <span className="text-gray-400">Show archived leads (lost, deferred)</span>
+              </label>
+            </div>
           </div>
 
           {/* Reset Filters */}
@@ -709,16 +742,56 @@ export function HunterPanel({
               </div>
             )}
 
+            {/* Archived Leads - conditionally shown */}
+            {showArchived && archivedLeads.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-800">
+                <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-gray-500"></span>
+                  Archived Leads ({archivedLeads.length})
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    lost, deferred, or manually archived
+                  </span>
+                </h2>
+                <div className="space-y-2 opacity-75">
+                  {archivedLeads.map((lead) => (
+                    <HunterLeadCard
+                      key={lead.id}
+                      lead={lead}
+                      onStatusChange={(id, status) => {
+                        onLeadAction?.(id, 'status_change', status)
+                      }}
+                      onNotesChange={(id, notes) => {
+                        onLeadAction?.(id, 'update_notes', notes)
+                      }}
+                      onCall={(lead) => {
+                        onLeadAction?.(lead.id, 'call', lead.phone)
+                      }}
+                      onPractice={(lead) => {
+                        onLeadAction?.(lead.id, 'practice', lead)
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* No results message */}
-            {filteredAndSortedLeads.length === 0 && unscoredLeads.length === 0 && (
+            {activeLeads.length === 0 && unscoredLeads.length === 0 && (
               <div className="text-center text-gray-400 text-sm p-8">
-                No leads match the current filters.{' '}
-                <button
-                  onClick={() => setFilters(DEFAULT_FILTERS)}
-                  className="text-blue-400 hover:text-blue-300 underline"
-                >
-                  Clear filters
-                </button>
+                No active leads.
+                {archivedLeads.length > 0 && !showArchived && (
+                  <span className="block mt-1 text-gray-500 text-xs">
+                    ({archivedLeads.length} archived leads hidden — enable via Filter)
+                  </span>
+                )}
+                {activeLeads.length === 0 && archivedLeads.length === 0 && (
+                  <button
+                    onClick={() => setFilters(DEFAULT_FILTERS)}
+                    className="text-blue-400 hover:text-blue-300 underline"
+                  >
+                    Clear filters
+                  </button>
+                )}
               </div>
             )}
           </>
