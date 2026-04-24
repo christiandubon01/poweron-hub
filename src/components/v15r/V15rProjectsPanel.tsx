@@ -82,6 +82,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   }, [forceUpdate])
   const [showQBImport, setShowQBImport] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
+  // Local snapshot of HUNTER context from prefillFromLead, kept independent
+  // of the prop so the banner persists after onPrefillUsed nulls the prop.
+  const [hunterBannerCtx, setHunterBannerCtx] = useState<any>(null)
 
   // New Project form state
   const [npName, setNpName] = useState('')
@@ -123,6 +126,13 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setNpContract(prefillFromLead.contract ? String(prefillFromLead.contract) : '')
     setNpType(prefillFromLead.type || 'Residential')
     setNpNotes(prefillFromLead.notes || '')
+    // Snapshot hunterContext locally so banner persists after onPrefillUsed clears the prop
+    if (prefillFromLead.hunterContext) {
+      setHunterBannerCtx({
+        leadId: prefillFromLead.leadId,
+        ...prefillFromLead.hunterContext
+      })
+    }
     setShowNewProject(true)
     onPrefillUsed?.()
   }
@@ -191,6 +201,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     backup.projects = [...(backup.projects || []), newProj]
     saveBackupDataAndSync(backup)
     setShowNewProject(false)
+    setHunterBannerCtx(null)
     forceUpdate()
   }
 
@@ -534,12 +545,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           <div className="bg-[var(--bg-card)] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">New Project</h3>
-              <button onClick={() => setShowNewProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
+              <button onClick={() => { setShowNewProject(false); setHunterBannerCtx(null); }} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
             </div>
             {/* HUNTER-sourced provenance banner — renders only when prefillFromLead
                 contains a leadId (i.e., this modal was opened via Pipeline Open
                 Estimate, not manually). */}
-            {prefillFromLead?.leadId && prefillFromLead?.hunterContext && (
+            {hunterBannerCtx?.leadId && (
               <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
@@ -550,65 +561,65 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-emerald-300">Sourced from HUNTER</span>
-                      {prefillFromLead.hunterContext.source_tag && (
+                      {hunterBannerCtx.source_tag && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
-                          {prefillFromLead.hunterContext.source_tag}
+                          {hunterBannerCtx.source_tag}
                         </span>
                       )}
-                      {prefillFromLead.hunterContext.freshness && (
-                        <span className="text-[10px] text-gray-500">&middot; {prefillFromLead.hunterContext.freshness}</span>
+                      {hunterBannerCtx.freshness && (
+                        <span className="text-[10px] text-gray-500">&middot; {hunterBannerCtx.freshness}</span>
                       )}
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-                      {typeof prefillFromLead.hunterContext.score === 'number' && prefillFromLead.hunterContext.score > 0 && (
+                      {typeof hunterBannerCtx.score === 'number' && hunterBannerCtx.score > 0 && (
                         <div className="flex items-center gap-1.5">
                           <span className="text-gray-500">Score:</span>
-                          <span className="font-semibold text-emerald-400">{prefillFromLead.hunterContext.score}</span>
+                          <span className="font-semibold text-emerald-400">{hunterBannerCtx.score}</span>
                         </div>
                       )}
-                      {typeof prefillFromLead.hunterContext.urgency_level === 'number' && prefillFromLead.hunterContext.urgency_level >= 3 && (
+                      {typeof hunterBannerCtx.urgency_level === 'number' && hunterBannerCtx.urgency_level >= 3 && (
                         <div className="flex items-center gap-1.5">
                           <span className="text-gray-500">Urgency:</span>
-                          <span className="font-semibold text-orange-400">{prefillFromLead.hunterContext.urgency_level}/5</span>
+                          <span className="font-semibold text-orange-400">{hunterBannerCtx.urgency_level}/5</span>
                         </div>
                       )}
-                      {typeof prefillFromLead.hunterContext.value_min === 'number' && typeof prefillFromLead.hunterContext.value_max === 'number' && (
+                      {typeof hunterBannerCtx.value_min === 'number' && typeof hunterBannerCtx.value_max === 'number' && (
                         <div className="flex items-center gap-1.5 col-span-2">
                           <span className="text-gray-500">Value range:</span>
-                          <span className="font-semibold text-gray-200">&#36;{prefillFromLead.hunterContext.value_min.toLocaleString()} &ndash; &#36;{prefillFromLead.hunterContext.value_max.toLocaleString()}</span>
+                          <span className="font-semibold text-gray-200">&#36;{hunterBannerCtx.value_min.toLocaleString()} &ndash; &#36;{hunterBannerCtx.value_max.toLocaleString()}</span>
                         </div>
                       )}
-                      {typeof prefillFromLead.hunterContext.comparable_jobs_count === 'number' && prefillFromLead.hunterContext.comparable_jobs_count > 0 && (
+                      {typeof hunterBannerCtx.comparable_jobs_count === 'number' && hunterBannerCtx.comparable_jobs_count > 0 && (
                         <div className="flex items-center gap-1.5 col-span-2">
                           <span className="text-gray-500">Comparable jobs:</span>
-                          <span className="text-gray-300">{prefillFromLead.hunterContext.comparable_jobs_count} matched</span>
+                          <span className="text-gray-300">{hunterBannerCtx.comparable_jobs_count} matched</span>
                         </div>
                       )}
-                      {prefillFromLead.hunterContext.urgency_reason && (
+                      {hunterBannerCtx.urgency_reason && (
                         <div className="col-span-2 mt-1">
                           <span className="text-gray-500 text-[10px]">Urgency reason:</span>
-                          <span className="block text-gray-300 text-[11px] mt-0.5">{prefillFromLead.hunterContext.urgency_reason}</span>
+                          <span className="block text-gray-300 text-[11px] mt-0.5">{hunterBannerCtx.urgency_reason}</span>
                         </div>
                       )}
-                      {prefillFromLead.hunterContext.pitch_angle && typeof prefillFromLead.hunterContext.pitch_angle === 'object' && (prefillFromLead.hunterContext.pitch_angle as any).angle && (
+                      {hunterBannerCtx.pitch_angle && typeof hunterBannerCtx.pitch_angle === 'object' && (hunterBannerCtx.pitch_angle as any).angle && (
                         <div className="col-span-2">
                           <span className="text-gray-500 text-[10px]">Suggested pitch angle:</span>
-                          <span className="block text-gray-300 text-[11px] mt-0.5 capitalize">{(prefillFromLead.hunterContext.pitch_angle as any).angle}</span>
+                          <span className="block text-gray-300 text-[11px] mt-0.5 capitalize">{(hunterBannerCtx.pitch_angle as any).angle}</span>
                         </div>
                       )}
-                      {(prefillFromLead.hunterContext.address || prefillFromLead.hunterContext.city) && (
+                      {(hunterBannerCtx.address || hunterBannerCtx.city) && (
                         <div className="col-span-2 mt-1 pt-2 border-t border-emerald-500/10">
                           <span className="text-gray-500 text-[10px]">Location:</span>
                           <span className="block text-gray-300 text-[11px] mt-0.5">
-                            {prefillFromLead.hunterContext.address}{prefillFromLead.hunterContext.address && prefillFromLead.hunterContext.city ? ', ' : ''}{prefillFromLead.hunterContext.city}
+                            {hunterBannerCtx.address}{hunterBannerCtx.address && hunterBannerCtx.city ? ', ' : ''}{hunterBannerCtx.city}
                           </span>
                         </div>
                       )}
-                      {(prefillFromLead.hunterContext.contact_email || prefillFromLead.hunterContext.contact_phone) && (
+                      {(hunterBannerCtx.contact_email || hunterBannerCtx.contact_phone) && (
                         <div className="col-span-2">
                           <span className="text-gray-500 text-[10px]">Contact:</span>
                           <span className="block text-gray-300 text-[11px] mt-0.5">
-                            {prefillFromLead.hunterContext.contact_phone}{prefillFromLead.hunterContext.contact_phone && prefillFromLead.hunterContext.contact_email ? ' | ' : ''}{prefillFromLead.hunterContext.contact_email}
+                            {hunterBannerCtx.contact_phone}{hunterBannerCtx.contact_phone && hunterBannerCtx.contact_email ? ' | ' : ''}{hunterBannerCtx.contact_email}
                           </span>
                         </div>
                       )}
@@ -663,7 +674,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
               </div>
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={() => setShowNewProject(false)} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm font-semibold hover:bg-gray-600">Cancel</button>
+              <button onClick={() => { setShowNewProject(false); setHunterBannerCtx(null); }} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm font-semibold hover:bg-gray-600">Cancel</button>
               <button onClick={saveNewProject} className="flex-1 px-4 py-2 rounded bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500">Create Project</button>
             </div>
           </div>
