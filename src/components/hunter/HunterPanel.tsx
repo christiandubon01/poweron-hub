@@ -402,6 +402,18 @@ export function HunterPanel({
   // Archived bucket: lost/deferred/archived leads, hidden behind toggle.
   const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
 
+  // TEMP DEBUG — remove after diagnosis
+  if (typeof window !== 'undefined') {
+    (window as any).__hunterDebug = {
+      storeLeadsCount: storeLeads.length,
+      leadsCount: leads.length,
+      filteredAndSortedCount: filteredAndSortedLeads.length,
+      activeCount: activeLeads.length,
+      archivedCount: archivedLeads.length,
+      statusByLead: leads.map((l) => ({ id: l.id, score: l.score, status: (l as any).status })),
+    }
+  }
+
   // TEMP DEBUG
   console.log('[HUNTER-DEBUG]', {
     totalStoreLeads: storeLeads.length,
