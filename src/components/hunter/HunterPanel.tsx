@@ -382,7 +382,7 @@ export function HunterPanel({
   // 'lost', 'deferred', 'archived' are hidden by default but surfaced when
   // showArchived toggle is on.
   const isArchivedStatus = (status: string | null | undefined) =>
-    status === 'lost' || status === 'deferred' || status === 'archived'
+    status === 'lost' || status === 'deferred' || status === 'archived' || status === 'estimated'
   const isActiveLead = (lead: any) => {
     const s = (lead as any).status
     return s !== 'won' && !isArchivedStatus(s)
@@ -651,7 +651,7 @@ export function HunterPanel({
                   'w-1.5 h-1.5 rounded-full',
                   showArchived ? 'bg-emerald-400' : 'bg-gray-600'
                 )} />
-                Show archived (lost, deferred)
+                Show archived (lost, deferred, estimated)
               </button>
             </div>
           </div>
@@ -778,7 +778,7 @@ export function HunterPanel({
                   <span className="w-2 h-2 rounded-full bg-gray-500"></span>
                   Archived Leads ({archivedLeads.length})
                   <span className="ml-2 text-xs text-gray-500 font-normal">
-                    lost, deferred, or manually archived
+                    lost, deferred, estimated, or manually archived
                   </span>
                 </h2>
                 <div className="space-y-2 opacity-75">

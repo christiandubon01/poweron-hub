@@ -408,6 +408,38 @@ export function AppShell({ children }: AppShellProps) {
   const [showSessionDebrief, setShowSessionDebrief] = useState(false)
   const [debriefConclusions, setDebriefConclusions] = useState<any[]>([])
 
+  // HUNTER-C-OPEN-ESTIMATE-BRIDGE-APR24-2026-1
+  // Holds prefill data mapped from a HunterLead when the operator clicks
+  // "Open Estimate" in PipelineTab. Passed down to V15rProjectsPanel which
+  // already accepts a prefillFromLead prop and auto-opens the New Project
+  // modal when the prop is present. Cleared by onPrefillUsed callback.
+  const [hunterLeadPrefill, setHunterLeadPrefill] = useState<{
+    name?: string;
+    customer?: string;
+    contract?: number;
+    type?: string;
+    notes?: string;
+    leadId?: string;
+    leadType?: string;
+    hunterContext?: {
+      score?: number;
+      pitch_angle?: any;
+      pitch_script?: string;
+      comparable_jobs_count?: number;
+      urgency_level?: number;
+      urgency_reason?: string;
+      value_min?: number;
+      value_max?: number;
+      freshness?: string;
+      source_tag?: string;
+      contact_email?: string;
+      contact_phone?: string;
+      address?: string;
+      city?: string;
+      estimated_margin?: number;
+    };
+  } | null>(null)
+
   let profile = null
   try {
     const auth = useAuth()
@@ -567,6 +599,60 @@ export function AppShell({ children }: AppShellProps) {
     return () => window.removeEventListener('poweron:show-money', handleShowMoney)
   }, [])
 
+  // HUNTER-C-OPEN-ESTIMATE-BRIDGE-APR24-2026-1
+  // Listens for 'poweron:open-estimate' dispatched by PipelineTab when the
+  // operator clicks "Open Estimate" on a won lead. Maps the HunterLead to
+  // the prefillFromLead shape that V15rProjectsPanel already expects, stores
+  // it in hunterLeadPrefill state, then switches the active panel to 'projects'
+  // so V15rProjectsPanel mounts and picks up the prefill, auto-opening the
+  // New Project modal pre-filled with the lead's data and rich hunterContext.
+  useEffect(() => {
+    const handleOpenEstimate = (event: Event) => {
+      const customEvent = event as CustomEvent
+      const detail = customEvent?.detail
+      if (!detail?.lead) return
+
+      const lead = detail.lead
+      const estValue = typeof lead.estimated_value === 'number' ? lead.estimated_value : 0
+
+      const prefill = {
+        name: (lead.description || '').slice(0, 80) || (lead.company_name ? lead.company_name + ' Project' : 'New Project from HUNTER'),
+        customer: lead.contact_name || lead.company_name || '',
+        contract: estValue,
+        type: (lead.lead_type || 'Residential').charAt(0).toUpperCase() + (lead.lead_type || 'Residential').slice(1).toLowerCase(),
+        notes: lead.description || '',
+        leadId: lead.id,
+        leadType: 'hunter',
+        hunterContext: {
+          score: typeof lead.score === 'number' ? lead.score : undefined,
+          pitch_angle: lead.pitch_angle,
+          pitch_script: lead.pitch_script,
+          comparable_jobs_count: Array.isArray(lead.comparable_jobs) ? lead.comparable_jobs.length : 0,
+          urgency_level: lead.urgency_level,
+          urgency_reason: lead.urgency_reason,
+          value_min: estValue > 0 ? Math.round(estValue * 0.85) : undefined,
+          value_max: estValue > 0 ? Math.round(estValue * 1.15) : undefined,
+          freshness: lead.freshness,
+          source_tag: lead.source_tag || lead.source,
+          contact_email: lead.email,
+          contact_phone: lead.phone,
+          address: lead.address,
+          city: lead.city,
+          estimated_margin: lead.estimated_margin,
+        },
+      }
+
+      setHunterLeadPrefill(prefill)
+      // Switch to the Projects panel so V15rProjectsPanel renders and
+      // picks up the prefill. The active view key 'projects' matches the
+      // case in renderContent() that renders V15rProjectsPanel.
+      setActiveView('projects')
+    }
+
+    window.addEventListener('poweron:open-estimate', handleOpenEstimate)
+    return () => window.removeEventListener('poweron:open-estimate', handleOpenEstimate)
+  }, [])
+
   // NDA gate — check on auth. Non-demo, non-read-only sessions only.
   // B24: Check localStorage cache first — if the user signed before, skip the
   // Supabase call entirely so the NDA flow never re-triggers after signing.
@@ -668,7 +754,11 @@ export function AppShell({ children }: AppShellProps) {
           <V15rHome />
         </>
       )
-      case 'projects':        return <V15rProjectsPanel onSelectProject={handleSelectProject} />
+      case 'projects':        return <V15rProjectsPanel
+        onSelectProject={handleSelectProject}
+        prefillFromLead={hunterLeadPrefill as any}
+        onPrefillUsed={() => setHunterLeadPrefill(null)}
+      />
       case 'leads':           return <V15rLeadsPanel />
       case 'templates':       return <V15rTemplatesPanel />
       case 'pricing-intelligence': return <V15rPricingIntelligencePanel />
@@ -700,7 +790,11 @@ export function AppShell({ children }: AppShellProps) {
             />
           )
         }
-        return <V15rProjectsPanel onSelectProject={handleSelectProject} />
+        return <V15rProjectsPanel
+          onSelectProject={handleSelectProject}
+          prefillFromLead={hunterLeadPrefill as any}
+          onPrefillUsed={() => setHunterLeadPrefill(null)}
+        />
 
       // AI agent panels (lazy-loaded with Suspense)
       case 'nexus':           return <Suspense fallback={<PanelLoading />}><NexusChatPanel /></Suspense>

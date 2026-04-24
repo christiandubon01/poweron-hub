@@ -34,15 +34,22 @@ export const PipelineTab: React.FC = () => {
 
   const wonLeads = leads.filter((l) => (l as any).status === 'won');
 
-  const handleOpenEstimate = (lead: HunterLead) => {
+  const handleOpenEstimate = async (lead: HunterLead) => {
     console.log('[Pipeline] Open Estimate clicked for lead:', lead.id);
-    // Dispatch a custom event that V15rProjectsPanel (or any listener) can
-    // pick up to open the New Project modal pre-filled with this lead's data.
+    // Dispatch to AppShell listener which routes to V15rProjectsPanel prefill.
     window.dispatchEvent(
       new CustomEvent('poweron:open-estimate', {
         detail: { lead, source: 'hunter' },
       })
     );
+    // Mark the HUNTER lead as having had an estimate opened, so it leaves
+    // Pipeline's default view. The converted Project row in backup will
+    // carry convertedFromLeadId for lineage.
+    try {
+      await updateLeadStatus(lead.id, 'estimated' as LeadStatus);
+    } catch (err) {
+      console.error('[Pipeline] Failed to mark lead as estimated:', err);
+    }
   };
 
   const handleReturnToLeads = async (lead: HunterLead) => {
