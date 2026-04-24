@@ -1,4 +1,7 @@
-// @ts-nocheck
+// HUNTER-E1-NOCHECK-OUTCOMETRACKER-APR23-2026-1: @ts-nocheck removed;
+// conservative as-any casts applied at property-access sites where
+// Supabase JSON shapes don't match canonical types. Schema alignment
+// deferred to post-Sunday soak week.
 /**
  * src/services/hunter/HunterOutcomeTracker.ts
  * HUNTER Outcome Tracker — HT6
@@ -91,8 +94,8 @@ export async function markLeadWon(
 ): Promise<void> {
   try {
     // 1. Update lead status to 'won'
-    const { error: updateError } = await supabase
-      .from('hunter_leads')
+    const { error: updateError } = await (supabase
+      .from('hunter_leads') as any)
       .update({
         status: LeadStatus.WON,
         last_updated: new Date().toISOString(),
@@ -114,7 +117,7 @@ export async function markLeadWon(
           notes: details.notes,
         },
         created_at: new Date().toISOString(),
-      })
+      } as any)
       .select()
       .single();
 
@@ -155,8 +158,8 @@ export async function markLeadLost(
 ): Promise<void> {
   try {
     // 1. Update lead status to 'lost'
-    const { error: updateError } = await supabase
-      .from('hunter_leads')
+    const { error: updateError } = await (supabase
+      .from('hunter_leads') as any)
       .update({
         status: LeadStatus.LOST,
         last_updated: new Date().toISOString(),
@@ -177,7 +180,7 @@ export async function markLeadLost(
           notes: details.notes,
         },
         created_at: new Date().toISOString(),
-      });
+      } as any);
 
     if (outcomeError) throw outcomeError;
 
@@ -216,8 +219,8 @@ export async function markLeadDeferred(
 ): Promise<void> {
   try {
     // 1. Update lead status to 'deferred' with follow-up date
-    const { error: updateError } = await supabase
-      .from('hunter_leads')
+    const { error: updateError } = await (supabase
+      .from('hunter_leads') as any)
       .update({
         status: LeadStatus.DEFERRED,
         deferred_follow_up: followUpDate,
@@ -239,7 +242,7 @@ export async function markLeadDeferred(
           notes,
         },
         created_at: new Date().toISOString(),
-      });
+      } as any);
 
     if (outcomeError) throw outcomeError;
 
@@ -266,8 +269,8 @@ export async function markLeadDeferred(
  */
 export async function markLeadArchived(leadId: string): Promise<void> {
   try {
-    const { error } = await supabase
-      .from('hunter_leads')
+    const { error } = await (supabase
+      .from('hunter_leads') as any)
       .update({
         status: LeadStatus.ARCHIVED,
         last_updated: new Date().toISOString(),
@@ -308,10 +311,10 @@ export async function getOutcomeStats(): Promise<OutcomeStats> {
     }
 
     // 2. Count outcomes
-    const wonCount = leads.filter((l) => l.status === LeadStatus.WON).length;
-    const lostCount = leads.filter((l) => l.status === LeadStatus.LOST).length;
-    const deferredCount = leads.filter((l) => l.status === LeadStatus.DEFERRED).length;
-    const archivedCount = leads.filter((l) => l.status === LeadStatus.ARCHIVED).length;
+    const wonCount = (leads as any[]).filter((l) => l.status === LeadStatus.WON).length;
+    const lostCount = (leads as any[]).filter((l) => l.status === LeadStatus.LOST).length;
+    const deferredCount = (leads as any[]).filter((l) => l.status === LeadStatus.DEFERRED).length;
+    const archivedCount = (leads as any[]).filter((l) => l.status === LeadStatus.ARCHIVED).length;
 
     // 3. Fetch won outcomes with revenue
     const { data: wonOutcomes, error: wonError } = await supabase
@@ -322,8 +325,8 @@ export async function getOutcomeStats(): Promise<OutcomeStats> {
     if (wonError) throw wonError;
 
     const totalRevenueWon =
-      wonOutcomes?.reduce((sum, o) => {
-        const revenue = o.details?.actualRevenue || 0;
+      (wonOutcomes as any[])?.reduce((sum, o) => {
+        const revenue = (o as any).details?.actualRevenue || 0;
         return sum + revenue;
       }, 0) || 0;
 
@@ -365,8 +368,8 @@ export async function getOutcomesBySource(): Promise<OutcomeBySource[]> {
     // Group by source
     const bySource = new Map<string, OutcomeBySource>();
 
-    leads.forEach((lead) => {
-      const source = lead.source || 'unknown';
+    (leads as any[]).forEach((lead) => {
+      const source = (lead as any).source || 'unknown';
       if (!bySource.has(source)) {
         bySource.set(source, {
           source,
@@ -381,9 +384,9 @@ export async function getOutcomesBySource(): Promise<OutcomeBySource[]> {
       const stats = bySource.get(source)!;
       stats.totalLeads++;
 
-      if (lead.status === LeadStatus.WON) stats.wonCount++;
-      else if (lead.status === LeadStatus.LOST) stats.lostCount++;
-      else if (lead.status === LeadStatus.DEFERRED) stats.deferredCount++;
+      if ((lead as any).status === LeadStatus.WON) stats.wonCount++;
+      else if ((lead as any).status === LeadStatus.LOST) stats.lostCount++;
+      else if ((lead as any).status === LeadStatus.DEFERRED) stats.deferredCount++;
     });
 
     // Calculate win rates
@@ -416,8 +419,8 @@ export async function getOutcomesByPitchAngle(): Promise<OutcomeByPitchAngle[]> 
     // Group by pitch angle
     const byAngle = new Map<string, OutcomeByPitchAngle>();
 
-    leads.forEach((lead) => {
-      const angle = lead.pitch_angle || 'none';
+    (leads as any[]).forEach((lead) => {
+      const angle = (lead as any).pitch_angle || 'none';
       if (!byAngle.has(angle)) {
         byAngle.set(angle, {
           pitchAngle: angle,
@@ -431,8 +434,8 @@ export async function getOutcomesByPitchAngle(): Promise<OutcomeByPitchAngle[]> 
       const stats = byAngle.get(angle)!;
       stats.totalLeads++;
 
-      if (lead.status === LeadStatus.WON) stats.wonCount++;
-      else if (lead.status === LeadStatus.LOST) stats.lostCount++;
+      if ((lead as any).status === LeadStatus.WON) stats.wonCount++;
+      else if ((lead as any).status === LeadStatus.LOST) stats.lostCount++;
     });
 
     // Calculate win rates
@@ -464,8 +467,8 @@ export async function getTopLossReasons(): Promise<TopLossReasons[]> {
 
     // Count reasons
     const reasonCounts = new Map<string, number>();
-    lostOutcomes.forEach((outcome) => {
-      const reason = outcome.details?.lossReason || 'unknown';
+    (lostOutcomes as any[]).forEach((outcome) => {
+      const reason = (outcome as any).details?.lossReason || 'unknown';
       reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
     });
 
@@ -506,8 +509,8 @@ export async function getOutcomeTrend(daysBack: number = 30): Promise<OutcomeTre
       { won: number; decided: number; period: string }
     >();
 
-    outcomes.forEach((outcome) => {
-      const date = new Date(outcome.created_at);
+    (outcomes as any[]).forEach((outcome) => {
+      const date = new Date((outcome as any).created_at);
       const weekStart = new Date(date);
       weekStart.setDate(date.getDate() - date.getDay());
       const period = weekStart.toISOString().split('T')[0];
@@ -517,8 +520,8 @@ export async function getOutcomeTrend(daysBack: number = 30): Promise<OutcomeTre
       }
 
       const stats = byWeek.get(period)!;
-      if (outcome.outcome === 'won') stats.won++;
-      if (outcome.outcome === 'won' || outcome.outcome === 'lost') stats.decided++;
+      if ((outcome as any).outcome === 'won') stats.won++;
+      if ((outcome as any).outcome === 'won' || (outcome as any).outcome === 'lost') stats.decided++;
     });
 
     // Calculate win rates
@@ -556,7 +559,7 @@ async function createDebrief(
         outcome,
         context,
         created_at: new Date().toISOString(),
-      });
+      } as any);
 
     if (error) throw error;
   } catch (error) {
