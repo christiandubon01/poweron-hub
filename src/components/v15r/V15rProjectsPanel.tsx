@@ -32,7 +32,32 @@ import { getDemoBackupData } from '@/services/demoDataService'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
-  prefillFromLead?: { name?: string; customer?: string; contract?: number; type?: string; notes?: string; leadId?: string; leadType?: string } | null
+  prefillFromLead?: {
+    name?: string;
+    customer?: string;
+    contract?: number;
+    type?: string;
+    notes?: string;
+    leadId?: string;
+    leadType?: string;
+    hunterContext?: {
+      score?: number;
+      pitch_angle?: any;
+      pitch_script?: string;
+      comparable_jobs_count?: number;
+      urgency_level?: number;
+      urgency_reason?: string;
+      value_min?: number;
+      value_max?: number;
+      freshness?: string;
+      source_tag?: string;
+      contact_email?: string;
+      contact_phone?: string;
+      address?: string;
+      city?: string;
+      estimated_margin?: number;
+    };
+  } | null
   onPrefillUsed?: () => void
 }
 
@@ -511,6 +536,87 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
               <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">New Project</h3>
               <button onClick={() => setShowNewProject(false)} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
             </div>
+            {/* HUNTER-sourced provenance banner — renders only when prefillFromLead
+                contains a leadId (i.e., this modal was opened via Pipeline Open
+                Estimate, not manually). */}
+            {prefillFromLead?.leadId && prefillFromLead?.hunterContext && (
+              <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
+                    <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-emerald-300">Sourced from HUNTER</span>
+                      {prefillFromLead.hunterContext.source_tag && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
+                          {prefillFromLead.hunterContext.source_tag}
+                        </span>
+                      )}
+                      {prefillFromLead.hunterContext.freshness && (
+                        <span className="text-[10px] text-gray-500">&middot; {prefillFromLead.hunterContext.freshness}</span>
+                      )}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                      {typeof prefillFromLead.hunterContext.score === 'number' && prefillFromLead.hunterContext.score > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-gray-500">Score:</span>
+                          <span className="font-semibold text-emerald-400">{prefillFromLead.hunterContext.score}</span>
+                        </div>
+                      )}
+                      {typeof prefillFromLead.hunterContext.urgency_level === 'number' && prefillFromLead.hunterContext.urgency_level >= 3 && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-gray-500">Urgency:</span>
+                          <span className="font-semibold text-orange-400">{prefillFromLead.hunterContext.urgency_level}/5</span>
+                        </div>
+                      )}
+                      {typeof prefillFromLead.hunterContext.value_min === 'number' && typeof prefillFromLead.hunterContext.value_max === 'number' && (
+                        <div className="flex items-center gap-1.5 col-span-2">
+                          <span className="text-gray-500">Value range:</span>
+                          <span className="font-semibold text-gray-200">&#36;{prefillFromLead.hunterContext.value_min.toLocaleString()} &ndash; &#36;{prefillFromLead.hunterContext.value_max.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {typeof prefillFromLead.hunterContext.comparable_jobs_count === 'number' && prefillFromLead.hunterContext.comparable_jobs_count > 0 && (
+                        <div className="flex items-center gap-1.5 col-span-2">
+                          <span className="text-gray-500">Comparable jobs:</span>
+                          <span className="text-gray-300">{prefillFromLead.hunterContext.comparable_jobs_count} matched</span>
+                        </div>
+                      )}
+                      {prefillFromLead.hunterContext.urgency_reason && (
+                        <div className="col-span-2 mt-1">
+                          <span className="text-gray-500 text-[10px]">Urgency reason:</span>
+                          <span className="block text-gray-300 text-[11px] mt-0.5">{prefillFromLead.hunterContext.urgency_reason}</span>
+                        </div>
+                      )}
+                      {prefillFromLead.hunterContext.pitch_angle && typeof prefillFromLead.hunterContext.pitch_angle === 'object' && (prefillFromLead.hunterContext.pitch_angle as any).angle && (
+                        <div className="col-span-2">
+                          <span className="text-gray-500 text-[10px]">Suggested pitch angle:</span>
+                          <span className="block text-gray-300 text-[11px] mt-0.5 capitalize">{(prefillFromLead.hunterContext.pitch_angle as any).angle}</span>
+                        </div>
+                      )}
+                      {(prefillFromLead.hunterContext.address || prefillFromLead.hunterContext.city) && (
+                        <div className="col-span-2 mt-1 pt-2 border-t border-emerald-500/10">
+                          <span className="text-gray-500 text-[10px]">Location:</span>
+                          <span className="block text-gray-300 text-[11px] mt-0.5">
+                            {prefillFromLead.hunterContext.address}{prefillFromLead.hunterContext.address && prefillFromLead.hunterContext.city ? ', ' : ''}{prefillFromLead.hunterContext.city}
+                          </span>
+                        </div>
+                      )}
+                      {(prefillFromLead.hunterContext.contact_email || prefillFromLead.hunterContext.contact_phone) && (
+                        <div className="col-span-2">
+                          <span className="text-gray-500 text-[10px]">Contact:</span>
+                          <span className="block text-gray-300 text-[11px] mt-0.5">
+                            {prefillFromLead.hunterContext.contact_phone}{prefillFromLead.hunterContext.contact_phone && prefillFromLead.hunterContext.contact_email ? ' | ' : ''}{prefillFromLead.hunterContext.contact_email}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Project Name *</label>
