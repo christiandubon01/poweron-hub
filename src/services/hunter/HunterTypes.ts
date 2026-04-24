@@ -102,6 +102,78 @@ export interface HunterLead {
   last_updated?: string; // ISO timestamp
   notes?: string;
   created_at?: string; // ISO timestamp
+
+  // ============================================================================
+  // Panel-only display fields (added by HUNTER-B4-TYPES-EXTEND-APR23-2026-1)
+  // ============================================================================
+  // These fields exist on the canonical type so panel consumers can import
+  // HunterLead from this file instead of duplicating their own local interface.
+  // All fields are optional - the store/scoring engine layer does not populate
+  // them; the panel layer computes and fills them at render time.
+
+  /** Structured scoring breakdown for ScoreRing UI display */
+  scoringFactors?: Array<{
+    factor: string;
+    weight: number;
+    impact: number;
+    rationale?: string;
+  }>;
+
+  /** Structured pitch script split by section (for copyable pitch UI) */
+  pitchScriptStructured?: {
+    opener: string;
+    valueProp: string;
+    socialProof: string;
+    softAsk: string;
+    objectionAnticipation: string;
+    close: string;
+  };
+
+  /** Pitch angle detection flags with applied state */
+  pitchAngles?: Array<{
+    angle: 'urgency' | 'pain' | 'opportunity' | 'efficiency' | 'safety' | 'competitor_gap' | 'relationship' | 'seasonal' | 'financial';
+    applied: boolean;
+    rationale?: string;
+  }>;
+
+  /** Estimated value range for pipeline calculation (min-max band) */
+  valueRange?: { min: number; max: number };
+
+  /** Margin estimate (0-1 or percentage) */
+  marginEstimate?: number;
+
+  /** Comparable past jobs for context */
+  comparableJobs?: Array<{
+    jobId?: string;
+    description: string;
+    value?: number;
+    margin?: number;
+    similarityScore?: number;
+  }>;
+
+  /** Human-readable freshness label (e.g., "2h ago", "3d ago") */
+  freshness?: string;
+
+  /** Formatted display date (e.g., "Apr 23") for card UI */
+  dateDiscovered?: string;
+
+  /** Lowercased job type category key for JOB_TYPE_COLORS lookup */
+  jobTypeCategory?: string;
+
+  /** Operator's preferred contact method (display-only signal) */
+  bestContactMethod?: 'phone' | 'email' | 'text';
+
+  /** Short preview text for card (fallback when structured pitch unavailable) */
+  pitchPreview?: string;
+
+  /** Distance from operator in miles (optional routing hint) */
+  distance?: number;
+
+  /** Trigger reason text shown in Job Intel panel */
+  triggerReason?: string;
+
+  /** Estimated scope text shown in Job Intel panel */
+  estimatedScope?: string;
 }
 
 /**
