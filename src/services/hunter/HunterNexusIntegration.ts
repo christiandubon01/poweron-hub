@@ -177,7 +177,7 @@ export function handleOnDemandScanCommand(): CommandResponse {
  * Handle NEXUS voice command: "NEXUS, let\'s debrief the [name] job"
  * Opens debrief flow for specific lead.
  */
-export function handleDebrieflCommandForLead(leadName: string): CommandResponse {
+export function handleDebriefCommandForLead(leadName: string): CommandResponse {
   const store = useHunterStore.getState();
   
   // Find lead by name
@@ -372,7 +372,7 @@ export default {
   buildBriefContext,
   handleBriefCommand,
   handleOnDemandScanCommand,
-  handleDebrieflCommandForLead,
+  handleDebriefCommandForLead,
   handleFilterByScoreCommand,
   registerHunterCommands,
   publishLeadsReadyEvent,
