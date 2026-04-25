@@ -34,13 +34,69 @@ const CITIES = [
 
 const TLMA_BASE_URL = "https://publiclookup.rivco.org/";
 
+// Real Chrome on Windows headers � TLMA's WAF blocks generic / bot-shaped
+// User-Agents. We send a complete browser-shaped header set including
+// Accept, Accept-Language, Accept-Encoding, and Referer so the request
+// looks like it came from a normal user navigating the site.
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Referer": "https://publiclookup.rivco.org/",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-User": "?1",
+};
+
 // ----- MAIN HANDLER -----
 serve(async (req: Request) => {
   const url = new URL(req.url);
   const dryRun = url.searchParams.get("dry_run") === "true";
+  const debug = url.searchParams.get("debug") === "true";
+  
+  // DEBUG MODE — fetch one URL, return raw HTML for parser development
+  if (debug) {
+    const debugUrl = "https://publiclookup.rivco.org/?Page=1&PageSize=10&SortBy=AppliedDate&SortDesc=true&Criteria.PermitType=Residential+Dwelling+%28BRS%29&Criteria.City=PALM+DESERT&Criteria.AppliedDateStart=2026-04-01";
+    try {
+      const dr = await fetch(debugUrl, { headers: BROWSER_HEADERS });
+      const dh = await dr.text();
+      return new Response(JSON.stringify({
+        url: debugUrl,
+        status: dr.status,
+        statusText: dr.statusText,
+        contentType: dr.headers.get("content-type"),
+        contentLength: dh.length,
+        firstChars: dh.slice(0, 500),
+        hasTable: dh.includes("<table"),
+        hasPermit: dh.includes("permit") || dh.includes("Permit"),
+        tableSnippet: dh.includes("<table") ? dh.slice(dh.indexOf("<table"), dh.indexOf("<table") + 2000) : null,
+      }, null, 2), { headers: { "Content-Type": "application/json" } });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: String(e) }), { status: 500 });
+    }
+  }
   const daysBack = parseInt(url.searchParams.get("days_back") || "0", 10);
   // Default lookback = 7 days. Use ?days_back=90 for first-run backfill.
   const lookback = daysBack > 0 ? daysBack : 7;
+
+  // Optional ?city=NAME filter — limits scrape to ONE city per invocation
+  // to stay under the Edge Function timeout. NAME must match a city in the
+  // CITIES array (case-sensitive, spaces allowed). If absent, all 13 cities
+  // are scraped (which often exceeds timeout for 90-day backfills).
+  const cityFilter = url.searchParams.get("city");
+  const citiesToScan = cityFilter
+    ? CITIES.filter((c) => c.toUpperCase() === cityFilter.toUpperCase())
+    : CITIES;
+
+  if (cityFilter && citiesToScan.length === 0) {
+    return jsonResponse(400, {
+      error: "Unknown city: " + cityFilter,
+      valid_cities: CITIES,
+    });
+  }
 
   const tenantId = Deno.env.get("HUNTER_TENANT_ID");
   const userId = Deno.env.get("HUNTER_USER_ID");
@@ -59,7 +115,7 @@ serve(async (req: Request) => {
 
   // ----- SEARCH MATRIX LOOP -----
   for (const permitType of PERMIT_TYPES) {
-    for (const city of CITIES) {
+    for (const city of citiesToScan) {
       try {
         const params = new URLSearchParams({
           Page: "1",
@@ -72,10 +128,7 @@ serve(async (req: Request) => {
         });
         const fetchUrl = TLMA_BASE_URL + "?" + params.toString();
         const resp = await fetch(fetchUrl, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (HUNTER scraper for Power On Solutions LLC)",
-          },
+          headers: BROWSER_HEADERS,
         });
         if (!resp.ok) {
           errors.push(`HTTP ${resp.status} for ${city} / ${permitType}`);
@@ -94,10 +147,7 @@ serve(async (req: Request) => {
           params.set("Page", String(page));
           const pageUrl = TLMA_BASE_URL + "?" + params.toString();
           const pageResp = await fetch(pageUrl, {
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (HUNTER scraper for Power On Solutions LLC)",
-            },
+            headers: BROWSER_HEADERS,
           });
           if (!pageResp.ok) {
             errors.push(
@@ -169,7 +219,7 @@ serve(async (req: Request) => {
     const report: DryRunReport = {
       timestamp: new Date().toISOString(),
       dry_run: true,
-      search_matrix_size: PERMIT_TYPES.length * CITIES.length,
+      search_matrix_size: PERMIT_TYPES.length * citiesToScan.length,
       total_permits_fetched: allPermits.length,
       permits_after_dedup: uniquePermits.size,
       permits_above_score_threshold: scored.filter(
@@ -215,7 +265,7 @@ serve(async (req: Request) => {
   const report: LiveRunReport = {
     timestamp: new Date().toISOString(),
     dry_run: false,
-    search_matrix_size: PERMIT_TYPES.length * CITIES.length,
+    search_matrix_size: PERMIT_TYPES.length * citiesToScan.length,
     total_permits_fetched: allPermits.length,
     inserts,
     updates,
