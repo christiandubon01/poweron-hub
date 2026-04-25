@@ -99,6 +99,7 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     pitchScript: undefined, // store holds scalar text; structured pitch lives on pitchPreview until B4
     pitchAngles: undefined,
     status: (storeLead as any).status || undefined,
+    notes: storeLead.notes || undefined,
   }
 }
 
