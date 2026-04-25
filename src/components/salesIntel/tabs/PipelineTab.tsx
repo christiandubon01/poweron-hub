@@ -34,22 +34,17 @@ export const PipelineTab: React.FC = () => {
 
   const wonLeads = leads.filter((l) => (l as any).status === 'won');
 
-  const handleOpenEstimate = async (lead: HunterLead) => {
+  const handleOpenEstimate = (lead: HunterLead) => {
     console.log('[Pipeline] Open Estimate clicked for lead:', lead.id);
     // Dispatch to AppShell listener which routes to V15rProjectsPanel prefill.
+    // Note: lead status transitions to 'estimated' only when Project is actually
+    // created via saveNewProject in V15rProjectsPanel — NOT when modal opens.
+    // This way Cancel leaves the lead in Pipeline as 'won' (no rollback needed).
     window.dispatchEvent(
       new CustomEvent('poweron:open-estimate', {
         detail: { lead, source: 'hunter' },
       })
     );
-    // Mark the HUNTER lead as having had an estimate opened, so it leaves
-    // Pipeline's default view. The converted Project row in backup will
-    // carry convertedFromLeadId for lineage.
-    try {
-      await updateLeadStatus(lead.id, 'estimated' as LeadStatus);
-    } catch (err) {
-      console.error('[Pipeline] Failed to mark lead as estimated:', err);
-    }
   };
 
   const handleReturnToLeads = async (lead: HunterLead) => {

@@ -29,6 +29,7 @@ import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
+import { useHunterStore } from '@/store/hunterStore'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
@@ -73,6 +74,10 @@ function fmtDate(dateStr?: string): string {
 
 export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, onPrefillUsed }: Props) {
   const { isDemoMode, hasHydrated } = useDemoMode()
+  // Pulled from hunterStore so we can transition the source HUNTER lead to
+  // status='estimated' ONLY when the operator actually saves a new Project
+  // (not when the modal opens). Cancel does nothing — lead stays in Pipeline.
+  const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   useEffect(() => {
@@ -160,7 +165,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setShowEditProject(true)
   }
 
-  function saveNewProject() {
+  async function saveNewProject() {
     if (!npName.trim()) { alert('Project name is required.'); return }
     if (!backup) return
     pushState(backup)
@@ -200,6 +205,17 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     }
     backup.projects = [...(backup.projects || []), newProj]
     saveBackupDataAndSync(backup)
+    // If this Project was created from a HUNTER lead, transition the lead to
+    // 'estimated' so it leaves Pipeline's default view. Lineage is already
+    // captured via newProj.convertedFromLeadId above.
+    if (prefillFromLead?.leadId || hunterBannerCtx?.leadId) {
+      const leadId = prefillFromLead?.leadId || hunterBannerCtx?.leadId
+      try {
+        await updateLeadStatus(leadId, 'estimated' as any)
+      } catch (err) {
+        console.error('[V15rProjectsPanel] Failed to mark HUNTER lead as estimated:', err)
+      }
+    }
     setShowNewProject(false)
     setHunterBannerCtx(null)
     forceUpdate()
