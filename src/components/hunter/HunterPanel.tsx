@@ -268,6 +268,12 @@ export function HunterPanel({
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
+  // Sub-bucket collapse state — Estimated, Lost, Deferred each independent.
+  // All three default to collapsed so the screen stays compact; operator
+  // expands the bucket they want to investigate.
+  const [estimatedExpanded, setEstimatedExpanded] = useState(false)
+  const [lostExpanded, setLostExpanded] = useState(false)
+  const [deferredExpanded, setDeferredExpanded] = useState(false)
 
   // HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1
   // Modal open/close state and inline success banner state. Banner clears
@@ -320,7 +326,7 @@ export function HunterPanel({
       // Score tier filter — bypass for archived-status leads so they
       // always reach the isArchivedLead bucket regardless of score.
       const leadStatus = (lead as any).status
-      const isArchivedByStatus = leadStatus === 'lost' || leadStatus === 'deferred' || leadStatus === 'archived'
+      const isArchivedByStatus = leadStatus === 'lost' || leadStatus === 'deferred' || leadStatus === 'archived' || leadStatus === 'estimated'
       if (filters.scoreTier !== 'all' && !isArchivedByStatus) {
         const tier = getScoreTierLabel(lead.score)
         if (tier !== filters.scoreTier) return false
@@ -400,18 +406,17 @@ export function HunterPanel({
     (l) => (l.score ?? 0) >= 40 && (l.score ?? 0) < 60
   )
 
-  // Archived bucket: lost/deferred/archived leads, hidden behind toggle.
+  // Archived bucket: lost/deferred/archived/estimated leads, hidden behind toggle.
   const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
 
-  // TEMP DEBUG
-  console.log('[HUNTER-DEBUG]', {
-    totalStoreLeads: storeLeads.length,
-    totalLeads: leads.length,
-    filteredAndSorted: filteredAndSortedLeads.length,
-    active: activeLeads.length,
-    archived: archivedLeads.length,
-    allStatuses: leads.map(l => ({ id: l.id, status: (l as any).status, score: l.score })),
-  })
+  // Sub-buckets within Archived — split by disposition so operator can scan
+  // each independently. Each bucket has its own collapse state.
+  const estimatedLeads = archivedLeads.filter((l: any) => l.status === 'estimated')
+  const lostLeads = archivedLeads.filter((l: any) => l.status === 'lost')
+  const deferredLeads = archivedLeads.filter((l: any) => l.status === 'deferred')
+  const otherArchivedLeads = archivedLeads.filter((l: any) =>
+    l.status !== 'estimated' && l.status !== 'lost' && l.status !== 'deferred'
+  )
 
   // Metrics
   const totalPipeline = leads.reduce((sum, lead) => {
@@ -772,36 +777,160 @@ export function HunterPanel({
               </div>
             )}
 
-            {/* Archived Leads - conditionally shown */}
+            {/* Archived Leads - conditionally shown, split into sub-buckets */}
             {showArchived && archivedLeads.length > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-800">
-                <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                <h2 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-gray-500"></span>
                   Archived Leads ({archivedLeads.length})
-                  <span className="ml-2 text-xs text-gray-500 font-normal">
-                    lost, deferred, estimated, or manually archived
-                  </span>
                 </h2>
-                <div className="space-y-2 opacity-75">
-                  {archivedLeads.map((lead) => (
-                    <HunterLeadCard
-                      key={lead.id}
-                      lead={lead}
-                      onStatusChange={(id, status) => {
-                        onLeadAction?.(id, 'status_change', status)
-                      }}
-                      onNotesChange={(id, notes) => {
-                        onLeadAction?.(id, 'update_notes', notes)
-                      }}
-                      onCall={(lead) => {
-                        onLeadAction?.(lead.id, 'call', lead.phone)
-                      }}
-                      onPractice={(lead) => {
-                        onLeadAction?.(lead.id, 'practice', lead)
-                      }}
-                    />
-                  ))}
-                </div>
+
+                {/* Estimated bucket — leads moved out of Pipeline after Open Estimate */}
+                {estimatedLeads.length > 0 && (
+                  <div className="mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setEstimatedExpanded(!estimatedExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded text-left transition-colors"
+                      aria-expanded={estimatedExpanded}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        <span className="text-xs font-semibold text-emerald-300">Estimated</span>
+                        <span className="text-xs text-gray-500">({estimatedLeads.length})</span>
+                      </span>
+                      <span className="text-gray-500 text-xs">{estimatedExpanded ? '▼' : '▶'}</span>
+                    </button>
+                    {estimatedExpanded && (
+                      <div className="mt-2 space-y-2 opacity-75">
+                        {estimatedLeads.map((lead) => (
+                          <HunterLeadCard
+                            key={lead.id}
+                            lead={lead}
+                            onStatusChange={(id, status) => {
+                              onLeadAction?.(id, 'status_change', status)
+                            }}
+                            onNotesChange={(id, notes) => {
+                              onLeadAction?.(id, 'update_notes', notes)
+                            }}
+                            onCall={(lead) => {
+                              onLeadAction?.(lead.id, 'call', lead.phone)
+                            }}
+                            onPractice={(lead) => {
+                              onLeadAction?.(lead.id, 'practice', lead)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Lost bucket — leads marked as lost with debrief captured */}
+                {lostLeads.length > 0 && (
+                  <div className="mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setLostExpanded(!lostExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded text-left transition-colors"
+                      aria-expanded={lostExpanded}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                        <span className="text-xs font-semibold text-red-300">Lost</span>
+                        <span className="text-xs text-gray-500">({lostLeads.length})</span>
+                      </span>
+                      <span className="text-gray-500 text-xs">{lostExpanded ? '▼' : '▶'}</span>
+                    </button>
+                    {lostExpanded && (
+                      <div className="mt-2 space-y-2 opacity-75">
+                        {lostLeads.map((lead) => (
+                          <HunterLeadCard
+                            key={lead.id}
+                            lead={lead}
+                            onStatusChange={(id, status) => {
+                              onLeadAction?.(id, 'status_change', status)
+                            }}
+                            onNotesChange={(id, notes) => {
+                              onLeadAction?.(id, 'update_notes', notes)
+                            }}
+                            onCall={(lead) => {
+                              onLeadAction?.(lead.id, 'call', lead.phone)
+                            }}
+                            onPractice={(lead) => {
+                              onLeadAction?.(lead.id, 'practice', lead)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Deferred bucket — leads parked for later */}
+                {deferredLeads.length > 0 && (
+                  <div className="mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeferredExpanded(!deferredExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded text-left transition-colors"
+                      aria-expanded={deferredExpanded}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                        <span className="text-xs font-semibold text-amber-300">Deferred</span>
+                        <span className="text-xs text-gray-500">({deferredLeads.length})</span>
+                      </span>
+                      <span className="text-gray-500 text-xs">{deferredExpanded ? '▼' : '▶'}</span>
+                    </button>
+                    {deferredExpanded && (
+                      <div className="mt-2 space-y-2 opacity-75">
+                        {deferredLeads.map((lead) => (
+                          <HunterLeadCard
+                            key={lead.id}
+                            lead={lead}
+                            onStatusChange={(id, status) => {
+                              onLeadAction?.(id, 'status_change', status)
+                            }}
+                            onNotesChange={(id, notes) => {
+                              onLeadAction?.(id, 'update_notes', notes)
+                            }}
+                            onCall={(lead) => {
+                              onLeadAction?.(lead.id, 'call', lead.phone)
+                            }}
+                            onPractice={(lead) => {
+                              onLeadAction?.(lead.id, 'practice', lead)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Catch-all for any 'archived' or unrecognized status */}
+                {otherArchivedLeads.length > 0 && (
+                  <div className="space-y-2 opacity-75">
+                    {otherArchivedLeads.map((lead) => (
+                      <HunterLeadCard
+                        key={lead.id}
+                        lead={lead}
+                        onStatusChange={(id, status) => {
+                          onLeadAction?.(id, 'status_change', status)
+                        }}
+                        onNotesChange={(id, notes) => {
+                          onLeadAction?.(id, 'update_notes', notes)
+                        }}
+                        onCall={(lead) => {
+                          onLeadAction?.(lead.id, 'call', lead.phone)
+                        }}
+                        onPractice={(lead) => {
+                          onLeadAction?.(lead.id, 'practice', lead)
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
