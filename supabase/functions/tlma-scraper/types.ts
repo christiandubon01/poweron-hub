@@ -76,6 +76,12 @@ export interface HunterLeadRow {
   issued_date: string | null;
   finalized_date: string | null;
   expired_date: string | null;
+  // Geocoding fields (added by migration 071)
+  latitude?: number | null;
+  longitude?: number | null;
+  distance_from_base_miles?: number | null;
+  geocoded_at?: string | null;
+  geocoding_status?: 'pending' | 'success' | 'failed' | 'skipped' | null;
 }
 
 export interface DryRunReport {

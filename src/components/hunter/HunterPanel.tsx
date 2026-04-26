@@ -30,7 +30,7 @@ export interface HunterPanelProps {
   onLeadAction?: (leadId: string, action: string, value: any) => void
 }
 
-type SortOption = 'score' | 'date' | 'value' | 'distance'
+type SortOption = 'score' | 'date' | 'value' | 'distance' | 'nearest'
 type ScoreTier = 'elite' | 'strong' | 'qualified' | 'expansion' | 'archived'
 
 interface FilterState {
@@ -82,16 +82,32 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     score: typeof storeLead.score === 'number' ? storeLead.score : 0,
     scoringFactors: Array.isArray(storeLead.score_factors) ? storeLead.score_factors : undefined,
     contactName: storeLead.contact_name || 'Unknown',
+    contact_name: storeLead.contact_name || undefined,
     jobType: storeLead.lead_type || 'electrical',
     jobTypeCategory: (storeLead.lead_type || 'electrical').toLowerCase(),
     pitchPreview: storeLead.description || storeLead.pitch_script || '',
-    distance: undefined,
+    description: storeLead.description || undefined,
+    distance: (storeLead as any).distance_from_base_miles ?? undefined,
+    distanceFromBaseMiles: (storeLead as any).distance_from_base_miles ?? undefined,
+    latitude: (storeLead as any).latitude ?? undefined,
+    longitude: (storeLead as any).longitude ?? undefined,
+    geocodedAt: (storeLead as any).geocoded_at ?? undefined,
+    geocodingStatus: (storeLead as any).geocoding_status ?? undefined,
     dateDiscovered,
     sourceTag: storeLead.source_tag || storeLead.source || 'manual',
+    source: storeLead.source || undefined,
     freshness,
     phone: storeLead.phone || undefined,
     email: storeLead.email || undefined,
     company: storeLead.company_name || undefined,
+    company_name: storeLead.company_name || undefined,
+    contact_company: (storeLead as any).contact_company || undefined,
+    address: (storeLead as any).address || undefined,
+    city: storeLead.city || undefined,
+    permit_number: (storeLead as any).permit_number || undefined,
+    permit_status: (storeLead as any).permit_status || undefined,
+    permit_type_code: (storeLead as any).permit_type_code || undefined,
+    total_sqft: (storeLead as any).total_sqft ?? undefined,
     bestContactMethod: undefined,
     valueRange,
     marginEstimate: typeof storeLead.estimated_margin === 'number' ? storeLead.estimated_margin : undefined,
@@ -268,6 +284,9 @@ export function HunterPanel({
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
+  // Distance filter — null = disabled (show all); number = max miles
+  const [maxDistanceMiles, setMaxDistanceMiles] = useState<number | null>(null)
+  const [distanceFilterEnabled, setDistanceFilterEnabled] = useState(false)
   // Sub-bucket collapse state — Estimated, Lost, Deferred each independent.
   // All three default to collapsed so the screen stays compact; operator
   // expands the bucket they want to investigate.
@@ -357,6 +376,15 @@ export function HunterPanel({
       return true
     })
 
+    // Distance filter — applied after other filters
+    // Leads without geocoding (null distance) are always included so we don't hide pending leads
+    if (distanceFilterEnabled && maxDistanceMiles !== null) {
+      result = result.filter((l) => {
+        const d = (l as any).distanceFromBaseMiles ?? l.distance
+        return d == null || d <= maxDistanceMiles
+      })
+    }
+
     // Sort
     result.sort((a, b) => {
       switch (sortBy) {
@@ -368,6 +396,15 @@ export function HunterPanel({
           return (b.valueRange?.max || 0) - (a.valueRange?.max || 0)
         case 'distance':
           return (a.distance || 999) - (b.distance || 999)
+        case 'nearest': {
+          // Nearest first; nulls go to the bottom
+          const aD = (a as any).distanceFromBaseMiles ?? a.distance
+          const bD = (b as any).distanceFromBaseMiles ?? b.distance
+          if (aD == null && bD == null) return 0
+          if (aD == null) return 1
+          if (bD == null) return -1
+          return aD - bD
+        }
         default:
           return 0
       }
@@ -543,6 +580,7 @@ export function HunterPanel({
             <option value="date">Sort by Date</option>
             <option value="value">Sort by Value</option>
             <option value="distance">Sort by Distance</option>
+            <option value="nearest">Nearest First</option>
           </select>
         </div>
 
@@ -660,11 +698,61 @@ export function HunterPanel({
                 Show archived (lost, deferred, estimated)
               </button>
             </div>
+
+            {/* Within X miles distance filter */}
+            <div className="col-span-2 space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !distanceFilterEnabled
+                  setDistanceFilterEnabled(next)
+                  if (next && maxDistanceMiles === null) setMaxDistanceMiles(50)
+                }}
+                className={clsx(
+                  'inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition',
+                  distanceFilterEnabled
+                    ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+                )}
+                aria-pressed={distanceFilterEnabled}
+              >
+                <span className={clsx(
+                  'w-1.5 h-1.5 rounded-full',
+                  distanceFilterEnabled ? 'bg-blue-400' : 'bg-gray-600'
+                )} />
+                Within {distanceFilterEnabled && maxDistanceMiles != null ? `${maxDistanceMiles} miles` : 'X miles'}
+              </button>
+              {distanceFilterEnabled && (
+                <div>
+                  <label className="text-xs text-gray-400">
+                    Max distance: {maxDistanceMiles} mi
+                  </label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="100"
+                    step="5"
+                    value={maxDistanceMiles ?? 50}
+                    onChange={(e) => setMaxDistanceMiles(parseInt(e.target.value))}
+                    className="w-full mt-1"
+                  />
+                  <div className="flex justify-between text-xs text-gray-600 mt-0.5">
+                    <span>5 mi</span>
+                    <span>100 mi</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
           </div>
 
           {/* Reset Filters */}
           <button
-            onClick={() => setFilters(DEFAULT_FILTERS)}
+            onClick={() => {
+              setFilters(DEFAULT_FILTERS)
+              setDistanceFilterEnabled(false)
+              setMaxDistanceMiles(null)
+            }}
             className="text-xs text-gray-400 hover:text-gray-200 underline"
           >
             Reset all filters

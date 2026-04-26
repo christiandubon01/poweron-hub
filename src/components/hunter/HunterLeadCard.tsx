@@ -1,33 +1,45 @@
 // @ts-nocheck
 /**
  * HunterLeadCard — Expandable lead card component
- * 
- * Displays lead information in collapsed or expanded state:
- * 
- * Collapsed view:
- * - Score badge (color by tier)
- * - Contact name
- * - Job type chip
- * - One-line pitch preview
- * - Distance
- * - Date
- * 
+ *
+ * HUNTER-GEOCODING-DISTANCE-CARDS-APR25-2026-1 rebuild:
+ *
+ * Collapsed view (top to bottom):
+ *   Row 1: contact_name (bold) | distance (big) + drive time
+ *   Row 2: city + ZIP location | score badge
+ *   Row 3: permit badges (permit_number, permit_status, permit_type_code, sqft)
+ *   Row 4: description (2 lines, truncated)
+ *   Row 5: action buttons (Open Estimate / Won / Lost / Deferred / Open in Maps)
+ *
  * Expanded view:
- * - Full card anatomy with multiple sections
- * - Header with lead ID, source tag, score with tier
- * - Contact info (name, phone, email, company, best contact method)
- * - Job Intel (trigger reason, estimated scope, value range, margin, comparable jobs)
- * - Pitch Script (full generated script)
- * - Pitch Angle (applied angles with reasoning)
- * - Actions row (Call, Copy Pitch, Practice, Won/Lost/Defer, Notes)
+ *   Full card with contact info, job intel, pitch script, pitch angles, notes, actions.
+ *
+ * CRITICAL: Won/Lost/Deferred/Delete/Notes behaviors all preserved.
  */
 
 import React, { useState } from 'react'
-import { ChevronDown, ChevronUp, Phone, Mail, MapPin, Copy, Zap, BookOpen, CheckCircle, XCircle, Clock, Edit2, Trash2 } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronUp,
+  Phone,
+  Mail,
+  MapPin,
+  Copy,
+  Zap,
+  BookOpen,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Edit2,
+  Trash2,
+  Navigation,
+  ExternalLink,
+} from 'lucide-react'
 import clsx from 'clsx'
 import { HunterScoreBadge, type ScoreFactor } from './HunterScoreBadge'
 import { useHunterStore } from '@/store/hunterStore'
 import { LostDebriefModal } from './LostDebriefModal'
+import { formatDistance, formatDriveTime } from '@/services/geocoding/distance'
 
 // Re-export canonical HunterLead so consumers (e.g. HunterPanel) can keep
 // their existing 'import { type HunterLead } from ./HunterLeadCard' path.
@@ -58,6 +70,30 @@ function getJobTypeColor(jobType?: string) {
   return JOB_TYPE_COLORS[key] || JOB_TYPE_COLORS.electrical
 }
 
+/** Build Google Maps URL from lead address fields */
+function buildMapsUrl(lead: any): string {
+  const parts: string[] = []
+  if (lead.address) parts.push(lead.address)
+  if (lead.city) parts.push(lead.city)
+  parts.push('CA')
+  return `https://maps.google.com/?q=${encodeURIComponent(parts.join(', '))}`
+}
+
+/** Extract city display text from lead — handles TLMA leads where city may be on the address */
+function getCityDisplay(lead: any): string {
+  if (lead.city && lead.city.trim()) return lead.city.trim()
+
+  // Attempt to extract city from address string for TLMA leads
+  if (lead.address && lead.address.trim()) {
+    const parts = lead.address.split(',')
+    if (parts.length >= 2) {
+      const possibleCity = parts[parts.length - 2]?.trim()
+      if (possibleCity && possibleCity.length > 1) return possibleCity
+    }
+  }
+  return 'Location unknown'
+}
+
 export function HunterLeadCard({
   lead,
   onCall,
@@ -71,17 +107,27 @@ export function HunterLeadCard({
   const [notes, setNotes] = useState(lead.notes || '')
   const [lostModalOpen, setLostModalOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  
+
   const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
   const deleteLead = useHunterStore((s) => s.deleteLead)
-  
+
   const jobTypeColor = getJobTypeColor(lead.jobTypeCategory)
+
+  // Distance display — prefer distanceFromBaseMiles (geocoded), fall back to legacy distance
+  const distanceMiles: number | null | undefined =
+    lead.distanceFromBaseMiles ?? (typeof lead.distance === 'number' ? lead.distance : undefined)
+
+  const distanceDisplay = formatDistance(distanceMiles)
+  const driveTimeDisplay = formatDriveTime(distanceMiles)
+
+  const cityDisplay = getCityDisplay(lead)
+  const hasLocation = !!(lead.address || lead.city)
 
   const handleCopyPitch = () => {
     const scriptText = lead.pitchScript
       ? `${lead.pitchScript.opener}\n\n${lead.pitchScript.valueProp}\n\n${lead.pitchScript.socialProof}\n\n${lead.pitchScript.softAsk}\n\n${lead.pitchScript.objectionAnticipation}\n\n${lead.pitchScript.close}`
-      : lead.pitchPreview
-    
+      : lead.pitchPreview || ''
+
     if (onCopyPitch) onCopyPitch(scriptText)
     navigator.clipboard.writeText(scriptText)
   }
@@ -91,6 +137,18 @@ export function HunterLeadCard({
     setEditingNotes(false)
   }
 
+  const handleOpenMaps = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    window.open(buildMapsUrl(lead), '_blank', 'noopener noreferrer')
+  }
+
+  // ─── Permit metadata badges ──────────────────────────────────────────────
+  const showPermitBadges =
+    lead.source === 'tlma_riverside' ||
+    lead.permit_number ||
+    lead.permit_status ||
+    lead.permit_type_code
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden hover:border-gray-700 transition-colors">
       {/* COLLAPSED VIEW */}
@@ -99,65 +157,177 @@ export function HunterLeadCard({
           onClick={() => setExpanded(true)}
           className="w-full p-4 text-left hover:bg-gray-800 transition-colors"
         >
-          <div className="flex items-start gap-4">
-            {/* Score Badge */}
-            <HunterScoreBadge
-              score={lead.score}
-              factors={lead.scoringFactors}
-              size="md"
-            />
-
-            {/* Lead Info */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-base font-semibold text-white truncate">
-                  {lead.contactName}
-                </h3>
-                <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded whitespace-nowrap">
-                  {lead.sourceTag}
-                </span>
-              </div>
-
-              {/* Job Type Chip */}
-              <div className="mb-2">
-                <span
-                  className={clsx(
-                    'inline-block text-xs font-medium px-2 py-0.5 rounded border',
-                    jobTypeColor.bg,
-                    jobTypeColor.text,
-                    jobTypeColor.border
-                  )}
-                >
-                  {lead.jobType}
-                </span>
-              </div>
-
-              {/* Pitch Preview */}
-              <p className="text-sm text-gray-300 truncate mb-2">
-                {lead.pitchPreview}
-              </p>
-
-              {/* Footer Info */}
-              <div className="flex items-center gap-3 text-xs text-gray-400">
-                {lead.distance !== undefined && (
-                  <div className="flex items-center gap-1">
-                    <MapPin size={12} />
-                    <span>{lead.distance} mi</span>
-                  </div>
-                )}
-                <span>{lead.dateDiscovered}</span>
-              </div>
+          {/* Row 1: Contact name + Distance */}
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className="text-base font-bold text-white truncate">
+                {lead.contactName || lead.contact_name || 'Unknown'}
+              </h3>
+              {lead.phone && (
+                <div className="flex items-center gap-1 text-xs text-gray-400 shrink-0">
+                  <Phone size={11} />
+                  <span className="hidden sm:inline">{lead.phone}</span>
+                </div>
+              )}
             </div>
 
-            {/* Expand Button */}
+            {/* Distance — prominent top-right */}
+            <div className="text-right shrink-0">
+              <div className={clsx(
+                'text-sm font-bold',
+                distanceMiles != null ? 'text-emerald-400' : 'text-gray-600'
+              )}>
+                {distanceDisplay}
+              </div>
+              {distanceMiles != null && distanceMiles >= 0 && (
+                <div className="text-xs text-gray-500">{driveTimeDisplay}</div>
+              )}
+            </div>
+          </div>
+
+          {/* Row 2: City/Location + Score badge */}
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-1.5 text-xs text-gray-400 min-w-0">
+              <MapPin size={11} className="shrink-0" />
+              <span className="truncate">{cityDisplay}</span>
+            </div>
+            <div className="shrink-0">
+              <HunterScoreBadge
+                score={lead.score}
+                factors={lead.scoringFactors}
+                size="sm"
+              />
+            </div>
+          </div>
+
+          {/* Row 3: Permit badges + sqft */}
+          {showPermitBadges && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {lead.permit_number && (
+                <span className="inline-flex items-center text-xs px-1.5 py-0.5 bg-gray-800 text-gray-300 rounded border border-gray-700 font-mono">
+                  #{lead.permit_number}
+                </span>
+              )}
+              {lead.permit_status && (
+                <span className={clsx(
+                  'inline-flex items-center text-xs px-1.5 py-0.5 rounded border',
+                  lead.permit_status === 'Issued'
+                    ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                    : lead.permit_status === 'Applied'
+                    ? 'bg-blue-950 text-blue-300 border-blue-800'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                )}>
+                  {lead.permit_status}
+                </span>
+              )}
+              {lead.permit_type_code && (
+                <span className="inline-flex items-center text-xs px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded border border-gray-700">
+                  {lead.permit_type_code}
+                </span>
+              )}
+              {lead.total_sqft != null && lead.total_sqft > 0 && (
+                <span className="inline-flex items-center text-xs px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded border border-gray-700">
+                  {lead.total_sqft.toLocaleString()} sqft
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Row 4: Description (2 lines truncated) */}
+          {(lead.description || lead.pitchPreview) && (
+            <p className="text-xs text-gray-400 line-clamp-2 mb-2">
+              {lead.description || lead.pitchPreview}
+            </p>
+          )}
+
+          {/* Row 5: Quick action buttons */}
+          <div
+            className="flex items-center gap-1.5 mt-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Won */}
             <button
-              className="text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0 mt-1"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (window.confirm('Mark this lead as Won? It will move to Pipeline.')) {
+                  updateLeadStatus(lead.id, 'won').catch((err) => {
+                    console.error('Failed to mark lead as Won:', err)
+                  })
+                }
+              }}
+              className={clsx(
+                'flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs',
+                lead.status === 'won'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              )}
+              title="Mark as Won"
+            >
+              <CheckCircle size={12} />
+              <span className="hidden sm:inline">Won</span>
+            </button>
+
+            {/* Lost */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setLostModalOpen(true)
+              }}
+              className={clsx(
+                'flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs',
+                lead.status === 'lost'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              )}
+              title="Mark as Lost"
+            >
+              <XCircle size={12} />
+              <span className="hidden sm:inline">Lost</span>
+            </button>
+
+            {/* Deferred */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                updateLeadStatus(lead.id, 'deferred').catch((err) => {
+                  console.error('Failed to mark lead as Deferred:', err)
+                })
+              }}
+              className={clsx(
+                'flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs',
+                lead.status === 'deferred'
+                  ? 'bg-orange-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              )}
+              title="Defer to Study Queue"
+            >
+              <Clock size={12} />
+              <span className="hidden sm:inline">Defer</span>
+            </button>
+
+            {/* Open in Maps */}
+            {hasLocation && (
+              <button
+                onClick={handleOpenMaps}
+                className="flex items-center gap-1 px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors text-xs ml-auto"
+                title="Open in Google Maps"
+              >
+                <Navigation size={12} />
+                <span className="hidden sm:inline">Maps</span>
+              </button>
+            )}
+
+            {/* Expand */}
+            <button
               onClick={(e) => {
                 e.stopPropagation()
                 setExpanded(true)
               }}
+              className="flex items-center gap-1 px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors text-xs"
+              title="Expand lead details"
             >
-              <ChevronDown size={20} />
+              <ChevronDown size={12} />
+              <span className="hidden sm:inline">More</span>
             </button>
           </div>
         </button>
@@ -168,16 +338,39 @@ export function HunterLeadCard({
         <div className="p-4 space-y-4">
           {/* Header */}
           <div className="flex items-start justify-between pb-4 border-b border-gray-700">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs font-mono text-gray-500">ID: {lead.id}</span>
-                <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded">
-                  {lead.sourceTag}
-                </span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-xs font-mono text-gray-500">ID: {lead.id?.slice(0, 8)}</span>
+                {lead.sourceTag && (
+                  <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded">
+                    {lead.sourceTag}
+                  </span>
+                )}
+                {lead.source === 'tlma_riverside' && (
+                  <span className="text-xs px-2 py-0.5 bg-blue-950 text-blue-300 rounded border border-blue-800">
+                    TLMA
+                  </span>
+                )}
               </div>
-              <h3 className="text-lg font-bold text-white">{lead.contactName}</h3>
+              <h3 className="text-lg font-bold text-white">
+                {lead.contactName || lead.contact_name || 'Unknown'}
+              </h3>
+              {/* Location + Distance */}
+              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                <div className="flex items-center gap-1 text-sm text-gray-400">
+                  <MapPin size={13} />
+                  <span>{cityDisplay}</span>
+                </div>
+                {distanceMiles != null && (
+                  <div className="flex items-center gap-1 text-sm font-semibold text-emerald-400">
+                    <Navigation size={13} />
+                    <span>{distanceDisplay}</span>
+                    <span className="text-xs text-gray-500 font-normal">{driveTimeDisplay}</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 shrink-0 ml-3">
               <HunterScoreBadge
                 score={lead.score}
                 factors={lead.scoringFactors}
@@ -199,8 +392,41 @@ export function HunterLeadCard({
             </div>
           )}
 
+          {/* Permit Metadata (TLMA) */}
+          {showPermitBadges && (
+            <div className="flex flex-wrap gap-1.5">
+              {lead.permit_number && (
+                <span className="inline-flex items-center text-xs px-2 py-1 bg-gray-800 text-gray-300 rounded border border-gray-700 font-mono">
+                  Permit #{lead.permit_number}
+                </span>
+              )}
+              {lead.permit_status && (
+                <span className={clsx(
+                  'inline-flex items-center text-xs px-2 py-1 rounded border',
+                  lead.permit_status === 'Issued'
+                    ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                    : lead.permit_status === 'Applied'
+                    ? 'bg-blue-950 text-blue-300 border-blue-800'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                )}>
+                  {lead.permit_status}
+                </span>
+              )}
+              {lead.permit_type_code && (
+                <span className="inline-flex items-center text-xs px-2 py-1 bg-gray-800 text-gray-400 rounded border border-gray-700">
+                  {lead.permit_type_code}
+                </span>
+              )}
+              {lead.total_sqft != null && lead.total_sqft > 0 && (
+                <span className="inline-flex items-center text-xs px-2 py-1 bg-gray-800 text-gray-400 rounded border border-gray-700">
+                  {lead.total_sqft.toLocaleString()} sqft
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Contact Section */}
-          {(lead.phone || lead.email || lead.company || lead.bestContactMethod) && (
+          {(lead.phone || lead.email || lead.company || lead.company_name || lead.contact_company || lead.bestContactMethod) && (
             <div className="space-y-2">
               <h4 className="text-sm font-semibold text-gray-200">Contact</h4>
               <div className="grid grid-cols-1 gap-1.5 text-sm text-gray-300">
@@ -222,19 +448,52 @@ export function HunterLeadCard({
                     )}
                   </div>
                 )}
-                {lead.company && (
+                {(lead.company || lead.company_name || lead.contact_company) && (
                   <div className="flex items-center gap-2 text-gray-400">
-                    <span className="font-medium">{lead.company}</span>
+                    <span className="font-medium">
+                      {lead.company || lead.company_name || lead.contact_company}
+                    </span>
                   </div>
                 )}
               </div>
             </div>
           )}
 
+          {/* Address section */}
+          {(lead.address || lead.city) && (
+            <div className="space-y-1">
+              <h4 className="text-sm font-semibold text-gray-200">Location</h4>
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-400">
+                  {lead.address && <div>{lead.address}</div>}
+                  {lead.city && <div>{lead.city}</div>}
+                </div>
+                <button
+                  onClick={handleOpenMaps}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-xs transition-colors"
+                >
+                  <Navigation size={12} />
+                  Open in Maps
+                  <ExternalLink size={11} />
+                </button>
+              </div>
+              {lead.geocodingStatus === 'success' && lead.latitude && (
+                <div className="text-xs text-gray-600">
+                  {lead.latitude.toFixed(4)}°N, {lead.longitude?.toFixed(4)}°W
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Job Intel Section */}
-          {(lead.triggerReason || lead.estimatedScope || lead.valueRange) && (
+          {(lead.triggerReason || lead.estimatedScope || lead.valueRange || lead.description) && (
             <div className="space-y-2 p-3 bg-gray-800 rounded">
               <h4 className="text-sm font-semibold text-gray-200">Job Intel</h4>
+              {lead.description && (
+                <div className="text-xs text-gray-300">
+                  <span className="font-medium text-gray-200">Description:</span> {lead.description}
+                </div>
+              )}
               {lead.triggerReason && (
                 <div className="text-xs text-gray-300">
                   <span className="font-medium text-gray-200">Trigger:</span> {lead.triggerReason}
@@ -261,7 +520,7 @@ export function HunterLeadCard({
                   <span className="font-medium text-gray-200">Comparable:</span>
                   {lead.comparableJobs.map((job, i) => (
                     <div key={i} className="ml-2">
-                      {job.name}: ${job.value.toLocaleString()} ({job.margin}% margin)
+                      {job.name || job.description}: ${(job.value || 0).toLocaleString()} ({job.margin}% margin)
                     </div>
                   ))}
                 </div>
@@ -316,10 +575,10 @@ export function HunterLeadCard({
                         ? 'bg-emerald-900 border-emerald-700 text-emerald-200'
                         : 'bg-gray-800 border-gray-700 text-gray-400'
                     )}
-                    title={angle.reasoning}
+                    title={angle.reasoning || angle.rationale}
                   >
                     {angle.angle}
-                    {angle.reasoning && ' 💡'}
+                    {(angle.reasoning || angle.rationale) && ' 💡'}
                   </div>
                 ))}
               </div>
@@ -397,14 +656,26 @@ export function HunterLeadCard({
               Practice
             </button>
 
+            {/* Open in Maps */}
+            {hasLocation && (
+              <button
+                onClick={handleOpenMaps}
+                className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors"
+              >
+                <Navigation size={14} />
+                Maps
+                <ExternalLink size={12} />
+              </button>
+            )}
+
             {/* Status Change Buttons */}
             <div className="flex gap-2 ml-auto">
               <button
                 onClick={() => {
                   if (window.confirm('Mark this lead as Won? It will move to Pipeline.')) {
                     updateLeadStatus(lead.id, 'won').catch((err) => {
-                      console.error('Failed to mark lead as Won:', err);
-                    });
+                      console.error('Failed to mark lead as Won:', err)
+                    })
                   }
                 }}
                 aria-label="Mark as Won"
@@ -436,8 +707,8 @@ export function HunterLeadCard({
               <button
                 onClick={() => {
                   updateLeadStatus(lead.id, 'deferred').catch((err) => {
-                    console.error('Failed to mark lead as Deferred:', err);
-                  });
+                    console.error('Failed to mark lead as Deferred:', err)
+                  })
                 }}
                 aria-label="Mark as Deferred"
                 className={clsx(
@@ -504,10 +775,10 @@ export function HunterLeadCard({
               <button
                 onClick={async () => {
                   try {
-                    await deleteLead(lead.id);
-                    setConfirmDelete(false);
+                    await deleteLead(lead.id)
+                    setConfirmDelete(false)
                   } catch (err) {
-                    console.error('Failed to delete lead:', err);
+                    console.error('Failed to delete lead:', err)
                   }
                 }}
                 className="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded"

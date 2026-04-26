@@ -3,6 +3,11 @@ import {
   SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2";
 import type { HunterLeadRow } from "./types.ts";
+import {
+  geocodeAddress,
+  haversineDistanceMiles,
+  buildAddressForGeocoding,
+} from "./geocoding.ts";
 
 export function createServiceClient(): SupabaseClient {
   const url = Deno.env.get("SUPABASE_URL");
@@ -55,10 +60,72 @@ function toText(val: unknown): string {
   return String(val);
 }
 
+/**
+ * Reads tenant_settings for setting_key='home_base_address' and returns
+ * { lat, lng } if available, otherwise null.
+ */
+export async function getHomeBaseLatLng(
+  client: SupabaseClient,
+  tenantId: string
+): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const { data, error } = await client
+      .from("tenant_settings")
+      .select("setting_value")
+      .eq("tenant_id", tenantId)
+      .eq("setting_key", "home_base_address")
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    const val = data.setting_value;
+    if (
+      val &&
+      typeof val.lat === "number" &&
+      typeof val.lng === "number"
+    ) {
+      return { lat: val.lat, lng: val.lng };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function upsertLead(
   client: SupabaseClient,
   row: HunterLeadRow
 ): Promise<{ action: "insert" | "update" | "unchanged"; lead_id: string; revisions_written: number }> {
+  // 0. Geocoding — enrich row with lat/lng + distance before upsert
+  const addressText = buildAddressForGeocoding(row.address, row.city);
+
+  if (!addressText) {
+    row.geocoding_status = 'skipped';
+  } else {
+    const geocodeResult = await geocodeAddress(addressText);
+
+    if (geocodeResult.status === 'success') {
+      row.latitude = geocodeResult.lat;
+      row.longitude = geocodeResult.lng;
+      row.geocoded_at = new Date().toISOString();
+      row.geocoding_status = 'success';
+
+      // Calculate distance from home base if available
+      const homeBase = await getHomeBaseLatLng(client, row.tenant_id);
+      if (homeBase) {
+        row.distance_from_base_miles = haversineDistanceMiles(
+          homeBase.lat, homeBase.lng,
+          geocodeResult.lat, geocodeResult.lng
+        );
+      }
+    } else if (geocodeResult.status === 'no_results') {
+      row.geocoding_status = 'failed';
+    } else {
+      // failed (API error, key missing, etc.)
+      row.geocoding_status = 'failed';
+    }
+  }
+
   // 1. Look for existing row
   const { data: existing, error: selectError } = await client
     .from("hunter_leads")

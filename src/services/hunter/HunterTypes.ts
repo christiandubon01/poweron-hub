@@ -174,6 +174,34 @@ export interface HunterLead {
 
   /** Estimated scope text shown in Job Intel panel */
   estimatedScope?: string;
+
+  // ============================================================================
+  // Geocoding fields (added by migration 071 / HUNTER-GEOCODING-APR25-2026-1)
+  // ============================================================================
+  /** Latitude from Google Maps Geocoding API */
+  latitude?: number | null;
+  /** Longitude from Google Maps Geocoding API */
+  longitude?: number | null;
+  /** Distance from operator home base in miles (Haversine) */
+  distanceFromBaseMiles?: number | null;
+  /** Timestamp when geocoding was last run for this lead */
+  geocodedAt?: string | null;
+  /** Status of geocoding attempt */
+  geocodingStatus?: 'pending' | 'success' | 'failed' | 'skipped' | null;
+
+  // ============================================================================
+  // TLMA-specific fields surfaced on lead cards
+  // ============================================================================
+  /** TLMA permit number */
+  permit_number?: string | null;
+  /** TLMA permit status (e.g., "Applied", "Issued") */
+  permit_status?: string | null;
+  /** TLMA permit type code */
+  permit_type_code?: string | null;
+  /** Total square footage */
+  total_sqft?: number | null;
+  /** Tenant ID (for multi-tenant scoping) */
+  tenant_id?: string | null;
 }
 
 /**

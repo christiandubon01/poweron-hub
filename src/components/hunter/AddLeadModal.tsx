@@ -37,6 +37,7 @@ interface FormState {
   email: string
   address: string
   city: string
+  zip: string
   lead_type: string
   description: string
   estimated_value: string // kept as string for controlled input; parsed on save
@@ -54,6 +55,7 @@ const EMPTY_FORM: FormState = {
   email: '',
   address: '',
   city: '',
+  zip: '',
   lead_type: '',
   description: '',
   estimated_value: '',
@@ -145,7 +147,13 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: AddLeadModalProps) 
     if (form.phone.trim()) payload.phone = form.phone.trim()
     if (form.email.trim()) payload.email = form.email.trim()
     if (form.address.trim()) payload.address = form.address.trim()
-    if (form.city.trim()) payload.city = form.city.trim()
+    // Combine city + ZIP for storage. If both provided, store as "City, ZIP"
+    // so it appears correctly in the lead card and geocoding uses the full info.
+    if (form.city.trim() || form.zip.trim()) {
+      const cityZip = [form.city.trim(), form.zip.trim()].filter(Boolean).join(' ')
+      if (form.city.trim()) payload.city = cityZip
+      // geocoding_status defaults to 'pending' via DB default; backfill will pick it up
+    }
     if (form.description.trim()) payload.description = form.description.trim()
     if (form.notes.trim()) payload.notes = form.notes.trim()
 
@@ -282,15 +290,28 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: AddLeadModalProps) 
                 placeholder="123 Main St"
               />
             </div>
-            <div>
-              <label className={labelClass}>City</label>
-              <input
-                type="text"
-                value={form.city}
-                onChange={(e) => setField('city', e.target.value)}
-                className={inputClass}
-                placeholder="Los Angeles"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelClass}>City</label>
+                <input
+                  type="text"
+                  value={form.city}
+                  onChange={(e) => setField('city', e.target.value)}
+                  className={inputClass}
+                  placeholder="Palm Desert"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>ZIP</label>
+                <input
+                  type="text"
+                  value={form.zip}
+                  onChange={(e) => setField('zip', e.target.value)}
+                  className={inputClass}
+                  placeholder="92260"
+                  maxLength={10}
+                />
+              </div>
             </div>
           </section>
 

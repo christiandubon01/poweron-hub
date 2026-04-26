@@ -87,6 +87,10 @@ export const useHunterStore = create<HunterStoreState>()(
             return;
           }
 
+          // select('*') returns all columns including migration-071 geocoding fields:
+          // latitude, longitude, distance_from_base_miles, geocoded_at, geocoding_status
+          // as well as migration-070 permit fields: permit_number, permit_status,
+          // permit_type_code, total_sqft, address, city, contact_name, phone, etc.
           const { data, error } = await (supabase as any)
             .from('hunter_leads')
             .select('*')
