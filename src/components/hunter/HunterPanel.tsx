@@ -13,7 +13,8 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus } from 'lucide-react'
+import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus, Loader2 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
 import AddLeadModal from './AddLeadModal'
@@ -329,6 +330,52 @@ export function HunterPanel({
     [storeLeads],
   )
 
+  // HUNTER-MANUAL-SCAN-BUTTON-APR28-2026-1
+  // Manual "Scan Now" button handler. Calls deployed tlma-scraper Edge
+  // Function (which logs to cron_run_log via inject HUNTER-CRON-STATUS-
+  // VISIBILITY). Owner-only is enforced implicitly by the Edge Function's
+  // service-role check (auth header required). CORS preflight must
+  // succeed; tlma-scraper >= v9 required.
+  const [isScanning, setIsScanning] = useState(false)
+  const handleScanTLMA = async () => {
+    if (isScanning) return
+    setIsScanning(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string) ?? ''
+      if (!SUPABASE_URL || !token) {
+        alert('Not authenticated. Please refresh and sign in again.')
+        return
+      }
+      const params = new URLSearchParams({ source: 'manual' })
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/tlma-scraper?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const result = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        alert(`Scan failed: ${result.error || resp.statusText}`)
+        return
+      }
+      const newCount = result.new_leads ?? result.inserts ?? result.inserted ?? 0
+      const updatedCount = result.updated_leads ?? result.updates ?? result.updated ?? 0
+      const errorCount = (result.errors && Array.isArray(result.errors))
+        ? result.errors.length
+        : (typeof result.errors === 'number' ? result.errors : 0)
+      alert(
+        `Scan complete — ${newCount} new lead(s), ${updatedCount} updated` +
+          (errorCount ? `, ${errorCount} error(s)` : '') +
+          '.'
+      )
+      await fetchLeads()
+    } catch (err: any) {
+      alert(`Scan error: ${err?.message ?? String(err)}`)
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
   const leads: HunterLead[] = leadsFromProps ?? translatedStoreLeads
 
   // Real computation for leadsDiscoveredToday if not provided as prop.
@@ -489,12 +536,17 @@ export function HunterPanel({
               Add Lead
             </button>
             <button
-              onClick={onTriggerHunterScan}
-              className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
-              title="Manually trigger HUNTER scan"
+              onClick={handleScanTLMA}
+              disabled={isScanning}
+              className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white text-sm rounded transition-colors"
+              title={isScanning ? 'Scan in progress…' : 'Manually trigger TLMA scan'}
             >
-              <RotateCcw size={14} />
-              Scan Now
+              {isScanning ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RotateCcw size={14} />
+              )}
+              {isScanning ? 'Scanning…' : 'Scan Now'}
             </button>
             <button
               onClick={onViewStudyQueue}
