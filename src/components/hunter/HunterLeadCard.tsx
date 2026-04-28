@@ -21,6 +21,8 @@ import React, { useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
+  ChevronRight,
+  ClipboardList,
   Phone,
   Mail,
   MapPin,
@@ -40,6 +42,13 @@ import { HunterScoreBadge, type ScoreFactor } from './HunterScoreBadge'
 import { useHunterStore } from '@/store/hunterStore'
 import { LostDebriefModal } from './LostDebriefModal'
 import { formatDistance, formatDriveTime } from '@/services/geocoding/distance'
+import {
+  fetchLeadRevisions,
+  formatRevisionValue,
+  classifyFieldChange,
+  FIELD_LABELS,
+  type LeadRevision,
+} from '@/services/hunter/leadRevisionsService'
 
 // Re-export canonical HunterLead so consumers (e.g. HunterPanel) can keep
 // their existing 'import { type HunterLead } from ./HunterLeadCard' path.
@@ -94,6 +103,88 @@ function getCityDisplay(lead: any): string {
   return 'Location unknown'
 }
 
+function RevisionsIndicator({
+  expanded,
+  loaded,
+  loading,
+  revisions,
+  onToggle,
+  leadId,
+}: {
+  expanded: boolean
+  loaded: boolean
+  loading: boolean
+  revisions: LeadRevision[]
+  onToggle: () => void
+  leadId: string | undefined
+}) {
+  if (!leadId) return null
+
+  return (
+    <div className="mt-2 border-t border-gray-800 pt-2">
+      <button
+        onClick={onToggle}
+        className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+      >
+        {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        <ClipboardList size={11} />
+        <span>
+          {loaded
+            ? (revisions.length > 0
+                ? `${revisions.length} revision${revisions.length === 1 ? '' : 's'}`
+                : 'No revisions')
+            : 'Permit history'}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 ml-4 flex flex-col gap-1.5">
+          {loading && <span className="text-xs text-gray-500">Loading…</span>}
+          {!loading && loaded && revisions.length === 0 && (
+            <span className="text-xs text-gray-500">No revision history yet.</span>
+          )}
+          {!loading && revisions.map((rev) => {
+            const accent = classifyFieldChange(rev.field_name)
+            const accentClass =
+              accent === 'status' ? 'border-l-emerald-500'
+              : accent === 'sqft' ? 'border-l-amber-500'
+              : accent === 'notable' ? 'border-l-blue-500'
+              : 'border-l-gray-700'
+            const fieldLabel = FIELD_LABELS[rev.field_name] ?? rev.field_name
+            return (
+              <div
+                key={rev.id}
+                className={`pl-2 border-l-2 ${accentClass} text-xs flex flex-col gap-0.5`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-200 font-medium">{fieldLabel}</span>
+                  <span className="text-gray-600 text-[10px]">
+                    {new Date(rev.detected_at).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+                <div className="text-gray-400">
+                  <span className="line-through opacity-60">
+                    {formatRevisionValue(rev.old_value)}
+                  </span>
+                  {' → '}
+                  <span className="text-gray-200">
+                    {formatRevisionValue(rev.new_value)}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function HunterLeadCard({
   lead,
   onCall,
@@ -107,6 +198,25 @@ export function HunterLeadCard({
   const [notes, setNotes] = useState(lead.notes || '')
   const [lostModalOpen, setLostModalOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [revisionsExpanded, setRevisionsExpanded] = useState(false)
+  const [revisions, setRevisions] = useState<LeadRevision[]>([])
+  const [revisionsLoaded, setRevisionsLoaded] = useState(false)
+  const [revisionsLoading, setRevisionsLoading] = useState(false)
+
+  const handleToggleRevisions = async () => {
+    const next = !revisionsExpanded
+    setRevisionsExpanded(next)
+    if (next && !revisionsLoaded && !revisionsLoading && lead?.id) {
+      setRevisionsLoading(true)
+      try {
+        const r = await fetchLeadRevisions(lead.id)
+        setRevisions(r)
+        setRevisionsLoaded(true)
+      } finally {
+        setRevisionsLoading(false)
+      }
+    }
+  }
 
   const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
   const deleteLead = useHunterStore((s) => s.deleteLead)
@@ -239,6 +349,18 @@ export function HunterLeadCard({
               {lead.description || lead.pitchPreview}
             </p>
           )}
+
+          {/* Revisions section — additive, hidden when no revisions */}
+          <div onClick={(e) => e.stopPropagation()}>
+            <RevisionsIndicator
+              expanded={revisionsExpanded}
+              loaded={revisionsLoaded}
+              loading={revisionsLoading}
+              revisions={revisions}
+              onToggle={handleToggleRevisions}
+              leadId={lead?.id}
+            />
+          </div>
 
           {/* Row 5: Quick action buttons */}
           <div
