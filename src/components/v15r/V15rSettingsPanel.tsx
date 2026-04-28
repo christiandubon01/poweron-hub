@@ -45,6 +45,7 @@ import {
 } from '@/services/milestoneBackupService'
 import TestDataManagementPanel from '@/components/testdata/TestDataManagementPanel'
 import { HomeBaseSettings } from '@/components/settings/HomeBaseSettings'
+import { CronStatusPanel } from '@/components/hunter/CronStatusPanel'
 
 function NoData() {
   return (
@@ -552,8 +553,18 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          {/* HUNTER Home Base — sets shop address, triggers geocode backfill */}
-          <HomeBaseSettings />
+          {/* HUNTER Operations — Home Base + cron run status */}
+          <SettingCard title="HUNTER Operations">
+            <div className="flex flex-col gap-5">
+              <HomeBaseSettings />
+              <div className="border-t border-gray-800 pt-4">
+                <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2 tracking-wider">
+                  Cron Run Status
+                </h4>
+                <CronStatusPanel />
+              </div>
+            </div>
+          </SettingCard>
 
           {/* 0. THEME & BRANDING */}
           <SettingCard title="Theme & Branding">

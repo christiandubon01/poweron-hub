@@ -51,8 +51,22 @@ const BROWSER_HEADERS: Record<string, string> = {
   "Sec-Fetch-User": "?1",
 };
 
+// CORS headers — added in v9 to unblock browser-initiated calls
+// (e.g. HunterPanel manual Scan Now). Purely additive: does not change
+// scoring, parsing, dedup, or upsert logic.
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+
 // ----- MAIN HANDLER -----
 serve(async (req: Request) => {
+  // CORS preflight — must be first statement so browser fetch works.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS_HEADERS });
+  }
+
   const url = new URL(req.url);
   const dryRun = url.searchParams.get("dry_run") === "true";
   const debug = url.searchParams.get("debug") === "true";
@@ -73,9 +87,12 @@ serve(async (req: Request) => {
         hasTable: dh.includes("<table"),
         hasPermit: dh.includes("permit") || dh.includes("Permit"),
         tableSnippet: dh.includes("<table") ? dh.slice(dh.indexOf("<table"), dh.indexOf("<table") + 2000) : null,
-      }, null, 2), { headers: { "Content-Type": "application/json" } });
+      }, null, 2), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
     } catch (e) {
-      return new Response(JSON.stringify({ error: String(e) }), { status: 500 });
+      return new Response(JSON.stringify({ error: String(e) }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
     }
   }
   const daysBack = parseInt(url.searchParams.get("days_back") || "0", 10);
@@ -105,6 +122,48 @@ serve(async (req: Request) => {
       error: "HUNTER_TENANT_ID and HUNTER_USER_ID must be set in env",
     });
   }
+
+  // ----- RUN LOGGING (v9) -----
+  // Write a row to cron_run_log at start (status=running) and update at end
+  // with final status / counts. Purely additive — provides operational
+  // visibility into the 13-city cron sweep. UI reads this table.
+  const supabase = createServiceClient();
+  const cityParam = url.searchParams.get("city") || "ALL_CITIES";
+  const runSource =
+    url.searchParams.get("source") === "manual" ? "manual" : "cron";
+  const runStart = Date.now();
+
+  let logId: string | null = null;
+  // Skip cron_run_log insert for dry runs — dry_run is a developer tool and
+  // doesn't reach the live-branch update, so we'd otherwise leave orphan
+  // 'running' rows. This guard keeps cron_run_log dedicated to real runs.
+  if (!dryRun) {
+    try {
+      const { data: logRow } = await supabase
+        .from("cron_run_log")
+        .insert({
+          city: cityParam,
+          run_source: runSource,
+          status: "running",
+          started_at: new Date(runStart).toISOString(),
+        })
+        .select("id")
+        .single();
+      logId = logRow?.id ?? null;
+    } catch (_e) {
+      // Log insert failed — proceed without run logging. Do not fail the run.
+      logId = null;
+    }
+  }
+
+  // Per-run counters tracked across both the city/permit_type fetch loop
+  // and the upsert loop. These feed the cron_run_log update at the end.
+  let newCount = 0;
+  let updatedCount = 0;
+  let errorCount = 0;
+  let lastError: string | null = null;
+
+  try {
 
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - lookback);
@@ -168,6 +227,8 @@ serve(async (req: Request) => {
         errors.push(
           `Exception for ${city} / ${permitType}: ${(err as Error).message}`
         );
+        errorCount++;
+        lastError = (err as Error).message;
       }
     }
   }
@@ -236,7 +297,7 @@ serve(async (req: Request) => {
   }
 
   // ===== LIVE BRANCH =====
-  const supabase = createServiceClient();
+  // Note: `supabase` was created at the top of the handler (v9 run logging).
   let inserts = 0,
     updates = 0,
     lastSeenTouched = 0,
@@ -251,14 +312,20 @@ serve(async (req: Request) => {
         userId
       );
       const result = await upsertLead(supabase, row);
-      if (result.action === "insert") inserts++;
-      else if (result.action === "update") updates++;
-      else lastSeenTouched++;
+      if (result.action === "insert") {
+        inserts++;
+        newCount++;
+      } else if (result.action === "update") {
+        updates++;
+        updatedCount++;
+      } else lastSeenTouched++;
       revisionsLogged += result.revisions_written;
     } catch (err) {
       errors.push(
         `upsert failed for ${s.permit.permit_number}: ${(err as Error).message}`
       );
+      errorCount++;
+      lastError = (err as Error).message;
     }
   }
 
@@ -274,14 +341,64 @@ serve(async (req: Request) => {
     skipped_unchanged: lastSeenTouched,
     errors,
   };
+
+  // ----- RUN LOGGING (v9): final update -----
+  if (logId) {
+    const finalStatus =
+      errorCount === 0
+        ? "success"
+        : newCount + updatedCount > 0
+        ? "partial"
+        : "failed";
+    try {
+      await supabase
+        .from("cron_run_log")
+        .update({
+          completed_at: new Date().toISOString(),
+          status: finalStatus,
+          new_leads: newCount,
+          updated_leads: updatedCount,
+          errors: errorCount,
+          error_message: lastError,
+          duration_ms: Date.now() - runStart,
+          permit_types_processed: PERMIT_TYPES.length,
+        })
+        .eq("id", logId);
+    } catch (_e) {
+      // Don't let log update failure poison the response.
+    }
+  }
+
   return jsonResponse(200, report);
+
+  } catch (err) {
+    // OUTERMOST catch — write a failed-status update so unhandled crashes
+    // are recorded in cron_run_log instead of leaving the row at 'running'.
+    if (logId) {
+      try {
+        await supabase
+          .from("cron_run_log")
+          .update({
+            completed_at: new Date().toISOString(),
+            status: "failed",
+            errors: 1,
+            error_message: (err as Error).message,
+            duration_ms: Date.now() - runStart,
+          })
+          .eq("id", logId);
+      } catch (_e) {
+        // ignore — best-effort logging
+      }
+    }
+    throw err;
+  }
 });
 
 // ----- HELPERS -----
 function jsonResponse(status: number, body: object): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
   });
 }
 
