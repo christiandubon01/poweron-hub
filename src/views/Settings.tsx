@@ -10,6 +10,7 @@ import { Settings2, Droplets, Lock, CheckCircle, RotateCcw } from 'lucide-react'
 import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { HomeBaseSettings } from '@/components/settings/HomeBaseSettings';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -171,6 +172,9 @@ export default function SettingsView({
 
       {/* ── Scrollable Content ────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 max-w-2xl w-full mx-auto">
+
+      {/* ── HUNTER Home Base ─────────────────────────────────────── */}
+        <HomeBaseSettings />
 
         {/* ── Watermark Settings ────────────────────────────────────────────── */}
         <div

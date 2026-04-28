@@ -44,6 +44,7 @@ import {
   type SnapshotFilter,
 } from '@/services/milestoneBackupService'
 import TestDataManagementPanel from '@/components/testdata/TestDataManagementPanel'
+import { HomeBaseSettings } from '@/components/settings/HomeBaseSettings'
 
 function NoData() {
   return (
@@ -551,6 +552,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
+          {/* HUNTER Home Base — sets shop address, triggers geocode backfill */}
+          <HomeBaseSettings />
 
           {/* 0. THEME & BRANDING */}
           <SettingCard title="Theme & Branding">

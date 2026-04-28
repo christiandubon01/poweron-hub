@@ -9,7 +9,8 @@
 
 import { supabase } from '@/lib/supabase';
 
-const EDGE_FUNCTIONS_BASE = '/functions/v1';
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string) ?? '';
+const EDGE_FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
 
 /**
  * Get current user's auth token for calling Edge Functions.
