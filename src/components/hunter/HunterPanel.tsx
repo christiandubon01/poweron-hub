@@ -13,7 +13,8 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus, Loader2 } from 'lucide-react'
+import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus, Loader2, MapIcon, ChevronUp } from 'lucide-react'
+import HunterMap from './HunterMap'
 import { supabase } from '@/lib/supabase'
 import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
@@ -285,6 +286,22 @@ export function HunterPanel({
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
+  // HUNTER-MAP-VIEW-APR28-2026-1
+const [mapExpanded, setMapExpanded] = useState(true)
+const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null)
+
+const handleMapLeadSelect = (leadId: string) => {
+  setHighlightedLeadId(leadId)
+  // Scroll the matching card into view
+  setTimeout(() => {
+    const el = document.querySelector(`[data-lead-id="${leadId}"]`)
+    if (el && 'scrollIntoView' in el) {
+      (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, 50)
+  // Auto-clear the highlight after a few seconds
+  setTimeout(() => setHighlightedLeadId(null), 3500)
+}
   // Distance filter — null = disabled (show all); number = max miles
   const [maxDistanceMiles, setMaxDistanceMiles] = useState<number | null>(null)
   const [distanceFilterEnabled, setDistanceFilterEnabled] = useState(false)
@@ -586,6 +603,26 @@ export function HunterPanel({
           </div>
         </div>
 
+        {/* HUNTER-MAP-VIEW-APR28-2026-1 — collapsible map */}
+        <div className="border border-gray-800 rounded overflow-hidden bg-gray-950">
+          <button
+            onClick={() => setMapExpanded(!mapExpanded)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-gray-900 hover:bg-gray-800 transition-colors"
+          >
+            <div className="flex items-center gap-2 text-xs text-gray-300">
+              <MapIcon size={13} className="text-emerald-500" />
+              <span className="font-medium">Lead Map</span>
+              <span className="text-gray-500">— pin click opens lead</span>
+            </div>
+            {mapExpanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+          </button>
+          {mapExpanded && (
+            <div style={{ height: '50vh', minHeight: 320 }}>
+              <HunterMap leads={leads} onLeadSelect={handleMapLeadSelect} />
+            </div>
+          )}
+        </div>
+        
         {/* HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1 — inline success confirmation */}
         {addLeadSuccessVisible && (
           <div className="bg-emerald-900 border border-emerald-700 rounded p-3 text-sm text-emerald-100 flex items-center gap-2">

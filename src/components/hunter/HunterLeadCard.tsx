@@ -260,7 +260,10 @@ export function HunterLeadCard({
     lead.permit_type_code
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden hover:border-gray-700 transition-colors">
+    <div
+      data-lead-id={lead?.id}
+      className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden hover:border-gray-700 transition-colors"
+    >
       {/* COLLAPSED VIEW */}
       {!expanded && (
         <button

@@ -21,6 +21,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@picovoice/porcupine-web": "^3.0.3",
     "@picovoice/web-voice-processor": "^4.0.8",
+    "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.43.0",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-biometric": "^2.3.2",
