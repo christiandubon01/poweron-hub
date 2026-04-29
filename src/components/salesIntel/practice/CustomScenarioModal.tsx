@@ -12,6 +12,7 @@
 import { useState, useEffect } from 'react'
 import { X, Zap, Search, ArrowRight, Save } from 'lucide-react'
 import clsx from 'clsx'
+import { useHunterStore } from '@/store/hunterStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -112,10 +113,42 @@ export function CustomScenarioModal({
   const [recentScenarios, setRecentScenarios] = useState<RecentScenario[]>([])
   const [submitting, setSubmitting] = useState(false)
 
-  // Load HUNTER leads and recent scenarios
+  // Load HUNTER leads from real hunter store and recent scenarios from localStorage.
+  // HUNTER-PRACTICE-PLUMBING-APR28-2026-1 — replaces getMockHUNTERLeads() prior pass.
   useEffect(() => {
-    setHunterLeads(getMockHUNTERLeads())
+    const storeLeads = useHunterStore.getState().leads
+    const mapped: HUNTERLead[] = storeLeads.map((l: any) => ({
+      id: l.id,
+      name: l.contact_name || l.company_name || 'Unknown Lead',
+      company: l.company_name || l.contact_company || undefined,
+      objections: undefined,
+      notes: [
+        l.permit_number ? `Permit ${l.permit_number}` : null,
+        l.permit_status ? `Status: ${l.permit_status}` : null,
+        l.city ? `City: ${l.city}` : null,
+        l.total_sqft ? `${l.total_sqft} sqft` : null,
+        l.description ? l.description : null,
+      ].filter(Boolean).join(' · '),
+    }))
+    setHunterLeads(mapped)
     setRecentScenarios(getRecentScenarios())
+
+    // If the user clicked Practice on a HunterLeadCard, the store stashed the
+    // lead id in sessionStorage. Pre-select that lead in the dropdown.
+    try {
+      const presetId = typeof window !== 'undefined'
+        ? sessionStorage.getItem('si_practiceLead')
+        : null
+      if (presetId) {
+        const preset = mapped.find((m) => m.id === presetId)
+        if (preset) {
+          setSelectedHUNTERLead(preset)
+        }
+        sessionStorage.removeItem('si_practiceLead')
+      }
+    } catch (err) {
+      console.warn('[CustomScenarioModal] preselect failed:', err)
+    }
   }, [])
 
   // Handle HUNTER lead selection

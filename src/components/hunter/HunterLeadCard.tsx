@@ -40,6 +40,7 @@ import {
 import clsx from 'clsx'
 import { HunterScoreBadge, type ScoreFactor } from './HunterScoreBadge'
 import { useHunterStore } from '@/store/hunterStore'
+import { useSalesIntelStore } from '@/components/salesIntel/SalesIntelStore'
 import { LostDebriefModal } from './LostDebriefModal'
 import { formatDistance, formatDriveTime } from '@/services/geocoding/distance'
 import {
@@ -774,7 +775,11 @@ export function HunterLeadCard({
             </button>
 
             <button
-              onClick={() => onPractice && onPractice(lead)}
+              onClick={() => {
+                if (lead?.id) {
+                  useSalesIntelStore.getState().navigateToLeadPractice(lead.id)
+                }
+              }}
               className="flex items-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors"
             >
               <BookOpen size={14} />

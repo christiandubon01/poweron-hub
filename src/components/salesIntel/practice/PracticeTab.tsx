@@ -312,6 +312,22 @@ export function PracticeTab() {
 
   // Modal & suggestions
   const [showCustomModal, setShowCustomModal] = useState(false)
+  // HUNTER-PRACTICE-PLUMBING-APR28-2026-1
+  // When the user clicks Practice on a HunterLeadCard, the SalesIntel store
+  // stashes the lead id in sessionStorage. On Practice tab mount, detect
+  // that and auto-open the custom scenario modal with the lead preselected.
+  useEffect(() => {
+    try {
+      const presetId = typeof window !== 'undefined'
+        ? sessionStorage.getItem('si_practiceLead')
+        : null
+      if (presetId) {
+        setShowCustomModal(true)
+      }
+    } catch (err) {
+      console.warn('[PracticeTab] sessionStorage check failed:', err)
+    }
+  }, [])
   const [sparkSuggestion, setSparkSuggestion] = useState<SPARKSuggestion | null>(null)
 
   // Character names for different call types
@@ -422,12 +438,15 @@ export function PracticeTab() {
             </button>
           )}
 
-          {/* Hunter Lead Context (placeholder) */}
+          {/* HUNTER Lead Context — opens CustomScenarioModal preloaded with real leads */}
           {callType !== 'custom' && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-2">
               <div className="text-xs font-semibold text-zinc-300 uppercase tracking-wide mb-3">Advanced Options</div>
-              <button className="w-full text-left p-2 text-xs text-zinc-400 hover:text-blue-400 rounded hover:bg-zinc-800 transition-colors flex items-center gap-2">
-                <Lock size={14} />
+              <button
+                onClick={() => setShowCustomModal(true)}
+                className="w-full text-left p-2 text-xs text-zinc-400 hover:text-blue-400 rounded hover:bg-zinc-800 transition-colors flex items-center gap-2"
+              >
+                <User size={14} />
                 Load HUNTER Lead Context
               </button>
             </div>
