@@ -25,7 +25,7 @@ import {
   getHistory,
   clearBuffer,
 } from '@/services/voice/conversationBuffer'
-import type { ConversationEntry } from '@/services/voice/conversationBuffer'
+import { difficultyHint, ARCHETYPES, type ArchetypeId } from './practiceArchetypes'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -201,14 +201,15 @@ export async function transcribeUserSpeech(audioBlob: Blob): Promise<string> {
 export async function getCharacterResponse(
   character: CharacterPersonality,
   userText: string,
-  difficulty: 1 | 2 | 3 | 4 | 5
+  difficulty: 1 | 2 | 3 | 4 | 5 | number,
+  archetypeId?: ArchetypeId | null
 ): Promise<string> {
   try {
     console.log('[SparkVoice] Requesting character response from Claude...')
     const startTime = performance.now()
-    
+
     // Build system prompt for character role-play
-    const systemPrompt = buildCharacterSystemPrompt(character, difficulty)
+    const systemPrompt = buildCharacterSystemPrompt(character, difficulty, archetypeId)
     
     // Get conversation history for context
     const conversationHistory = getHistory()
@@ -253,25 +254,39 @@ export async function getCharacterResponse(
 
 /**
  * Build system prompt for character role-play.
- * Adjusts difficulty via scenario tension/objections.
+ * Composes Call Type's character + (optional) personality archetype + 0–10 difficulty.
+ *
+ * HUNTER-PRACTICE-ARCHETYPES-DIFFICULTY-APR28-2026-1
+ * Backward compatible — accepts legacy 1–5 difficulty (mapped 1→2, 2→4, 3→5, 4→7, 5→9).
  */
 function buildCharacterSystemPrompt(
   character: CharacterPersonality,
-  difficulty: 1 | 2 | 3 | 4 | 5
+  difficulty: 1 | 2 | 3 | 4 | 5 | number,
+  archetypeId?: ArchetypeId | null
 ): string {
-  const difficultyGuide: Record<number, string> = {
-    1: 'Easy: Be cooperative and interested. Ask basic clarifying questions.',
-    2: 'Medium: Show some skepticism. Mention budget concerns. Ask for timeline.',
-    3: 'Hard: Raise 2-3 legitimate objections. Mention competitor quotes.',
-    4: 'Harder: Push back on pricing. Question scope. Demand guarantees.',
-    5: 'Expert: Aggressive objections. Price pressure. Consider walking away.',
-  }
-  
+  // Normalize legacy 1–5 to 0–10 (rough proportional map: 1→2, 2→4, 3→5, 4→7, 5→9)
+  const legacyToNumeric: Record<number, number> = { 1: 2, 2: 4, 3: 5, 4: 7, 5: 9 }
+  const rawDifficulty = typeof difficulty === 'number' ? difficulty : 5
+  const normalized = rawDifficulty >= 0 && rawDifficulty <= 5 && Number.isInteger(rawDifficulty) && rawDifficulty in legacyToNumeric
+    ? legacyToNumeric[rawDifficulty]
+    : Math.max(0, Math.min(10, Math.round(rawDifficulty)))
+
+  // Archetype paragraph (optional — null/undefined means use the character's default personality)
+  const archetype = archetypeId
+    ? ARCHETYPES.find((a) => a.id === archetypeId)
+    : undefined
+  const archetypeParagraph = archetype
+    ? `\nPERSONALITY ARCHETYPE: ${archetype.label}\n${archetype.systemPromptHint}\n`
+    : ''
+
+  // Continuous-scale difficulty paragraph
+  const difficultyParagraph = difficultyHint(normalized)
+
   return `You are ${character.name}, an estimator with a ${character.tone} personality.
 
 ${character.personality}
-
-Difficulty level: ${difficultyGuide[difficulty]}
+${archetypeParagraph}
+${difficultyParagraph}
 
 Keep responses natural and conversational. Ask follow-up questions to understand scope better. Respond in 1-3 sentences typically. Stay in character throughout the conversation.`
 }

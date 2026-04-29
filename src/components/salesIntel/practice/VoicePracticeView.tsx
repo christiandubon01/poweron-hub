@@ -39,6 +39,8 @@ import type {
   TranscriptEntry,
   VoiceAudioChunk,
 } from '@/services/sparkTraining/SparkTrainingVoice'
+import { bucketDifficulty } from './PracticeTab'
+import { ARCHETYPES, type ArchetypeId } from '@/services/sparkTraining/practiceArchetypes'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -166,19 +168,17 @@ function TranscriptPanel({ entries }: { entries: TranscriptEntry[] }) {
 // Sub-component: Character Info Bar
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CharacterInfoBar({ character, difficulty }: {
+function CharacterInfoBar({ character, difficulty, archetypeId }: {
   character: CharacterPersonality
-  difficulty: 1 | 2 | 3 | 4 | 5
+  difficulty: number
+  archetypeId?: ArchetypeId | null
 }) {
-  const difficultyLabel = ['', 'Easy', 'Medium', 'Hard', 'Harder', 'Expert'][difficulty]
-  const difficultyColor: Record<number, string> = {
-    1: 'bg-green-500/20 text-green-300 border-green-500/30',
-    2: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-    3: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-    4: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
-    5: 'bg-red-500/20 text-red-300 border-red-500/30',
-  }
-  
+  const d = Math.max(0, Math.min(10, Math.round(difficulty)))
+  const b = bucketDifficulty(d)
+  const archetype = archetypeId
+    ? ARCHETYPES.find((a) => a.id === archetypeId)
+    : undefined
+
   return (
     <div className="flex items-center justify-between bg-zinc-900/40 border border-zinc-700/30 rounded-lg p-4">
       <div className="flex items-center gap-3">
@@ -187,15 +187,16 @@ function CharacterInfoBar({ character, difficulty }: {
         </div>
         <div>
           <div className="font-medium text-white">{character.name}</div>
-          <div className="text-xs text-zinc-400">{character.tone}</div>
+          <div className="text-xs text-zinc-400">
+            {character.tone}{archetype ? ` · ${archetype.label}` : ''}
+          </div>
         </div>
       </div>
-      
       <div className={clsx(
         'px-3 py-1 rounded-full text-xs font-medium border',
-        difficultyColor[difficulty]
+        b.color
       )}>
-        {difficultyLabel} • L{difficulty}
+        {b.label} · {d}/10
       </div>
     </div>
   )
@@ -207,16 +208,17 @@ function CharacterInfoBar({ character, difficulty }: {
 
 export interface VoicePracticeViewProps {
   mode: VoiceMode
-  difficulty: 1 | 2 | 3 | 4 | 5
+  difficulty: 1 | 2 | 3 | 4 | 5 | number
   character?: CharacterPersonality
+  archetypeId?: ArchetypeId | null
   onRoundEnd?: (transcript: TranscriptEntry[]) => void
   onClose?: () => void
 }
-
 export default function VoicePracticeView({
   mode = 'voice-transcript',
-  difficulty = 2,
+  difficulty = 5,
   character = ADAM_STONE_VOICE,
+  archetypeId = null,
   onRoundEnd,
   onClose,
 }: VoicePracticeViewProps) {
@@ -277,7 +279,8 @@ export default function VoicePracticeView({
         const characterText = await getCharacterResponse(
           character,
           userText,
-          difficulty
+          difficulty,
+          archetypeId
         )
         
         // Generate and stream audio
@@ -358,7 +361,8 @@ export default function VoicePracticeView({
       const characterText = await getCharacterResponse(
         character,
         userText,
-        difficulty
+        difficulty,
+        archetypeId
       )
       
       // Add character response (text only in text mode)
@@ -398,7 +402,7 @@ export default function VoicePracticeView({
       <div className="border-b border-zinc-700/30 bg-zinc-900/40 backdrop-blur p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <CharacterInfoBar character={character} difficulty={difficulty} />
+            <CharacterInfoBar character={character} difficulty={difficulty} archetypeId={archetypeId} />
             <div className="flex items-center gap-2 text-sm text-zinc-400">
               <Clock size={16} />
               {formatTime(elapsedSeconds)}

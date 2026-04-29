@@ -60,18 +60,21 @@ function WaveformAnimation() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DifficultyBadge({ level }: { level: DifficultyLevel }) {
-  const colors = {
-    1: 'bg-green-500/20 text-green-300 border-green-500/40',
-    2: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
-    3: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
-    4: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
-    5: 'bg-red-500/20 text-red-300 border-red-500/40',
-  }
-  const labels = { 1: 'Friendly', 2: 'Cautious', 3: 'Hardball', 4: 'Skeptic', 5: 'Gatekeeper' }
-
+  const d = Math.max(0, Math.min(10, Math.round(level)))
+  const color =
+    d <= 3 ? 'bg-green-500/20 text-green-300 border-green-500/40'
+    : d <= 6 ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40'
+    : d <= 8 ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
+    : 'bg-red-500/20 text-red-300 border-red-500/40'
+  const label =
+    d <= 3 ? 'Easy'
+    : d <= 6 ? 'Median'
+    : d <= 8 ? 'Hard'
+    : d >= 10 ? 'Unwinnable'
+    : 'Extreme'
   return (
-    <span className={clsx('inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold', colors[level])}>
-      {labels[level]}
+    <span className={clsx('inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold', color)}>
+      {label} · {d}/10
     </span>
   )
 }

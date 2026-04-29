@@ -17,6 +17,8 @@ interface AnthropicClient {
   };
 }
 
+import { ARCHETYPES, difficultyHint, type ArchetypeId } from './practiceArchetypes';
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -165,15 +167,41 @@ const STANDARD_OBJECTIONS = [
  */
 export function generateCharacterPrompt(
   template: string,
-  difficulty: 'easy' | 'medium' | 'hard',
-  customDescription?: string
+  difficulty: 'easy' | 'medium' | 'hard' | number,
+  customDescription?: string,
+  archetypeId?: ArchetypeId
 ): GeneratedCharacter {
   const char = CHARACTER_TEMPLATES[template];
   if (!char) {
     throw new Error(`Unknown template: ${template}`);
   }
 
-  // Scale difficulty
+  // Normalize difficulty to a number (0–10) so the same code path handles both
+  // legacy string callers ('easy'|'medium'|'hard') and new numeric callers (0–10).
+  // Strings map to the middle of each band: easy=2, medium=5, hard=8.
+  const difficultyNum: number =
+    typeof difficulty === 'number'
+      ? Math.max(0, Math.min(10, Math.round(difficulty)))
+      : difficulty === 'easy' ? 2
+      : difficulty === 'medium' ? 5
+      : 8;
+
+  // Optional archetype paragraph (Path B — orthogonal to call type / template)
+  const archetype = archetypeId
+    ? ARCHETYPES.find((a) => a.id === archetypeId)
+    : undefined;
+  const archetypeParagraph = archetype
+    ? `\nPERSONALITY ARCHETYPE: ${archetype.label}\n${archetype.systemPromptHint}\n`
+    : '';
+
+  // Difficulty paragraph (continuous 0–10 scale via difficultyHint helper)
+  const difficultyParagraph = difficultyHint(difficultyNum);
+
+  // Legacy modifiers preserved for the keyBehaviors array below — derived
+  // from the bucketed numeric difficulty so the rest of the function still
+  // has the existing fields it expects.
+  const bucket: 'easy' | 'medium' | 'hard' =
+    difficultyNum <= 3 ? 'easy' : difficultyNum <= 6 ? 'medium' : 'hard';
   const difficultyModifiers = {
     easy: {
       patience: 'high patience, willing to listen',
@@ -191,8 +219,7 @@ export function generateCharacterPrompt(
       timeAllowed: 'expects answer today or walks',
     },
   };
-
-  const modifiers = difficultyModifiers[difficulty];
+  const modifiers = difficultyModifiers[bucket];
 
   const systemPrompt = `
 You are ${char.name}, ${char.title}.
@@ -202,8 +229,10 @@ ${char.personality}
 
 WHAT DRIVES YOU:
 ${char.motivation}
+${archetypeParagraph}
+${difficultyParagraph}
 
-DIFFICULTY LEVEL: ${difficulty.toUpperCase()}
+LEGACY DIFFICULTY MODIFIERS (supplementary):
 ${modifiers.patience}
 ${modifiers.challengeLevel}
 ${modifiers.timeAllowed}
@@ -226,15 +255,17 @@ React as you would in a real phone call. If something doesn't make sense, you'll
 `.trim();
 
   const keyBehaviors = [
-    difficulty === 'easy' ? 'Listening actively' : 'Testing competence',
+    bucket === 'easy' ? 'Listening actively' : 'Testing competence',
     char.responseSpeed === 'quick' ? 'Fast responses' : 'Thoughtful pauses',
     `${char.objectionStyle} objection style`,
-    difficulty === 'hard' ? 'Push back on weak arguments' : 'Open to conversation',
+    bucket === 'hard' ? 'Push back on weak arguments' : 'Open to conversation',
+    archetype ? `Archetype: ${archetype.label}` : 'No archetype',
+    `Difficulty: ${difficultyNum}/10`,
   ];
 
   return {
     template,
-    difficulty,
+    difficulty: bucket, // GeneratedCharacter.difficulty is the legacy string union — return bucketed value for backward compat
     systemPrompt,
     characterName: char.name,
     characterTitle: char.title,
