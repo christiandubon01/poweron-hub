@@ -14,7 +14,12 @@
   to     = "/index.html"
   status = 200
 
-# SPA routing: all paths serve index.html
+[[redirects]]
+  from   = "/.netlify/functions/*"
+  to     = "/.netlify/functions/:splat"
+  status = 200
+  force  = false
+
 [[redirects]]
   from   = "/*"
   to     = "/index.html"
