@@ -266,6 +266,9 @@ export async function scrapeCity(
 
       const leadRow = {
         tenant_id: '31a60821-2796-41fa-b48d-d7df59e48198',
+        user_id: '31a60821-2796-41fa-b48d-d7df59e48198',
+        source: 'city-portal',
+        lead_type: 'permit',
         permit_number: p.CaseNumber,
         permit_type: p.CaseType ?? null,
         work_class: p.CaseWorkclass ?? null,
@@ -298,7 +301,7 @@ export async function scrapeCity(
         newCount++
       }
     } catch (err: any) {
-      errorMessages.push(`${p.PermitNumber}: ${err?.message ?? 'upsert failed'}`)
+      errorMessages.push(`${p.CaseNumber}: ${err?.message ?? 'upsert failed'}`)
     }
   }
 
