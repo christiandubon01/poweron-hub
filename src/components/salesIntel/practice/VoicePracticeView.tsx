@@ -430,10 +430,10 @@ export default function VoicePracticeView({
           <form onSubmit={handleTextInput} className="flex-1 flex flex-col gap-4">
             <TranscriptPanel entries={transcript} />
             
-            <div className="flex gap-2">
-              <input
-                type="text"
-                name="userInput"
+            <div className="flex gap-2 flex-shrink-0">
+            <input
+              type="text"
+              name="userInput""
                 placeholder="Type your response..."
                 disabled={isProcessing}
                 className="flex-1 px-4 py-2 rounded border border-zinc-700/30 bg-zinc-900/40 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 disabled:opacity-50"
