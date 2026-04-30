@@ -151,7 +151,7 @@ function TranscriptPanel({ entries }: { entries: TranscriptEntry[] }) {
             {entry.speaker === 'user' ? 'You' : 'Adam Stone'}
           </div>
           <div className={clsx(
-            'inline-block max-w-xs px-3 py-2 rounded-lg',
+            'inline-block max-w-[65%] px-3 py-2 rounded-lg',
             entry.speaker === 'user'
               ? 'bg-blue-500/20 text-blue-100 rounded-br-none'
               : 'bg-green-500/20 text-green-100 rounded-bl-none'
@@ -421,7 +421,9 @@ export default function VoicePracticeView({
       {/* Main Content */}
       <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
         {/* Waveform */}
+        <div className="flex-shrink-0">
         <WaveformVisualizer data={waveform} />
+        </div>
         
         {/* Transcript or Input */}
         {mode === 'text-only' ? (
