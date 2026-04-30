@@ -266,7 +266,7 @@ export async function scrapeCity(
 
       const leadRow = {
         tenant_id: '31a60821-2796-41fa-b48d-d7df59e48198',
-        user_id: '31a60821-2796-41fa-b48d-d7df59e48198',
+        user_id: '6a5c2d43-cf37-45ff-9f22-d4d315683cf8',
         source: 'city-portal',
         lead_type: 'permit',
         permit_number: p.CaseNumber,
