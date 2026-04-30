@@ -265,6 +265,7 @@ export async function scrapeCity(
       const portalUrl = `${portalBase}/apps/SelfService#/permit/${p.CaseNumber}`
 
       const leadRow = {
+        tenant_id: '31a60821-2796-41fa-b48d-d7df59e48198',
         permit_number: p.CaseNumber,
         permit_type: p.CaseType ?? null,
         work_class: p.CaseWorkclass ?? null,
