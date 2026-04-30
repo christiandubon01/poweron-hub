@@ -16,13 +16,13 @@ export interface CityConfig {
 }
 
 export interface EnerGovPermit {
-  PermitNumber: string
-  PermitType?: string
-  WorkClass?: string
-  Status?: string
+  CaseNumber: string
+  CaseType?: string
+  CaseWorkclass?: string
+  CaseStatus?: string
   ApplyDate?: string
   IssueDate?: string | null
-  MainAddress?: string
+  AddressDisplay?: string
   ProjectName?: string | null
   Description?: string | null
   ContractorName?: string | null
@@ -100,6 +100,7 @@ export async function fetchEnerGovPermits(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json;charset=UTF-8',
     'accept': 'application/json, text/plain, */*',
+    'cookie': 'Tyler-Tenant-Culture=en-US',
     'tenantid': '1',
     'tenantname': config.tenantName,
     'tyler-tenant-culture': 'en-US',
@@ -124,7 +125,7 @@ export async function fetchEnerGovPermits(
 
     const data = await res.json()
     // EnerGov response shape: { Permits: { Result: [...], Total: N } }
-    const permits: EnerGovPermit[] = data?.Permits?.Result ?? []
+    const permits: EnerGovPermit[] = data?.Result?.EntityResults ?? []
     allPermits.push(...permits)
 
     // Stop paginating when we get fewer results than a full page
@@ -145,8 +146,8 @@ export function scorePermit(p: EnerGovPermit): ScoreResult {
   let score = 0
   const factors: string[] = []
   const desc = (p.Description ?? '').toLowerCase()
-  const wc = (p.WorkClass ?? '').toLowerCase()
-  const status = (p.Status ?? '').toLowerCase()
+  const wc = (p.CaseWorkclass ?? '').toLowerCase()
+  const status = (p.CaseStatus ?? '').toLowerCase()
 
   // Work class signals — what kind of project
   if (wc.includes('new construction')) {
@@ -256,21 +257,21 @@ export async function scrapeCity(
       const { data: existing } = await supabase
         .from('hunter_leads')
         .select('id, score')
-        .eq('permit_number', p.PermitNumber)
+        .eq('permit_number', p.CaseNumber)
         .eq('source_city', config.cityLabel)
         .maybeSingle()
 
       const portalBase = new URL(config.baseUrl).origin
-      const portalUrl = `${portalBase}/apps/SelfService#/permit/${p.PermitNumber}`
+      const portalUrl = `${portalBase}/apps/SelfService#/permit/${p.CaseNumber}`
 
       const leadRow = {
-        permit_number: p.PermitNumber,
-        permit_type: p.PermitType ?? null,
-        work_class: p.WorkClass ?? null,
-        status: p.Status ?? null,
+        permit_number: p.CaseNumber,
+        permit_type: p.CaseType ?? null,
+        work_class: p.CaseWorkclass ?? null,
+        status: p.CaseStatus ?? null,
         apply_date: p.ApplyDate ?? null,
         issue_date: p.IssueDate ?? null,
-        address: p.MainAddress ?? null,
+        address: p.AddressDisplay ?? null,
         project_name: p.ProjectName ?? null,
         description: p.Description ?? null,
         contractor_name: p.ContractorName ?? null,
