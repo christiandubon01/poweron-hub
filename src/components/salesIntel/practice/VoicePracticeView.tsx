@@ -427,7 +427,7 @@ export default function VoicePracticeView({
         
         {/* Transcript or Input */}
         {mode === 'text-only' ? (
-          <form onSubmit={handleTextInput} className="flex-1 flex flex-col gap-4">
+          <form onSubmit={handleTextInput} className="flex-1 flex flex-col gap-4 min-h-0">
             <TranscriptPanel entries={transcript} />
             
             <div className="flex gap-2 flex-shrink-0">
