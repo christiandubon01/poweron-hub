@@ -225,8 +225,8 @@ export async function getCharacterResponse(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        systemPrompt,
-        messages,
+      system: systemPrompt,
+      messages,
         model: 'claude-haiku-4-5-20251001',  // Current Haiku model — fast + capable for character responses
         maxTokens: 300,  // Keep responses concise for natural conversation
       })

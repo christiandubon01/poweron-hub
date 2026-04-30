@@ -341,9 +341,9 @@ export default function VoicePracticeView({
   // Handle text mode input
   const handleTextInput = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const formData = new FormData(e.currentTarget)
+    const form = e.currentTarget
+    const formData = new FormData(form)
     const userText = (formData.get('userInput') as string).trim()
-    
     if (!userText) return
     
     setIsProcessing(true)
@@ -373,7 +373,7 @@ export default function VoicePracticeView({
       }])
       
       // Clear input
-      e.currentTarget.reset()
+      form.reset()
     } catch (err) {
       console.error('[VoicePracticeView] Response failed:', err)
       setError(err instanceof Error ? err.message : 'Unknown error')
