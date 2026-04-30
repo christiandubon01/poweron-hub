@@ -95,7 +95,7 @@ export async function fetchEnerGovPermits(
   const applyDateFrom = toISO(from)
   const applyDateTo = toISO(today)
   const PAGE_SIZE = 50
-  const MAX_PAGES = 20
+  const MAX_PAGES = 2
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json;charset=UTF-8',
@@ -206,7 +206,7 @@ export async function scrapeCity(
   config: CityConfig,
   options: ScrapeOptions = {}
 ): Promise<ScrapeResult> {
-  const { dryRun = false, source = 'cron', daysBack = 30 } = options
+  const { dryRun = false, source = 'cron', daysBack = 7 } = options
   const errorMessages: string[] = []
 
   let permits: EnerGovPermit[] = []

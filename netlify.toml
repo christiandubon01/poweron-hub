@@ -8,6 +8,9 @@
 [functions]
   directory = "netlify/functions"
 
+[functions."city-scraper"]
+  timeout = 26
+
 # Auth callback — must be before the wildcard (Safari iOS strips fragment on redirect)
 [[redirects]]
   from   = "/auth/callback"
