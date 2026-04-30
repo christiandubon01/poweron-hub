@@ -237,7 +237,9 @@ export async function getCharacterResponse(
     }
     
     const data = await response.json()
-    const characterText = data.content || ''
+    const characterText = Array.isArray(data.content)
+  ? data.content.map((b: any) => b.text ?? '').join('')
+  : (typeof data.content === 'string' ? data.content : '')
     
     const elapsed = performance.now() - startTime
     console.log(`[SparkVoice] Character response in ${(elapsed / 1000).toFixed(2)}s: "${characterText}"`)
