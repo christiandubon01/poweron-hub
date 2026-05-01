@@ -16,6 +16,7 @@ export interface CityConfig {
 }
 
 export interface EnerGovPermit {
+  CaseId?: string
   CaseNumber: string
   CaseType?: string
   CaseWorkclass?: string
@@ -280,8 +281,7 @@ export async function scrapeCity(
       error_messages: [],
       permits_fetched: permits.length,
       permits_scored: viable.length,
-      sample_permit: permits[0] ?? null,
-    } as any
+    }
   }
 
   // Upsert into hunter_leads
@@ -299,7 +299,9 @@ export async function scrapeCity(
         .maybeSingle()
 
       const portalBase = new URL(config.baseUrl).origin
-      const portalUrl = `${portalBase}/apps/SelfService#/permit/${p.CaseNumber}`
+      const portalUrl = p.CaseId
+        ? `${portalBase}/apps/SelfService#/permit/${p.CaseId}`
+        : `${portalBase}/apps/SelfService#/permit/${p.CaseNumber}`
 
       const leadRow = {
         tenant_id: '31a60821-2796-41fa-b48d-d7df59e48198',
