@@ -92,14 +92,24 @@ const WORK_CLASS_VALUE_ESTIMATES: Record<string, { min: number; max: number }> =
   'alteration / repair / tenant improvement': { min: 8000, max: 30000 },
   'ti (additions/alterations)': { min: 8000, max: 30000 },
   'non residential': { min: 10000, max: 40000 },
+  // TLMA permit_type_code keys (Riverside County)
+  'bnr': { min: 20000, max: 80000 },  // Commercial Buildings
+  'bti': { min: 15000, max: 50000 },  // Tenant Improvement
+  'bmn': { min: 20000, max: 60000 },  // Mfg Buildings Commercial
+  'brs': { min: 15000, max: 40000 },  // Residential Dwelling
+  'bar': { min: 5000,  max: 20000 },  // Residential Add/Rehab
+  'bas': { min: 3000,  max: 12000 },  // Accessory Building
+  'bsp': { min: 3000,  max: 8000  },  // Pool/Spa/Fountains
+  'bmr': { min: 8000,  max: 25000 },  // Manufactured Home Residential
 }
 
 function translateStoreToPanel(storeLead: StoreHunterLead): any {
   const estValue = typeof storeLead.estimated_value === 'number' ? storeLead.estimated_value : null
   const wcKey = ((storeLead as any).work_class_code ?? '').toLowerCase().trim()
+  const ptKey = ((storeLead as any).permit_type_code ?? '').toLowerCase().trim()
   const valueRange = estValue && estValue > 0
     ? { min: Math.round(estValue * 0.85), max: Math.round(estValue * 1.15) }
-    : WORK_CLASS_VALUE_ESTIMATES[wcKey]
+    : WORK_CLASS_VALUE_ESTIMATES[wcKey] ?? WORK_CLASS_VALUE_ESTIMATES[ptKey]
 
   const discoveredDate = storeLead.discovered_at ? new Date(storeLead.discovered_at) : null
   const freshness = discoveredDate ? formatFreshness(discoveredDate) : undefined
