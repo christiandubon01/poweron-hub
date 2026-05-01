@@ -109,6 +109,7 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     permit_number: (storeLead as any).permit_number || undefined,
     permit_status: (storeLead as any).permit_status || undefined,
     permit_type_code: (storeLead as any).permit_type_code || undefined,
+    portal_url: (storeLead as any).portal_url || (storeLead as any).permit_url || undefined,
     total_sqft: (storeLead as any).total_sqft ?? undefined,
     bestContactMethod: undefined,
     valueRange,
@@ -311,6 +312,8 @@ const handleMapLeadSelect = (leadId: string) => {
   const [estimatedExpanded, setEstimatedExpanded] = useState(false)
   const [lostExpanded, setLostExpanded] = useState(false)
   const [deferredExpanded, setDeferredExpanded] = useState(false)
+  const [cityPermitsExpanded, setCityPermitsExpanded] = useState(true)
+  const [activeCitySource, setActiveCitySource] = useState<'all' | 'TLMA' | 'Indio' | 'Palm Springs'>('all')
 
   // HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1
   // Modal open/close state and inline success banner state. Banner clears
@@ -507,6 +510,12 @@ const handleMapLeadSelect = (leadId: string) => {
     (l) => (l.score ?? 0) >= 40 && (l.score ?? 0) < 60
   )
 
+  // City portal leads bucket — source = 'city-portal', shown separately with source toggle
+  const cityPortalLeads = activeLeads.filter((l: any) => l.source === 'city-portal')
+  const filteredCityLeads = activeCitySource === 'all'
+    ? cityPortalLeads
+    : cityPortalLeads.filter((l: any) => l.city === activeCitySource)
+
   // Archived bucket: lost/deferred/archived/estimated leads, hidden behind toggle.
   const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
 
@@ -614,11 +623,38 @@ const handleMapLeadSelect = (leadId: string) => {
               <span className="font-medium">Lead Map</span>
               <span className="text-gray-500">— pin click opens lead</span>
             </div>
-            {mapExpanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                {(['all', 'TLMA', 'Indio', 'Palm Springs'] as const).map((src) => (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => setActiveCitySource(src)}
+                    className={clsx(
+                      'px-2 py-0.5 rounded text-xs font-medium transition-colors',
+                      activeCitySource === src
+                        ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-500/50'
+                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-500'
+                    )}
+                  >
+                    {src === 'all' ? 'All' : src}
+                  </button>
+                ))}
+              </div>
+              {mapExpanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+            </div>
           </button>
           {mapExpanded && (
             <div style={{ height: '50vh', minHeight: 320 }}>
-              <HunterMap leads={leads} onLeadSelect={handleMapLeadSelect} />
+              <HunterMap
+              leads={activeCitySource === 'all'
+                ? leads
+                : activeCitySource === 'TLMA'
+                ? leads.filter((l: any) => l.source === 'tlma_riverside')
+                : leads.filter((l: any) => l.city === activeCitySource)
+              }
+              onLeadSelect={handleMapLeadSelect}
+            />
             </div>
           )}
         </div>
@@ -951,6 +987,63 @@ const handleMapLeadSelect = (leadId: string) => {
                     />
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* City Portal Permits — Indio + Palm Springs scraped leads */}
+            {cityPortalLeads.length > 0 && (
+              <div className="mt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setCityPermitsExpanded(!cityPermitsExpanded)}
+                    className="flex items-center gap-2 text-sm font-bold text-cyan-300"
+                  >
+                    <span className="inline-block w-2 h-2 rounded-full bg-cyan-400"></span>
+                    City Permits ({filteredCityLeads.length})
+                    <span className="text-gray-500 text-xs">{cityPermitsExpanded ? '▼' : '▶'}</span>
+                  </button>
+                  {/* Source toggle pills */}
+                  <div className="flex gap-1">
+                    {(['all', 'TLMA', 'Indio', 'Palm Springs'] as const).map((src) => (
+                      <button
+                        key={src}
+                        type="button"
+                        onClick={() => setActiveCitySource(src)}
+                        className={clsx(
+                          'px-2 py-0.5 rounded text-xs font-medium transition-colors',
+                          activeCitySource === src
+                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-500/50'
+                            : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-500'
+                        )}
+                      >
+                        {src === 'all' ? 'All' : src}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {cityPermitsExpanded && (
+                  <div className="space-y-2">
+                    {filteredCityLeads.map((lead) => (
+                      <HunterLeadCard
+                        key={lead.id}
+                        lead={lead}
+                        onStatusChange={(id, status) => {
+                          onLeadAction?.(id, 'status_change', status)
+                        }}
+                        onNotesChange={(id, notes) => {
+                          onLeadAction?.(id, 'update_notes', notes)
+                        }}
+                        onCall={(lead) => {
+                          onLeadAction?.(lead.id, 'call', lead.phone)
+                        }}
+                        onPractice={(lead) => {
+                          onLeadAction?.(lead.id, 'practice', lead)
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

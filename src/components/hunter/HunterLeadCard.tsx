@@ -255,10 +255,11 @@ export function HunterLeadCard({
 
   // ─── Permit metadata badges ──────────────────────────────────────────────
   const showPermitBadges =
-    lead.source === 'tlma_riverside' ||
-    lead.permit_number ||
-    lead.permit_status ||
-    lead.permit_type_code
+  lead.source === 'tlma_riverside' ||
+  lead.source === 'city-portal' ||
+  lead.permit_number ||
+  lead.permit_status ||
+  lead.permit_type_code
 
   return (
     <div
@@ -275,7 +276,12 @@ export function HunterLeadCard({
           <div className="flex items-start justify-between gap-3 mb-2">
             <div className="flex items-center gap-2 min-w-0">
               <h3 className="text-base font-bold text-white truncate">
-                {lead.contactName || lead.contact_name || 'Unknown'}
+                {lead.contactName || lead.contact_name || 
+                (lead.source === 'city-portal' 
+                  ? (lead.description?.slice(0, 50) || lead.work_class_code || lead.permit_type_label || 'City Permit')
+                  : 'Unknown'
+                )
+              }
               </h3>
               {lead.phone && (
                 <div className="flex items-center gap-1 text-xs text-gray-400 shrink-0">
@@ -321,6 +327,18 @@ export function HunterLeadCard({
                 <span className="inline-flex items-center text-xs px-1.5 py-0.5 bg-gray-800 text-gray-300 rounded border border-gray-700 font-mono">
                   #{lead.permit_number}
                 </span>
+              )}
+              {(lead as any).portal_url && (
+                <a
+                  href={(lead as any).portal_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-blue-950 text-blue-300 rounded border border-blue-800 hover:bg-blue-900 transition-colors"
+                >
+                  <ExternalLink size={10} />
+                  Portal
+                </a>
               )}
               {lead.permit_status && (
                 <span className={clsx(
