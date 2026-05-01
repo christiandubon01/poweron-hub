@@ -146,49 +146,85 @@ export function scorePermit(p: EnerGovPermit): ScoreResult {
   let score = 0
   const factors: string[] = []
   const desc = (p.Description ?? '').toLowerCase()
-  const wc = (p.CaseWorkclass ?? '').toLowerCase()
-  const status = (p.CaseStatus ?? '').toLowerCase()
+  const wc = (p.CaseWorkclass ?? '').toLowerCase().trim()
+  const pt = (p.CaseType ?? '').toLowerCase()
+  const status = (p.CaseStatus ?? '').toLowerCase().trim()
 
-  // Work class signals — what kind of project
-  if (wc.includes('new construction')) {
+  // ── Work class signals (tuned to real EnerGov values) ─────────────────────
+
+  // Tier 1: Direct C-10 electrical work (+35)
+  const directElec = [
+    'panel upgrade', 'simple main panel upgrade',
+    'electrical modification', 'electrical',
+    'residential ev station',
+    'residential energy storage system (ess)',
+  ]
+  if (directElec.some(v => wc === v || wc.includes(v))) {
+    score += 35; factors.push('direct_electrical')
+  }
+  // Tier 2: New construction — always needs electrical rough-in (+30)
+  else if (wc === 'new' || wc.includes('condominiums new') || wc.includes('new commercial')) {
     score += 30; factors.push('new_construction')
-  } else if (wc.includes('adu') || wc.includes('accessory dwelling')) {
-    score += 25; factors.push('adu')
-  } else if (wc.includes('addition')) {
-    score += 22; factors.push('addition')
-  } else if (wc.includes('remodel') || wc.includes('alteration')) {
-    score += 18; factors.push('remodel')
-  } else if (wc.includes('commercial')) {
+  }
+  // Tier 3: Solar / PV / ESS — adjacent C-10 work (+25)
+  else if (
+    wc.includes('photovoltaic') || wc.includes('solar panel') ||
+    wc.includes('simple photovoltaic') || wc.includes('energy storage')
+  ) {
+    score += 25; factors.push('solar_pv')
+  }
+  // Tier 4: ADU / additions (+22)
+  else if (wc.includes('adu') || wc.includes('accessory dwelling')) {
+    score += 22; factors.push('adu')
+  }
+  // Tier 5: Additions / alterations (+18)
+  else if (wc.includes('addition') || wc.includes('alteration') || wc.includes('remodel')) {
+    score += 18; factors.push('addition_remodel')
+  }
+  // Tier 6: Commercial non-residential (+20)
+  else if (wc.includes('non residential') || wc.includes('commercial') || pt.includes('commercial')) {
     score += 20; factors.push('commercial')
   }
+  // Tier 7: Pool & Spa — has electrical component (+12)
+  else if (wc.includes('pool') || wc.includes('spa')) {
+    score += 12; factors.push('pool_spa')
+  }
 
-  // Electrical keywords in description — direct signal
+  // ── Electrical keywords in description — direct signal (+20) ─────────────
   const elecKeywords = [
     'electrical', 'panel upgrade', 'service upgrade', 'main panel',
     'sub-panel', 'subpanel', 'wiring', 'rewire', 'circuit',
     'meter', 'ev charger', 'electric vehicle', 'solar', 'photovoltaic',
-    'pv system', 'battery storage', 'ess', 'generator',
+    'pv system', 'battery storage', 'ess', 'generator', 'interconnect',
   ]
   for (const kw of elecKeywords) {
     if (desc.includes(kw)) {
       score += 20
       factors.push(`elec_kw:${kw.replace(/ /g, '_')}`)
-      break // one keyword match is enough
+      break // one match is enough
     }
   }
 
-  // Status signals — early = better opportunity
-  if (status.includes('applied') || status.includes('submitted')) {
-    score += 15; factors.push('status:applied')
-  } else if (status.includes('plan check') || status.includes('plan review')) {
-    score += 12; factors.push('status:plan_check')
-  } else if (status.includes('issued')) {
+  // ── Status signals (tuned to real EnerGov permit_status values) ───────────
+  if (
+    status === 'submitted' || status === 'submitted - online' ||
+    status === 'in review' || status === 'ready to review'
+  ) {
+    score += 15; factors.push('status:early')
+  } else if (status === 'fees due' || status === "outstanding coa's") {
+    score += 12; factors.push('status:fees_due')
+  } else if (status === 'issued') {
     score += 8; factors.push('status:issued')
-  } else if (status.includes('finaled') || status.includes('closed') || status.includes('expired')) {
-    score -= 20; factors.push('status:closed')
+  } else if (status === 'corrections requested') {
+    score += 5; factors.push('status:corrections')
+  } else if (
+    status === 'denied' || status === 'void' ||
+    status === 'canceled' || status === 'complete'
+  ) {
+    score -= 15; factors.push('status:closed')
   }
 
-  // No contractor assigned = open opportunity
+  // ── No contractor assigned = open opportunity (+10) ───────────────────────
   if (!p.ContractorName || p.ContractorName.trim() === '') {
     score += 10; factors.push('no_contractor')
   }
@@ -285,6 +321,8 @@ export async function scrapeCity(
         source_city: config.cityLabel,
         portal_url: portalUrl,
         run_source: source,
+        contractor_name: p.ContractorName ?? null,
+        contractor_name: p.ContractorName ?? null,
       }
 
       if (existing) {
