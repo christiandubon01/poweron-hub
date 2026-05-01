@@ -67,11 +67,39 @@ function getScoreTierLabel(score: number): ScoreTier {
 // Translator: converts store-shaped HunterLead (canonical HunterTypes) to
 // panel-shaped HunterLead (HunterLeadCard local type). Quick-and-dirty bridge;
 // B4 MANAGED-3 session unifies the types so this function can be deleted.
+
+// HUNTER-UI-GEO-UNIFY-APR30-2026-1: static value estimates by work class (C-10 electrical focus)
+const WORK_CLASS_VALUE_ESTIMATES: Record<string, { min: number; max: number }> = {
+  'panel upgrade': { min: 3500, max: 8000 },
+  'simple main panel upgrade': { min: 2500, max: 5500 },
+  'electrical modification': { min: 1500, max: 5000 },
+  'electrical': { min: 2000, max: 6000 },
+  'residential ev station (charging plug)': { min: 1500, max: 3500 },
+  'residential energy storage system (ess)': { min: 6000, max: 15000 },
+  'simple photovoltaic': { min: 8000, max: 18000 },
+  'residential solar panel - roof install': { min: 10000, max: 22000 },
+  'residential solar panel roof install - solar app': { min: 10000, max: 22000 },
+  'new': { min: 15000, max: 40000 },
+  'condominiums new': { min: 20000, max: 60000 },
+  'new commercial office': { min: 30000, max: 80000 },
+  'single family dwelling - additions/alterations': { min: 5000, max: 20000 },
+  'alteration / remodel': { min: 4000, max: 15000 },
+  'remodel': { min: 4000, max: 15000 },
+  'addition': { min: 5000, max: 20000 },
+  'pool & spa': { min: 3000, max: 8000 },
+  'mechanical': { min: 3000, max: 10000 },
+  'simple hvac': { min: 3500, max: 9000 },
+  'alteration / repair / tenant improvement': { min: 8000, max: 30000 },
+  'ti (additions/alterations)': { min: 8000, max: 30000 },
+  'non residential': { min: 10000, max: 40000 },
+}
+
 function translateStoreToPanel(storeLead: StoreHunterLead): any {
   const estValue = typeof storeLead.estimated_value === 'number' ? storeLead.estimated_value : null
+  const wcKey = ((storeLead as any).work_class_code ?? '').toLowerCase().trim()
   const valueRange = estValue && estValue > 0
     ? { min: Math.round(estValue * 0.85), max: Math.round(estValue * 1.15) }
-    : undefined
+    : WORK_CLASS_VALUE_ESTIMATES[wcKey]
 
   const discoveredDate = storeLead.discovered_at ? new Date(storeLead.discovered_at) : null
   const freshness = discoveredDate ? formatFreshness(discoveredDate) : undefined
@@ -119,6 +147,9 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     pitchAngles: undefined,
     status: (storeLead as any).status || undefined,
     notes: storeLead.notes || undefined,
+    contractor_name: (storeLead as any).contractor_name ?? undefined,
+    applied_date: (storeLead as any).applied_date ?? undefined,
+    work_class_code: (storeLead as any).work_class_code ?? undefined,
   }
 }
 
@@ -288,7 +319,13 @@ export function HunterPanel({
   const [showFilters, setShowFilters] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   // HUNTER-MAP-VIEW-APR28-2026-1
-const [mapExpanded, setMapExpanded] = useState(true)
+const [mapExpanded, setMapExpandedRaw] = useState(() => {
+  try { return localStorage.getItem('hunter_map_expanded') !== 'false' } catch { return true }
+})
+const setMapExpanded = (v: boolean) => {
+  try { localStorage.setItem('hunter_map_expanded', String(v)) } catch {}
+  setMapExpandedRaw(v)
+}
 const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null)
 
 const handleMapLeadSelect = (leadId: string) => {
@@ -313,7 +350,15 @@ const handleMapLeadSelect = (leadId: string) => {
   const [lostExpanded, setLostExpanded] = useState(false)
   const [deferredExpanded, setDeferredExpanded] = useState(false)
   const [cityPermitsExpanded, setCityPermitsExpanded] = useState(true)
-  const [activeCitySource, setActiveCitySource] = useState<'all' | 'TLMA' | 'Indio' | 'Palm Springs'>('all')
+  // HUNTER-UI-GEO-UNIFY-APR30-2026-1: geography filter persisted across sessions
+  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs'
+  const [geoFilter, setGeoFilterRaw] = useState<GeoFilter>(() => {
+    try { return (localStorage.getItem('hunter_geo_filter') as GeoFilter) ?? 'all' } catch { return 'all' }
+  })
+  const setGeoFilter = (f: GeoFilter) => {
+    try { localStorage.setItem('hunter_geo_filter', f) } catch {}
+    setGeoFilterRaw(f)
+  }
 
   // HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1
   // Modal open/close state and inline success banner state. Banner clears
@@ -398,6 +443,16 @@ const handleMapLeadSelect = (leadId: string) => {
 
   const leads: HunterLead[] = leadsFromProps ?? translatedStoreLeads
 
+  // HUNTER-UI-GEO-UNIFY-APR30-2026-1: geography-scoped lead set gates all buckets
+  const geoFilteredLeads = useMemo(() => {
+    switch (geoFilter) {
+      case 'tlma':         return leads.filter((l: any) => l.source === 'tlma_riverside')
+      case 'indio':        return leads.filter((l: any) => l.city === 'Indio')
+      case 'palm_springs': return leads.filter((l: any) => l.city === 'Palm Springs')
+      default:             return leads
+    }
+  }, [leads, geoFilter])
+
   // Real computation for leadsDiscoveredToday if not provided as prop.
   // "Today" = leads whose dateDiscovered renders a string matching today's format.
   // Until B4 unifies types we rely on the translator's formatted string — close enough.
@@ -408,7 +463,7 @@ const handleMapLeadSelect = (leadId: string) => {
 
   // Filter and sort leads
   const filteredAndSortedLeads = useMemo(() => {
-    let result = leads.filter((lead) => {
+    let result = geoFilteredLeads.filter((lead) => {
       // Score tier filter — bypass for archived-status leads so they
       // always reach the isArchivedLead bucket regardless of score.
       const leadStatus = (lead as any).status
@@ -478,7 +533,7 @@ const handleMapLeadSelect = (leadId: string) => {
     })
 
     return result
-  }, [leads, filters, sortBy])
+  }, [geoFilteredLeads, filters, sortBy])
 
   // Tier thresholds per canonical HUNTER scoring: elite 85+, strong 75-84,
   // qualified 60-74, expansion 40-59, archived <40.
@@ -510,11 +565,8 @@ const handleMapLeadSelect = (leadId: string) => {
     (l) => (l.score ?? 0) >= 40 && (l.score ?? 0) < 60
   )
 
-  // City portal leads bucket — source = 'city-portal', shown separately with source toggle
-  const cityPortalLeads = activeLeads.filter((l: any) => l.source === 'city-portal')
-  const filteredCityLeads = activeCitySource === 'all'
-    ? cityPortalLeads
-    : cityPortalLeads.filter((l: any) => l.city === activeCitySource)
+  // HUNTER-UI-GEO-UNIFY-APR30-2026-1: city-portal leads now flow through score
+  // buckets (Top/Expansion) via geoFilter — no separate City Permits section.
 
   // Archived bucket: lost/deferred/archived/estimated leads, hidden behind toggle.
   const archivedLeads = filteredAndSortedLeads.filter(isArchivedLead)
@@ -529,14 +581,14 @@ const handleMapLeadSelect = (leadId: string) => {
   )
 
   // Metrics
-  const totalPipeline = leads.reduce((sum, lead) => {
+  const totalPipeline = geoFilteredLeads.reduce((sum, lead) => {
     const midpoint = lead.valueRange
       ? (lead.valueRange.min + lead.valueRange.max) / 2
       : 0
     return sum + midpoint
   }, 0)
 
-  const avgScore = leads.length > 0 ? (leads.reduce((sum, l) => sum + l.score, 0) / leads.length).toFixed(0) : 0
+  const avgScore = geoFilteredLeads.length > 0 ? (geoFilteredLeads.reduce((sum, l) => sum + l.score, 0) / geoFilteredLeads.length).toFixed(0) : 0
 
   return (
     <div className="h-full flex flex-col bg-gradient-to-b from-gray-900 to-black">
@@ -625,19 +677,19 @@ const handleMapLeadSelect = (leadId: string) => {
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {(['all', 'TLMA', 'Indio', 'Palm Springs'] as const).map((src) => (
+                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs']] as const).map(([val, label]) => (
                   <button
-                    key={src}
+                    key={val}
                     type="button"
-                    onClick={() => setActiveCitySource(src)}
+                    onClick={() => setGeoFilter(val)}
                     className={clsx(
                       'px-2 py-0.5 rounded text-xs font-medium transition-colors',
-                      activeCitySource === src
+                      geoFilter === val
                         ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-500/50'
                         : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-500'
                     )}
                   >
-                    {src === 'all' ? 'All' : src}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -647,12 +699,7 @@ const handleMapLeadSelect = (leadId: string) => {
           {mapExpanded && (
             <div style={{ height: '50vh', minHeight: 320 }}>
               <HunterMap
-              leads={activeCitySource === 'all'
-                ? leads
-                : activeCitySource === 'TLMA'
-                ? leads.filter((l: any) => l.source === 'tlma_riverside')
-                : leads.filter((l: any) => l.city === activeCitySource)
-              }
+              leads={geoFilteredLeads}
               onLeadSelect={handleMapLeadSelect}
             />
             </div>
@@ -887,16 +934,22 @@ const handleMapLeadSelect = (leadId: string) => {
 
       {/* Lead Inbox */}
       <div className="flex-1 overflow-y-auto space-y-4 p-4">
-        {leads.length === 0 ? (
+        {geoFilteredLeads.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-gray-400">
             <Zap size={48} className="mb-3 opacity-50" />
-            <p>No leads yet. HUNTER scans run every morning.</p>
-            <button
-              onClick={onTriggerHunterScan}
-              className="mt-3 text-blue-400 hover:text-blue-300 underline text-sm"
-            >
-              Trigger manual scan
-            </button>
+            {leads.length === 0 ? (
+              <>
+                <p>No leads yet. HUNTER scans run every morning.</p>
+                <button
+                  onClick={onTriggerHunterScan}
+                  className="mt-3 text-blue-400 hover:text-blue-300 underline text-sm"
+                >
+                  Trigger manual scan
+                </button>
+              </>
+            ) : (
+              <p className="text-sm">No leads in this area. Select a different jurisdiction above.</p>
+            )}
           </div>
         ) : (
           <>
@@ -990,62 +1043,7 @@ const handleMapLeadSelect = (leadId: string) => {
               </div>
             )}
 
-            {/* City Portal Permits — Indio + Palm Springs scraped leads */}
-            {cityPortalLeads.length > 0 && (
-              <div className="mt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setCityPermitsExpanded(!cityPermitsExpanded)}
-                    className="flex items-center gap-2 text-sm font-bold text-cyan-300"
-                  >
-                    <span className="inline-block w-2 h-2 rounded-full bg-cyan-400"></span>
-                    City Permits ({filteredCityLeads.length})
-                    <span className="text-gray-500 text-xs">{cityPermitsExpanded ? '▼' : '▶'}</span>
-                  </button>
-                  {/* Source toggle pills */}
-                  <div className="flex gap-1">
-                    {(['all', 'TLMA', 'Indio', 'Palm Springs'] as const).map((src) => (
-                      <button
-                        key={src}
-                        type="button"
-                        onClick={() => setActiveCitySource(src)}
-                        className={clsx(
-                          'px-2 py-0.5 rounded text-xs font-medium transition-colors',
-                          activeCitySource === src
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-500/50'
-                            : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-500'
-                        )}
-                      >
-                        {src === 'all' ? 'All' : src}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {cityPermitsExpanded && (
-                  <div className="space-y-2">
-                    {filteredCityLeads.map((lead) => (
-                      <HunterLeadCard
-                        key={lead.id}
-                        lead={lead}
-                        onStatusChange={(id, status) => {
-                          onLeadAction?.(id, 'status_change', status)
-                        }}
-                        onNotesChange={(id, notes) => {
-                          onLeadAction?.(id, 'update_notes', notes)
-                        }}
-                        onCall={(lead) => {
-                          onLeadAction?.(lead.id, 'call', lead.phone)
-                        }}
-                        onPractice={(lead) => {
-                          onLeadAction?.(lead.id, 'practice', lead)
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* City-portal leads now flow through Top Leads / Expansion via geoFilter */}
 
             {/* Archived Leads - conditionally shown, split into sub-buckets */}
             {showArchived && archivedLeads.length > 0 && (

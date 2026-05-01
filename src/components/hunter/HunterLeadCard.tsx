@@ -231,6 +231,15 @@ export function HunterLeadCard({
   const distanceDisplay = formatDistance(distanceMiles)
   const driveTimeDisplay = formatDriveTime(distanceMiles)
 
+  // HUNTER-UI-CARD-ENHANCE-APR30-2026-1: NEW badge — applied within 3 days
+  const appliedDate = (lead as any).applied_date ? new Date((lead as any).applied_date) : null
+  const isNewLead = appliedDate
+    ? (Date.now() - appliedDate.getTime()) < 3 * 24 * 60 * 60 * 1000
+    : false
+  const appliedDateDisplay = appliedDate
+    ? appliedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+    : null
+
   const cityDisplay = getCityDisplay(lead)
   const hasLocation = !!(lead.address || lead.city)
 
@@ -274,14 +283,19 @@ export function HunterLeadCard({
         >
           {/* Row 1: Contact name + Distance */}
           <div className="flex items-start justify-between gap-3 mb-2">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              {isNewLead && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                  NEW
+                </span>
+              )}
               <h3 className="text-base font-bold text-white truncate">
-                {lead.contactName || lead.contact_name || 
-                (lead.source === 'city-portal' 
-                  ? (lead.description?.slice(0, 50) || lead.work_class_code || lead.permit_type_label || 'City Permit')
+                {lead.contactName || lead.contact_name ||
+                (lead.source === 'city-portal'
+                  ? (lead.description?.slice(0, 50) || (lead as any).work_class_code || (lead as any).permit_type_label || 'City Permit')
                   : 'Unknown'
-                )
-              }
+                )}
               </h3>
               {lead.phone && (
                 <div className="flex items-center gap-1 text-xs text-gray-400 shrink-0">
@@ -345,9 +359,19 @@ export function HunterLeadCard({
                   'inline-flex items-center text-xs px-1.5 py-0.5 rounded border',
                   lead.permit_status === 'Issued'
                     ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                    : lead.permit_status === 'Applied'
+                  : lead.permit_status === 'Submitted - Online' || lead.permit_status === 'Submitted'
                     ? 'bg-blue-950 text-blue-300 border-blue-800'
-                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                  : lead.permit_status === 'In Review' || lead.permit_status === 'Ready to Review'
+                    ? 'bg-sky-950 text-sky-300 border-sky-800'
+                  : lead.permit_status === 'Fees Due'
+                    ? 'bg-yellow-950 text-yellow-300 border-yellow-800'
+                  : lead.permit_status === 'Corrections Requested'
+                    ? 'bg-orange-950 text-orange-300 border-orange-800'
+                  : lead.permit_status === 'Denied' || lead.permit_status === 'Void' || lead.permit_status === 'Canceled'
+                    ? 'bg-red-950 text-red-400 border-red-900'
+                  : lead.permit_status === 'Complete'
+                    ? 'bg-gray-800 text-gray-500 border-gray-700'
+                  : 'bg-gray-800 text-gray-400 border-gray-700'
                 )}>
                   {lead.permit_status}
                 </span>
@@ -364,6 +388,28 @@ export function HunterLeadCard({
               )}
             </div>
           )}
+
+          {/* Row 3b: Contractor + applied date */}
+          <div className="flex items-center gap-3 mb-2 flex-wrap">
+            {(lead as any).contractor_name ? (
+              <span className="flex items-center gap-1 text-xs text-amber-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                {(lead as any).contractor_name}
+              </span>
+            ) : (
+              (lead.source === 'tlma_riverside' || lead.source === 'city-portal') && (
+                <span className="flex items-center gap-1 text-xs text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                  No contractor
+                </span>
+              )
+            )}
+            {appliedDateDisplay && (
+              <span className="text-xs text-gray-500">
+                Applied {appliedDateDisplay}
+              </span>
+            )}
+          </div>
 
           {/* Row 4: Description (2 lines truncated) */}
           {(lead.description || lead.pitchPreview) && (
