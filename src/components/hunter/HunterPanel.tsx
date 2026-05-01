@@ -111,7 +111,7 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     id: storeLead.id,
     score: typeof storeLead.score === 'number' ? storeLead.score : 0,
     scoringFactors: Array.isArray(storeLead.score_factors) ? storeLead.score_factors : undefined,
-    contactName: storeLead.contact_name || 'Unknown',
+    contactName: storeLead.contact_name || undefined,
     contact_name: storeLead.contact_name || undefined,
     jobType: storeLead.lead_type || 'electrical',
     jobTypeCategory: (storeLead.lead_type || 'electrical').toLowerCase(),
