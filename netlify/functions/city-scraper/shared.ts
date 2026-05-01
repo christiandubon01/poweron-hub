@@ -280,7 +280,8 @@ export async function scrapeCity(
       error_messages: [],
       permits_fetched: permits.length,
       permits_scored: viable.length,
-    }
+      sample_permit: permits[0] ?? null,
+    } as any
   }
 
   // Upsert into hunter_leads
