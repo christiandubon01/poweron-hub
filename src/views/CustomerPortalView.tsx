@@ -4,17 +4,14 @@
  * Route: /portal  /request
  * No auth required — Phase 1
  *
- * Tabs:
- *   Homeowner  → service request form → inserts portal_requests
- *   GC / Sub   → RFQ form            → inserts portal_requests (request_type='gc')
- *
- * On submit: row inserted into portal_requests with source='customer_portal'
+ * Design: matches poweronsolutionsllc.com
+ *   - Plus Jakarta Sans + Manrope fonts
+ *   - #030604 bg · #6ccb3f green · #ffd222 gold
+ *   - Radial gradient glows · grain grid overlay · glass panels
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 type Tab = 'homeowner' | 'gc'
 
@@ -28,31 +25,23 @@ type FormState = {
   description: string
   preferred_date: string
   preferred_time: string
-  // GC-only
   company: string
 }
 
 const BLANK: FormState = {
-  name: '',
-  phone: '',
-  email: '',
-  address: '',
-  city: '',
-  service_category: '',
-  description: '',
-  preferred_date: '',
-  preferred_time: '',
-  company: '',
+  name: '', phone: '', email: '', address: '', city: '',
+  service_category: '', description: '', preferred_date: '',
+  preferred_time: '', company: '',
 }
 
 const SERVICE_CATEGORIES = [
-  { value: 'residential', label: 'Residential' },
-  { value: 'commercial', label: 'Commercial' },
-  { value: 'solar', label: 'Solar / PV' },
-  { value: 'maintenance', label: 'Maintenance / Service' },
+  { value: 'residential',   label: 'Residential' },
+  { value: 'commercial',    label: 'Commercial' },
+  { value: 'solar',         label: 'Solar / PV' },
+  { value: 'maintenance',   label: 'Maintenance & Service' },
   { value: 'panel_upgrade', label: 'Panel Upgrade' },
-  { value: 'ev_charger', label: 'EV Charger' },
-  { value: 'other', label: 'Other' },
+  { value: 'ev_charger',    label: 'EV Charger Installation' },
+  { value: 'other',         label: 'Other' },
 ]
 
 const TIME_SLOTS = [
@@ -62,375 +51,310 @@ const TIME_SLOTS = [
   'Flexible',
 ]
 
-// ── Styles (inline — no Tailwind dependency for portal public page) ────────────
-// Brand: #02060d navy · #1e80df electric blue · Barlow Condensed + Barlow
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
 
-const S = {
-  page: {
-    minHeight: '100vh',
-    background: 'linear-gradient(160deg, #02060d 0%, #06111f 60%, #0a1a2e 100%)',
-    fontFamily: "'Barlow', system-ui, sans-serif",
-    color: '#e8edf4',
-  } as React.CSSProperties,
+  .pr {
+    --green:   #6ccb3f;
+    --green-2: #1c7b36;
+    --gold:    #ffd222;
+    --white:   #f7f8ef;
+    --muted:   #b8c3b4;
+    --muted-2: #778372;
+    --panel:   rgba(10, 18, 14, 0.72);
+    --line:    rgba(255, 255, 255, 0.11);
+    --shadow:  0 28px 80px rgba(0,0,0,.48);
+    --radius:  24px;
+    --ease:    cubic-bezier(.2,.75,.18,1);
 
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '20px 32px',
-    borderBottom: '1px solid rgba(30,128,223,0.15)',
-    background: 'rgba(2,6,13,0.8)',
-    backdropFilter: 'blur(12px)',
-    position: 'sticky' as const,
-    top: 0,
-    zIndex: 50,
-  } as React.CSSProperties,
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 20% 0%, rgba(108,203,63,.14), transparent 28%),
+      radial-gradient(circle at 85% 12%, rgba(255,210,34,.08), transparent 26%),
+      radial-gradient(circle at 65% 85%, rgba(28,123,54,.12), transparent 26%),
+      linear-gradient(180deg, #010201 0%, #030604 38%, #061007 100%);
+    color: var(--white);
+    font-family: "Plus Jakarta Sans", "Manrope", ui-sans-serif, system-ui, sans-serif;
+    overflow-x: hidden;
+    position: relative;
+  }
 
-  logo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    textDecoration: 'none',
-  } as React.CSSProperties,
+  .pr-grain {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: .18;
+    background-image:
+      linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+    background-size: 52px 52px;
+    mask-image: linear-gradient(to bottom, black, transparent 92%);
+  }
 
-  logoMark: {
-    width: 36,
-    height: 36,
-    background: 'linear-gradient(135deg, #1e80df, #0d4f8c)',
-    borderRadius: 8,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 18,
-  } as React.CSSProperties,
+  .pr-nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(22px);
+    background: rgba(1,3,2,.82);
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .pr-nav-inner {
+    width: min(1240px, calc(100vw - 40px)); margin: 0 auto;
+    height: 78px; display: flex; align-items: center;
+    justify-content: space-between; gap: 24px; position: relative; z-index: 2;
+  }
+  .pr-brand { display: flex; align-items: center; gap: 12px; }
+  .pr-brand-mark {
+    width: 46px; height: 46px; border-radius: 13px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, rgba(108,203,63,.2), rgba(255,210,34,.06)), rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.12);
+    box-shadow: 0 0 28px rgba(108,203,63,.14);
+    font-size: 22px;
+  }
+  .pr-brand-name {
+    font-size: 15px; font-weight: 800; letter-spacing: .06em;
+    text-transform: uppercase; line-height: 1; color: var(--white);
+  }
+  .pr-brand-sub {
+    font-size: 10px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--gold); margin-top: 4px;
+  }
+  .pr-phone {
+    font-size: 14px; font-weight: 700; color: var(--green);
+    text-decoration: none; transition: color .2s;
+  }
+  .pr-phone:hover { color: var(--gold); }
 
-  logoText: {
-    fontFamily: "'Barlow Condensed', system-ui, sans-serif",
-    fontWeight: 700,
-    fontSize: 18,
-    letterSpacing: '0.04em',
-    color: '#e8edf4',
-    textTransform: 'uppercase' as const,
-    lineHeight: 1.1,
-  } as React.CSSProperties,
+  .pr-body {
+    width: min(640px, calc(100vw - 32px));
+    margin: 0 auto; padding: 52px 0 72px;
+    position: relative; z-index: 2;
+  }
 
-  licenseTag: {
-    fontSize: 11,
-    color: '#4a7fa8',
-    letterSpacing: '0.06em',
-    fontWeight: 600,
-  } as React.CSSProperties,
+  .pr-eyebrow {
+    display: inline-flex; align-items: center; gap: 10px;
+    color: var(--green); font-weight: 800; font-size: 11px;
+    letter-spacing: .18em; text-transform: uppercase; margin-bottom: 18px;
+  }
+  .pr-eyebrow::before { content: "⚡"; color: var(--gold); font-size: 14px; }
+  .pr-eyebrow::after {
+    content: ""; width: 70px; height: 1px;
+    background: linear-gradient(90deg, var(--green), transparent);
+  }
 
-  hero: {
-    textAlign: 'center' as const,
-    padding: '56px 24px 40px',
-    maxWidth: 640,
-    margin: '0 auto',
-  } as React.CSSProperties,
+  .pr-h1 {
+    font-size: clamp(36px, 6vw, 56px); font-weight: 800;
+    line-height: .96; letter-spacing: -.04em; margin: 0 0 18px;
+  }
+  .pr-h1 .gold { color: var(--gold); }
 
-  heroEyebrow: {
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: '0.18em',
-    color: '#1e80df',
-    textTransform: 'uppercase' as const,
-    marginBottom: 14,
-  } as React.CSSProperties,
+  .pr-sub {
+    font-size: 16px; color: var(--muted); line-height: 1.65;
+    max-width: 520px; margin-bottom: 32px;
+  }
 
-  heroTitle: {
-    fontFamily: "'Barlow Condensed', system-ui, sans-serif",
-    fontWeight: 700,
-    fontSize: 'clamp(32px, 6vw, 52px)',
-    lineHeight: 1.1,
-    letterSpacing: '-0.01em',
-    color: '#fff',
-    marginBottom: 16,
-  } as React.CSSProperties,
+  .pr-badges { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 36px; }
+  .pr-badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 14px; border-radius: 30px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1);
+    font-size: 12px; font-weight: 600; color: var(--muted);
+  }
+  .pr-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 8px rgba(108,203,63,.6);
+    flex-shrink: 0;
+  }
 
-  heroSub: {
-    fontSize: 16,
-    color: '#7a9bbe',
-    lineHeight: 1.6,
-    maxWidth: 480,
-    margin: '0 auto 32px',
-  } as React.CSSProperties,
+  .pr-tabs {
+    display: flex; gap: 0;
+    background: rgba(255,255,255,.04);
+    border-radius: 16px; border: 1px solid rgba(255,255,255,.08);
+    padding: 5px; margin-bottom: 24px;
+  }
+  .pr-tab {
+    flex: 1; padding: 11px 16px; border-radius: 11px; border: none; cursor: pointer;
+    font-family: "Plus Jakarta Sans","Manrope",sans-serif;
+    font-weight: 800; font-size: 13px; letter-spacing: .04em; text-transform: uppercase;
+    transition: all .25s var(--ease);
+    background: transparent; color: var(--muted-2);
+  }
+  .pr-tab.active {
+    background: linear-gradient(135deg, var(--green-2), #0f5225);
+    color: var(--white);
+    border: 1px solid rgba(108,203,63,.4);
+    box-shadow: 0 4px 18px rgba(108,203,63,.22), inset 0 1px 0 rgba(255,255,255,.12);
+  }
 
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '5px 12px',
-    borderRadius: 20,
-    background: 'rgba(30,128,223,0.12)',
-    border: '1px solid rgba(30,128,223,0.3)',
-    fontSize: 12,
-    color: '#5da8e8',
-    fontWeight: 600,
-  } as React.CSSProperties,
+  .pr-card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 36px;
+    backdrop-filter: blur(16px); box-shadow: var(--shadow);
+    position: relative; overflow: hidden;
+  }
+  .pr-card::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(108,203,63,.3), rgba(255,210,34,.2), transparent);
+  }
 
-  tabRow: {
-    display: 'flex',
-    gap: 0,
-    background: 'rgba(255,255,255,0.04)',
-    borderRadius: 12,
-    border: '1px solid rgba(255,255,255,0.08)',
-    padding: 4,
-    margin: '0 auto 32px',
-    maxWidth: 360,
-    width: '100%',
-  } as React.CSSProperties,
+  .pr-gc-box {
+    background: rgba(108,203,63,.06); border: 1px solid rgba(108,203,63,.18);
+    border-radius: 16px; padding: 20px 24px; margin-bottom: 28px;
+  }
+  .pr-gc-title { font-size: 14px; font-weight: 800; color: var(--green); margin-bottom: 10px; }
+  .pr-gc-box ul { font-size: 13px; color: var(--muted); line-height: 1.9; margin: 0; padding-left: 18px; }
 
-  tab: (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '10px 16px',
-    borderRadius: 8,
-    border: 'none',
-    cursor: 'pointer',
-    fontFamily: "'Barlow Condensed', system-ui, sans-serif",
-    fontWeight: 700,
-    fontSize: 14,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    transition: 'all 0.2s',
-    background: active ? 'linear-gradient(135deg, #1e80df, #1565b8)' : 'transparent',
-    color: active ? '#fff' : '#4a7fa8',
-    boxShadow: active ? '0 2px 12px rgba(30,128,223,0.3)' : 'none',
-  }),
+  .pr-section {
+    font-size: 10px; font-weight: 800; letter-spacing: .18em;
+    color: var(--green); text-transform: uppercase;
+    margin: 28px 0 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .pr-section::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, rgba(108,203,63,.3), transparent);
+  }
 
-  formWrap: {
-    maxWidth: 600,
-    margin: '0 auto',
-    padding: '0 20px 60px',
-  } as React.CSSProperties,
+  .pr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .pr-full { grid-column: 1 / -1; }
+  .pr-field { display: flex; flex-direction: column; gap: 7px; }
+  .pr-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .07em;
+    color: var(--muted-2); text-transform: uppercase;
+  }
+  .pr-req { color: var(--gold); margin-left: 2px; }
 
-  card: {
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: 16,
-    padding: '32px',
-    backdropFilter: 'blur(8px)',
-  } as React.CSSProperties,
+  .pr-input, .pr-select, .pr-textarea {
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 12px; padding: 11px 15px;
+    font-size: 14px; font-weight: 500; color: var(--white);
+    outline: none; width: 100%; box-sizing: border-box;
+    font-family: "Plus Jakarta Sans","Manrope",sans-serif;
+    transition: border-color .2s, background .2s, box-shadow .2s;
+    -webkit-appearance: none; appearance: none;
+  }
+  .pr-input:focus, .pr-select:focus, .pr-textarea:focus {
+    border-color: rgba(108,203,63,.5);
+    background: rgba(255,255,255,.07);
+    box-shadow: 0 0 0 3px rgba(108,203,63,.1);
+  }
+  .pr-input::placeholder, .pr-textarea::placeholder { color: var(--muted-2); opacity: 1; }
+  .pr-textarea { min-height: 110px; resize: vertical; }
+  .pr-select { cursor: pointer; }
+  .pr-select option { background: #07100a; }
 
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: '0.14em',
-    color: '#1e80df',
-    textTransform: 'uppercase' as const,
-    marginBottom: 16,
-    marginTop: 24,
-  } as React.CSSProperties,
+  .pr-btn-gold {
+    width: 100%; margin-top: 28px; min-height: 52px; padding: 0 24px;
+    border-radius: 14px; border: none; cursor: pointer;
+    font-family: "Plus Jakarta Sans","Manrope",sans-serif;
+    font-weight: 850; font-size: 15px; letter-spacing: .02em;
+    color: #111307;
+    background: linear-gradient(135deg, #ffe75c, #ffc20f 48%, #d88905);
+    box-shadow: 0 14px 34px rgba(255,210,34,.2), inset 0 1px 0 rgba(255,255,255,.55);
+    transition: transform .24s var(--ease), box-shadow .24s var(--ease);
+    position: relative; overflow: hidden;
+  }
+  .pr-btn-gold::before {
+    content: ""; position: absolute; top: -80%; left: -40%;
+    width: 32%; height: 240%; background: rgba(255,255,255,.55);
+    transform: rotate(25deg) translateX(-160%);
+    transition: transform .7s var(--ease);
+  }
+  .pr-btn-gold:hover::before { transform: rotate(25deg) translateX(520%); }
+  .pr-btn-gold:hover { transform: translateY(-2px); box-shadow: 0 20px 50px rgba(255,210,34,.3); }
+  .pr-btn-gold:disabled { opacity: .5; cursor: not-allowed; transform: none !important; }
 
-  fieldRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 12,
-  } as React.CSSProperties,
+  .pr-btn-ghost {
+    padding: 11px 30px; border-radius: 12px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.14);
+    color: var(--white); font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: all .22s var(--ease);
+    font-family: "Plus Jakarta Sans","Manrope",sans-serif;
+  }
+  .pr-btn-ghost:hover {
+    background: rgba(255,255,255,.09); border-color: rgba(108,203,63,.45);
+    transform: translateY(-2px);
+  }
 
-  field: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 6,
-    marginBottom: 12,
-  } as React.CSSProperties,
+  .pr-error {
+    background: rgba(220,38,38,.1); border: 1px solid rgba(220,38,38,.25);
+    border-radius: 12px; padding: 12px 16px;
+    font-size: 13px; color: #fca5a5; margin-top: 16px;
+  }
+  .pr-consent {
+    font-size: 12px; color: var(--muted-2);
+    text-align: center; margin-top: 16px; line-height: 1.6;
+  }
 
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: '#7a9bbe',
-    letterSpacing: '0.04em',
-  } as React.CSSProperties,
+  .pr-success { text-align: center; padding: 72px 24px; }
+  .pr-success-icon {
+    width: 80px; height: 80px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--green), var(--green-2));
+    display: grid; place-items: center; font-size: 36px;
+    margin: 0 auto 28px;
+    box-shadow: 0 8px 40px rgba(108,203,63,.3);
+    animation: pr-pop .4s var(--ease) both;
+  }
+  .pr-success-title {
+    font-size: clamp(32px, 6vw, 48px); font-weight: 800;
+    line-height: 1; letter-spacing: -.03em; margin-bottom: 16px;
+  }
+  .pr-success-sub {
+    font-size: 16px; color: var(--muted); line-height: 1.65;
+    max-width: 440px; margin: 0 auto 32px;
+  }
+  .pr-success-chip {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 12px 24px; border-radius: 14px;
+    background: rgba(108,203,63,.08); border: 1px solid rgba(108,203,63,.2);
+    font-size: 13px; color: var(--green); font-weight: 600; margin-bottom: 32px;
+  }
 
-  input: {
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    padding: '10px 14px',
-    fontSize: 14,
-    color: '#e8edf4',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    fontFamily: "'Barlow', system-ui, sans-serif",
-  } as React.CSSProperties,
+  .pr-footer {
+    text-align: center; padding: 22px 24px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    font-size: 12px; color: var(--muted-2);
+    position: relative; z-index: 2;
+  }
+  .pr-footer a { color: var(--green); text-decoration: none; }
+  .pr-footer a:hover { color: var(--gold); }
 
-  textarea: {
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    padding: '10px 14px',
-    fontSize: 14,
-    color: '#e8edf4',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    minHeight: 100,
-    resize: 'vertical' as const,
-    fontFamily: "'Barlow', system-ui, sans-serif",
-  } as React.CSSProperties,
+  @keyframes pr-pop {
+    0%   { transform: scale(.7); opacity: 0; }
+    60%  { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1); }
+  }
 
-  select: {
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    padding: '10px 14px',
-    fontSize: 14,
-    color: '#e8edf4',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    fontFamily: "'Barlow', system-ui, sans-serif",
-    appearance: 'none' as const,
-    cursor: 'pointer',
-  } as React.CSSProperties,
+  @media (max-width: 520px) {
+    .pr-grid { grid-template-columns: 1fr; }
+    .pr-full { grid-column: 1; }
+    .pr-card { padding: 22px 16px; }
+    .pr-body { padding: 36px 0 60px; }
+  }
+`
 
-  submitBtn: (loading: boolean): React.CSSProperties => ({
-    width: '100%',
-    padding: '14px',
-    marginTop: 24,
-    borderRadius: 10,
-    border: 'none',
-    background: loading
-      ? 'rgba(30,128,223,0.4)'
-      : 'linear-gradient(135deg, #1e80df, #1565b8)',
-    color: '#fff',
-    fontFamily: "'Barlow Condensed', system-ui, sans-serif",
-    fontWeight: 700,
-    fontSize: 16,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-    cursor: loading ? 'not-allowed' : 'pointer',
-    boxShadow: loading ? 'none' : '0 4px 20px rgba(30,128,223,0.35)',
-    transition: 'all 0.2s',
-  }),
-
-  errorBox: {
-    background: 'rgba(220,38,38,0.12)',
-    border: '1px solid rgba(220,38,38,0.3)',
-    borderRadius: 8,
-    padding: '12px 16px',
-    fontSize: 13,
-    color: '#fca5a5',
-    marginTop: 16,
-  } as React.CSSProperties,
-
-  successWrap: {
-    textAlign: 'center' as const,
-    padding: '60px 24px',
-    maxWidth: 480,
-    margin: '0 auto',
-  } as React.CSSProperties,
-
-  successIcon: {
-    width: 72,
-    height: 72,
-    background: 'linear-gradient(135deg, #16a34a, #15803d)',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 32,
-    margin: '0 auto 24px',
-    boxShadow: '0 8px 32px rgba(22,163,74,0.3)',
-  } as React.CSSProperties,
-
-  successTitle: {
-    fontFamily: "'Barlow Condensed', system-ui, sans-serif",
-    fontWeight: 700,
-    fontSize: 32,
-    color: '#fff',
-    marginBottom: 12,
-  } as React.CSSProperties,
-
-  successSub: {
-    fontSize: 15,
-    color: '#7a9bbe',
-    lineHeight: 1.6,
-    marginBottom: 32,
-  } as React.CSSProperties,
-
-  anotherBtn: {
-    padding: '10px 28px',
-    borderRadius: 8,
-    border: '1px solid rgba(30,128,223,0.4)',
-    background: 'transparent',
-    color: '#5da8e8',
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-  } as React.CSSProperties,
-
-  footer: {
-    textAlign: 'center' as const,
-    padding: '20px 24px',
-    borderTop: '1px solid rgba(255,255,255,0.06)',
-    fontSize: 12,
-    color: '#2d4a63',
-  } as React.CSSProperties,
-
-  gcInfo: {
-    background: 'rgba(30,128,223,0.06)',
-    border: '1px solid rgba(30,128,223,0.15)',
-    borderRadius: 12,
-    padding: '20px 24px',
-    marginBottom: 24,
-  } as React.CSSProperties,
-
-  gcInfoTitle: {
-    fontFamily: "'Barlow Condensed', system-ui, sans-serif",
-    fontWeight: 700,
-    fontSize: 16,
-    color: '#5da8e8',
-    marginBottom: 8,
-  } as React.CSSProperties,
-
-  gcInfoList: {
-    fontSize: 13,
-    color: '#7a9bbe',
-    lineHeight: 1.8,
-    paddingLeft: 16,
-  } as React.CSSProperties,
+function injectStyles() {
+  if (document.getElementById('pr-styles')) return
+  const s = document.createElement('style')
+  s.id = 'pr-styles'
+  s.textContent = CSS
+  document.head.appendChild(s)
 }
 
-// ── Fonts loader (inject once) ────────────────────────────────────────────────
-function loadFonts() {
-  if (document.getElementById('portal-fonts')) return
-  const link = document.createElement('link')
-  link.id = 'portal-fonts'
-  link.rel = 'stylesheet'
-  link.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600&display=swap'
-  document.head.appendChild(link)
-}
-
-// ── Field component ───────────────────────────────────────────────────────────
 function Field({
-  label,
-  required,
-  children,
-  fullWidth,
+  label, required, children, full,
 }: {
-  label: string
-  required?: boolean
-  children: React.ReactNode
-  fullWidth?: boolean
+  label: string; required?: boolean; children: React.ReactNode; full?: boolean
 }) {
   return (
-    <div style={{ ...S.field, ...(fullWidth ? { gridColumn: '1 / -1' } : {}) }}>
-      <label style={S.label}>
-        {label}
-        {required && <span style={{ color: '#1e80df', marginLeft: 2 }}>*</span>}
+    <div className={`pr-field${full ? ' pr-full' : ''}`}>
+      <label className="pr-label">
+        {label}{required && <span className="pr-req">*</span>}
       </label>
       {children}
     </div>
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
 export default function CustomerPortalView() {
-  loadFonts()
+  useEffect(() => { injectStyles() }, [])
 
   const [tab, setTab] = useState<Tab>('homeowner')
   const [form, setForm] = useState<FormState>(BLANK)
@@ -438,23 +362,16 @@ export default function CustomerPortalView() {
   const [error, setError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
 
-  const set = (key: keyof FormState) => (
+  const setF = (key: keyof FormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => setForm(prev => ({ ...prev, [key]: e.target.value }))
 
   const handleSubmit = async () => {
-    if (!form.name.trim()) {
-      setError('Please enter your name.')
-      return
-    }
+    if (!form.name.trim()) { setError('Please enter your name.'); return }
     if (!form.phone.trim() && !form.email.trim()) {
-      setError('Please enter a phone number or email so we can reach you.')
-      return
+      setError('Please enter a phone number or email so we can reach you.'); return
     }
-    if (!form.service_category) {
-      setError('Please select a service category.')
-      return
-    }
+    if (!form.service_category) { setError('Please select a service category.'); return }
 
     setLoading(true)
     setError(null)
@@ -474,7 +391,6 @@ export default function CustomerPortalView() {
         source: 'customer_portal',
         status: 'new',
       }
-
       if (tab === 'gc' && form.company.trim()) {
         payload.notes = `Company: ${form.company.trim()}`
       }
@@ -484,11 +400,10 @@ export default function CustomerPortalView() {
         .insert(payload)
 
       if (dbError) {
-        setError('Something went wrong submitting your request. Please try again or call us.')
-        console.error('portal_requests insert error:', dbError)
+        setError('Something went wrong. Please try again or call us at (760) 339-9888.')
+        console.error('portal_requests insert:', dbError)
         return
       }
-
       setSubmitted(true)
     } catch (err: any) {
       setError('Unexpected error. Please try again.')
@@ -498,127 +413,127 @@ export default function CustomerPortalView() {
     }
   }
 
-  const reset = () => {
-    setForm(BLANK)
-    setSubmitted(false)
-    setError(null)
-  }
+  const reset = () => { setForm(BLANK); setSubmitted(false); setError(null) }
 
   return (
-    <div style={S.page}>
-      {/* Header */}
-      <header style={S.header}>
-        <div style={S.logo}>
-          <div style={S.logoMark}>⚡</div>
-          <div>
-            <div style={S.logoText}>Power On Solutions</div>
-            <div style={S.licenseTag}>C-10 ELECTRICAL · LIC #1151468</div>
-          </div>
-        </div>
-        <a
-          href="tel:17603399888"
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: '#5da8e8',
-            textDecoration: 'none',
-            letterSpacing: '0.04em',
-          }}
-        >
-          (760) 339-9888
-        </a>
-      </header>
+    <div className="pr">
+      <div className="pr-grain" />
 
-      {submitted ? (
-        /* ── Success Screen ── */
-        <div style={S.successWrap}>
-          <div style={S.successIcon}>✓</div>
-          <div style={S.successTitle}>Request Received</div>
-          <p style={S.successSub}>
-            We'll review your request and reach out within 1 business day to schedule your estimate.
-            Coachella Valley's trusted electrical contractor — we've got you covered.
-          </p>
-          <button style={S.anotherBtn} onClick={reset}>
-            Submit another request
-          </button>
+      {/* Nav */}
+      <nav className="pr-nav">
+        <div className="pr-nav-inner">
+          <div className="pr-brand">
+            <div className="pr-brand-mark">⚡</div>
+            <div>
+              <div className="pr-brand-name">Power On Solutions</div>
+              <div className="pr-brand-sub">C-10 Electrical · Lic #1151468</div>
+            </div>
+          </div>
+          <a href="tel:17603399888" className="pr-phone">(760) 339-9888</a>
         </div>
-      ) : (
-        <>
-          {/* Hero */}
-          <div style={S.hero}>
-            <div style={S.heroEyebrow}>Coachella Valley · Electrical Contractor</div>
-            <h1 style={S.heroTitle}>Request Electrical Service</h1>
-            <p style={S.heroSub}>
-              Residential, commercial, solar, and maintenance. Licensed, insured, and serving the Coachella Valley.
+      </nav>
+
+      <div className="pr-body">
+        {submitted ? (
+          <div className="pr-success">
+            <div className="pr-success-icon">✓</div>
+            <div className="pr-success-title">
+              Request <span style={{ color: 'var(--gold)' }}>Received</span>
+            </div>
+            <p className="pr-success-sub">
+              We'll review your request and reach out within 1 business day
+              to confirm your estimate. Coachella Valley's trusted electrical contractor —
+              we've got you covered.
             </p>
-            <div style={S.badge}>
+            <div className="pr-success-chip">
               <span>⚡</span>
-              <span>Fast response · No-obligation estimates</span>
+              <span>Licensed · Insured · Coachella Valley based</span>
             </div>
+            <br />
+            <button className="pr-btn-ghost" onClick={reset}>Submit another request</button>
           </div>
+        ) : (
+          <>
+            <div className="pr-eyebrow">Coachella Valley Electrical</div>
+            <h1 className="pr-h1">
+              Request <span className="gold">Electrical</span><br />Service
+            </h1>
+            <p className="pr-sub">
+              Residential, commercial, solar, and maintenance. Licensed, insured,
+              and built around the Coachella Valley. No-obligation estimates.
+            </p>
+            <div className="pr-badges">
+              <span className="pr-badge"><span className="pr-dot" />Fast response</span>
+              <span className="pr-badge"><span className="pr-dot" />C-10 Licensed & Insured</span>
+              <span className="pr-badge"><span className="pr-dot" />Coachella Valley based</span>
+            </div>
 
-          {/* Tab switcher */}
-          <div style={{ padding: '0 20px' }}>
-            <div style={S.tabRow}>
-              <button style={S.tab(tab === 'homeowner')} onClick={() => setTab('homeowner')}>
-                Homeowner
+            <div className="pr-tabs">
+              <button
+                className={`pr-tab${tab === 'homeowner' ? ' active' : ''}`}
+                onClick={() => setTab('homeowner')}
+              >
+                🏠 Homeowner
               </button>
-              <button style={S.tab(tab === 'gc')} onClick={() => setTab('gc')}>
-                GC / Sub
+              <button
+                className={`pr-tab${tab === 'gc' ? ' active' : ''}`}
+                onClick={() => setTab('gc')}
+              >
+                🏗️ GC / Sub-Contractor
               </button>
             </div>
-          </div>
 
-          {/* Form */}
-          <div style={S.formWrap}>
-            <div style={S.card}>
-
+            <div className="pr-card">
               {tab === 'gc' && (
-                <div style={S.gcInfo}>
-                  <div style={S.gcInfoTitle}>General Contractor & Sub-Contractor RFQ</div>
-                  <ul style={S.gcInfoList}>
-                    <li>C-10 Electrical License #1151468</li>
-                    <li>Available for bid on commercial & residential projects</li>
+                <div className="pr-gc-box">
+                  <div className="pr-gc-title">⚡ General Contractor & Sub-Contractor RFQ</div>
+                  <ul>
+                    <li>C-10 Electrical License #1151468 — available for bid</li>
+                    <li>Commercial, residential, and solar projects</li>
                     <li>Crew capacity and certifications available on request</li>
+                    <li>We respond within 1 business day</li>
                   </ul>
                 </div>
               )}
 
-              {/* Contact */}
-              <div style={S.sectionLabel}>Contact Information</div>
-              <div style={S.fieldRow}>
+              <div className="pr-section">Contact Information</div>
+              <div className="pr-grid">
                 <Field label="Full Name" required>
-                  <input style={S.input} value={form.name} onChange={set('name')} placeholder="Your name" />
+                  <input className="pr-input" value={form.name} onChange={setF('name')} placeholder="Your name" />
                 </Field>
-                {tab === 'gc' && (
+                {tab === 'gc' ? (
                   <Field label="Company">
-                    <input style={S.input} value={form.company} onChange={set('company')} placeholder="Company name" />
+                    <input className="pr-input" value={form.company} onChange={setF('company')} placeholder="Company name" />
+                  </Field>
+                ) : (
+                  <Field label="Phone">
+                    <input className="pr-input" type="tel" value={form.phone} onChange={setF('phone')} placeholder="(760) 000-0000" />
                   </Field>
                 )}
-                <Field label="Phone">
-                  <input style={S.input} type="tel" value={form.phone} onChange={set('phone')} placeholder="(760) 000-0000" />
-                </Field>
+                {tab === 'gc' && (
+                  <Field label="Phone">
+                    <input className="pr-input" type="tel" value={form.phone} onChange={setF('phone')} placeholder="(760) 000-0000" />
+                  </Field>
+                )}
                 <Field label="Email">
-                  <input style={S.input} type="email" value={form.email} onChange={set('email')} placeholder="you@email.com" />
+                  <input className="pr-input" type="email" value={form.email} onChange={setF('email')} placeholder="you@email.com" />
                 </Field>
               </div>
 
-              {/* Location */}
-              <div style={S.sectionLabel}>Service Location</div>
-              <div style={S.fieldRow}>
-                <Field label="Address" fullWidth>
-                  <input style={S.input} value={form.address} onChange={set('address')} placeholder="Street address" />
+              <div className="pr-section">Service Location</div>
+              <div className="pr-grid">
+                <Field label="Street Address" full>
+                  <input className="pr-input" value={form.address} onChange={setF('address')} placeholder="Street address" />
                 </Field>
                 <Field label="City">
-                  <input style={S.input} value={form.city} onChange={set('city')} placeholder="e.g. Palm Springs" />
+                  <input className="pr-input" value={form.city} onChange={setF('city')} placeholder="e.g. Palm Springs" />
                 </Field>
               </div>
 
-              {/* Service */}
-              <div style={S.sectionLabel}>Service Request</div>
-              <div style={S.fieldRow}>
+              <div className="pr-section">Service Details</div>
+              <div className="pr-grid">
                 <Field label="Service Category" required>
-                  <select style={S.select} value={form.service_category} onChange={set('service_category')}>
+                  <select className="pr-select" value={form.service_category} onChange={setF('service_category')}>
                     <option value="">Select a category</option>
                     {SERVICE_CATEGORIES.map(c => (
                       <option key={c.value} value={c.value}>{c.label}</option>
@@ -627,53 +542,58 @@ export default function CustomerPortalView() {
                 </Field>
                 {tab === 'homeowner' && (
                   <Field label="Preferred Date">
-                    <input style={S.input} type="date" value={form.preferred_date} onChange={set('preferred_date')} />
+                    <input className="pr-input" type="date" value={form.preferred_date} onChange={setF('preferred_date')} />
                   </Field>
                 )}
               </div>
+
               {tab === 'homeowner' && (
-                <div style={S.fieldRow}>
+                <div className="pr-grid">
                   <Field label="Preferred Time">
-                    <select style={S.select} value={form.preferred_time} onChange={set('preferred_time')}>
+                    <select className="pr-select" value={form.preferred_time} onChange={setF('preferred_time')}>
                       <option value="">Any time</option>
-                      {TIME_SLOTS.map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                      {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </Field>
                 </div>
               )}
-              <div style={S.fieldRow}>
-                <Field label={tab === 'gc' ? 'Project Description / Scope' : 'Describe the Issue'} fullWidth>
+
+              <div className="pr-grid">
+                <Field
+                  label={tab === 'gc' ? 'Project Scope / Description' : 'Describe the Issue'}
+                  full
+                >
                   <textarea
-                    style={S.textarea}
+                    className="pr-textarea"
                     value={form.description}
-                    onChange={set('description')}
-                    placeholder={
-                      tab === 'gc'
-                        ? 'Describe the project scope, timeline, and any specific requirements...'
-                        : 'What electrical issue are you experiencing? Any relevant details help...'
-                    }
+                    onChange={setF('description')}
+                    placeholder={tab === 'gc'
+                      ? 'Scope, timeline, special requirements, trade coordination...'
+                      : 'What electrical issue are you experiencing? Any details help us prepare...'}
                   />
                 </Field>
               </div>
 
-              {error && <div style={S.errorBox}>{error}</div>}
+              {error && <div className="pr-error">{error}</div>}
 
-              <button style={S.submitBtn(loading)} onClick={handleSubmit} disabled={loading}>
-                {loading ? 'Submitting…' : tab === 'gc' ? 'Submit RFQ' : 'Request Estimate'}
+              <button className="pr-btn-gold" onClick={handleSubmit} disabled={loading}>
+                {loading ? 'Submitting…' : tab === 'gc' ? '⚡ Submit RFQ' : '⚡ Request My Estimate'}
               </button>
 
-              <p style={{ fontSize: 12, color: '#2d4a63', textAlign: 'center', marginTop: 14 }}>
-                By submitting you agree to be contacted by Power On Solutions LLC regarding your request.
+              <p className="pr-consent">
+                By submitting you agree to be contacted by Power On Solutions LLC.
+                Your information is never shared or sold.
               </p>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
 
-      <footer style={S.footer}>
-        © {new Date().getFullYear()} Power On Solutions LLC · C-10 Electrical License #1151468 · Desert Hot Springs, CA
+      <footer className="pr-footer">
+        © {new Date().getFullYear()} Power On Solutions LLC &nbsp;·&nbsp;
+        C-10 Electrical License #1151468 &nbsp;·&nbsp;
+        Desert Hot Springs, CA &nbsp;·&nbsp;
+        <a href="tel:17603399888">(760) 339-9888</a>
       </footer>
     </div>
   )
