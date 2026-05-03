@@ -87,7 +87,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const STATUS_TO_MILESTONE: Record<string, string[]> = {
   new:       ['request_received'],
-  reviewed:  ['request_received', 'accepted'],
+  reviewed:  ['request_received'],
   scheduled: ['request_received', 'accepted', 'scheduling', 'confirmed'],
   closed:    ['request_received', 'accepted', 'scheduling', 'confirmed', 'work_completed'],
 }
@@ -400,13 +400,9 @@ function TrackingMap({
             map: mapInstance.current,
             title: 'Service Location',
             icon: {
-              path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
-              fillColor: '#6ccb3f',
-              fillOpacity: 1,
-              strokeColor: '#0a1208',
-              strokeWeight: 2,
-              scale: 1.2,
-              anchor: new google.maps.Point(0, 0),
+              url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40"><path d="M16 0C7.163 0 0 7.163 0 16c0 10 16 24 16 24s16-14 16-24C32 7.163 24.837 0 16 0z" fill="#6ccb3f" stroke="#0a1208" stroke-width="2"/><circle cx="16" cy="16" r="6" fill="#0a1208"/></svg>')}`,
+              scaledSize: new google.maps.Size(32, 40),
+              anchor: new google.maps.Point(16, 40),
             },
           })
 
