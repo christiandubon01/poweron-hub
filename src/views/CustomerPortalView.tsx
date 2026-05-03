@@ -418,7 +418,7 @@ export default function CustomerPortalView() {
         .single()
 
       if (dbError) {
-        setError('Something went wrong. Please try again or call us at (760) 339-9888.')
+        setError(`Error: ${dbError.message} | Code: ${dbError.code}`)
         console.error('portal_requests insert:', dbError)
         return
       }
