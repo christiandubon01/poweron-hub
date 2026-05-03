@@ -12,6 +12,8 @@
 
 import React, { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 type Tab = 'homeowner' | 'gc'
 
@@ -411,11 +413,20 @@ export default function CustomerPortalView() {
         payload.notes = `Company: ${form.company.trim()}`
       }
 
-      const { data, error: dbError } = await (supabase as any)
-        .from('portal_requests')
-        .insert(payload)
-        .select('id')
-        .single()
+      const { data, error: dbError } = await fetch(`${SUPABASE_URL}/rest/v1/portal_requests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Prefer': 'return=representation',
+        },
+        body: JSON.stringify(payload),
+      }).then(async (res) => {
+        const json = await res.json()
+        if (!res.ok) return { data: null, error: json }
+        return { data: Array.isArray(json) ? json[0] : json, error: null }
+      })
 
       if (dbError) {
         setError(`Error: ${dbError.message} | Code: ${dbError.code}`)
