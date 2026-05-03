@@ -397,15 +397,17 @@ export function PortalInbox({ onLeadConverted }: PortalInboxProps) {
   }, [load])
 
   const handleConvert = async (req: PortalRequest) => {
+    if (converting) return  // block any second click
     setConverting(req.id)
+    setSelectedReq(null)   // close modal immediately
     try {
       const leadId = await convertToLead(req)
       if (leadId) {
         setRequests(prev => prev.filter(r => r.id !== req.id))
-        setSelectedReq(null)
         onLeadConverted?.()
       } else {
         alert('Conversion failed — check console for details.')
+        setRequests(prev => prev)  // re-show on failure
       }
     } finally {
       setConverting(null)

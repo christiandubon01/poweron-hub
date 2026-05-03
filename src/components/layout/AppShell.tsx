@@ -407,7 +407,11 @@ export function AppShell({ children }: AppShellProps) {
   // Session Debrief overlay state
   const [showSessionDebrief, setShowSessionDebrief] = useState(false)
   const [debriefConclusions, setDebriefConclusions] = useState<any[]>([])
-
+  const [serviceCallPrefill, setServiceCallPrefill] = useState<{
+    customer: string
+    address: string
+    notes: string
+  } | null>(null)
   // HUNTER-C-OPEN-ESTIMATE-BRIDGE-APR24-2026-1
   // Holds prefill data mapped from a HunterLead when the operator clicks
   // "Open Estimate" in PipelineTab. Passed down to V15rProjectsPanel which
@@ -642,11 +646,17 @@ export function AppShell({ children }: AppShellProps) {
         },
       }
 
-      setHunterLeadPrefill(prefill)
-      // Switch to the Projects panel so V15rProjectsPanel renders and
-      // picks up the prefill. The active view key 'projects' matches the
-      // case in renderContent() that renders V15rProjectsPanel.
-      setActiveView('projects')
+      if (detail?.entryType === 'service_call') {
+        setServiceCallPrefill({
+          customer: lead.contact_name || lead.company_name || '',
+          address: [lead.address, lead.city].filter(Boolean).join(', '),
+          notes: lead.description || '',
+        })
+        setActiveView('field-log')
+      } else {
+        setHunterLeadPrefill(prefill)
+        setActiveView('projects')
+      }
     }
 
     window.addEventListener('poweron:open-estimate', handleOpenEstimate)
@@ -766,7 +776,7 @@ export function AppShell({ children }: AppShellProps) {
 
       // v15r Business
       case 'graph-dashboard': return <V15rDashboard />
-      case 'field-log':       return <V15rFieldLogPanel />
+      case 'field-log':       return <V15rFieldLogPanel serviceCallPrefill={serviceCallPrefill} onPrefillUsed={() => setServiceCallPrefill(null)} />
       case 'money':           return <V15rMoneyPanel />
       case 'income-calc':     return <V15rIncomeCalc />
       case 'price-book':      return <V15rPriceBookPanel />

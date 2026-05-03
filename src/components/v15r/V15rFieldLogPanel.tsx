@@ -11,7 +11,7 @@
  * STEP 3: Rewrite with exact features
  */
 
-import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useCallback, useMemo, lazy, Suspense, useEffect } from 'react'
 import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText } from 'lucide-react'
 import {
   getBackupData,
@@ -257,11 +257,16 @@ function interleaveWithGaps(entries: any[], dateField: string = 'date'): Array<{
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function V15rFieldLogPanel() {
+export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }: { serviceCallPrefill?: { customer: string; address: string; notes: string } | null; onPrefillUsed?: () => void } = {}) {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
-  const [activeTab, setActiveTab] = useState<'proj' | 'svc' | 'triggers'>('proj')
+  const [activeTab, setActiveTab] = useState<'proj' | 'svc' | 'triggers'>(() => {
+    try {
+      if (localStorage.getItem('poweron_svc_prefill')) return 'svc'
+    } catch {}
+    return 'proj'
+  })
   const [projFilter, setProjFilter] = useState('all')
   const [svcFilter, setSvcFilter] = useState('all')
   const [showGaps, setShowGaps] = useState(true)
@@ -310,7 +315,6 @@ export default function V15rFieldLogPanel() {
   const [slEmatInfo, setSlEmatInfo] = useState('')
   const [slDetailLink, setSlDetailLink] = useState('')
   const [slNotes, setSlNotes] = useState('')
-
   // Service Estimate workflow state (Step 1-3)
   const [showEstimateForm, setShowEstimateForm] = useState(false)
   const [editEstimateId, setEditEstimateId] = useState<string | null>(null)
@@ -323,6 +327,18 @@ export default function V15rFieldLogPanel() {
   const [estMaterials, setEstMaterials] = useState('')
   const [estMiles, setEstMiles] = useState('')
   const [estNotes, setEstNotes] = useState('')
+
+  useEffect(() => {
+    if (serviceCallPrefill) {
+      setActiveTab('svc')
+      setEstCust(serviceCallPrefill.customer || '')
+      setEstAddr(serviceCallPrefill.address || '')
+      setEstNotes(serviceCallPrefill.notes || '')
+      setShowEstimateForm(true)
+      onPrefillUsed?.()
+    }
+  }, [serviceCallPrefill])
+
   const [completingEstimateId, setCompletingEstimateId] = useState<string | null>(null)
   const [actualHours, setActualHours] = useState('')
   const [actualMaterials, setActualMaterials] = useState('')
