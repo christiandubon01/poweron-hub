@@ -196,6 +196,7 @@ export function HunterLeadCard({
 }: HunterLeadCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [editingNotes, setEditingNotes] = useState(false)
+  const [filesModalOpen, setFilesModalOpen] = useState(false)
   const [notes, setNotes] = useState(lead.notes || '')
   const [lostModalOpen, setLostModalOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -871,6 +872,75 @@ export function HunterLeadCard({
               </p>
             )}
           </div>
+
+          {/* Uploaded Files Section — portal leads only */}
+          {(lead.source === 'customer_portal' || lead.sourceTag === 'customer_portal') && (() => {
+            const desc = lead.description || ''
+            const match = desc.match(/Files:\s*(.+)/)
+            const fileUrls = match ? match[1].split(',').map((u: string) => u.trim()).filter(Boolean) : []
+            if (fileUrls.length === 0) return null
+            const imageUrls = fileUrls.filter((u: string) => /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(u))
+            const docUrls = fileUrls.filter((u: string) => !/\.(jpg|jpeg|png|gif|webp|heic)$/i.test(u))
+            return (
+              <div>
+                <button
+                  onClick={() => setFilesModalOpen(true)}
+                  className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-yellow-600/50 rounded text-xs text-gray-300 hover:text-white transition-colors w-full"
+                >
+                  <span>📎</span>
+                  <span>View Uploaded Files ({fileUrls.length})</span>
+                </button>
+                {filesModalOpen && (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center p-4"
+                    style={{ background: 'rgba(0,0,0,.8)', backdropFilter: 'blur(8px)' }}
+                    onClick={() => setFilesModalOpen(false)}
+                  >
+                    <div
+                      className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border border-gray-700 bg-gray-950 p-6 space-y-4"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-base font-bold text-white">📎 Uploaded Files ({fileUrls.length})</h3>
+                        <button onClick={() => setFilesModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">✕</button>
+                      </div>
+                      {imageUrls.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Photos / Videos ({imageUrls.length})</div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {imageUrls.map((url: string, i: number) => (
+                              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                                className="block rounded-lg overflow-hidden border border-gray-800 hover:border-yellow-600/50 transition-colors">
+                                <img src={url} alt={`Upload ${i + 1}`} className="w-full h-40 object-cover" loading="lazy" />
+                                <div className="px-2 py-1 text-[10px] text-gray-500 truncate bg-gray-900">
+                                  {decodeURIComponent(url.split('/').pop() ?? url).replace(/^\d+-/, '')}
+                                </div>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {docUrls.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Documents ({docUrls.length})</div>
+                          <div className="space-y-2">
+                            {docUrls.map((url: string, i: number) => (
+                              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center gap-2 px-3 py-2.5 bg-gray-900 border border-gray-800 hover:border-yellow-600/40 rounded-lg text-sm text-gray-300 hover:text-white transition-colors">
+                                <span>📄</span>
+                                <span className="truncate flex-1">{decodeURIComponent(url.split('/').pop() ?? url).replace(/^\d+-/, '')}</span>
+                                <span className="text-gray-600 text-xs flex-shrink-0">Open ↗</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Actions Row */}
           <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-700">

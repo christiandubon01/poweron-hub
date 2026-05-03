@@ -617,10 +617,11 @@ export function AppShell({ children }: AppShellProps) {
       if (!detail?.lead) return
 
       const lead = detail.lead
+      console.log('[AppShell] open-estimate lead.source_tag=', lead.source_tag, 'lead.source=', lead.source)
       const estValue = typeof lead.estimated_value === 'number' ? lead.estimated_value : 0
 
       const prefill = {
-        name: (lead.description || '').slice(0, 80) || (lead.company_name ? lead.company_name + ' Project' : 'New Project from HUNTER'),
+        name: `${lead.contact_name || lead.company_name || 'Client'} - ${(lead.description || '').slice(0, 20)}`,
         customer: lead.contact_name || lead.company_name || '',
         contract: estValue,
         type: (lead.lead_type || 'Residential').charAt(0).toUpperCase() + (lead.lead_type || 'Residential').slice(1).toLowerCase(),

@@ -85,8 +85,10 @@ const CATEGORY_LABELS: Record<string, string> = {
 const STATUS_TO_MILESTONE: Record<string, string[]> = {
   new:       ['request_received'],
   reviewed:  ['request_received'],
+  accepted:  ['request_received', 'accepted'],
   scheduled: ['request_received', 'accepted', 'scheduling', 'confirmed'],
   closed:    ['request_received', 'accepted', 'scheduling', 'confirmed', 'work_completed'],
+  dismissed: [],
 }
 
 function isCoachellaValley(city: string | null): boolean {
@@ -204,7 +206,7 @@ function injectStyles() {
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
 // ── Maps loader ───────────────────────────────────────────────────────────────
@@ -474,6 +476,12 @@ export default function PortalTrackView() {
             <div className="pt-not-found-title">Request Not Found</div>
             <p className="pt-not-found-sub">We couldn't find this request. Please check your link or call us at (760) 623-8962.</p>
           </div>
+        ) : request?.status === 'dismissed' ? (
+          <div className="pt-not-found">
+            <div className="pt-not-found-icon">📋</div>
+            <div className="pt-not-found-title">Request No Longer Active</div>
+            <p className="pt-not-found-sub">We weren't able to move forward with this request at this time. Please call us at (760) 623-8962 if you have questions or would like to submit a new request.</p>
+          </div>
         ) : request ? (
           <>
             <div className="pt-eyebrow">Job Tracker</div>
@@ -501,7 +509,15 @@ export default function PortalTrackView() {
                       <div className="pt-milestone-content">
                         <div className="pt-milestone-title">{meta.label}</div>
                         {(isDone || isActive) && <div className="pt-milestone-desc">{entry?.description || meta.desc}</div>}
-                        {entry && <div className="pt-milestone-time">{formatTime(entry.event_time)}</div>}
+                        {entry && type !== 'scheduling' && (
+                          <div className="pt-milestone-time">
+                            {type === 'confirmed'
+                              ? request.preferred_date
+                                ? new Date(request.preferred_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+                                : formatTime(entry.event_time)
+                              : formatTime(entry.event_time)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
@@ -526,10 +542,10 @@ export default function PortalTrackView() {
                 <span className="pt-info-label">Status</span>
                 <span className={`pt-badge ${request.status}`}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
-                  {request.status === 'new' ? 'Under Review' :
-                   request.status === 'reviewed' ? 'Under Review' :
-                   request.status === 'scheduled' ? 'Scheduled' :
-                   request.status === 'closed' ? 'Completed' : request.status}
+                  {(() => {
+                    const latestDone = [...MILESTONE_ORDER].reverse().find(m => doneTypes.has(m))
+                    return latestDone ? MILESTONE_LABELS[latestDone].label : 'Under Review'
+                  })()}
                 </span>
               </div>
             </div>

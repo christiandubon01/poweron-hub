@@ -109,10 +109,44 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     return () => { cancelled = true }
   }, [])
 
+  const activeStatuses = ['new', 'contacted', 'follow_up']
   const geocodedLeads = useMemo(
-    () => leads.filter((l: any) => typeof l.latitude === 'number' && typeof l.longitude === 'number'),
+    () => leads.filter((l: any) =>
+      typeof l.latitude === 'number' && typeof l.longitude === 'number' &&
+      activeStatuses.includes((l as any).status ?? 'new')
+    ),
     [leads]
   )
+  const ungeocodedPortalLeads = useMemo(
+    () => leads.filter((l: any) =>
+      (l.source === 'customer_portal' || l.sourceTag === 'customer_portal') &&
+      (typeof l.latitude !== 'number' || typeof l.longitude !== 'number') &&
+      (l.address || l.city) &&
+      activeStatuses.includes((l as any).status ?? 'new')
+    ),
+    [leads]
+  )
+  const [portalPins, setPortalPins] = useState<{ id: string; lat: number; lng: number; lead: any }[]>([])
+
+  useEffect(() => {
+    setPortalPins([])
+    if (!isLoaded || ungeocodedPortalLeads.length === 0) return
+    const google = (window as any).google
+    if (!google?.maps) return
+    const geocoder = new google.maps.Geocoder()
+    ungeocodedPortalLeads.forEach((lead: any) => {
+      const query = [lead.address, lead.city, 'CA'].filter(Boolean).join(', ')
+      if (!query) return
+      geocoder.geocode({ address: query }, (results: any, status: any) => {
+        if (status !== 'OK' || !results[0]) return
+        const loc = results[0].geometry.location
+        setPortalPins(prev => {
+          if (prev.find(p => p.id === lead.id)) return prev
+          return [...prev, { id: lead.id, lat: loc.lat(), lng: loc.lng(), lead }]
+        })
+      })
+    })
+  }, [isLoaded, ungeocodedPortalLeads])
 
   const center = homeBase ?? FALLBACK_CENTER
 
@@ -180,6 +214,16 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           title={lead.contactName ?? lead.contact_name ?? 'Lead'}
           icon={pinSymbol(pinColorForScore(lead.score ?? 0))}
           onClick={() => setSelectedLeadId(lead.id)}
+        />
+      ))}
+
+      {portalPins.map(({ id, lat, lng, lead }) => (
+        <MarkerF
+          key={`portal-${id}`}
+          position={{ lat, lng }}
+          title={lead.contactName ?? lead.contact_name ?? 'Portal Lead'}
+          icon={pinSymbol(pinColorForScore(lead.score ?? 82))}
+          onClick={() => setSelectedLeadId(id)}
         />
       ))}
 

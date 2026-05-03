@@ -7,7 +7,7 @@
  * chips (stale days, completion %, open RFIs), edit/delete/move-status buttons.
  */
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X } from 'lucide-react'
 import {
   getBackupData,
@@ -90,7 +90,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // Local snapshot of HUNTER context from prefillFromLead, kept independent
   // of the prop so the banner persists after onPrefillUsed nulls the prop.
   const [hunterBannerCtx, setHunterBannerCtx] = useState<any>(null)
-
+  const portalLeadRef = useRef<{ isPortal: boolean }>({ isPortal: false })
   // New Project form state
   const [npName, setNpName] = useState('')
   const [npClient, setNpClient] = useState('')
@@ -137,6 +137,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         leadId: prefillFromLead.leadId,
         ...prefillFromLead.hunterContext
       })
+      const isPortal = prefillFromLead.hunterContext.source_tag === 'customer_portal' ||
+                       prefillFromLead.hunterContext.source === 'customer_portal'
+      portalLeadRef.current = { isPortal }
     }
     setShowNewProject(true)
     onPrefillUsed?.()
@@ -217,10 +220,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       }
 
       // If this lead came from the customer portal, fire the Scheduling milestone
-      const isPortalLead = hunterBannerCtx?.source_tag === 'customer_portal' ||
-                           prefillFromLead?.hunterContext?.source_tag === 'customer_portal'
+      const isPortalLead = portalLeadRef.current.isPortal ||
+                           hunterBannerCtx?.source_tag === 'customer_portal' ||
+                           hunterBannerCtx?.source === 'customer_portal'
       if (isPortalLead) {
         // Find the portal_request linked to this hunter lead
+        console.log('[Portal] isPortalLead=true, leadId=', leadId)
         const { supabase: sb } = await import('@/lib/supabase')
         const { data: portalReq } = await (sb as any)
           .from('portal_requests')
@@ -228,17 +233,21 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           .eq('hunter_lead_id', leadId)
           .maybeSingle()
         if (portalReq?.id) {
-          await (sb as any)
-            .from('job_timeline')
-            .insert({
-              portal_request_id: portalReq.id,
-              event_type:        'scheduling',
-              title:             'Project Scheduled',
-              description:       'A project has been created for your request. We will reach out shortly to confirm details.',
-              event_time:        new Date().toISOString(),
-              triggered_by:      'owner',
-            })
-            .catch((err: any) => console.error('[V15rProjectsPanel] job_timeline scheduling insert failed:', err))
+          try {
+            await (sb as any)
+              .from('job_timeline')
+              .insert({
+                portal_request_id: portalReq.id,
+                event_type:        'confirmed',
+                title:             'Appointment Confirmed',
+                description:       'Your appointment has been scheduled. We will be there as planned.',
+                event_time:        new Date().toISOString(),
+                triggered_by:      'owner',
+              })
+            console.log('[Portal] confirmed milestone inserted for', portalReq.id)
+          } catch (err: any) {
+            console.error('[V15rProjectsPanel] job_timeline confirmed insert failed:', err)
+          }
         }
       }
     }

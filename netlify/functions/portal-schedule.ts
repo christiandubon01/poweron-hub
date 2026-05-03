@@ -511,9 +511,9 @@ async function handleSendConfirmationEmail(body, resendApiKey) {
         </td></tr>
         <!-- Footer -->
         <tr><td style="background:#0f172a;padding:20px 40px;border-top:1px solid #1e293b;text-align:center;">
-          <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;">Power On Solutions LLC · C-10 License #1151468</p>
-          <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;">Desert Hot Springs, CA · Coachella Valley Electrical Contractor</p>
-          <p style="margin:0;font-size:11px;color:#64748b;">© ${year} Power On Solutions LLC. All rights reserved.</p>
+          <p style="margin:0 0 6px;font-size:12px;color:#475569;">${COMPANY_NAME} · C-10 License #${LICENSE_NUMBER}</p>
+          <p style="margin:0 0 6px;font-size:12px;color:#475569;">Desert Hot Springs, CA · Coachella Valley Electrical Contractor</p>
+          <p style="margin:0;font-size:11px;color:#334155;">© ${year} ${COMPANY_NAME}. All rights reserved.</p>
         </td></tr>
       </table>
     </td></tr>

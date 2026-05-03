@@ -188,6 +188,13 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
         triggerGeocodingBackfill(tenantId).catch((err) => {
           console.error('[portalService] backfill failed (non-fatal):', err)
         })
+        // Re-fetch hunter store so map pin appears immediately after geocoding
+        try {
+          const { useHunterStore } = await import('@/store/hunterStore')
+          useHunterStore.getState().fetchLeads()
+        } catch (err) {
+          console.error('[portalService] hunter store re-fetch failed (non-fatal):', err)
+        }
       })
       .catch((err) => {
         console.error('[portalService] geocoding failed (non-fatal):', err)
@@ -198,7 +205,7 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
   const { error: updateError } = await (supabase as any)
     .from('portal_requests')
     .update({
-      status:         'reviewed',
+      status:         'accepted',
       hunter_lead_id: newLeadId,
     })
     .eq('id', request.id)
@@ -207,21 +214,31 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
     console.error('[portalService] update portal_request failed:', updateError)
   }
 
-  // ── Insert "Accepted" job_timeline milestone ───────────────────────────────
-  // This triggers the Accepted step on the customer's tracking page in real time
-  await (supabase as any)
-    .from('job_timeline')
-    .insert({
-      portal_request_id: request.id,
-      event_type:        'accepted',
-      title:             'Request Accepted',
-      description:       'Your request has been accepted. We\'ll reach out with scheduling options soon.',
-      event_time:        new Date().toISOString(),
-      triggered_by:      'owner',
-    })
-    .catch((err: any) => {
-      console.error('[portalService] job_timeline accepted insert failed (non-fatal):', err)
-    })
+  // ── Insert "Accepted" + "Scheduling" job_timeline milestones ─────────────
+  try {
+    await (supabase as any)
+      .from('job_timeline')
+      .insert([
+        {
+          portal_request_id: request.id,
+          event_type:        'accepted',
+          title:             'Request Accepted',
+          description:       'Your request has been accepted. We\'ll reach out with scheduling options soon.',
+          event_time:        new Date().toISOString(),
+          triggered_by:      'owner',
+        },
+        {
+          portal_request_id: request.id,
+          event_type:        'scheduling',
+          title:             'Scheduling in Progress',
+          description:       'We\'re coordinating your appointment time and will confirm shortly.',
+          event_time:        new Date(Date.now() + 1000).toISOString(),
+          triggered_by:      'owner',
+        },
+      ])
+  } catch (err: any) {
+    console.error('[portalService] job_timeline accepted+scheduling insert failed (non-fatal):', err)
+  }
 
   return newLeadId
 }
@@ -232,7 +249,7 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
 export async function dismissPortalRequest(requestId: string): Promise<void> {
   const { error } = await (supabase as any)
     .from('portal_requests')
-    .update({ status: 'closed' })
+    .update({ status: 'dismissed' })
     .eq('id', requestId)
 
   if (error) {
