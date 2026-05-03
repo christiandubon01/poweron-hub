@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useHunterStore } from '@/store/hunterStore';
 import type { HunterLead } from '@/services/hunter/HunterTypes';
 import { LeadStatus } from '@/services/hunter/HunterTypes';
@@ -34,7 +34,7 @@ export const PipelineTab: React.FC = () => {
 
   const wonLeads = leads.filter((l) => (l as any).status === 'won');
 
-  const handleOpenEstimate = (lead: HunterLead) => {
+const handleOpenEstimate = (lead: HunterLead, type: 'project' | 'service_call' = 'project') => {
     console.log('[Pipeline] Open Estimate clicked for lead:', lead.id);
     // Dispatch to AppShell listener which routes to V15rProjectsPanel prefill.
     // Note: lead status transitions to 'estimated' only when Project is actually
@@ -42,7 +42,7 @@ export const PipelineTab: React.FC = () => {
     // This way Cancel leaves the lead in Pipeline as 'won' (no rollback needed).
     window.dispatchEvent(
       new CustomEvent('poweron:open-estimate', {
-        detail: { lead, source: 'hunter' },
+        detail: { lead, source: 'hunter', entryType: type },
       })
     );
   };
@@ -125,23 +125,7 @@ export const PipelineTab: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleOpenEstimate(lead)}
-                      className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium px-3 py-2 rounded transition"
-                    >
-                      <FileText size={14} />
-                      Open Estimate
-                    </button>
-                    <button
-                      onClick={() => handleReturnToLeads(lead)}
-                      className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-2 rounded transition"
-                      title="Send back to Leads tab"
-                    >
-                      <ArrowLeft size={14} />
-                      Return to Leads
-                    </button>
-                  </div>
+                  <LeadTypeToggle lead={lead} onOpenEstimate={handleOpenEstimate} onReturnToLeads={handleReturnToLeads} />
                 </div>
               );
             })}
@@ -151,5 +135,61 @@ export const PipelineTab: React.FC = () => {
     </div>
   );
 };
+
+function LeadTypeToggle({ lead, onOpenEstimate, onReturnToLeads }: {
+  lead: HunterLead
+  onOpenEstimate: (lead: HunterLead, type: 'project' | 'service_call') => void
+  onReturnToLeads: (lead: HunterLead) => void
+}) {
+  const [type, setType] = useState<'project' | 'service_call'>('project')
+  return (
+    <div className="space-y-2">
+      <div className="flex rounded-lg overflow-hidden border border-gray-700">
+        <button
+          type="button"
+          onClick={() => setType('project')}
+          className={`flex-1 text-xs font-bold py-1.5 transition-colors ${
+            type === 'project'
+              ? 'bg-emerald-600 text-white'
+              : 'bg-gray-800 text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          📋 Project
+        </button>
+        <button
+          type="button"
+          onClick={() => setType('service_call')}
+          className={`flex-1 text-xs font-bold py-1.5 transition-colors ${
+            type === 'service_call'
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-800 text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          🔧 Service Call
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onOpenEstimate(lead, type)}
+          className={`flex-1 flex items-center justify-center gap-2 text-white text-sm font-medium px-3 py-2 rounded transition ${
+            type === 'project'
+              ? 'bg-emerald-600 hover:bg-emerald-500'
+              : 'bg-blue-600 hover:bg-blue-500'
+          }`}
+        >
+          <FileText size={14} />
+          {type === 'project' ? 'Open as Project' : 'Open as Service Call'}
+        </button>
+        <button
+          onClick={() => onReturnToLeads(lead)}
+          className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-2 rounded transition"
+          title="Send back to Leads tab"
+        >
+          <ArrowLeft size={14} />
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default PipelineTab;

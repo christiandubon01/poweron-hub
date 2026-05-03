@@ -215,6 +215,32 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       } catch (err) {
         console.error('[V15rProjectsPanel] Failed to mark HUNTER lead as estimated:', err)
       }
+
+      // If this lead came from the customer portal, fire the Scheduling milestone
+      const isPortalLead = hunterBannerCtx?.source_tag === 'customer_portal' ||
+                           prefillFromLead?.hunterContext?.source_tag === 'customer_portal'
+      if (isPortalLead) {
+        // Find the portal_request linked to this hunter lead
+        const { supabase: sb } = await import('@/lib/supabase')
+        const { data: portalReq } = await (sb as any)
+          .from('portal_requests')
+          .select('id')
+          .eq('hunter_lead_id', leadId)
+          .maybeSingle()
+        if (portalReq?.id) {
+          await (sb as any)
+            .from('job_timeline')
+            .insert({
+              portal_request_id: portalReq.id,
+              event_type:        'scheduling',
+              title:             'Project Scheduled',
+              description:       'A project has been created for your request. We will reach out shortly to confirm details.',
+              event_time:        new Date().toISOString(),
+              triggered_by:      'owner',
+            })
+            .catch((err: any) => console.error('[V15rProjectsPanel] job_timeline scheduling insert failed:', err))
+        }
+      }
     }
     setShowNewProject(false)
     setHunterBannerCtx(null)
