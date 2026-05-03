@@ -207,6 +207,22 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
     console.error('[portalService] update portal_request failed:', updateError)
   }
 
+  // ── Insert "Accepted" job_timeline milestone ───────────────────────────────
+  // This triggers the Accepted step on the customer's tracking page in real time
+  await (supabase as any)
+    .from('job_timeline')
+    .insert({
+      portal_request_id: request.id,
+      event_type:        'accepted',
+      title:             'Request Accepted',
+      description:       'Your request has been accepted. We\'ll reach out with scheduling options soon.',
+      event_time:        new Date().toISOString(),
+      triggered_by:      'owner',
+    })
+    .catch((err: any) => {
+      console.error('[portalService] job_timeline accepted insert failed (non-fatal):', err)
+    })
+
   return newLeadId
 }
 
