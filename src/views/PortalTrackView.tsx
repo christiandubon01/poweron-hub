@@ -3,18 +3,35 @@
  * Customer-facing job tracking page at /portal/track/:requestId
  * No auth required — public route
  *
- * Shows:
- *   - Current status timeline (Request Received → Accepted → Scheduling → Confirmed → On My Way → Complete)
- *   - Contact info summary
- *   - Static Google Maps showing service address (once accepted)
- *   - Live GPS marker when technician is "On My Way" (Supabase Realtime)
+ * Features:
+ *   - Timeline milestones with Supabase Realtime updates
+ *   - Google Maps: Coachella Valley view for local, CA state for outside CV
+ *   - Static pin on customer address
+ *   - Live GPS marker when technician is "On My Way" (technician_location table)
+ *   - Real logo in nav
  */
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams } from 'react-router-dom'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
+const MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_BROWSER_KEY ?? ''
+
+// Coachella Valley cities
+const CV_CITIES = [
+  'desert hot springs', 'palm springs', 'cathedral city', 'rancho mirage',
+  'palm desert', 'indian wells', 'la quinta', 'indio', 'coachella',
+  'thermal', 'mecca', 'thousand palms', 'bermuda dunes', 'sky valley',
+  'desert edge', 'north palm springs', 'east hemet',
+]
+
+// Coachella Valley center + zoom
+const CV_CENTER = { lat: 33.7225, lng: -116.3736 }
+const CV_ZOOM = 10
+// California center + zoom
+const CA_CENTER = { lat: 36.7783, lng: -119.4179 }
+const CA_ZOOM = 6
 
 interface PortalRequest {
   id: string
@@ -39,36 +56,33 @@ interface JobTimeline {
   event_time: string
 }
 
+interface TechLocation {
+  latitude: number
+  longitude: number
+  is_active: boolean
+  technician_name: string | null
+}
+
 const MILESTONE_ORDER = [
-  'request_received',
-  'accepted',
-  'scheduling',
-  'confirmed',
-  'on_my_way',
-  'arrived',
-  'work_started',
-  'work_completed',
+  'request_received', 'accepted', 'scheduling', 'confirmed',
+  'on_my_way', 'arrived', 'work_started', 'work_completed',
 ]
 
 const MILESTONE_LABELS: Record<string, { label: string; icon: string; desc: string }> = {
-  request_received: { label: 'Request Received',    icon: '📋', desc: 'We got your request and are reviewing it.' },
-  accepted:         { label: 'Accepted',             icon: '✅', desc: 'Your request has been accepted. We\'ll reach out with scheduling options soon.' },
-  scheduling:       { label: 'Scheduling',           icon: '📅', desc: 'We\'re coordinating your appointment time.' },
-  confirmed:        { label: 'Appointment Confirmed',icon: '🔒', desc: 'Your appointment is locked in.' },
-  on_my_way:        { label: 'On My Way',            icon: '🚗', desc: 'Your technician is heading to your location.' },
-  arrived:          { label: 'Arrived',              icon: '📍', desc: 'Your technician has arrived.' },
-  work_started:     { label: 'Work Started',         icon: '⚡', desc: 'Work is in progress.' },
-  work_completed:   { label: 'Work Completed',       icon: '🎉', desc: 'All done! Thank you for choosing Power On Solutions.' },
+  request_received: { label: 'Request Received',     icon: '📋', desc: 'We got your request and are reviewing it.' },
+  accepted:         { label: 'Accepted',              icon: '✅', desc: 'Your request has been accepted. We\'ll reach out with scheduling options soon.' },
+  scheduling:       { label: 'Scheduling',            icon: '📅', desc: 'We\'re coordinating your appointment time.' },
+  confirmed:        { label: 'Appointment Confirmed', icon: '🔒', desc: 'Your appointment is locked in.' },
+  on_my_way:        { label: 'On My Way',             icon: '🚗', desc: 'Your technician is heading to your location.' },
+  arrived:          { label: 'Arrived',               icon: '📍', desc: 'Your technician has arrived.' },
+  work_started:     { label: 'Work Started',          icon: '⚡', desc: 'Work is in progress.' },
+  work_completed:   { label: 'Work Completed',        icon: '🎉', desc: 'All done! Thank you for choosing Power On Solutions.' },
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
-  residential:   'Residential Electrical',
-  commercial:    'Commercial Electrical',
-  solar:         'Solar / PV',
-  maintenance:   'Maintenance & Service',
-  panel_upgrade: 'Panel Upgrade',
-  ev_charger:    'EV Charger Installation',
-  other:         'Electrical Service',
+  residential: 'Residential Electrical', commercial: 'Commercial Electrical',
+  solar: 'Solar / PV', maintenance: 'Maintenance & Service',
+  panel_upgrade: 'Panel Upgrade', ev_charger: 'EV Charger Installation', other: 'Electrical Service',
 }
 
 const STATUS_TO_MILESTONE: Record<string, string[]> = {
@@ -78,8 +92,12 @@ const STATUS_TO_MILESTONE: Record<string, string[]> = {
   closed:    ['request_received', 'accepted', 'scheduling', 'confirmed', 'work_completed'],
 }
 
-// ── CSS ───────────────────────────────────────────────────────────────────────
+function isCoachellaValley(city: string | null): boolean {
+  if (!city) return false
+  return CV_CITIES.includes(city.toLowerCase().trim())
+}
 
+// ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
 
@@ -104,7 +122,6 @@ const CSS = `
     color: var(--white);
     font-family: "Plus Jakarta Sans", "Manrope", ui-sans-serif, system-ui, sans-serif;
     overflow-x: hidden;
-    position: relative;
   }
 
   .pt-grain {
@@ -126,41 +143,52 @@ const CSS = `
     height: 72px; display: flex; align-items: center;
     justify-content: space-between; gap: 24px;
   }
-  .pt-brand { display: flex; align-items: center; gap: 12px; }
-  .pt-brand-mark {
-    width: 42px; height: 42px; border-radius: 12px;
-    display: grid; place-items: center;
-    background: linear-gradient(135deg, rgba(108,203,63,.2), rgba(255,210,34,.06)), rgba(255,255,255,.04);
-    border: 1px solid rgba(255,255,255,.12);
-    font-size: 20px;
-  }
-  .pt-brand-name { font-size: 14px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-  .pt-brand-sub  { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin-top: 3px; }
-  .pt-phone { font-size: 13px; font-weight: 700; color: var(--green); text-decoration: none; }
+  .pt-logo { height: 44px; width: auto; object-fit: contain; display: block; }
+  .pt-phone { font-size: 13px; font-weight: 700; color: #6ccb3f; text-decoration: none; }
 
   .pt-body {
-    width: min(640px, calc(100vw - 32px));
+    width: min(680px, calc(100vw - 32px));
     margin: 0 auto; padding: 44px 0 72px;
     position: relative; z-index: 2;
   }
 
   .pt-eyebrow {
     display: inline-flex; align-items: center; gap: 10px;
-    color: var(--green); font-weight: 800; font-size: 11px;
+    color: #6ccb3f; font-weight: 800; font-size: 11px;
     letter-spacing: .18em; text-transform: uppercase; margin-bottom: 14px;
   }
-  .pt-eyebrow::before { content: "⚡"; color: var(--gold); font-size: 13px; }
+  .pt-eyebrow::before { content: "⚡"; color: #ffd222; font-size: 13px; }
 
   .pt-h1 {
     font-size: clamp(28px, 5vw, 42px); font-weight: 800;
     line-height: 1; letter-spacing: -.03em; margin: 0 0 6px;
   }
-  .pt-h1 .gold { color: var(--gold); }
+  .pt-h1 .gold { color: #ffd222; }
+  .pt-id { font-size: 11px; color: #778372; font-family: monospace; letter-spacing: .08em; margin-bottom: 28px; }
 
-  .pt-id {
-    font-size: 11px; color: var(--muted-2); font-family: monospace;
-    letter-spacing: .08em; margin-bottom: 32px;
+  /* Map */
+  .pt-map-card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
+    margin-bottom: 20px; box-shadow: var(--shadow);
   }
+  .pt-map-header {
+    padding: 14px 20px; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .pt-map-title { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+  .pt-map-live {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 20px;
+    background: rgba(108,203,63,.12); border: 1px solid rgba(108,203,63,.3);
+    font-size: 11px; font-weight: 700; color: #6ccb3f;
+    margin-left: auto;
+  }
+  .pt-map-live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #6ccb3f; animation: pt-pulse 1.5s ease-in-out infinite;
+  }
+  .pt-map-container { height: 300px; width: 100%; }
 
   /* Status card */
   .pt-status-card {
@@ -176,30 +204,23 @@ const CSS = `
 
   .pt-section-label {
     font-size: 10px; font-weight: 800; letter-spacing: .18em;
-    color: var(--green); text-transform: uppercase;
-    margin: 0 0 20px;
-    display: flex; align-items: center; gap: 10px;
+    color: #6ccb3f; text-transform: uppercase;
+    margin: 0 0 20px; display: flex; align-items: center; gap: 10px;
   }
   .pt-section-label::after {
     content: ""; flex: 1; height: 1px;
     background: linear-gradient(90deg, rgba(108,203,63,.3), transparent);
   }
 
-  /* Timeline */
   .pt-timeline { display: flex; flex-direction: column; gap: 0; }
-  .pt-milestone {
-    display: flex; gap: 16px; align-items: flex-start;
-    position: relative;
-  }
+  .pt-milestone { display: flex; gap: 16px; align-items: flex-start; position: relative; }
   .pt-milestone:not(:last-child)::before {
-    content: ""; position: absolute;
-    left: 17px; top: 36px;
+    content: ""; position: absolute; left: 17px; top: 36px;
     width: 2px; height: calc(100% + 4px);
-    background: rgba(255,255,255,.08);
-    z-index: 0;
+    background: rgba(255,255,255,.08); z-index: 0;
   }
   .pt-milestone.done:not(:last-child)::before {
-    background: linear-gradient(180deg, var(--green), rgba(108,203,63,.2));
+    background: linear-gradient(180deg, #6ccb3f, rgba(108,203,63,.2));
   }
   .pt-milestone-dot {
     width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
@@ -208,29 +229,22 @@ const CSS = `
     position: relative; z-index: 1; transition: all .3s;
   }
   .pt-milestone.done .pt-milestone-dot {
-    background: linear-gradient(135deg, var(--green), var(--green-2));
-    border-color: var(--green);
-    box-shadow: 0 0 16px rgba(108,203,63,.4);
+    background: linear-gradient(135deg, #6ccb3f, #1c7b36);
+    border-color: #6ccb3f; box-shadow: 0 0 16px rgba(108,203,63,.4);
   }
   .pt-milestone.active .pt-milestone-dot {
-    background: rgba(108,203,63,.15);
-    border-color: var(--green);
+    background: rgba(108,203,63,.15); border-color: #6ccb3f;
     box-shadow: 0 0 20px rgba(108,203,63,.3);
     animation: pt-pulse 2s ease-in-out infinite;
   }
   .pt-milestone-content { padding: 6px 0 24px; flex: 1; }
-  .pt-milestone-title {
-    font-size: 14px; font-weight: 700;
-    color: var(--muted-2); margin-bottom: 2px;
-    transition: color .3s;
-  }
+  .pt-milestone-title { font-size: 14px; font-weight: 700; color: #778372; margin-bottom: 2px; transition: color .3s; }
   .pt-milestone.done .pt-milestone-title,
-  .pt-milestone.active .pt-milestone-title { color: var(--white); }
-  .pt-milestone-desc { font-size: 12px; color: var(--muted-2); line-height: 1.5; }
-  .pt-milestone.active .pt-milestone-desc { color: var(--muted); }
-  .pt-milestone-time { font-size: 11px; color: var(--muted-2); margin-top: 3px; font-family: monospace; }
+  .pt-milestone.active .pt-milestone-title { color: #f7f8ef; }
+  .pt-milestone-desc { font-size: 12px; color: #778372; line-height: 1.5; }
+  .pt-milestone.active .pt-milestone-desc { color: #b8c3b4; }
+  .pt-milestone-time { font-size: 11px; color: #778372; margin-top: 3px; font-family: monospace; }
 
-  /* Info card */
   .pt-info-card {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 24px 28px;
@@ -238,47 +252,41 @@ const CSS = `
   }
   .pt-info-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
   .pt-info-row:last-child { border-bottom: none; }
-  .pt-info-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; color: var(--muted-2); text-transform: uppercase; flex-shrink: 0; }
-  .pt-info-value { font-size: 13px; font-weight: 600; color: var(--white); text-align: right; }
+  .pt-info-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; color: #778372; text-transform: uppercase; flex-shrink: 0; }
+  .pt-info-value { font-size: 13px; font-weight: 600; color: #f7f8ef; text-align: right; }
 
-  /* Status badge */
   .pt-badge {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700;
   }
-  .pt-badge.new      { background: rgba(108,203,63,.12); color: var(--green); border: 1px solid rgba(108,203,63,.3); }
+  .pt-badge.new      { background: rgba(108,203,63,.12); color: #6ccb3f; border: 1px solid rgba(108,203,63,.3); }
   .pt-badge.reviewed { background: rgba(59,130,246,.12); color: #60a5fa; border: 1px solid rgba(59,130,246,.3); }
-  .pt-badge.closed   { background: rgba(255,255,255,.06); color: var(--muted); border: 1px solid rgba(255,255,255,.1); }
+  .pt-badge.closed   { background: rgba(255,255,255,.06); color: #b8c3b4; border: 1px solid rgba(255,255,255,.1); }
 
-  /* Not found */
   .pt-not-found { text-align: center; padding: 80px 24px; }
   .pt-not-found-icon { font-size: 48px; margin-bottom: 20px; }
   .pt-not-found-title { font-size: 28px; font-weight: 800; margin-bottom: 12px; }
-  .pt-not-found-sub { font-size: 15px; color: var(--muted); line-height: 1.6; }
+  .pt-not-found-sub { font-size: 15px; color: #b8c3b4; line-height: 1.6; }
 
-  /* Loading */
   .pt-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; gap: 16px; }
-  .pt-spinner { width: 36px; height: 36px; border: 3px solid rgba(108,203,63,.2); border-top-color: var(--green); border-radius: 50%; animation: pt-spin .8s linear infinite; }
+  .pt-spinner { width: 36px; height: 36px; border: 3px solid rgba(108,203,63,.2); border-top-color: #6ccb3f; border-radius: 50%; animation: pt-spin .8s linear infinite; }
 
-  .pt-footer {
-    text-align: center; padding: 20px 24px;
-    border-top: 1px solid rgba(255,255,255,.06);
-    font-size: 12px; color: var(--muted-2);
-    position: relative; z-index: 2;
-  }
-  .pt-footer a { color: var(--green); text-decoration: none; }
-
-  .pt-cta {
-    text-align: center; padding: 20px 0 0;
-  }
+  .pt-cta { text-align: center; padding: 20px 0 0; }
   .pt-cta a {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 12px 28px; border-radius: 12px;
     background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
-    color: var(--white); font-size: 14px; font-weight: 600; text-decoration: none;
+    color: #f7f8ef; font-size: 14px; font-weight: 600; text-decoration: none;
     transition: all .22s;
   }
   .pt-cta a:hover { background: rgba(255,255,255,.09); border-color: rgba(108,203,63,.4); }
+
+  .pt-footer {
+    text-align: center; padding: 22px 24px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    font-size: 12px; color: #778372; position: relative; z-index: 2;
+  }
+  .pt-footer a { color: #6ccb3f; text-decoration: none; }
 
   @keyframes pt-spin { to { transform: rotate(360deg); } }
   @keyframes pt-pulse {
@@ -288,6 +296,7 @@ const CSS = `
 
   @media (max-width: 520px) {
     .pt-status-card, .pt-info-card { padding: 20px 16px; }
+    .pt-map-container { height: 240px; }
   }
 `
 
@@ -306,6 +315,170 @@ function formatTime(iso: string): string {
   })
 }
 
+// ── Google Maps loader ────────────────────────────────────────────────────────
+
+let mapsLoaded = false
+let mapsLoading = false
+const mapsCallbacks: (() => void)[] = []
+
+function loadGoogleMaps(cb: () => void) {
+  if (mapsLoaded) { cb(); return }
+  mapsCallbacks.push(cb)
+  if (mapsLoading) return
+  mapsLoading = true
+  const script = document.createElement('script')
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}&libraries=geometry`
+  script.async = true
+  script.onload = () => {
+    mapsLoaded = true
+    mapsLoading = false
+    mapsCallbacks.forEach(fn => fn())
+    mapsCallbacks.length = 0
+  }
+  document.head.appendChild(script)
+}
+
+// ── Map component ─────────────────────────────────────────────────────────────
+
+function TrackingMap({
+  address,
+  city,
+  techLocation,
+  isOnMyWay,
+}: {
+  address: string | null
+  city: string | null
+  techLocation: TechLocation | null
+  isOnMyWay: boolean
+}) {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const mapInstance = useRef<any>(null)
+  const customerMarker = useRef<any>(null)
+  const techMarker = useRef<any>(null)
+  const [geocoded, setGeocoded] = useState<{ lat: number; lng: number } | null>(null)
+
+  const isLocal = isCoachellaValley(city)
+  const center = isLocal ? CV_CENTER : CA_CENTER
+  const zoom = isLocal ? CV_ZOOM : CA_ZOOM
+
+  const initMap = useCallback(() => {
+    if (!mapRef.current || mapInstance.current) return
+    const google = (window as any).google
+    mapInstance.current = new google.maps.Map(mapRef.current, {
+      center,
+      zoom,
+      styles: [
+        { elementType: 'geometry', stylers: [{ color: '#0a1208' }] },
+        { elementType: 'labels.text.fill', stylers: [{ color: '#6ccb3f' }] },
+        { elementType: 'labels.text.stroke', stylers: [{ color: '#0a1208' }] },
+        { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1a2e1a' }] },
+        { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0d1f0d' }] },
+        { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#041208' }] },
+        { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+        { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+      ],
+      disableDefaultUI: false,
+      zoomControl: true,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+    })
+
+    // Geocode address if provided
+    if (address || city) {
+      const query = [address, city, 'CA'].filter(Boolean).join(', ')
+      const geocoder = new google.maps.Geocoder()
+      geocoder.geocode({ address: query }, (results: any, status: any) => {
+        if (status === 'OK' && results[0]) {
+          const loc = results[0].geometry.location
+          const pos = { lat: loc.lat(), lng: loc.lng() }
+          setGeocoded(pos)
+
+          // Customer pin
+          customerMarker.current = new google.maps.Marker({
+            position: pos,
+            map: mapInstance.current,
+            title: 'Service Location',
+            icon: {
+              path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
+              fillColor: '#6ccb3f',
+              fillOpacity: 1,
+              strokeColor: '#0a1208',
+              strokeWeight: 2,
+              scale: 1.2,
+              anchor: new google.maps.Point(0, 0),
+            },
+          })
+
+          // Center map on address if local
+          if (isLocal) {
+            mapInstance.current.setCenter(pos)
+            mapInstance.current.setZoom(14)
+          }
+        }
+      })
+    }
+  }, [address, city, center, zoom, isLocal])
+
+  useEffect(() => {
+    if (!MAPS_API_KEY) return
+    loadGoogleMaps(initMap)
+  }, [initMap])
+
+  // Update tech marker when location changes
+  useEffect(() => {
+    if (!mapInstance.current || !techLocation?.is_active) return
+    const google = (window as any).google
+    if (!google) return
+
+    const pos = { lat: techLocation.latitude, lng: techLocation.longitude }
+
+    if (!techMarker.current) {
+      techMarker.current = new google.maps.Marker({
+        position: pos,
+        map: mapInstance.current,
+        title: techLocation.technician_name || 'Technician',
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          fillColor: '#ffd222',
+          fillOpacity: 1,
+          strokeColor: '#0a1208',
+          strokeWeight: 2,
+          scale: 10,
+        },
+      })
+    } else {
+      techMarker.current.setPosition(pos)
+    }
+
+    // Pan map to show both markers
+    if (geocoded) {
+      const bounds = new google.maps.LatLngBounds()
+      bounds.extend(pos)
+      bounds.extend(geocoded)
+      mapInstance.current.fitBounds(bounds, { padding: 60 })
+    }
+  }, [techLocation, geocoded])
+
+  if (!MAPS_API_KEY) return null
+
+  return (
+    <div className="pt-map-card">
+      <div className="pt-map-header">
+        <span style={{ fontSize: 14 }}>📍</span>
+        <span className="pt-map-title">Service Location</span>
+        {isOnMyWay && techLocation?.is_active && (
+          <div className="pt-map-live">
+            <div className="pt-map-live-dot" />
+            Live Tracking
+          </div>
+        )}
+      </div>
+      <div className="pt-map-container" ref={mapRef} />
+    </div>
+  )
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function PortalTrackView() {
@@ -314,6 +487,7 @@ export default function PortalTrackView() {
   const { requestId } = useParams<{ requestId: string }>()
   const [request, setRequest] = useState<PortalRequest | null>(null)
   const [timeline, setTimeline] = useState<JobTimeline[]>([])
+  const [techLocation, setTechLocation] = useState<TechLocation | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
@@ -337,44 +511,62 @@ export default function PortalTrackView() {
         .order('event_time', { ascending: true })
 
       setTimeline((timelineData ?? []) as JobTimeline[])
+
+      // Check for active tech location
+      const { data: techData } = await (supabase as any)
+        .from('technician_location')
+        .select('*')
+        .eq('portal_request_id', requestId)
+        .eq('is_active', true)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (techData) setTechLocation(techData as TechLocation)
       setLoading(false)
     }
 
     load()
 
-    // Realtime subscription for timeline updates
+    // Realtime: timeline updates
     const channel = supabase
       .channel(`portal_track_${requestId}`)
       .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'job_timeline',
+        event: 'INSERT', schema: 'public', table: 'job_timeline',
         filter: `portal_request_id=eq.${requestId}`,
       }, (payload) => {
         setTimeline(prev => [...prev, payload.new as JobTimeline])
       })
       .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'portal_requests',
+        event: 'UPDATE', schema: 'public', table: 'portal_requests',
         filter: `id=eq.${requestId}`,
       }, (payload) => {
         setRequest(prev => prev ? { ...prev, ...payload.new } : prev)
+      })
+      // Realtime: GPS location updates
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'technician_location',
+        filter: `portal_request_id=eq.${requestId}`,
+      }, (payload) => {
+        if (payload.new && (payload.new as any).is_active) {
+          setTechLocation(payload.new as TechLocation)
+        } else {
+          setTechLocation(null)
+        }
       })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   }, [requestId])
 
-  // Compute which milestones are done based on status + timeline events
   const doneTypes = new Set<string>([
-    'request_received', // always done once the request exists
+    'request_received',
     ...timeline.map(t => t.event_type),
     ...(STATUS_TO_MILESTONE[request?.status ?? 'new'] ?? []),
   ])
 
   const activeMilestone = MILESTONE_ORDER.filter(m => !doneTypes.has(m))[0] ?? null
-
+  const isOnMyWay = doneTypes.has('on_my_way') && !doneTypes.has('arrived')
   const timelineMap = Object.fromEntries(timeline.map(t => [t.event_type, t]))
 
   return (
@@ -383,14 +575,8 @@ export default function PortalTrackView() {
 
       <nav className="pt-nav">
         <div className="pt-nav-inner">
-          <div className="pt-brand">
-            <div className="pt-brand-mark">⚡</div>
-            <div>
-              <div className="pt-brand-name">Power On Solutions</div>
-              <div className="pt-brand-sub">C-10 Electrical · Lic #1151468</div>
-            </div>
-          </div>
-          <a href="tel:17603399888" className="pt-phone">(760) 339-9888</a>
+          <img src={LOGO_URL} alt="Power On Solutions LLC" className="pt-logo" />
+          <a href="tel:17606238962" className="pt-phone">(760) 623-8962</a>
         </div>
       </nav>
 
@@ -398,14 +584,14 @@ export default function PortalTrackView() {
         {loading ? (
           <div className="pt-loading">
             <div className="pt-spinner" />
-            <span style={{ color: 'var(--muted)', fontSize: 14 }}>Loading your request…</span>
+            <span style={{ color: '#b8c3b4', fontSize: 14 }}>Loading your request…</span>
           </div>
         ) : notFound ? (
           <div className="pt-not-found">
             <div className="pt-not-found-icon">🔍</div>
             <div className="pt-not-found-title">Request Not Found</div>
             <p className="pt-not-found-sub">
-              We couldn't find this request. Please check your link or call us at (760) 339-9888.
+              We couldn't find this request. Please check your link or call us at (760) 623-8962.
             </p>
           </div>
         ) : request ? (
@@ -416,6 +602,14 @@ export default function PortalTrackView() {
             </h1>
             <div className="pt-id">Request ID: {requestId?.slice(0, 8).toUpperCase()}</div>
 
+            {/* Map */}
+            <TrackingMap
+              address={request.address}
+              city={request.city}
+              techLocation={techLocation}
+              isOnMyWay={isOnMyWay}
+            />
+
             {/* Timeline */}
             <div className="pt-status-card">
               <div className="pt-section-label">Progress</div>
@@ -424,23 +618,16 @@ export default function PortalTrackView() {
                   const meta = MILESTONE_LABELS[type]
                   const isDone = doneTypes.has(type)
                   const isActive = type === activeMilestone && !isDone
-                  const timelineEntry = timelineMap[type]
+                  const entry = timelineMap[type]
                   return (
-                    <div
-                      key={type}
-                      className={`pt-milestone${isDone ? ' done' : ''}${isActive ? ' active' : ''}`}
-                    >
-                      <div className="pt-milestone-dot">
-                        {isDone ? '✓' : meta.icon}
-                      </div>
+                    <div key={type} className={`pt-milestone${isDone ? ' done' : ''}${isActive ? ' active' : ''}`}>
+                      <div className="pt-milestone-dot">{isDone ? '✓' : meta.icon}</div>
                       <div className="pt-milestone-content">
                         <div className="pt-milestone-title">{meta.label}</div>
                         {(isDone || isActive) && (
-                          <div className="pt-milestone-desc">{timelineEntry?.description || meta.desc}</div>
+                          <div className="pt-milestone-desc">{entry?.description || meta.desc}</div>
                         )}
-                        {timelineEntry && (
-                          <div className="pt-milestone-time">{formatTime(timelineEntry.event_time)}</div>
-                        )}
+                        {entry && <div className="pt-milestone-time">{formatTime(entry.event_time)}</div>}
                       </div>
                     </div>
                   )
@@ -461,7 +648,7 @@ export default function PortalTrackView() {
                   <span className="pt-info-value">{CATEGORY_LABELS[request.service_category] ?? request.service_category}</span>
                 </div>
               )}
-              {request.city && (
+              {(request.address || request.city) && (
                 <div className="pt-info-row">
                   <span className="pt-info-label">Location</span>
                   <span className="pt-info-value">{[request.address, request.city].filter(Boolean).join(', ')}</span>
@@ -484,8 +671,7 @@ export default function PortalTrackView() {
                   {request.status === 'new' ? 'Under Review' :
                    request.status === 'reviewed' ? 'Accepted' :
                    request.status === 'scheduled' ? 'Scheduled' :
-                   request.status === 'closed' ? 'Completed' :
-                   request.status}
+                   request.status === 'closed' ? 'Completed' : request.status}
                 </span>
               </div>
             </div>
@@ -500,7 +686,7 @@ export default function PortalTrackView() {
       <footer className="pt-footer">
         © {new Date().getFullYear()} Power On Solutions LLC &nbsp;·&nbsp;
         C-10 Electrical License #1151468 &nbsp;·&nbsp;
-        <a href="tel:17603399888">(760) 339-9888</a>
+        <a href="tel:17606238962">(760) 623-8962</a>
       </footer>
     </div>
   )
