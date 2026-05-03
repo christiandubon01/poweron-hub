@@ -511,11 +511,7 @@ export default function PortalTrackView() {
                         {(isDone || isActive) && <div className="pt-milestone-desc">{entry?.description || meta.desc}</div>}
                         {entry && type !== 'scheduling' && (
                           <div className="pt-milestone-time">
-                            {type === 'confirmed'
-                              ? request.preferred_date
-                                ? new Date(request.preferred_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-                                : formatTime(entry.event_time)
-                              : formatTime(entry.event_time)}
+                            {formatTime(entry.event_time)}
                           </div>
                         )}
                       </div>

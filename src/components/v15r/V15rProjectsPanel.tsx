@@ -241,7 +241,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                 event_type:        'confirmed',
                 title:             'Appointment Confirmed',
                 description:       'Your appointment has been scheduled. We will be there as planned.',
-                event_time:        new Date().toISOString(),
+                event_time:        npStartDate ? new Date(npStartDate + 'T12:00:00').toISOString() : new Date().toISOString(),
                 triggered_by:      'owner',
               })
             console.log('[Portal] confirmed milestone inserted for', portalReq.id)
