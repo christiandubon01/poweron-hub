@@ -306,6 +306,21 @@ const CSS = `
     background: rgba(108,203,63,.08); border: 1px solid rgba(108,203,63,.2);
     font-size: 13px; color: var(--green); font-weight: 600; margin-bottom: 32px;
   }
+  .pr-track-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 14px 28px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--green-2), #0f5225);
+    color: var(--white); font-size: 15px; font-weight: 700;
+    text-decoration: none; margin-bottom: 16px;
+    border: 1px solid rgba(108,203,63,.4);
+    box-shadow: 0 4px 20px rgba(108,203,63,.25);
+    transition: all .22s var(--ease);
+  }
+  .pr-track-link:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(108,203,63,.35); }
+  .pr-track-url {
+    font-size: 11px; color: var(--muted-2); font-family: monospace;
+    margin-bottom: 28px; word-break: break-all; padding: 0 16px;
+  }
 
   .pr-footer {
     text-align: center; padding: 22px 24px;
@@ -361,6 +376,7 @@ export default function CustomerPortalView() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
+  const [submittedId, setSubmittedId] = useState<string | null>(null)
 
   const setF = (key: keyof FormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -395,16 +411,35 @@ export default function CustomerPortalView() {
         payload.notes = `Company: ${form.company.trim()}`
       }
 
-      const { error: dbError } = await (supabase as any)
+      const { data, error: dbError } = await (supabase as any)
         .from('portal_requests')
         .insert(payload)
+        .select('id')
+        .single()
 
       if (dbError) {
         setError('Something went wrong. Please try again or call us at (760) 339-9888.')
         console.error('portal_requests insert:', dbError)
         return
       }
+
+      setSubmittedId(data.id)
       setSubmitted(true)
+
+      // Send confirmation email with tracking link (fire and forget)
+      if (form.email.trim()) {
+        fetch('/.netlify/functions/portal-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'send_submission_confirmation',
+            customerEmail: form.email.trim(),
+            customerName: form.name.trim(),
+            requestId: data.id,
+            serviceCategory: form.service_category,
+          }),
+        }).catch(err => console.error('Confirmation email error:', err))
+      }
     } catch (err: any) {
       setError('Unexpected error. Please try again.')
       console.error(err)
@@ -413,13 +448,21 @@ export default function CustomerPortalView() {
     }
   }
 
-  const reset = () => { setForm(BLANK); setSubmitted(false); setError(null) }
+  const reset = () => {
+    setForm(BLANK)
+    setSubmitted(false)
+    setSubmittedId(null)
+    setError(null)
+  }
+
+  const trackingUrl = submittedId
+    ? `${window.location.origin}/portal/track/${submittedId}`
+    : null
 
   return (
     <div className="pr">
       <div className="pr-grain" />
 
-      {/* Nav */}
       <nav className="pr-nav">
         <div className="pr-nav-inner">
           <div className="pr-brand">
@@ -441,16 +484,33 @@ export default function CustomerPortalView() {
               Request <span style={{ color: 'var(--gold)' }}>Received</span>
             </div>
             <p className="pr-success-sub">
-              We'll review your request and reach out within 1 business day
-              to confirm your estimate. Coachella Valley's trusted electrical contractor —
-              we've got you covered.
+              We'll review your request and reach out within 1 business day.
+              Track your request status using the link below.
             </p>
+
+            {trackingUrl && (
+              <>
+                <div style={{ marginBottom: 8 }}>
+                  <a href={trackingUrl} className="pr-track-link">
+                    ⚡ Track My Request →
+                  </a>
+                </div>
+                <div className="pr-track-url">{trackingUrl}</div>
+              </>
+            )}
+
             <div className="pr-success-chip">
-              <span>⚡</span>
-              <span>Licensed · Insured · Coachella Valley based</span>
+              <span>📧</span>
+              <span>
+                {form.email
+                  ? 'Check your email for your tracking link'
+                  : 'Bookmark the tracking link above'}
+              </span>
             </div>
-            <br />
-            <button className="pr-btn-ghost" onClick={reset}>Submit another request</button>
+
+            <button className="pr-btn-ghost" onClick={reset}>
+              Submit another request
+            </button>
           </div>
         ) : (
           <>

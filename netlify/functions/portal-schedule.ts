@@ -587,6 +587,155 @@ Desert Hot Springs, CA · ${WEBSITE_URL}`
   }
 }
 
+// ── sendSubmissionConfirmation ────────────────────────────────────────────────
+
+async function handleSendSubmissionConfirmation(body, resendApiKey) {
+  const { customerEmail, customerName, requestId, serviceCategory } = body
+
+  if (!customerEmail || !customerName || !requestId) {
+    return {
+      statusCode: 422,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({ success: false, error: 'Missing required fields' }),
+    }
+  }
+
+  const firstName = (customerName || 'there').split(' ')[0]
+  const trackingUrl = `https://app.poweronsolutionsllc.com/portal/track/${requestId}`
+  const year = new Date().getFullYear()
+  const categoryLabel = {
+    residential: 'Residential Electrical',
+    commercial: 'Commercial Electrical',
+    solar: 'Solar / PV',
+    maintenance: 'Maintenance & Service',
+    panel_upgrade: 'Panel Upgrade',
+    ev_charger: 'EV Charger Installation',
+    other: 'Electrical Service',
+  }[serviceCategory] || 'Electrical Service'
+
+  const htmlBody = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Request Received – Power On Solutions</title>
+</head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#0f172a;">
+    <tr><td align="center" style="padding:40px 16px;">
+      <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600"
+             style="max-width:600px;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
+        <tr><td style="background:linear-gradient(135deg,#6ccb3f 0%,#1c7b36 100%);padding:6px 0;text-align:center;">
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.15em;color:#0f172a;text-transform:uppercase;">
+            Power On Solutions LLC · C-10 Licensed · CA
+          </span>
+        </td></tr>
+        <tr><td style="padding:36px 40px 24px;text-align:center;border-bottom:1px solid #334155;">
+          <div style="display:inline-block;background:#6ccb3f;border-radius:10px;padding:10px 20px;margin-bottom:16px;">
+            <span style="font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;">⚡ POWER ON</span>
+          </div>
+          <h1 style="margin:0 0 6px;font-size:26px;font-weight:700;color:#f8fafc;">Request Received!</h1>
+          <p style="margin:0;font-size:15px;color:#94a3b8;">We'll review your request and reach out within 1 business day.</p>
+        </td></tr>
+        <tr><td style="padding:28px 40px 0;">
+          <p style="margin:0 0 8px;font-size:16px;color:#e2e8f0;">Hi ${firstName},</p>
+          <p style="margin:0 0 16px;font-size:15px;color:#94a3b8;line-height:1.6;">
+            Thanks for reaching out to Power On Solutions. We've received your <strong style="color:#e2e8f0;">${categoryLabel}</strong> request
+            and will review it shortly. You can track your request status at any time using the link below.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 40px 28px;text-align:center;">
+          <a href="${trackingUrl}"
+             style="display:inline-block;background:linear-gradient(135deg,#6ccb3f,#1c7b36);color:#fff;font-weight:800;font-size:15px;text-decoration:none;border-radius:8px;padding:14px 32px;">
+            Track My Request →
+          </a>
+          <p style="margin:12px 0 0;font-size:12px;color:#475569;">Or copy this link: ${trackingUrl}</p>
+        </td></tr>
+        <tr><td style="padding:0 40px 28px;">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                 style="background:#0f172a;border-radius:8px;border:1px solid #334155;">
+            <tr><td style="padding:18px 24px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#e2e8f0;">What happens next?</p>
+              <p style="margin:0 0 6px;font-size:13px;color:#94a3b8;">✓ We review your request (within 1 business day)</p>
+              <p style="margin:0 0 6px;font-size:13px;color:#94a3b8;">✓ We reach out with scheduling options based on your preferred time</p>
+              <p style="margin:0;font-size:13px;color:#94a3b8;">✓ You receive a confirmation once your appointment is set</p>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:0 40px 32px;text-align:center;">
+          <p style="margin:0 0 12px;font-size:14px;color:#94a3b8;">Questions? Call us directly:</p>
+          <a href="tel:17603399888"
+             style="display:inline-block;background:#f59e0b;color:#0f172a;font-weight:800;font-size:15px;text-decoration:none;border-radius:8px;padding:13px 32px;">
+            (760) 339-9888
+          </a>
+        </td></tr>
+        <tr><td style="background:#0f172a;padding:20px 40px;border-top:1px solid #1e293b;text-align:center;">
+          <p style="margin:0 0 6px;font-size:12px;color:#475569;">Power On Solutions LLC · C-10 License #1151468</p>
+          <p style="margin:0 0 6px;font-size:12px;color:#475569;">Desert Hot Springs, CA · Coachella Valley Electrical Contractor</p>
+          <p style="margin:0;font-size:11px;color:#334155;">© ${year} Power On Solutions LLC. All rights reserved.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+  const textBody = `Hi ${firstName},
+
+We've received your ${categoryLabel} request at Power On Solutions!
+
+Track your request status here:
+${trackingUrl}
+
+WHAT HAPPENS NEXT:
+✓ We review your request (within 1 business day)
+✓ We reach out with scheduling options
+✓ You receive a confirmation once your appointment is set
+
+Questions? Call (760) 339-9888
+
+---
+Power On Solutions LLC · C-10 License #1151468
+Desert Hot Springs, CA · poweronsolutionsllc.com`
+
+  try {
+    const res = await fetch(RESEND_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to: [String(customerEmail).toLowerCase().trim()],
+        subject: `We received your request – Power On Solutions`,
+        html: htmlBody,
+        text: textBody,
+      }),
+    })
+
+    const resData = await res.json()
+    if (!res.ok) {
+      return {
+        statusCode: res.status,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ success: false, error: resData?.message || 'Email send failed' }),
+      }
+    }
+    return {
+      statusCode: 200,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({ success: true, messageId: resData.id }),
+    }
+  } catch (err) {
+    return {
+      statusCode: 500,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({ success: false, error: err.message }),
+    }
+  }
+}
+
 // ── approveBooking ────────────────────────────────────────────────────────────
 
 async function handleApproveBooking(body, supabaseUrl, serviceKey, resendApiKey) {
@@ -799,7 +948,15 @@ exports.handler = async (event, _context) => {
         body: JSON.stringify({ success: true, slots }),
       }
     }
-
+    case 'send_submission_confirmation':
+      if (!resendKey) {
+        return {
+          statusCode: 500,
+          headers: CORS_HEADERS,
+          body: JSON.stringify({ success: false, error: 'RESEND_API_KEY not configured' }),
+        }
+      }
+      return handleSendSubmissionConfirmation(body, resendKey)
     case 'approve_booking':
       return handleApproveBooking(body, supabaseUrl, serviceKey, resendKey)
 

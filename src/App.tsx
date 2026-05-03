@@ -47,6 +47,10 @@ const InviteAccept = lazy(() =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .catch((): any => { window.location.reload(); return { default: () => null } })
 )
+const PortalTrackPage = lazy(() =>
+  import('@/views/PortalTrackView')
+    .catch((): any => { window.location.reload(); return { default: () => null } })
+)
 
 // ── Spinner (shared loading state) ────────────────────────────────────────────
 function FullPageSpinner() {
@@ -429,6 +433,16 @@ export default function App() {
             element={
               <Suspense fallback={<FullPageSpinner />}>
                 <CustomerPortalPage />
+              </Suspense>
+            }
+          />
+
+            {/* Portal job tracker — unique link per request */}
+          <Route
+            path="/portal/track/:requestId"
+            element={
+              <Suspense fallback={<FullPageSpinner />}>
+                <PortalTrackPage />
               </Suspense>
             }
           />

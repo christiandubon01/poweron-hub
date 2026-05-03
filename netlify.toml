@@ -10,6 +10,8 @@
 
 [functions."city-scraper"]
   timeout = 26
+[functions."portal-schedule"]
+timeout = 26
 
 # Auth callback — must be before the wildcard (Safari iOS strips fragment on redirect)
 [[redirects]]
