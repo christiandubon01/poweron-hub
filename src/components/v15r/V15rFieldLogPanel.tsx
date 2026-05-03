@@ -403,9 +403,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
     const labor = estHrs * estRate
     const mileageCost = estMi * mileRate
-    const subtotal = labor + estMat + mileageCost
-    const taxAmount = subtotal * (taxRate / 100)
-    const totalQuote = subtotal + taxAmount
+    const taxableAmount = estMat + mileageCost
+    const taxAmount = taxableAmount * (taxRate / 100)
+    const totalQuote = labor + estMat + mileageCost + taxAmount
     const profit = totalQuote - estMat - mileageCost - (estHrs * (parseFloat(String(backup?.settings?.opCost)) || 35))
     const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
 
@@ -1657,14 +1657,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 const labor = estHrs * estRate
                 const mileageCost = estMi * mileRate
                 const opCostTotal = estHrs * opCost
-                const totalQuote = labor + estMat + mileageCost
-                const profit = totalQuote - estMat - mileageCost - opCostTotal
+                const taxableAmount = estMat + mileageCost
+                const taxAmount = taxableAmount * (taxRate / 100)
+                const totalQuote = labor + estMat + mileageCost + taxAmount
+                const profit = totalQuote - estMat - mileageCost - taxAmount - opCostTotal
                 const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
 
                 return (
                   <>
                     {/* 5-cell summary bar matching source HTML */}
-                    <div className="grid grid-cols-5 gap-0 rounded-lg overflow-hidden border border-blue-700/30">
+                    <div className="grid grid-cols-6 gap-0 rounded-lg overflow-hidden border border-blue-700/30">
                       <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
                         <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Material Cost</div>
                         <div className="font-mono text-xs font-bold text-orange-400">{fmt(estMat)}</div>
@@ -1672,6 +1674,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
                         <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Mileage <span className="opacity-60">@${mileRate.toFixed(2)}/mi</span></div>
                         <div className="font-mono text-xs font-bold text-red-400">{fmt(mileageCost)}</div>
+                      </div>
+                      <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
+                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Tax <span className="opacity-60">@{taxRate.toFixed(2)}% mat+mi</span></div>
+                        <div className="font-mono text-xs font-bold text-yellow-400">{fmt(taxAmount)}</div>
                       </div>
                       <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
                         <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Op Cost <span className="opacity-60">@${opCost.toFixed(2)}/hr</span></div>
@@ -2159,6 +2165,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       )}
                     </div>
                     <div className="text-right text-[10px]" style={{ minWidth: '160px' }}>
+                      <div className="font-mono font-bold" style={{ color: '#f7f8ef', fontSize: '12px', marginBottom: '4px' }}>
+                        {fmt(roll.totalBillable)} quote
+                      </div>
                       <div className="font-mono" style={{ color: '#e5e7eb' }}>
                         {num(roll.hrs).toFixed(1)}h × ${num(roll.opCost).toFixed(2)} = <span style={{ fontWeight: 700, color: '#f87171' }}>{fmt(roll.laborCost)} lab</span>
                       </div>
@@ -2168,33 +2177,29 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       <div className="font-mono" style={{ color: '#e5e7eb' }}>
                         {num(roll.miles)}mi × ${num(roll.mileRate).toFixed(2)} = <span style={{ fontWeight: 700, color: '#60a5fa' }}>{fmt(roll.mileCost)} mi</span>
                       </div>
-                      <div style={{ color: roll.projectedProfit >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: 800, fontSize: '16px', lineHeight: '1.2', marginTop: '4px' }}>
-                        {fmt(roll.projectedProfit)}
-                      </div>
-                      <div style={{ fontSize: '8px', color: 'var(--t3)' }}>actual ({num(l.hrs).toFixed(1)}h)</div>
                     </div>
                   </div>
 
                   {/* Ledger rollup */}
-                  <div className="bg-[var(--bg-input)] rounded px-2 py-1.5 text-[9px] space-y-1">
+                  <div className="bg-[var(--bg-input)] rounded px-2 py-2 text-[10px] space-y-1.5" style={{ border: '1px solid rgba(255,255,255,0.1)' }}>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Base Quote:</span>
-                      <span className="font-mono text-gray-300">{fmt(roll.baseQuoted)}</span>
+                      <span className="font-mono text-gray-300 font-semibold">{fmt(roll.baseQuoted)}</span>
                     </div>
-                    <div className="flex justify-between font-bold text-gray-200 border-t border-gray-700 pt-1">
+                    <div className="flex justify-between font-bold border-t border-gray-700 pt-1.5" style={{ color: '#f7f8ef', fontSize: '11px' }}>
                       <span>Total Billable:</span>
                       <span className="font-mono">{fmt(roll.totalBillable)}</span>
                     </div>
-                    <div className="flex justify-between font-bold border-t border-gray-700 pt-1">
-                      <span className="text-gray-500">Total Cost:</span>
+                    <div className="flex justify-between font-bold border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
+                      <span className="text-gray-400">Total Cost:</span>
                       <span className="font-mono" style={{ color: '#f87171' }}>{fmt(roll.totalActual)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Projected Margin (Quoted {num(roll.estHrs).toFixed(1)} hr):</span>
+                    <div className="flex justify-between border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
+                      <span className="text-gray-400">Projected Margin (Quoted {num(roll.estHrs).toFixed(1)} hr):</span>
                       <span className="font-mono font-bold" style={{ color: roll.estimatedProfit >= 0 ? '#378ADD' : '#E24B4A' }}>{fmt(roll.estimatedProfit)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Cash Real Margin (Actual {num(l.hrs).toFixed(1)} hr):</span>
+                    <div className="flex justify-between" style={{ fontSize: '11px' }}>
+                      <span className="text-gray-400">Cash Real Margin (Actual {num(l.hrs).toFixed(1)} hr):</span>
                       <span className="font-mono font-bold" style={{ color: roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{fmt(roll.projectedProfit)}</span>
                     </div>
                   </div>
