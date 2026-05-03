@@ -59,7 +59,7 @@ const COMPANY_NAME    = 'Power On Solutions LLC'
 const LICENSE_NUMBER  = '1151468'
 const CSLB_VERIFY_URL = `https://www.cslb.ca.gov/OnlineServices/CheckLicenseII/CheckLicense.aspx?LicNum=${LICENSE_NUMBER}`
 const FROM_ADDRESS    = 'Power On Solutions <app@poweronsolutionsllc.com>'
-const PHONE_DISPLAY   = '(760) 555-0100'
+const PHONE_DISPLAY   = '(760) 623-8962'
 const WEBSITE_URL     = 'https://poweronsolutionsllc.com'
 const RESEND_API_URL  = 'https://api.resend.com/emails'
 
@@ -382,7 +382,7 @@ async function handleSendConfirmationEmail(body, resendApiKey) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Booking Confirmed — Power On Solutions</title>
 </head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Plus Jakarta Sans','Manrope',Arial,sans-serif;">
   <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#0f172a;">
     <tr><td align="center" style="padding:40px 16px;">
       <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600"
@@ -395,9 +395,9 @@ async function handleSendConfirmationEmail(body, resendApiKey) {
         </td></tr>
         <!-- Brand row -->
         <tr><td style="padding:36px 40px 24px;text-align:center;border-bottom:1px solid #334155;">
-          <div style="display:inline-block;background:#f59e0b;border-radius:10px;padding:10px 20px;margin-bottom:16px;">
-            <span style="font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;">⚡ POWER ON</span>
-          </div>
+          <img src="https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png"
+               alt="Power On Solutions LLC" width="240" height="59"
+               style="display:block;margin:0 auto 16px;height:59px;width:240px;object-fit:contain;" />
           <h1 style="margin:0 0 6px;font-size:26px;font-weight:700;color:#f8fafc;">Booking Confirmed!</h1>
           <p style="margin:0;font-size:15px;color:#94a3b8;">Your visit has been approved and scheduled.</p>
         </td></tr>
@@ -618,9 +618,10 @@ async function handleSendSubmissionConfirmation(body, resendApiKey) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Request Received – Power On Solutions</title>
+  <title>Booking Confirmed – Power On Solutions</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Plus Jakarta Sans','Manrope',Arial,sans-serif;">
   <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#0f172a;">
     <tr><td align="center" style="padding:40px 16px;">
       <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600"
@@ -631,9 +632,9 @@ async function handleSendSubmissionConfirmation(body, resendApiKey) {
           </span>
         </td></tr>
         <tr><td style="padding:36px 40px 24px;text-align:center;border-bottom:1px solid #334155;">
-          <div style="display:inline-block;background:#6ccb3f;border-radius:10px;padding:10px 20px;margin-bottom:16px;">
-            <span style="font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;">⚡ POWER ON</span>
-          </div>
+          <img src="https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png"
+               alt="Power On Solutions LLC" width="240" height="59"
+               style="display:block;margin:0 auto 16px;height:59px;width:240px;object-fit:contain;" />
           <h1 style="margin:0 0 6px;font-size:26px;font-weight:700;color:#f8fafc;">Request Received!</h1>
           <p style="margin:0;font-size:15px;color:#94a3b8;">We'll review your request and reach out within 1 business day.</p>
         </td></tr>
