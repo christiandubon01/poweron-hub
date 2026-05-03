@@ -299,8 +299,8 @@ function TrackingMap({
           icon: {
             url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
               '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40">' +
-              '<path d="M16 0C7.163 0 0 7.163 0 16c0 10 16 24 16 24s16-14 16-24C32 7.163 24.837 0 16 0z" fill="#6ccb3f" stroke="#fff" stroke-width="1.5"/>' +
-              '<circle cx="16" cy="16" r="5" fill="#fff"/>' +
+              '<path d="M16 0C7.163 0 0 7.163 0 16c0 10 16 24 16 24s16-14 16-24C32 7.163 24.837 0 16 0z" fill="#ffd222" stroke="#0a1208" stroke-width="1.5"/>' +
+              '<circle cx="16" cy="16" r="5" fill="#0a1208"/>' +
               '</svg>'
             )}`,
             scaledSize: new google.maps.Size(32, 40),
@@ -308,11 +308,9 @@ function TrackingMap({
           },
         })
 
-        // Zoom to address if Coachella Valley
-        if (isLocal) {
-          mapInstance.current.setCenter(pos)
-          mapInstance.current.setZoom(14)
-        }
+        // Always center on customer address with ~15 mile radius view
+        mapInstance.current.setCenter(pos)
+        mapInstance.current.setZoom(10)
       })
     }
 
@@ -320,8 +318,14 @@ function TrackingMap({
       doGeocode()
     } else {
       loadGoogleMaps(() => {
-        // Wait a tick for map to be ready
-        setTimeout(doGeocode, 200)
+        const tryGeocode = (attempts: number) => {
+          if (mapInstance.current) { 
+            setTimeout(doGeocode, 500)
+            return 
+          }
+          if (attempts > 0) setTimeout(() => tryGeocode(attempts - 1), 400)
+        }
+        tryGeocode(15)
       })
     }
   }, [address, city, isLocal])
