@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase'
 import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
 import AddLeadModal from './AddLeadModal'
+import PortalInbox from './PortalInbox'
 import { useHunterStore } from '@/store/hunterStore'
 import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
 
@@ -361,7 +362,7 @@ const handleMapLeadSelect = (leadId: string) => {
   const [deferredExpanded, setDeferredExpanded] = useState(false)
   const [cityPermitsExpanded, setCityPermitsExpanded] = useState(true)
   // HUNTER-UI-GEO-UNIFY-APR30-2026-1: geography filter persisted across sessions
-  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs'
+  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs' | 'portal'
   const [geoFilter, setGeoFilterRaw] = useState<GeoFilter>(() => {
     try { return (localStorage.getItem('hunter_geo_filter') as GeoFilter) ?? 'all' } catch { return 'all' }
   })
@@ -459,6 +460,7 @@ const handleMapLeadSelect = (leadId: string) => {
       case 'tlma':         return leads.filter((l: any) => l.source === 'tlma_riverside')
       case 'indio':        return leads.filter((l: any) => l.city === 'Indio')
       case 'palm_springs': return leads.filter((l: any) => l.city === 'Palm Springs')
+      case 'portal':       return leads.filter((l: any) => l.source === 'customer_portal' || l.sourceTag === 'customer_portal')
       default:             return leads
     }
   }, [leads, geoFilter])
@@ -687,7 +689,7 @@ const handleMapLeadSelect = (leadId: string) => {
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs']] as const).map(([val, label]) => (
+                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs'], ['portal', '⚡ Portal']] as const).map(([val, label]) => (
                   <button
                     key={val}
                     type="button"
@@ -770,7 +772,8 @@ const handleMapLeadSelect = (leadId: string) => {
         {(filters.scoreTier !== 'all' ||
           filters.jobType !== 'all' ||
           filters.urgencyOnly ||
-          filters.dateRange !== 'all') && (
+          filters.dateRange !== 'all' ||
+          filters.sourceTag !== 'all') && (
           <div className="text-xs text-blue-400 ml-auto">
             ✓ Filters active
           </div>
@@ -944,6 +947,7 @@ const handleMapLeadSelect = (leadId: string) => {
 
       {/* Lead Inbox */}
       <div className="flex-1 overflow-y-auto space-y-4 p-4">
+        <PortalInbox onLeadConverted={fetchLeads} />
         {geoFilteredLeads.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-gray-400">
             <Zap size={48} className="mb-3 opacity-50" />

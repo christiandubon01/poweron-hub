@@ -290,6 +290,12 @@ export function HunterLeadCard({
                   NEW
                 </span>
               )}
+              {(lead.source === 'customer_portal' || lead.sourceTag === 'customer_portal') && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 rounded-full shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block" />
+                  ⚡ INBOUND
+                </span>
+              )}
               <h3 className="text-base font-bold text-white truncate">
                 {lead.contactName || lead.contact_name ||
                 (lead.source === 'city-portal'
@@ -532,8 +538,13 @@ export function HunterLeadCard({
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="text-xs font-mono text-gray-500">ID: {lead.id?.slice(0, 8)}</span>
                 {lead.sourceTag && (
-                  <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded">
-                    {lead.sourceTag}
+                  <span className={clsx(
+                    'text-xs px-2 py-0.5 rounded border',
+                    (lead.source === 'customer_portal' || lead.sourceTag === 'customer_portal')
+                      ? 'bg-yellow-950/50 text-yellow-300 border-yellow-700/50'
+                      : 'bg-gray-800 text-gray-300 border-gray-700'
+                  )}>
+                    {lead.sourceTag === 'customer_portal' ? '⚡ Portal' : lead.sourceTag}
                   </span>
                 )}
                 {lead.source === 'tlma_riverside' && (
@@ -612,6 +623,47 @@ export function HunterLeadCard({
                   {lead.total_sqft.toLocaleString()} sqft
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Portal Lead Insight */}
+          {(lead.source === 'customer_portal' || lead.sourceTag === 'customer_portal') && (
+            <div className="p-3 bg-yellow-950/30 border border-yellow-700/40 rounded-lg space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide">⚡ Inbound Portal Lead</span>
+                <span className="text-[10px] px-1.5 py-0.5 bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 rounded-full font-bold">HOT</span>
+              </div>
+              <p className="text-xs text-yellow-200/70">
+                Customer actively reached out — highest conversion intent. Contact within 1 hour for best close rate.
+              </p>
+              <div className="flex items-center gap-6 text-xs pt-1 border-t border-yellow-800/30 flex-wrap">
+                <div>
+                  <div className="text-gray-500 mb-0.5">Distance</div>
+                  <div className="font-semibold text-emerald-400">
+                    {distanceMiles != null ? distanceDisplay : '—'}
+                  </div>
+                </div>
+                {distanceMiles != null && (
+                  <div>
+                    <div className="text-gray-500 mb-0.5">Drive time</div>
+                    <div className="font-semibold text-gray-200">{driveTimeDisplay}</div>
+                  </div>
+                )}
+                {lead.valueRange && (
+                  <div>
+                    <div className="text-gray-500 mb-0.5">Est. value</div>
+                    <div className="font-semibold text-gray-200">
+                      ${lead.valueRange.min.toLocaleString()} – ${lead.valueRange.max.toLocaleString()}
+                    </div>
+                  </div>
+                )}
+                {lead.marginEstimate !== undefined && (
+                  <div>
+                    <div className="text-gray-500 mb-0.5">Est. margin</div>
+                    <div className="font-semibold text-gray-200">{lead.marginEstimate}%</div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
