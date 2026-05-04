@@ -22,6 +22,9 @@ export function YelpAdPanel() {
   const [dailyBudget, setDailyBudget] = useState('10')
   const [monthlySpend, setMonthlySpend] = useState('')
   const [notes, setNotes] = useState('')
+  const [totalLeadsManual, setTotalLeadsManual] = useState('')
+  const [convertedManual, setConvertedManual] = useState('')
+  const [revenueManual, setRevenueManual] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [userId, setUserId] = useState(null)
@@ -37,10 +40,16 @@ export function YelpAdPanel() {
       setDailyBudget(String(data.daily_budget ?? '10'))
       setMonthlySpend(String(data.monthly_spend ?? ''))
       setNotes(data.notes ?? '')
+      setTotalLeadsManual(data.total_leads_manual != null ? String(data.total_leads_manual) : '')
+      setConvertedManual(data.converted_manual != null ? String(data.converted_manual) : '')
+      setRevenueManual(data.revenue_manual != null ? String(data.revenue_manual) : '')
     } else {
       setDailyBudget('10')
       setMonthlySpend('')
       setNotes('')
+      setTotalLeadsManual('')
+      setConvertedManual('')
+      setRevenueManual('')
     }
   }, [userId, month])
 
@@ -54,6 +63,9 @@ export function YelpAdPanel() {
       daily_budget: parseFloat(dailyBudget) || 0,
       monthly_spend: parseFloat(monthlySpend) || 0,
       notes,
+      total_leads_manual: parseInt(totalLeadsManual) || null,
+      converted_manual: parseInt(convertedManual) || null,
+      revenue_manual: parseFloat(revenueManual) || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,month' })
     setSaving(false)
@@ -66,11 +78,14 @@ export function YelpAdPanel() {
     (l.discovered_at || l.created_at || '').startsWith(month)
   )
   const wonYelpLeads = yelpLeads.filter((l) => l.status === 'won' || l.status === 'estimated' || l.disposition === 'won_archived')
-  const totalRevenue = wonYelpLeads.reduce((sum, l) => sum + (typeof (l.estimated_value || l.estimatedValue) === 'number' ? (l.estimated_value || l.estimatedValue || 0) : 0), 0)
+  const hunterRevenue = wonYelpLeads.reduce((sum, l) => sum + (typeof (l.estimated_value || l.estimatedValue) === 'number' ? (l.estimated_value || l.estimatedValue || 0) : 0), 0)
+  const totalRevenue = parseFloat(revenueManual) || hunterRevenue
+  const totalLeads = parseInt(totalLeadsManual) || yelpLeads.length
+  const totalConverted = parseInt(convertedManual) || wonYelpLeads.length
   const spend = parseFloat(monthlySpend) || (parseFloat(dailyBudget) || 0) * 30
   const roi = spend > 0 ? ((totalRevenue - spend) / spend) * 100 : null
-  const costPerLead = yelpLeads.length > 0 && spend > 0 ? spend / yelpLeads.length : null
-  const conversionRate = yelpLeads.length > 0 ? (wonYelpLeads.length / yelpLeads.length) * 100 : null
+  const costPerLead = totalLeads > 0 && spend > 0 ? spend / totalLeads : null
+  const conversionRate = totalLeads > 0 ? (totalConverted / totalLeads) * 100 : null
 
   return (
     <div className="p-4 space-y-4">
@@ -100,6 +115,26 @@ export function YelpAdPanel() {
               placeholder={String((parseFloat(dailyBudget) || 0) * 30)} />
           </div>
         </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Total Leads Received</label>
+            <input type="number" value={totalLeadsManual} onChange={(e) => setTotalLeadsManual(e.target.value)}
+              className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-200 focus:outline-none focus:border-red-500"
+              placeholder="0" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Converted</label>
+            <input type="number" value={convertedManual} onChange={(e) => setConvertedManual(e.target.value)}
+              className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-200 focus:outline-none focus:border-red-500"
+              placeholder="0" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Actual Revenue ($)</label>
+            <input type="number" value={revenueManual} onChange={(e) => setRevenueManual(e.target.value)}
+              className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-200 focus:outline-none focus:border-red-500"
+              placeholder="0" />
+          </div>
+        </div>
         <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
           className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-200 focus:outline-none focus:border-red-500"
           placeholder="Notes (e.g. paused mid-month...)" />
@@ -113,11 +148,11 @@ export function YelpAdPanel() {
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-gray-800 rounded-lg p-3">
             <div className="text-xs text-gray-500 mb-1">Yelp Leads</div>
-            <div className="text-2xl font-bold text-white">{yelpLeads.length}</div>
+            <div className="text-2xl font-bold text-white">{totalLeads}</div>
           </div>
           <div className="bg-gray-800 rounded-lg p-3">
             <div className="text-xs text-gray-500 mb-1">Converted</div>
-            <div className="text-2xl font-bold text-emerald-400">{wonYelpLeads.length}</div>
+            <div className="text-2xl font-bold text-emerald-400">{totalConverted}</div>
           </div>
           <div className="bg-gray-800 rounded-lg p-3">
             <div className="text-xs text-gray-500 mb-1">Ad Spend</div>
