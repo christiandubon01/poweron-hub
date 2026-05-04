@@ -110,7 +110,7 @@ export function HunterOutcomeModal({
 
     try {
       const details: LostDetails = {
-        lossReason,
+        lossReason: lostReason,
         competitorInfo: lostCompetitor || undefined,
         notes: lostNotes || undefined,
       }

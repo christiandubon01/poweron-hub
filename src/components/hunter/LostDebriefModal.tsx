@@ -55,7 +55,27 @@ export function LostDebriefModal({ lead, isOpen, onClose, onSaved }: LostDebrief
       });
 
       await updateLeadStatus(lead.id, LeadStatus.LOST);
-
+      // Write disposition for Lead History block
+      try {
+        const { supabase: sb } = await import('@/lib/supabase')
+        const lossLabel = wentWithCompetitor && competitorName
+          ? `Lost to competitor: ${competitorName}`
+          : whatHappened
+          ? `Lost: ${whatHappened.slice(0, 80)}`
+          : 'Lost'
+        await (sb as any).from('hunter_leads').update({
+          disposition: 'lost',
+          disposition_detail: lossLabel,
+          disposition_at: new Date().toISOString(),
+        }).eq('id', lead.id)
+      } catch (err) {
+        console.error('[LostDebriefModal] disposition write failed (non-fatal):', err)
+      }
+      // Re-fetch store so Lead History block renders immediately
+      try {
+        const { useHunterStore: hs } = await import('@/store/hunterStore')
+        await hs.getState().fetchLeads()
+      } catch (_) {}
       setSaving(false);
       onSaved?.();
       onClose();

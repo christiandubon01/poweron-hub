@@ -215,6 +215,13 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       const leadId = prefillFromLead?.leadId || hunterBannerCtx?.leadId
       try {
         await updateLeadStatus(leadId, 'estimated' as any)
+        // Write disposition so Lead History shows what happened
+        const { supabase: sb } = await import('@/lib/supabase')
+        await (sb as any).from('hunter_leads').update({
+          disposition: 'won_archived',
+          disposition_detail: `Converted to project: ${npName.trim() || 'Unnamed project'}`,
+          disposition_at: new Date().toISOString(),
+        }).eq('id', leadId)
       } catch (err) {
         console.error('[V15rProjectsPanel] Failed to mark HUNTER lead as estimated:', err)
       }
@@ -295,12 +302,25 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     forceUpdate()
   }
 
-  function deleteProject(id: string) {
+  async function deleteProject(id: string) {
     if (!confirm('Delete this project? This cannot be undone.')) return
+    const proj = projects.find(p => p.id === id)
     backup.projects = projects.filter(p => p.id !== id)
-    // Also remove related logs
     backup.logs = (backup.logs || []).filter(l => l.projId !== id)
     persist()
+    // Write won_archived disposition to linked hunter lead
+    if (proj?.convertedFromLeadId) {
+      try {
+        const { supabase: sb } = await import('@/lib/supabase')
+        await (sb as any).from('hunter_leads').update({
+          disposition: 'won_archived',
+          disposition_detail: `Project deleted: ${proj.name || 'Unnamed project'}`,
+          disposition_at: new Date().toISOString(),
+        }).eq('id', proj.convertedFromLeadId)
+      } catch (err) {
+        console.error('[V15rProjectsPanel] disposition write failed (non-fatal):', err)
+      }
+    }
   }
 
   function moveStatus(id: string, newStatus: string) {

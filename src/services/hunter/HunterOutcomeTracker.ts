@@ -99,6 +99,9 @@ export async function markLeadWon(
       .update({
         status: LeadStatus.WON,
         last_updated: new Date().toISOString(),
+        disposition: 'won_archived',
+        disposition_detail: `Won: $${details.actualRevenue?.toLocaleString() ?? '—'} via ${details.closeMethod ?? '—'}`,
+        disposition_at: new Date().toISOString(),
       })
       .eq('id', leadId);
 
@@ -158,13 +161,21 @@ export async function markLeadLost(
 ): Promise<void> {
   try {
     // 1. Update lead status to 'lost'
+    const lossLabel = details.lossReason
+      ? `Lost: ${details.lossReason}${details.competitorInfo ? ` (${details.competitorInfo})` : ''}`
+      : 'Lost'
+    console.log('[HunterOutcomeTracker] marking lost:', leadId, lossLabel)
     const { error: updateError } = await (supabase
       .from('hunter_leads') as any)
       .update({
         status: LeadStatus.LOST,
         last_updated: new Date().toISOString(),
+        disposition: 'lost',
+        disposition_detail: lossLabel,
+        disposition_at: new Date().toISOString(),
       })
       .eq('id', leadId);
+    console.log('[HunterOutcomeTracker] update error:', updateError)
 
     if (updateError) throw updateError;
 
@@ -226,6 +237,9 @@ export async function markLeadDeferred(
         deferred_follow_up: followUpDate,
         deferred_notes: notes,
         last_updated: new Date().toISOString(),
+        disposition: 'study',
+        disposition_detail: `Deferred for follow-up${followUpDate ? `: ${followUpDate}` : ''}${notes ? ` — ${notes}` : ''}`,
+        disposition_at: new Date().toISOString(),
       })
       .eq('id', leadId);
 

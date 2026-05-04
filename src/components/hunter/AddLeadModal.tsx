@@ -71,6 +71,7 @@ const EMPTY_FORM: FormState = {
 const SOURCE_OPTIONS: Array<{ value: string; label: string; tag: string }> = [
   { value: 'manual_entry', label: 'Manual Entry', tag: 'manual_entry' },
   { value: 'referral', label: 'Referral', tag: 'referral' },
+  { value: 'yelp_ad', label: 'Yelp Ad', tag: 'yelp_ad' },
   { value: 'website', label: 'Website', tag: 'website' },
   { value: 'phone_call', label: 'Phone Call', tag: 'phone_call' },
   { value: 'other', label: 'Other', tag: 'other' },

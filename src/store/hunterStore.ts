@@ -222,9 +222,10 @@ export const useHunterStore = create<HunterStoreState>()(
             ),
             lastError: null,
           }));
-
           const { leads, activeFilters, sortBy } = get();
           get().applyFiltersAndSort(leads, activeFilters, sortBy);
+          // Re-fetch to ensure all tabs see fresh data including disposition fields
+          setTimeout(() => get().fetchLeads(), 800)
         } catch (err: any) {
           console.error('updateLeadStatus error:', err);
           set({ lastError: err?.message || 'Unknown error updating lead status' });

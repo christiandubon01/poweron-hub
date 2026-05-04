@@ -545,7 +545,7 @@ export function HunterLeadCard({
                       ? 'bg-yellow-950/50 text-yellow-300 border-yellow-700/50'
                       : 'bg-gray-800 text-gray-300 border-gray-700'
                   )}>
-                    {lead.sourceTag === 'customer_portal' ? '⚡ Portal' : lead.sourceTag}
+                    {lead.sourceTag === 'customer_portal' ? '⚡ Portal' : lead.sourceTag === 'yelp_ad' ? '★ Yelp' : lead.sourceTag}
                   </span>
                 )}
                 {lead.source === 'tlma_riverside' && (
@@ -665,6 +665,19 @@ export function HunterLeadCard({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Disposition Detail — shows what happened to archived leads */}
+          {(lead as any).disposition && (
+            <div className="p-3 bg-gray-800/60 border border-gray-700 rounded-lg space-y-1">
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">📋 Lead History</div>
+              <div className="text-sm text-gray-200">{(lead as any).disposition_detail || (lead as any).disposition}</div>
+              {(lead as any).disposition_at && (
+                <div className="text-xs text-gray-500">
+                  {new Date((lead as any).disposition_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                </div>
+              )}
             </div>
           )}
 

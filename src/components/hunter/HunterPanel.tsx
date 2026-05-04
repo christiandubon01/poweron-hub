@@ -20,6 +20,7 @@ import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
 import AddLeadModal from './AddLeadModal'
 import PortalInbox from './PortalInbox'
+import YelpAdPanel from './YelpAdPanel'
 import { useHunterStore } from '@/store/hunterStore'
 import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
 
@@ -161,6 +162,9 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     contractor_name: (storeLead as any).contractor_name ?? undefined,
     applied_date: (storeLead as any).applied_date ?? undefined,
     work_class_code: (storeLead as any).work_class_code ?? undefined,
+    disposition: (storeLead as any).disposition ?? undefined,
+    disposition_detail: (storeLead as any).disposition_detail ?? undefined,
+    disposition_at: (storeLead as any).disposition_at ?? undefined,
   }
 }
 
@@ -358,11 +362,13 @@ const handleMapLeadSelect = (leadId: string) => {
   // All three default to collapsed so the screen stays compact; operator
   // expands the bucket they want to investigate.
   const [estimatedExpanded, setEstimatedExpanded] = useState(false)
+  const [wonArchivedExpanded, setWonArchivedExpanded] = useState(false)
   const [lostExpanded, setLostExpanded] = useState(false)
-  const [deferredExpanded, setDeferredExpanded] = useState(false)
+  const [rejectedExpanded, setRejectedExpanded] = useState(false)
+  const [studyExpanded, setStudyExpanded] = useState(false)
   const [cityPermitsExpanded, setCityPermitsExpanded] = useState(true)
   // HUNTER-UI-GEO-UNIFY-APR30-2026-1: geography filter persisted across sessions
-  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs' | 'portal'
+  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs' | 'portal' | 'yelp'
   const [geoFilter, setGeoFilterRaw] = useState<GeoFilter>(() => {
     try { return (localStorage.getItem('hunter_geo_filter') as GeoFilter) ?? 'all' } catch { return 'all' }
   })
@@ -461,6 +467,7 @@ const handleMapLeadSelect = (leadId: string) => {
       case 'indio':        return leads.filter((l: any) => l.city === 'Indio')
       case 'palm_springs': return leads.filter((l: any) => l.city === 'Palm Springs')
       case 'portal':       return leads.filter((l: any) => l.source === 'customer_portal' || l.sourceTag === 'customer_portal')
+      case 'yelp':         return leads.filter((l: any) => l.source === 'yelp_ad' || l.sourceTag === 'yelp_ad' || (l as any).source_tag === 'yelp_ad')
       default:             return leads
     }
   }, [leads, geoFilter])
@@ -480,7 +487,12 @@ const handleMapLeadSelect = (leadId: string) => {
       // always reach the isArchivedLead bucket regardless of score.
       const leadStatus = (lead as any).status
       const isArchivedByStatus = leadStatus === 'lost' || leadStatus === 'deferred' || leadStatus === 'archived' || leadStatus === 'estimated'
-      if (filters.scoreTier !== 'all' && !isArchivedByStatus) {
+      if (isArchivedByStatus) {
+        // Always include archived leads in filteredAndSortedLeads
+        // showArchived controls section visibility, not filtering
+        return true
+      }
+      if (filters.scoreTier !== 'all' && filters.scoreTier !== 'archived') {
         const tier = getScoreTierLabel(lead.score)
         if (tier !== filters.scoreTier) return false
       }
@@ -585,9 +597,10 @@ const handleMapLeadSelect = (leadId: string) => {
 
   // Sub-buckets within Archived — split by disposition so operator can scan
   // each independently. Each bucket has its own collapse state.
-  const estimatedLeads = archivedLeads.filter((l: any) => l.status === 'estimated')
-  const lostLeads = archivedLeads.filter((l: any) => l.status === 'lost')
-  const deferredLeads = archivedLeads.filter((l: any) => l.status === 'deferred')
+  const wonArchivedLeads = archivedLeads.filter((l: any) => (l as any).disposition === 'won_archived' || l.status === 'estimated' || l.status === 'won')
+  const lostLeads = archivedLeads.filter((l: any) => (l as any).disposition === 'lost' || (l.status === 'lost' && !(l as any).disposition))
+  const rejectedLeads = archivedLeads.filter((l: any) => (l as any).disposition === 'rejected')
+  const studyLeads = archivedLeads.filter((l: any) => (l as any).disposition === 'study' || (l.status === 'deferred' && !(l as any).disposition))
   const otherArchivedLeads = archivedLeads.filter((l: any) =>
     l.status !== 'estimated' && l.status !== 'lost' && l.status !== 'deferred'
   )
@@ -686,10 +699,31 @@ const handleMapLeadSelect = (leadId: string) => {
               <MapIcon size={13} className="text-emerald-500" />
               <span className="font-medium">Lead Map</span>
               <span className="text-gray-500">— pin click opens lead</span>
+              <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 ml-2">
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="flex items-center gap-1 px-2 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded border border-gray-700 transition-colors"
+                >
+                  <Settings size={11} />
+                  Filter
+                  <ChevronDown size={11} className={clsx('transition-transform', showFilters && 'rotate-180')} />
+                </button>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortOption)}
+                  className="px-2 py-0.5 bg-gray-800 text-gray-300 rounded border border-gray-700 hover:border-gray-600 focus:outline-none text-xs"
+                >
+                  <option value="score">Score</option>
+                  <option value="date">Date</option>
+                  <option value="value">Value</option>
+                  <option value="distance">Distance</option>
+                  <option value="nearest">Nearest</option>
+                </select>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs'], ['portal', '⚡ Portal']] as const).map(([val, label]) => (
+                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs'], ['portal', '⚡ Portal'], ['yelp', 'Yelp']] as const).map(([val, label]) => (
                   <button
                     key={val}
                     type="button"
@@ -708,6 +742,96 @@ const handleMapLeadSelect = (leadId: string) => {
               {mapExpanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
             </div>
           </button>
+          {showFilters && (
+            <div className="bg-gray-900 border-b border-gray-800 px-3 py-2 flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={filters.scoreTier}
+                  onChange={(e) => setFilters({ ...filters, scoreTier: e.target.value as any })}
+                  className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none"
+                >
+                  <option value="all">All Tiers</option>
+                  <option value="elite">Elite (85+)</option>
+                  <option value="strong">Strong (75-84)</option>
+                  <option value="qualified">Qualified (60-74)</option>
+                  <option value="expansion">Expansion (40-59)</option>
+                </select>
+                <select
+                  value={filters.jobType}
+                  onChange={(e) => setFilters({ ...filters, jobType: e.target.value })}
+                  className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none"
+                >
+                  <option value="all">All Types</option>
+                  <option value="electrical">Electrical</option>
+                  <option value="solar">Solar</option>
+                  <option value="maintenance">Maintenance</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setFilters({ ...filters, urgencyOnly: !filters.urgencyOnly })}
+                  className={clsx(
+                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
+                    filters.urgencyOnly
+                      ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  <span className={clsx('w-1.5 h-1.5 rounded-full', filters.urgencyOnly ? 'bg-orange-400' : 'bg-gray-600')} />
+                  Urgent only (75+)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowArchived(!showArchived)}
+                  className={clsx(
+                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
+                    showArchived
+                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  <span className={clsx('w-1.5 h-1.5 rounded-full', showArchived ? 'bg-emerald-400' : 'bg-gray-600')} />
+                  Show archived
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !distanceFilterEnabled
+                    setDistanceFilterEnabled(next)
+                    if (next && maxDistanceMiles === null) setMaxDistanceMiles(50)
+                  }}
+                  className={clsx(
+                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
+                    distanceFilterEnabled
+                      ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  <span className={clsx('w-1.5 h-1.5 rounded-full', distanceFilterEnabled ? 'bg-blue-400' : 'bg-gray-600')} />
+                  {distanceFilterEnabled && maxDistanceMiles != null ? `Within ${maxDistanceMiles} mi` : 'Within X miles'}
+                </button>
+                {distanceFilterEnabled && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="5"
+                      max="100"
+                      step="5"
+                      value={maxDistanceMiles ?? 50}
+                      onChange={(e) => setMaxDistanceMiles(parseInt(e.target.value))}
+                      className="w-24"
+                    />
+                    <span className="text-xs text-gray-400">{maxDistanceMiles} mi</span>
+                  </div>
+                )}
+                <button
+                  onClick={() => { setFilters(DEFAULT_FILTERS); setDistanceFilterEnabled(false); setMaxDistanceMiles(null) }}
+                  className="text-xs text-gray-500 hover:text-gray-300 underline ml-1"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          )}
           {mapExpanded && (
             <div style={{ height: '50vh', minHeight: 320 }}>
               <HunterMap
@@ -742,49 +866,12 @@ const handleMapLeadSelect = (leadId: string) => {
         )}
       </div>
 
-      {/* Filter and Sort Bar */}
-      <div className="bg-gray-900 border-b border-gray-800 p-3 flex items-center gap-2">
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs rounded transition-colors"
-        >
-          <Settings size={12} />
-          Filter
-          <ChevronDown size={12} className={clsx('transition-transform', showFilters && 'rotate-180')} />
-        </button>
+      
 
-        {/* Sort Dropdown */}
-        <div className="relative">
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortOption)}
-            className="px-2 py-1.5 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 hover:border-gray-600 focus:outline-none focus:border-blue-500"
-          >
-            <option value="score">Sort by Score</option>
-            <option value="date">Sort by Date</option>
-            <option value="value">Sort by Value</option>
-            <option value="distance">Sort by Distance</option>
-            <option value="nearest">Nearest First</option>
-          </select>
-        </div>
-
-        {/* Filter status */}
-        {(filters.scoreTier !== 'all' ||
-          filters.jobType !== 'all' ||
-          filters.urgencyOnly ||
-          filters.dateRange !== 'all' ||
-          filters.sourceTag !== 'all') && (
-          <div className="text-xs text-blue-400 ml-auto">
-            ✓ Filters active
-          </div>
-        )}
-      </div>
-
-      {/* Expandable Filter Panel */}
-      {showFilters && (
-        <div className="bg-gray-850 border-b border-gray-800 p-4 space-y-3 max-h-48 overflow-y-auto">
-          <div className="grid grid-cols-2 gap-3">
-            {/* Score Tier Filter */}
+      {/* Expandable Filter Panel - moved to map header */}
+      {false && (
+        <div>
+          <div>
             <div>
               <label className="text-xs text-gray-400 font-medium">Score Tier</label>
               <select
@@ -948,6 +1035,9 @@ const handleMapLeadSelect = (leadId: string) => {
       {/* Lead Inbox */}
       <div className="flex-1 overflow-y-auto space-y-4 p-4">
         <PortalInbox onLeadConverted={fetchLeads} />
+        {(geoFilter === 'yelp') && (
+          <YelpAdPanel />
+        )}
         {geoFilteredLeads.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-gray-400">
             <Zap size={48} className="mb-3 opacity-50" />
@@ -1067,40 +1157,26 @@ const handleMapLeadSelect = (leadId: string) => {
                   Archived Leads ({archivedLeads.length})
                 </h2>
 
-                {/* Estimated bucket — leads moved out of Pipeline after Open Estimate */}
-                {estimatedLeads.length > 0 && (
+                {/* Won Archived */}
+                {wonArchivedLeads.length > 0 && (
                   <div className="mb-3">
-                    <button
-                      type="button"
-                      onClick={() => setEstimatedExpanded(!estimatedExpanded)}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded text-left transition-colors"
-                      aria-expanded={estimatedExpanded}
-                    >
+                    <button type="button" onClick={() => setWonArchivedExpanded(!wonArchivedExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 rounded text-left transition-colors">
                       <span className="flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                        <span className="text-xs font-semibold text-emerald-300">Estimated</span>
-                        <span className="text-xs text-gray-500">({estimatedLeads.length})</span>
+                        <span className="text-xs font-semibold text-emerald-300">Won Archived</span>
+                        <span className="text-xs text-gray-500">({wonArchivedLeads.length})</span>
                       </span>
-                      <span className="text-gray-500 text-xs">{estimatedExpanded ? '▼' : '▶'}</span>
+                      <span className="text-gray-500 text-xs">{wonArchivedExpanded ? '▼' : '▶'}</span>
                     </button>
-                    {estimatedExpanded && (
+                    {wonArchivedExpanded && (
                       <div className="mt-2 space-y-2 opacity-75">
-                        {estimatedLeads.map((lead) => (
-                          <HunterLeadCard
-                            key={lead.id}
-                            lead={lead}
-                            onStatusChange={(id, status) => {
-                              onLeadAction?.(id, 'status_change', status)
-                            }}
-                            onNotesChange={(id, notes) => {
-                              onLeadAction?.(id, 'update_notes', notes)
-                            }}
-                            onCall={(lead) => {
-                              onLeadAction?.(lead.id, 'call', lead.phone)
-                            }}
-                            onPractice={(lead) => {
-                              onLeadAction?.(lead.id, 'practice', lead)
-                            }}
+                        {wonArchivedLeads.map((lead) => (
+                          <HunterLeadCard key={lead.id} lead={lead}
+                            onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
+                            onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
+                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
                       </div>
@@ -1108,15 +1184,11 @@ const handleMapLeadSelect = (leadId: string) => {
                   </div>
                 )}
 
-                {/* Lost bucket — leads marked as lost with debrief captured */}
+                {/* Lost */}
                 {lostLeads.length > 0 && (
                   <div className="mb-3">
-                    <button
-                      type="button"
-                      onClick={() => setLostExpanded(!lostExpanded)}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded text-left transition-colors"
-                      aria-expanded={lostExpanded}
-                    >
+                    <button type="button" onClick={() => setLostExpanded(!lostExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 rounded text-left transition-colors">
                       <span className="flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
                         <span className="text-xs font-semibold text-red-300">Lost</span>
@@ -1127,21 +1199,11 @@ const handleMapLeadSelect = (leadId: string) => {
                     {lostExpanded && (
                       <div className="mt-2 space-y-2 opacity-75">
                         {lostLeads.map((lead) => (
-                          <HunterLeadCard
-                            key={lead.id}
-                            lead={lead}
-                            onStatusChange={(id, status) => {
-                              onLeadAction?.(id, 'status_change', status)
-                            }}
-                            onNotesChange={(id, notes) => {
-                              onLeadAction?.(id, 'update_notes', notes)
-                            }}
-                            onCall={(lead) => {
-                              onLeadAction?.(lead.id, 'call', lead.phone)
-                            }}
-                            onPractice={(lead) => {
-                              onLeadAction?.(lead.id, 'practice', lead)
-                            }}
+                          <HunterLeadCard key={lead.id} lead={lead}
+                            onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
+                            onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
+                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
                       </div>
@@ -1149,40 +1211,26 @@ const handleMapLeadSelect = (leadId: string) => {
                   </div>
                 )}
 
-                {/* Deferred bucket — leads parked for later */}
-                {deferredLeads.length > 0 && (
+                {/* Rejected */}
+                {rejectedLeads.length > 0 && (
                   <div className="mb-3">
-                    <button
-                      type="button"
-                      onClick={() => setDeferredExpanded(!deferredExpanded)}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded text-left transition-colors"
-                      aria-expanded={deferredExpanded}
-                    >
+                    <button type="button" onClick={() => setRejectedExpanded(!rejectedExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 rounded text-left transition-colors">
                       <span className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                        <span className="text-xs font-semibold text-amber-300">Deferred</span>
-                        <span className="text-xs text-gray-500">({deferredLeads.length})</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+                        <span className="text-xs font-semibold text-orange-300">Rejected</span>
+                        <span className="text-xs text-gray-500">({rejectedLeads.length})</span>
                       </span>
-                      <span className="text-gray-500 text-xs">{deferredExpanded ? '▼' : '▶'}</span>
+                      <span className="text-gray-500 text-xs">{rejectedExpanded ? '▼' : '▶'}</span>
                     </button>
-                    {deferredExpanded && (
+                    {rejectedExpanded && (
                       <div className="mt-2 space-y-2 opacity-75">
-                        {deferredLeads.map((lead) => (
-                          <HunterLeadCard
-                            key={lead.id}
-                            lead={lead}
-                            onStatusChange={(id, status) => {
-                              onLeadAction?.(id, 'status_change', status)
-                            }}
-                            onNotesChange={(id, notes) => {
-                              onLeadAction?.(id, 'update_notes', notes)
-                            }}
-                            onCall={(lead) => {
-                              onLeadAction?.(lead.id, 'call', lead.phone)
-                            }}
-                            onPractice={(lead) => {
-                              onLeadAction?.(lead.id, 'practice', lead)
-                            }}
+                        {rejectedLeads.map((lead) => (
+                          <HunterLeadCard key={lead.id} lead={lead}
+                            onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
+                            onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
+                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
                       </div>
@@ -1190,27 +1238,30 @@ const handleMapLeadSelect = (leadId: string) => {
                   </div>
                 )}
 
-                {/* Catch-all for any 'archived' or unrecognized status */}
-                {otherArchivedLeads.length > 0 && (
-                  <div className="space-y-2 opacity-75">
-                    {otherArchivedLeads.map((lead) => (
-                      <HunterLeadCard
-                        key={lead.id}
-                        lead={lead}
-                        onStatusChange={(id, status) => {
-                          onLeadAction?.(id, 'status_change', status)
-                        }}
-                        onNotesChange={(id, notes) => {
-                          onLeadAction?.(id, 'update_notes', notes)
-                        }}
-                        onCall={(lead) => {
-                          onLeadAction?.(lead.id, 'call', lead.phone)
-                        }}
-                        onPractice={(lead) => {
-                          onLeadAction?.(lead.id, 'practice', lead)
-                        }}
-                      />
-                    ))}
+                {/* Study */}
+                {studyLeads.length > 0 && (
+                  <div className="mb-3">
+                    <button type="button" onClick={() => setStudyExpanded(!studyExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 rounded text-left transition-colors">
+                      <span className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                        <span className="text-xs font-semibold text-blue-300">Study</span>
+                        <span className="text-xs text-gray-500">({studyLeads.length})</span>
+                      </span>
+                      <span className="text-gray-500 text-xs">{studyExpanded ? '▼' : '▶'}</span>
+                    </button>
+                    {studyExpanded && (
+                      <div className="mt-2 space-y-2 opacity-75">
+                        {studyLeads.map((lead) => (
+                          <HunterLeadCard key={lead.id} lead={lead}
+                            onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
+                            onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
+                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

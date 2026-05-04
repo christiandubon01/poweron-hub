@@ -252,6 +252,26 @@ export async function dismissPortalRequest(requestId: string): Promise<void> {
     .update({ status: 'dismissed' })
     .eq('id', requestId)
 
+  // Write rejected disposition to linked hunter lead if exists
+  if (!error) {
+    try {
+      const { data: portalReq } = await (supabase as any)
+        .from('portal_requests')
+        .select('hunter_lead_id')
+        .eq('id', requestId)
+        .maybeSingle()
+      if (portalReq?.hunter_lead_id) {
+        await (supabase as any).from('hunter_leads').update({
+          disposition: 'rejected',
+          disposition_detail: 'Portal request dismissed by owner',
+          disposition_at: new Date().toISOString(),
+        }).eq('id', portalReq.hunter_lead_id)
+      }
+    } catch (err) {
+      console.error('[portalService] rejected disposition write failed (non-fatal):', err)
+    }
+  }
+
   if (error) {
     console.error('[portalService] dismissPortalRequest:', error)
   }
