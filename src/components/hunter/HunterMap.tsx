@@ -75,6 +75,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
 
   const [homeBase, setHomeBase] = useState<HomeBase | null>(null)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
+  const markersRef = useRef<google.maps.Marker[]>([])
   const [routeLeadId, setRouteLeadId] = useState<string | null>(null)
   const routeLeadIdRef = useRef<string | null>(null)
   const [routeLoading, setRouteLoading] = useState(false)
@@ -559,6 +560,48 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     })
   }, [isLoaded, ungeocodedPortalLeads])
 
+  useEffect(() => {
+    if (!mapRef.current || !isLoaded) return
+    markersRef.current.forEach(m => m.setMap(null))
+    markersRef.current = []
+    if (homeBase) {
+      const hm = new google.maps.Marker({
+        position: { lat: homeBase.lat, lng: homeBase.lng },
+        map: mapRef.current,
+        title: 'Home base',
+        icon: homeBaseSymbol(),
+        zIndex: 1000,
+      })
+      markersRef.current.push(hm)
+    }
+    const allPins = [
+      ...geocodedLeads.map((lead: any) => ({
+        id: lead.id,
+        lat: lead.latitude ?? lead.lat,
+        lng: lead.longitude ?? lead.lng,
+        score: lead.score ?? 0,
+        title: lead.contactName ?? lead.contact_name ?? 'Lead',
+      })),
+      ...portalPins.map(({ id, lat, lng, lead }) => ({
+        id, lat, lng,
+        score: lead.score ?? 82,
+        title: lead.contactName ?? lead.contact_name ?? 'Portal Lead',
+      })),
+    ]
+    allPins.forEach(({ id, lat, lng, score, title }) => {
+      const m = new google.maps.Marker({
+        position: { lat, lng },
+        map: mapRef.current!,
+        title,
+        icon: pinSymbol(pinColorForScore(score)),
+        zIndex: 500,
+        optimized: false,
+      })
+      m.addListener('click', () => setSelectedLeadId(id))
+      markersRef.current.push(m)
+    })
+  }, [isLoaded, homeBase, geocodedLeads, portalPins])
+
   const center = homeBase ?? FALLBACK_CENTER
 
   const selectedLead = useMemo(
@@ -611,37 +654,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         ],
       }}
     >
-      {homeBase && (
-        <MarkerF
-          position={{ lat: homeBase.lat, lng: homeBase.lng }}
-          title="Home base — your shop"
-          icon={homeBaseSymbol()}
-          zIndex={1000}
-        />
-      )}
-
-      {geocodedLeads.map((lead: any) => (
-        <MarkerF
-          key={lead.id}
-          position={{ lat: lead.latitude ?? lead.lat, lng: lead.longitude ?? lead.lng }}
-          title={lead.contactName ?? lead.contact_name ?? 'Lead'}
-          icon={pinSymbol(pinColorForScore(lead.score ?? 0))}
-          options={{ optimized: false }}
-          onClick={() => setSelectedLeadId(lead.id)}
-        />
-      ))}
-
-      {portalPins.map(({ id, lat, lng, lead }) => (
-        <MarkerF
-          key={`portal-${id}`}
-          position={{ lat, lng }}
-          title={lead.contactName ?? lead.contact_name ?? 'Portal Lead'}
-          icon={pinSymbol(pinColorForScore(lead.score ?? 82))}
-          options={{ optimized: false }}
-          onClick={() => setSelectedLeadId(id)}
-        />
-      ))}
-
+    
       {selectedLead && (
         <InfoWindowF
           position={{ lat: (selectedLead as any).latitude ?? (selectedLead as any).lat, lng: (selectedLead as any).longitude ?? (selectedLead as any).lng }}
