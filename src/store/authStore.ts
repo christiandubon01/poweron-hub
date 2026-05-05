@@ -91,6 +91,7 @@ export type AuthStatus =
   | 'biometric_prompt'
   | 'locked'
   | 'authenticated'
+  | 'password_recovery'
 
 interface AuthState {
   status:         AuthStatus
@@ -184,6 +185,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (accessToken && refreshToken) {
           console.log('[Auth] iOS Safari fallback: found tokens in URL', { type, via: hash ? 'hash' : 'search' })
           await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+          // If this is a password recovery redirect, flag it
+          if (type === 'recovery') {
+            sessionStorage.setItem('poweron_password_recovery', '1')
+          }
           // Clear tokens from URL bar
           window.history.replaceState({}, document.title, window.location.pathname)
         }
@@ -220,9 +225,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       if (!profile) {
-        // Profile still missing after retries — route to passcode setup anyway
+        // Profile still missing after retries – route to passcode setup anyway
         // (setupPasscode will handle the missing profile gracefully)
         set({ status: 'needs_passcode_setup', user })
+        return
+      }
+      // Check for password recovery redirect
+      if (sessionStorage.getItem('poweron_password_recovery') === '1') {
+        sessionStorage.removeItem('poweron_password_recovery')
+        set({ status: 'password_recovery', user, profile })
         return
       }
 

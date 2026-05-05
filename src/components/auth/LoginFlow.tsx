@@ -527,6 +527,95 @@ function LoginForm({ onBack }: { onBack: () => void }) {
   )
 }
 
+// ── Set New Password Form (after recovery redirect) ───────────────────────────
+function SetNewPasswordForm() {
+  const { signOut } = useAuth()
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
+    if (password !== confirmPassword) { setError('Passwords do not match.'); return }
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.updateUser({ password })
+      if (error) throw error
+      setDone(true)
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to update password.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
+        <div className="w-full max-w-sm text-center">
+          <div className="flex justify-center mb-6">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+              <CheckCircle className="w-7 h-7 text-emerald-400" />
+            </div>
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Password updated</h2>
+          <p className="text-sm text-gray-400 mb-6">Your password has been changed successfully.</p>
+          <button onClick={() => signOut()} className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors">
+            Sign in with new password
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
+      <div className="w-full max-w-sm">
+        <div className="flex justify-center mb-8">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+            <Zap className="w-5 h-5 text-emerald-400" fill="currentColor" />
+          </div>
+        </div>
+        <h1 className="text-2xl font-extrabold text-white mb-1">Set new password</h1>
+        <p className="text-sm text-gray-500 mb-6">Choose a strong password for your account.</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">New Password</label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+              <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Min. 8 characters" required className="w-full pl-10 pr-10 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600" />
+              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Confirm Password</label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+              <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repeat password" required className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600" />
+            </div>
+          </div>
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+              <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
+              <p className="text-xs text-red-400">{error}</p>
+            </div>
+          )}
+          <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+            {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>Update Password <ArrowRight size={16} /></>}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── Passcode Setup Flow ───────────────────────────────────────────────────────
 function PasscodeSetupFlow() {
   const { setupPasscode } = useAuth()
@@ -586,6 +675,9 @@ export function LoginFlow({ children }: LoginFlowProps) {
 
     case 'locked':
       return <PasscodeScreen mode="verify" onComplete={submitPasscode} onCancel={signOut} />
+
+    case 'password_recovery':
+      return <SetNewPasswordForm />
 
     case 'authenticated':
       return <>{children}</>
