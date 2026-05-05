@@ -107,6 +107,58 @@ for (let i = 0; i < 12; i++) {
   eliteFrameCache.push(buildEliteFrame((i / 12) * Math.PI * 2))
 }
 
+const portalFrameCache: string[] = []
+function buildPortalFrame(offset: number) {
+  const arc1 = offset
+  const arc2 = offset + Math.PI * 0.7
+  const arc3 = offset + Math.PI * 1.4
+  const x1 = (20 + 22 * Math.cos(arc1)).toFixed(1)
+  const y1 = (23 + 22 * Math.sin(arc1)).toFixed(1)
+  const x2 = (20 + 22 * Math.cos(arc2)).toFixed(1)
+  const y2 = (23 + 22 * Math.sin(arc2)).toFixed(1)
+  const x3 = (20 + 22 * Math.cos(arc3)).toFixed(1)
+  const y3 = (23 + 22 * Math.sin(arc3)).toFixed(1)
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="56" viewBox="0 0 40 56">',
+    '<defs>',
+    '<radialGradient id="elec" cx="35%" cy="25%" r="70%">',
+    '<stop offset="0%" stop-color="#bfdbfe"/>',
+    '<stop offset="35%" stop-color="#2563eb"/>',
+    '<stop offset="100%" stop-color="#0f172a"/>',
+    '</radialGradient>',
+    '<filter id="eglow"><feGaussianBlur stdDeviation="2" result="blur"/>',
+    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
+    '</defs>',
+    // Pin body
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#elec)" filter="url(#eglow)" stroke="#60a5fa" stroke-width="1.5"/>',
+    // Shimmer highlight
+    '<ellipse cx="13" cy="14" rx="5" ry="8" fill="rgba(255,255,255,0.18)" transform="rotate(-25,13,14)"/>',
+    '<ellipse cx="12" cy="12" rx="2.5" ry="4.5" fill="rgba(255,255,255,0.3)" transform="rotate(-25,12,12)"/>',
+    // Animated electric arc dots
+    '<circle cx="' + x1 + '" cy="' + y1 + '" r="2" fill="#93c5fd" opacity="0.9"/>',
+    '<circle cx="' + x2 + '" cy="' + y2 + '" r="1.5" fill="#60a5fa" opacity="0.7"/>',
+    '<circle cx="' + x3 + '" cy="' + y3 + '" r="1" fill="#bfdbfe" opacity="0.5"/>',
+    // Inner core
+    '<circle cx="20" cy="23" r="6" fill="rgba(37,99,235,0.4)" stroke="rgba(147,197,253,0.7)" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="rgba(191,219,254,0.8)"/>',
+    // Lightning bolt
+    '<text x="20" y="27" text-anchor="middle" font-size="9" fill="#ffffff" font-family="Arial" font-weight="bold" opacity="0.9">&#9889;</text>',
+    '</svg>',
+  ].join('')
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg)
+}
+for (let i = 0; i < 12; i++) {
+  portalFrameCache.push(buildPortalFrame((i / 12) * Math.PI * 2))
+}
+
+function portalPinIcon() {
+  return {
+    url: portalFrameCache[0],
+    scaledSize: new google.maps.Size(40, 56),
+    anchor: new google.maps.Point(20, 52),
+  }
+}
+
 function elitePinIcon() {
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="56" viewBox="0 0 40 56">',
@@ -622,7 +674,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
   const ungeocodedPortalLeads = useMemo(
     () => leads.filter((l: any) =>
       (l.source === 'customer_portal' || l.sourceTag === 'customer_portal') &&
-      (typeof l.latitude !== 'number' || typeof l.longitude !== 'number') &&
+      (typeof l.latitude !== 'number' && typeof l.lat !== 'number') &&
       (l.address || l.city) &&
       activeStatuses.includes((l as any).status ?? 'new')
     ),
@@ -671,20 +723,24 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         lng: lead.longitude ?? lead.lng,
         score: lead.score ?? 0,
         title: lead.contactName ?? lead.contact_name ?? 'Lead',
+        isPortal: lead.source === 'customer_portal' || lead.sourceTag === 'customer_portal',
       })),
       ...portalPins.map(({ id, lat, lng, lead }) => ({
-        id, lat, lng,
+        id,
+        lat,
+        lng,
         score: lead.score ?? 82,
         title: lead.contactName ?? lead.contact_name ?? 'Portal Lead',
+        isPortal: true,
       })),
     ]
-    allPins.forEach(({ id, lat, lng, score, title }) => {
+    allPins.forEach(({ id, lat, lng, score, title, isPortal }) => {
       const m = new google.maps.Marker({
         position: { lat, lng },
         map: mapRef.current!,
         title,
-        icon: score >= 85 ? elitePinIcon() : pinSymbol(pinColorForScore(score), score),
-        zIndex: score >= 85 ? 600 : 500,
+        icon: score >= 85 ? elitePinIcon() : isPortal ? portalPinIcon() : pinSymbol(pinColorForScore(score), score),
+        zIndex: score >= 85 ? 600 : isPortal ? 550 : 500,
         optimized: false,
       })
       m.addListener('click', () => setSelectedLeadId(id))
@@ -702,6 +758,20 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           requestAnimationFrame(animateFlame)
         }
         requestAnimationFrame(animateFlame)
+      }
+      // Animate electric arc for portal pins
+      if (isPortal && score < 85) {
+        let frameIdx = Math.floor(Math.random() * 12)
+        const animatePortal = () => {
+          frameIdx = (frameIdx + 1) % 12
+          m.setIcon({
+            url: portalFrameCache[frameIdx],
+            scaledSize: new google.maps.Size(40, 56),
+            anchor: new google.maps.Point(20, 52),
+          })
+          requestAnimationFrame(animatePortal)
+        }
+        requestAnimationFrame(animatePortal)
       }
     })
   }, [isLoaded, homeBase, geocodedLeads, portalPins])
