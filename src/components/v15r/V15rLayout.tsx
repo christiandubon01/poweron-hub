@@ -1683,23 +1683,6 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 +Log
               </button>
 
-              {/* NW15: Neural World quick-launch — PULSE panel shortcut */}
-              {!isMobile && (
-                <button
-                  onClick={() => onNav('neural-world')}
-                  title="Neural World — 3D Business Visualization"
-                  className="px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1 flex-shrink-0"
-                  style={{
-                    background: 'rgba(0,229,204,0.12)',
-                    border: '1px solid rgba(0,229,204,0.35)',
-                    color: '#00e5cc',
-                  }}
-                >
-                  <Globe size={13} />
-                  Neural World
-                </button>
-              )}
-
               {/* Undo Button */}
               {!isMobile && (
                 <button
@@ -1808,10 +1791,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           className="flex-1"
           style={activeView === 'visual-suite' || activeView === 'neural-world'
             ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
-            : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'auto', overflowY: 'auto', minWidth: 320, display: 'flex', flexDirection: 'column' }
+            : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'hidden', overflowY: 'auto', width: '100%', maxWidth: '100vw', minHeight: 0, display: 'flex', flexDirection: 'column', WebkitOverflowScrolling: 'touch' }
           }
         >
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
             {children}
           </div>
         </main>
