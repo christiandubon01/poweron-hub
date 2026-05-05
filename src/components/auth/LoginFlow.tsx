@@ -283,6 +283,7 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
 // ── Login Form ────────────────────────────────────────────────────────────────
 function LoginForm({ onBack }: { onBack: () => void }) {
   const { signInWithEmail, error, clearError } = useAuth()
+  const { submitPasscode } = useAuth()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -292,6 +293,51 @@ function LoginForm({ onBack }: { onBack: () => void }) {
   const [forgotEmail, setForgotEmail] = useState('')
   const [forgotSent, setForgotSent] = useState(false)
   const [forgotLoading, setForgotLoading] = useState(false)
+  // PIN state
+  const [pinDigits, setPinDigits] = useState<string[]>(Array(6).fill(''))
+  const [pinLoading, setPinLoading] = useState(false)
+  const [pinError, setPinError] = useState('')
+  const PIN_KEYS = ['1','2','3','4','5','6','7','8','9','','0','back']
+
+  const handlePinKey = async (key: string) => {
+    if (pinLoading) return
+    if (key === 'back') {
+      setPinDigits(prev => {
+        const next = [...prev]
+        for (let i = 5; i >= 0; i--) { if (next[i] !== '') { next[i] = ''; break } }
+        return next
+      })
+      return
+    }
+    const filled = pinDigits.filter(x => x !== '').length
+    if (filled >= 6) return
+    const next = [...pinDigits]
+    next[filled] = key
+    setPinDigits(next)
+    if (filled === 5) {
+      // All 6 digits entered — verify
+      const pin = next.join('')
+      setPinLoading(true)
+      setPinError('')
+      try {
+        const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin))
+        const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
+        const stored = localStorage.getItem('poweron_pin_hash')
+        if (stored && hashHex === stored) {
+          // PIN matches — trigger auth
+          window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
+        } else {
+          setPinError('Incorrect PIN. Try again.')
+          setTimeout(() => { setPinDigits(Array(6).fill('')); setPinError(''); setPinLoading(false) }, 600)
+          return
+        }
+      } catch {
+        setPinError('PIN verification failed.')
+        setPinLoading(false)
+      }
+      setTimeout(() => { setPinDigits(Array(6).fill('')); setPinLoading(false) }, 300)
+    }
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -328,6 +374,9 @@ function LoginForm({ onBack }: { onBack: () => void }) {
       setForgotLoading(false)
     }
   }
+
+  const hasPinStored = !!localStorage.getItem('poweron_pin_hash')
+  const pinFilled = pinDigits.filter(x => x !== '').length
 
   if (showForgot) {
     return (
@@ -384,12 +433,12 @@ function LoginForm({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
+        {/* Email + Password form */}
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ position: 'relative' }}>
             <User size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
             <input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder="Email or @username" required autoComplete="username" style={inputStyle} />
           </div>
-
           <div style={{ position: 'relative' }}>
             <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
             <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required autoComplete="current-password" style={{ ...inputStyle, paddingRight: '44px' }} />
@@ -397,30 +446,64 @@ function LoginForm({ onBack }: { onBack: () => void }) {
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
-
           {(localError || error) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px' }}>
               <AlertCircle size={14} color="#f87171" />
               <span style={{ fontSize: '12px', color: '#f87171' }}>{localError || error}</span>
             </div>
           )}
-
           <button type="submit" disabled={loading || !identifier.trim() || !password} style={{ ...btnPrimary, opacity: (loading || !identifier.trim() || !password) ? 0.5 : 1 }}>
             {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Sign In</>}
           </button>
         </form>
 
-        <div style={{ marginTop: '16px', textAlign: 'center' }}>
+        <div style={{ marginTop: '14px', textAlign: 'center' }}>
           <button onClick={() => { setShowForgot(true); setLocalError('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T3, fontSize: '12px', fontFamily: "'Barlow', sans-serif" }}>
             Forgot password?
           </button>
         </div>
+
+        {/* PIN section — only show if PIN is stored */}
+        {hasPinStored && (
+          <div style={{ marginTop: '28px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+              <div style={{ flex: 1, height: '1px', background: 'rgba(30,128,223,0.12)' }} />
+              <span style={{ fontSize: '10px', color: T3, letterSpacing: '2px', textTransform: 'uppercase' }}>Or use PIN</span>
+              <div style={{ flex: 1, height: '1px', background: 'rgba(30,128,223,0.12)' }} />
+            </div>
+
+            {/* PIN dots */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '8px' }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} style={{ width: '14px', height: '14px', borderRadius: '50%', background: i < pinFilled ? BLUE : 'transparent', border: `2px solid ${i < pinFilled ? BLUE : 'rgba(30,128,223,0.25)'}`, transition: 'all 0.15s', boxShadow: i < pinFilled ? `0 0 8px rgba(30,128,223,0.5)` : 'none' }} />
+              ))}
+            </div>
+
+            {pinError && <div style={{ textAlign: 'center', fontSize: '12px', color: '#f87171', marginBottom: '8px' }}>{pinError}</div>}
+
+            {/* Numpad */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', maxWidth: '280px', margin: '12px auto 0' }}>
+              {PIN_KEYS.map((key, i) => {
+                if (key === '') return <div key={i} />
+                if (key === 'back') return (
+                  <button key={i} onClick={() => handlePinKey('back')} disabled={pinLoading} style={{ padding: '16px', borderRadius: '8px', background: 'rgba(30,128,223,0.06)', border: '1px solid rgba(30,128,223,0.15)', color: T2, fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Barlow', sans-serif" }}>
+                    ⌫
+                  </button>
+                )
+                return (
+                  <button key={i} onClick={() => handlePinKey(key)} disabled={pinLoading} style={{ padding: '16px', borderRadius: '8px', background: 'rgba(30,128,223,0.06)', border: '1px solid rgba(30,128,223,0.15)', color: TEXT, fontSize: '20px', fontWeight: 700, cursor: 'pointer', fontFamily: "'Barlow', sans-serif" }}>
+                    {key}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </PCBPage>
   )
 }
 
-// ── Set New Password Form ─────────────────────────────────────────────────────
 function SetNewPasswordForm() {
   const { signOut } = useAuth()
   const [password, setPassword] = useState('')
