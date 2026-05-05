@@ -500,7 +500,7 @@ Return ONLY the question text, no preamble.`,
   return (
     <div className="fixed inset-0 z-[9999] bg-zinc-950 flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+      <div className="flex items-center justify-between border-b border-zinc-800" style={{ padding: '1rem 1.5rem', paddingRight: 'max(1.5rem, env(safe-area-inset-right))' }}>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
             <Zap className="w-4 h-4 text-emerald-400" />
