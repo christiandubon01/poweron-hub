@@ -626,6 +626,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           position={{ lat: lead.latitude ?? lead.lat, lng: lead.longitude ?? lead.lng }}
           title={lead.contactName ?? lead.contact_name ?? 'Lead'}
           icon={pinSymbol(pinColorForScore(lead.score ?? 0))}
+          options={{ optimized: false }}
           onClick={() => setSelectedLeadId(lead.id)}
         />
       ))}
@@ -636,6 +637,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           position={{ lat, lng }}
           title={lead.contactName ?? lead.contact_name ?? 'Portal Lead'}
           icon={pinSymbol(pinColorForScore(lead.score ?? 82))}
+          options={{ optimized: false }}
           onClick={() => setSelectedLeadId(id)}
         />
       ))}
