@@ -44,13 +44,32 @@ function pinColorForScore(score: number): string {
   return '#6b7280'                          // Archived/cold - gray
 }
 
+const pinCache: Record<string, string> = {}
 function pinSymbol(color: string) {
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="36" viewBox="0 0 24 36">' +
-    '<path d="M12 0 C5.4 0 0 5.4 0 12 C0 21 12 36 12 36 C12 36 24 21 24 12 C24 5.4 18.6 0 12 0 Z" fill="' + color + '" stroke="#0f1117" stroke-width="1.5"/>' +
-    '<circle cx="12" cy="12" r="5" fill="rgba(255,255,255,0.4)"/>' +
-    '</svg>'
+  if (!pinCache[color]) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 24
+    canvas.height = 36
+    const ctx = canvas.getContext('2d')!
+    ctx.beginPath()
+    ctx.moveTo(12, 36)
+    ctx.bezierCurveTo(12, 36, 0, 21, 0, 12)
+    ctx.arc(12, 12, 12, Math.PI, 0, false)
+    ctx.bezierCurveTo(24, 21, 12, 36, 12, 36)
+    ctx.closePath()
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.strokeStyle = '#0f1117'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(12, 12, 5, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.4)'
+    ctx.fill()
+    pinCache[color] = canvas.toDataURL('image/png')
+  }
   return {
-    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+    url: pinCache[color],
     scaledSize: new google.maps.Size(24, 36),
     anchor: new google.maps.Point(12, 36),
   }
