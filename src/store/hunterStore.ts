@@ -102,7 +102,76 @@ export const useHunterStore = create<HunterStoreState>()(
             return;
           }
 
-          const leads = (data ?? []) as HunterLead[];
+          const rawLeads = (data ?? []) as HunterLead[];
+
+          // Client-side distance calc for leads missing distance_from_base_miles
+          const leadsNeedingDistance = rawLeads.filter(l => 
+            l.distanceFromBaseMiles == null && 
+            (l as any).distance_from_base_miles == null &&
+            ((l as any).latitude || (l as any).lat) &&
+            ((l as any).longitude || (l as any).lng)
+          );
+
+          let leads = rawLeads;
+
+          if (leadsNeedingDistance.length > 0) {
+            try {
+              const { data: tenantRow } = await (supabase as any)
+                .from('user_tenants')
+                .select('tenant_id')
+                .eq('user_id', (await supabase.auth.getUser()).data.user?.id)
+                .limit(1)
+                .single();
+
+              if (tenantRow?.tenant_id) {
+                const { data: setting } = await (supabase as any)
+                  .from('tenant_settings')
+                  .select('setting_value')
+                  .eq('tenant_id', tenantRow.tenant_id)
+                  .eq('setting_key', 'home_base_address')
+                  .maybeSingle();
+
+                if (setting?.setting_value?.lat && setting?.setting_value?.lng) {
+                  const homeLat = setting.setting_value.lat;
+                  const homeLng = setting.setting_value.lng;
+                  const R = 3958.8;
+
+                  leads = rawLeads.map(l => {
+                    if ((l as any).distance_from_base_miles != null || l.distanceFromBaseMiles != null) return l;
+                    const lat = (l as any).latitude ?? (l as any).lat;
+                    const lng = (l as any).longitude ?? (l as any).lng;
+                    if (!lat || !lng) return l;
+                    const dLat = (lat - homeLat) * Math.PI / 180;
+                    const dLng = (lng - homeLng) * Math.PI / 180;
+                    const lat1r = homeLat * Math.PI / 180;
+                    const lat2r = lat * Math.PI / 180;
+                    const a = Math.sin(dLat/2)**2 + Math.cos(lat1r)*Math.cos(lat2r)*Math.sin(dLng/2)**2;
+                    const miles = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 10) / 10;
+                    return { ...l, distanceFromBaseMiles: miles };
+                  });
+
+                  // Persist to Supabase in background (best effort)
+                  leadsNeedingDistance.forEach(async (l) => {
+                    const lat = (l as any).latitude ?? (l as any).lat;
+                    const lng = (l as any).longitude ?? (l as any).lng;
+                    if (!lat || !lng) return;
+                    const dLat = (lat - homeLat) * Math.PI / 180;
+                    const dLng = (lng - homeLng) * Math.PI / 180;
+                    const lat1r = homeLat * Math.PI / 180;
+                    const lat2r = lat * Math.PI / 180;
+                    const a = Math.sin(dLat/2)**2 + Math.cos(lat1r)*Math.cos(lat2r)*Math.sin(dLng/2)**2;
+                    const miles = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 10) / 10;
+                    await (supabase as any).from('hunter_leads')
+                      .update({ distance_from_base_miles: miles })
+                      .eq('id', l.id);
+                  });
+                }
+              }
+            } catch (e) {
+              console.warn('[hunterStore] distance calc failed:', e);
+            }
+          }
+
           set({ leads, lastError: null });
 
           const { activeFilters, sortBy } = get();

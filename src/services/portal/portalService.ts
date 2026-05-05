@@ -175,13 +175,35 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
             .eq('id', newLeadId)
           return
         }
+        // Calculate distance from home base
+        let distanceFromBaseMiles: number | null = null
+        try {
+          const { data: setting } = await (supabase as any)
+            .from('tenant_settings')
+            .select('setting_value')
+            .eq('tenant_id', tenantId)
+            .eq('setting_key', 'home_base_address')
+            .maybeSingle()
+          if (setting?.setting_value?.lat && setting?.setting_value?.lng) {
+            const R = 3958.8
+            const dLat = (geo.lat - setting.setting_value.lat) * Math.PI / 180
+            const dLng = (geo.lng - setting.setting_value.lng) * Math.PI / 180
+            const lat1r = setting.setting_value.lat * Math.PI / 180
+            const lat2r = geo.lat * Math.PI / 180
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1r)*Math.cos(lat2r)*Math.sin(dLng/2)**2
+            distanceFromBaseMiles = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 10) / 10
+          }
+        } catch (e) {
+          console.warn('[portalService] distance calc failed (non-fatal):', e)
+        }
         await (supabase as any)
           .from('hunter_leads')
           .update({
-            latitude:         geo.lat,
-            longitude:        geo.lng,
-            geocoding_status: 'success',
-            geocoded_at:      new Date().toISOString(),
+            latitude:                 geo.lat,
+            longitude:                geo.lng,
+            geocoding_status:         'success',
+            geocoded_at:              new Date().toISOString(),
+            distance_from_base_miles: distanceFromBaseMiles,
           })
           .eq('id', newLeadId)
         // Trigger backfill to calculate distance_from_base_miles

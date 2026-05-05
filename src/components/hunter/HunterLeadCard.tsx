@@ -17,7 +17,7 @@
  * CRITICAL: Won/Lost/Deferred/Delete/Notes behaviors all preserved.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   ChevronDown,
   ChevronUp,
@@ -222,14 +222,14 @@ export function HunterLeadCard({
 
   const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
   const deleteLead = useHunterStore((s) => s.deleteLead)
-
   const jobTypeColor = getJobTypeColor(lead.jobTypeCategory)
-
-  // Distance display — prefer distanceFromBaseMiles (geocoded), fall back to legacy distance
+  // Distance display ── prefer distanceFromBaseMiles (geocoded), fall back to legacy distance
   const distanceMiles: number | null | undefined =
-    lead.distanceFromBaseMiles ?? (typeof lead.distance === 'number' ? lead.distance : undefined)
-
-  const distanceDisplay = formatDistance(distanceMiles)
+    lead.distanceFromBaseMiles
+    ?? (lead as any).distance_from_base_miles
+    ?? (typeof lead.distance === 'number' ? lead.distance : undefined)
+  const hasCoords = !!(lead.lat && lead.lng)
+  const distanceDisplay = distanceMiles == null && hasCoords ? '…' : formatDistance(distanceMiles)
   const driveTimeDisplay = formatDriveTime(distanceMiles)
 
   // HUNTER-UI-CARD-ENHANCE-APR30-2026-1: NEW badge — applied within 3 days
