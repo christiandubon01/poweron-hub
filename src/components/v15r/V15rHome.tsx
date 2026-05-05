@@ -1,17 +1,17 @@
 // @ts-nocheck
 /**
- * V15rHome — Main dashboard/home view.
+ * V15rHome – Main dashboard/home view.
  * Faithfully ported from HTML renderHome().
  *
  * Sections:
  * 1. Greeting + date + "New Project" button
- * 2. 4 KPI pills (Pipeline, Cash Received, Open RFIs, Hours Logged)
+ * 2. 4 KPI cards (Pipeline, Cash Received, Open RFIs, Hours Logged)
  * 3. Google Calendar embed with week navigation (calOffset)
  * 4. Job Health cards (per project, score 0-100, reasons, chips)
- * 5. Service Jobs Requiring Attention (money math: totalBillable = quoted + income adj)
+ * 5. Service Jobs Requiring Attention (unpaid only)
  * 6. Agenda Alerts (auto-generated: stalled, check-in, critical RFIs)
  * 7. Agenda Sections with full CRUD (add/edit/delete categories+tasks, cycle status)
- * 8. Recent Logs (last 4-6 entries)
+ * 8. Recent Logs — tabbed: Projects | Service
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
@@ -89,19 +89,17 @@ function agendaStatusChip(status: string) {
   )
 }
 
-// Status cycle order
 const STATUS_CYCLE = ['pending', 'active', 'done', 'postponed', 'declined']
 
-// ── Balance color helper (same thresholds as Field Log) ─────────────────────
-// green > 20% remaining | yellow 10–20% | orange < 10% | red if negative
+// ── Balance color helper ─────────────────────────────────────────────────────
 
 function getBalanceColor(balance: number, contract: number): string {
-  if (balance < 0) return '#ef4444'       // red: negative balance
-  if (contract <= 0) return '#10b981'     // green fallback when no contract set
+  if (balance < 0) return '#ef4444'
+  if (contract <= 0) return '#10b981'
   const pctLeft = balance / contract
-  if (pctLeft > 0.20) return '#10b981'   // green: > 20% remaining
-  if (pctLeft > 0.10) return '#f59e0b'   // yellow: 10–20% remaining
-  return '#f97316'                        // orange: < 10% remaining
+  if (pctLeft > 0.20) return '#10b981'
+  if (pctLeft > 0.10) return '#f59e0b'
+  return '#f97316'
 }
 
 // ── Service money math helper ────────────────────────────────────────────────
@@ -114,14 +112,12 @@ function getServiceBalanceDue(log: any): number {
   return Math.max(0, totalBillable - collected)
 }
 
-// ── Helper to group logs by date ────────────────────────────────────────────
+// ── Helper to group logs by date ─────────────────────────────────────────────
 function groupLogsByDate(logs: any[]): Map<string, any[]> {
   const grouped = new Map<string, any[]>()
   logs.forEach(log => {
     const date = log.date || ''
-    if (!grouped.has(date)) {
-      grouped.set(date, [])
-    }
+    if (!grouped.has(date)) grouped.set(date, [])
     grouped.get(date)!.push(log)
   })
   return grouped
@@ -143,6 +139,9 @@ export default function V15rHome() {
 
   // ── Recent Logs pagination ──
   const [logsVisible, setLogsVisible] = useState(10)
+  const [logsTab, setLogsTab] = useState<'projects' | 'service'>('projects')
+  const [svcLogsVisible, setSvcLogsVisible] = useState(10)
+  const SVC_LOGS_PAGE = 10
   const LOGS_PAGE = 10
 
   // ── Quote refresh offset ──
@@ -175,7 +174,7 @@ export default function V15rHome() {
           if (first) setFirstName(first)
         }
       } catch {
-        // silently ignore — name is optional; fall back to no-name greeting
+        // silently ignore
       }
     }
     fetchUserName()
@@ -196,10 +195,6 @@ export default function V15rHome() {
     )
   }
 
-  // ── Data derivation ──────────────────────────────────────────────────────
-  // FIX-DASH: use Array.isArray guards throughout so a malformed/null/non-array
-  // value stored in the backup (e.g. backup.logs = null) never reaches .slice()
-  // or the spread operator and causes a runtime crash.
   let kpis: any
   let projects: BackupProject[] = []
 
@@ -213,7 +208,6 @@ export default function V15rHome() {
     projects = []
   }
 
-  // Ensure kpis is always a valid object even if try/catch path left it undefined
   if (!kpis) {
     kpis = { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
   }
@@ -221,64 +215,56 @@ export default function V15rHome() {
   const logs: any[] = Array.isArray(backup.logs) ? backup.logs : []
   const serviceLogs: any[] = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
 
-  // ── Agenda alerts (auto-generated) ─────────────────────────────────────
+  // ── Agenda alerts (auto-generated) ──────────────────────────────────────────
   const agendaAlerts: Array<{ clr: string; txt: string; id: string }> = []
   projects.forEach(p => {
-    // Skip projects with missing name or corrupted/placeholder stale days
     if (!p.name || p.name === 'undefined') return
     const d = daysSince(p.lastMove)
-    if (d > 365) return // skip corrupted entries with extreme stale days
+    if (d > 365) return
     if (d >= 14) {
-      agendaAlerts.push({ clr: '#ef4444', txt: '📞 Call on ' + p.name + ' — ' + d + 'd stalled', id: p.id })
+      agendaAlerts.push({ clr: '#ef4444', txt: '📞 Call on ' + p.name + ' – ' + d + 'd stalled', id: p.id })
     } else if (d >= 7) {
-      agendaAlerts.push({ clr: '#f59e0b', txt: '📧 Check-in: ' + p.name + ' — ' + d + 'd', id: p.id })
+      agendaAlerts.push({ clr: '#f59e0b', txt: '🔧 Check-in: ' + p.name + ' – ' + d + 'd', id: p.id })
     }
     ;(Array.isArray(p.rfis) ? p.rfis : []).filter((r: any) => r.status === 'critical').forEach((r: any) => {
       agendaAlerts.push({ clr: '#ef4444', txt: '⚠ Critical RFI on ' + p.name + ': ' + (r.question || '').slice(0, 55) + '...', id: p.id })
     })
   })
 
-  // Load custom alerts from backup
   const loadedCustomAlerts = Array.isArray(backup.customAlerts) ? backup.customAlerts : []
 
-  // Filter out AI alerts that have been manually edited (avoid duplicates)
   const editedProjectIds = new Set(
     loadedCustomAlerts.filter(a => a.isAI && a.manuallyEdited).map(a => a.linkedProjectId)
   )
   const filteredAgendaAlerts = agendaAlerts.filter(a => !editedProjectIds.has(a.id))
 
-  // Merge alerts: interleave custom alerts at original positions (by linked project)
-  // Custom alerts linked to a project replace the AI alert at that position
   const mergedAlerts: Array<{ type: 'ai'; data: typeof agendaAlerts[0]; idx: number } | { type: 'custom'; data: typeof loadedCustomAlerts[0]; idx: number }> = []
   filteredAgendaAlerts.forEach((a, i) => mergedAlerts.push({ type: 'ai', data: a, idx: i }))
   loadedCustomAlerts.forEach((a) => {
-    // Insert edited AI alerts at the position of their linked project
     const linkedIdx = a.linkedProjectId ? filteredAgendaAlerts.findIndex(fa => fa.id === a.linkedProjectId) : -1
     mergedAlerts.push({ type: 'custom', data: a, idx: linkedIdx >= 0 ? linkedIdx : mergedAlerts.length })
   })
   mergedAlerts.sort((a, b) => a.idx - b.idx)
 
-  // ── Recent logs — paginated (default 10, +10 per "View More" click) ────────
-  // FIX-DASH: logs is now guaranteed an array above, but we spread defensively
-  const allLogsReversed = (logs ?? []).slice().reverse()
+  // ── Recent logs – paginated ──────────────────────────────────────────────────
+  const allLogsReversed = (logs ?? []).slice().sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')))
   const recentLogs = allLogsReversed.slice(0, logsVisible)
   const hasMoreLogs = allLogsReversed.length > logsVisible
 
-  // ── Service jobs requiring attention (money math) ────────────────────────
+  // ── Service jobs requiring attention (unpaid only, threshold 0.5 to avoid float dust) ──
   const serviceJobsNeedingAttention = (serviceLogs ?? [])
     .map((l: any) => ({
       ...l,
       balanceDue: getServiceBalanceDue(l),
     }))
-    .filter((l: any) => l.balanceDue > 0)
+    .filter((l: any) => l.balanceDue > 0.5)
     .sort((a: any, b: any) => b.balanceDue - a.balanceDue)
 
-  // ── Agenda CRUD handlers ───────────────────────────────────────────────
+  // ── Agenda CRUD handlers ─────────────────────────────────────────────────────
 
   function persist() {
     backup._lastSavedAt = new Date().toISOString()
     saveBackupData(backup)
-    // Dispatch event to trigger KPI refresh in Layout
     window.dispatchEvent(new Event('storage'))
     forceUpdate()
   }
@@ -288,12 +274,7 @@ export default function V15rHome() {
     if (!title) return
     pushState(backup)
     const projectId = prompt('Link to project ID (leave blank for General):') || ''
-    ;(backup.agendaSections || []).push({
-      id: 'ag' + Date.now(),
-      title,
-      projectId,
-      tasks: [],
-    })
+    ;(backup.agendaSections || []).push({ id: 'ag' + Date.now(), title, projectId, tasks: [] })
     persist()
   }
 
@@ -382,7 +363,6 @@ export default function V15rHome() {
     pushState(backup)
     const balanceDue = getServiceBalanceDue(log)
     log.collected = num(log.collected || 0) + balanceDue
-    // Append statusEvent for historical exposure tracking (mirrors V15rFieldLogPanel.stampStatusEvent)
     if (!Array.isArray((log as any).statusEvents)) (log as any).statusEvents = []
     const prior = (log as any).statusEvents
     const wasInvoiced = !!(prior.length && prior[prior.length - 1].invoiced)
@@ -395,17 +375,12 @@ export default function V15rHome() {
     persist()
   }
 
-  // ── Alert management handlers ─────────────────────────────────────────────
+  // ── Alert management handlers ────────────────────────────────────────────────
 
   function saveAlert(alertId: string | null, data: {title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}, isAI: boolean) {
-    if (!data.title.trim()) {
-      alert('Alert title is required')
-      return
-    }
+    if (!data.title.trim()) { alert('Alert title is required'); return }
     pushState(backup)
-    if (!backup.customAlerts) {
-      backup.customAlerts = []
-    }
+    if (!backup.customAlerts) backup.customAlerts = []
     if (alertId) {
       const existingAlert = backup.customAlerts.find(a => a.id === alertId)
       if (existingAlert) {
@@ -414,10 +389,7 @@ export default function V15rHome() {
         existingAlert.action = data.action
         existingAlert.scheduledAt = data.scheduledAt || ''
         existingAlert.linkedProjectId = data.linkedProjectId || ''
-        // Mark as edited if this was an AI alert
-        if (existingAlert.isAI) {
-          existingAlert.manuallyEdited = true
-        }
+        if (existingAlert.isAI) existingAlert.manuallyEdited = true
       }
     } else {
       backup.customAlerts.push({
@@ -430,10 +402,7 @@ export default function V15rHome() {
         linkedProjectId: data.linkedProjectId || '',
       })
     }
-    // OneSignal push stub — when scheduledAt is set, queue for push notification
-    if (data.scheduledAt) {
-      console.log('[OneSignal] Push notification scheduled for:', data.scheduledAt)
-    }
+    if (data.scheduledAt) console.log('[OneSignal] Push notification scheduled for:', data.scheduledAt)
     persist()
     setEditingAlertId(null)
     setAddingAlert(false)
@@ -442,9 +411,7 @@ export default function V15rHome() {
 
   function dismissAlert(alertId: string) {
     pushState(backup)
-    if (backup.customAlerts) {
-      backup.customAlerts = backup.customAlerts.filter(a => a.id !== alertId)
-    }
+    if (backup.customAlerts) backup.customAlerts = backup.customAlerts.filter(a => a.id !== alertId)
     persist()
   }
 
@@ -459,23 +426,16 @@ export default function V15rHome() {
     })
   }
 
-  // ── Calendar navigation (week offset) ──────────────────────────────────
-  function prevWeek() {
-    setCalOffset(calOffset - 1)
-  }
+  function prevWeek() { setCalOffset(calOffset - 1) }
+  function nextWeek() { setCalOffset(calOffset + 1) }
 
-  function nextWeek() {
-    setCalOffset(calOffset + 1)
-  }
-
-  // ── Compute calendar URL with offset ──────────────────────────────────
   const gcalUrl = backup.settings?.gcalUrl ? `${backup.settings.gcalUrl}&mode=WEEK` : null
 
-  // ── Daily Motivation Data ──────────────────────────────────────────────
+  // ── Daily Motivation ─────────────────────────────────────────────────────────
   const MOTIVATION_PHRASES = [
     { quote: '"El que tenga miedo a morir, que no nazca."', attr: '— Ya sabes quien.' },
     { quote: '"No hay atajo que no tenga su precio."', attr: '— El camino lo defines tú.' },
-    { quote: '"Más vale solo que mal acompañado — pero mejor rodeado de los correctos."', attr: '— Piénsalo.' },
+    { quote: '"Más vale solo que mal acompañado – pero mejor rodeado de los correctos."', attr: '— Piénsalo.' },
     { quote: '"El éxito no llega a los que esperan. Llega a los que construyen."', attr: '— Tú sabes por qué estás aquí.' },
     { quote: '"Camarón que se duerme, se lo lleva la corriente."', attr: '— No te duermas.' },
     { quote: '"La diferencia entre el sueño y la realidad se llama trabajo."', attr: '— A trabajar.' },
@@ -485,14 +445,14 @@ export default function V15rHome() {
     { quote: '"Primero Dios, después tú mismo."', attr: '— Nadie más lo hará por ti.' },
     { quote: '"El trabajo duro supera al talento cuando el talento no trabaja duro."', attr: '— Recuérdalo.' },
     { quote: '"No esperes el momento perfecto. Toma el momento y hazlo perfecto."', attr: '— Ahora.' },
-    { quote: '"Lo que no te mata, te hace más fuerte — y más listo."', attr: '— Sigue adelante.' },
+    { quote: '"Lo que no te mata, te hace más fuerte – y más listo."', attr: '— Sigue adelante.' },
     { quote: '"Vale más una hora de acción que mil horas de intención."', attr: '— Muévete.' },
-    { quote: '"El que madruga, Dios lo ayuda — el que no, también trabaja más."', attr: '— Tú decides.' },
+    { quote: '"El que madruga, Dios lo ayuda – el que no, también trabaja más."', attr: '— Tú decides.' },
     { quote: '"La disciplina es elegir entre lo que quieres ahora y lo que quieres más."', attr: '— ¿Qué eliges?' },
-    { quote: '"No hay sueño pequeño — solo pasos pequeños."', attr: '— Da el siguiente.' },
+    { quote: '"No hay sueño pequeño – solo pasos pequeños."', attr: '— Da el siguiente.' },
     { quote: '"El dolor de hoy es la fuerza de mañana."', attr: '— Aguanta.' },
     { quote: '"Más sudor en el entrenamiento, menos sangre en la batalla."', attr: '— Prepárate.' },
-    { quote: '"El que persevera, alcanza — y el que no, busca excusas."', attr: '— Sin excusas.' },
+    { quote: '"El que persevera, alcanza – y el que no, busca excusas."', attr: '— Sin excusas.' },
     { quote: '"La vida no te da lo que mereces. Te da lo que negocias."', attr: '— Negocia fuerte.' },
     { quote: '"Cae siete veces, levántate ocho."', attr: '— Siempre uno más.' },
     { quote: '"El mundo es de los que se levantan antes."', attr: '— Ya estás despierto.' },
@@ -501,7 +461,7 @@ export default function V15rHome() {
     { quote: '"Si puedes soñarlo, puedes construirlo."', attr: '— Tú ya lo estás construyendo.' },
     { quote: '"El que no vive para servir, no sirve para vivir."', attr: '— Hazlo con propósito.' },
     { quote: '"Haz hoy lo que otros no quieren, para tener mañana lo que otros no pueden."', attr: '— Sin atajos.' },
-    { quote: '"La grandeza no se hereda — se construye."', attr: '— Bloque a bloque.' },
+    { quote: '"La grandeza no se hereda – se construye."', attr: '— Bloque a bloque.' },
     { quote: '"El camino de mil millas comienza con un solo paso."', attr: '— Ya diste el primero.' },
     { quote: '"No busques la aprobación de nadie. Busca los resultados."', attr: '— Los números no mienten.' },
   ]
@@ -510,21 +470,12 @@ export default function V15rHome() {
   const _motivDayOfYear = Math.floor((_motivNow.getTime() - _motivStart.getTime()) / (1000 * 60 * 60 * 24))
   const _motivPhrase = MOTIVATION_PHRASES[(_motivDayOfYear + quoteOffset) % MOTIVATION_PHRASES.length]
   const _motivHr = _motivNow.getHours()
-  const _motivPeriod = _motivHr >= 5 && _motivHr < 12 ? 'morning'
-    : _motivHr >= 12 && _motivHr < 17 ? 'afternoon'
-    : _motivHr >= 17 && _motivHr < 21 ? 'evening'
-    : 'night'
-  const _motivGreeting = firstName
-    ? `Good ${_motivPeriod}, ${firstName}`
-    : `Good ${_motivPeriod}`
-  const _motivFireLine = _motivHr >= 5 && _motivHr < 12
-    ? "Let's go build something today."
-    : _motivHr >= 12 && _motivHr < 18
-    ? "The day isn't over — keep pushing."
-    : 'Rest well. Tomorrow we go again.'
+  const _motivPeriod = _motivHr >= 5 && _motivHr < 12 ? 'morning' : _motivHr >= 12 && _motivHr < 17 ? 'afternoon' : _motivHr >= 17 && _motivHr < 21 ? 'evening' : 'night'
+  const _motivGreeting = firstName ? `Good ${_motivPeriod}, ${firstName}` : `Good ${_motivPeriod}`
+  const _motivFireLine = _motivHr >= 5 && _motivHr < 12 ? "Let's go build something today." : _motivHr >= 12 && _motivHr < 18 ? "The day isn't over – keep pushing." : 'Rest well. Tomorrow we go again.'
   const _motivFullQuote = `${_motivPhrase.quote} ${_motivPhrase.attr}`
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6 space-y-6 safe-area-all"
@@ -535,7 +486,7 @@ export default function V15rHome() {
         paddingRight: `max(1.5rem, env(safe-area-inset-right))`,
       }}>
 
-      {/* ── HEADER ──────────────────────────────────────────────────────────── */}
+      {/* ── HEADER ── */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-100">
@@ -548,26 +499,30 @@ export default function V15rHome() {
         </button>
       </div>
 
-      {/* ── 4 KPI PILLS - RESPONSIVE ────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      {/* ── KPI CARDS – PREMIUM ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { cls: 'border-l-emerald-500', lbl: 'Pipeline', lblFull: 'Total Pipeline', val: fmtK(kpis.pipeline), sub: projects.length + ' proj' },
-          { cls: 'border-l-blue-500', lbl: 'Cash Rcvd', lblFull: 'Cash Received', val: fmtK(kpis.paid), sub: 'Accum.' },
-          { cls: 'border-l-red-500', lbl: 'RFIs', lblFull: 'Open RFIs', val: String(kpis.openRfis), sub: 'Need res.' },
-          { cls: 'border-l-gray-500', lbl: 'Hrs Log', lblFull: 'Hours Logged', val: kpis.totalHours.toFixed(1) + 'h', sub: logs.length + ' ent' },
+          { accent: '#10b981', glow: 'rgba(16,185,129,0.12)', lbl: 'Total Pipeline', lblShort: 'Pipeline', val: fmtK(kpis.pipeline), sub: projects.length + (projects.length === 1 ? ' project' : ' projects'), icon: '◈' },
+          { accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)', lbl: 'Cash Received', lblShort: 'Cash Rcvd', val: fmtK(kpis.paid), sub: 'Accumulated', icon: '⬡' },
+          { accent: '#ef4444', glow: 'rgba(239,68,68,0.12)', lbl: 'Open RFIs', lblShort: 'RFIs', val: String(kpis.openRfis), sub: kpis.openRfis === 0 ? 'All resolved' : 'Need resolution', icon: '◇' },
+          { accent: '#a78bfa', glow: 'rgba(167,139,250,0.12)', lbl: 'Hours Logged', lblShort: 'Hrs Log', val: kpis.totalHours.toFixed(1) + 'h', sub: logs.length + (logs.length === 1 ? ' entry' : ' entries'), icon: '○' },
         ].map((k, i) => (
-          <div key={i} className={`rounded-lg border border-gray-800 border-l-4 ${k.cls} bg-[var(--bg-card)] p-3 touch-target`}>
-            <div className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">
-              <span className="sm:hidden">{k.lbl}</span>
-              <span className="hidden sm:inline">{k.lblFull}</span>
+          <div key={i} style={{ background: 'linear-gradient(135deg, #16181f 0%, #1a1d28 100%)', border: '1px solid rgba(255,255,255,0.06)', borderTop: `2px solid ${k.accent}`, borderRadius: '10px', padding: '14px 16px 12px', boxShadow: `0 0 0 1px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 24px ${k.glow}`, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: k.glow, filter: 'blur(20px)', pointerEvents: 'none' }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.35)' }}>
+                <span className="sm:hidden">{k.lblShort}</span>
+                <span className="hidden sm:inline">{k.lbl}</span>
+              </span>
+              <span style={{ fontSize: 13, opacity: 0.25, color: k.accent }}>{k.icon}</span>
             </div>
-            <div className="text-base sm:text-lg font-bold font-mono text-gray-100 mt-1 truncate">{k.val}</div>
-            <div className="text-[9px] text-gray-500 mt-0.5 truncate">{k.sub}</div>
+            <div style={{ fontFamily: '"JetBrains Mono", "Fira Code", monospace', fontSize: 22, fontWeight: 700, color: '#f1f5f9', letterSpacing: '-0.02em', lineHeight: 1, marginBottom: 6 }}>{k.val}</div>
+            <div style={{ fontSize: 10, color: k.accent, opacity: 0.7, fontWeight: 500 }}>{k.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* ── GOOGLE CALENDAR EMBED - RESPONSIVE ───────────────────────────────── */}
+      {/* ── GOOGLE CALENDAR EMBED ── */}
       <div className="calendar-container-wrapper">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Calendar</h2>
@@ -580,34 +535,18 @@ export default function V15rHome() {
                 {calOffset === 0 ? 'This Week' : calOffset > 0 ? `+${calOffset} week${calOffset !== 1 ? 's' : ''}` : `${calOffset} weeks`}
               </h3>
               <div className="flex gap-2 ml-2 flex-shrink-0">
-                <button
-                  onClick={prevWeek}
-                  className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target"
-                  title="Previous week"
-                  aria-label="Previous week"
-                >
+                <button onClick={prevWeek} className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target" title="Previous week" aria-label="Previous week">
                   <ChevronLeft size={16} className="text-gray-400" />
                 </button>
-                <button
-                  onClick={nextWeek}
-                  className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target"
-                  title="Next week"
-                  aria-label="Next week"
-                >
+                <button onClick={nextWeek} className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target" title="Next week" aria-label="Next week">
                   <ChevronRight size={16} className="text-gray-400" />
                 </button>
               </div>
             </div>
-            {/* Calendar container with responsive sizing */}
             <div className="calendar-container w-full overflow-hidden">
               <iframe
                 src={gcalUrl}
-                style={{ 
-                  border: '0', 
-                  width: '100%', 
-                  height: 'clamp(350px, 60vh, 600px)',
-                  display: 'block'
-                }}
+                style={{ border: '0', width: '100%', height: 'clamp(350px, 60vh, 600px)', display: 'block' }}
                 className="bg-[var(--bg-secondary)] w-full"
                 title="Google Calendar"
               />
@@ -621,7 +560,7 @@ export default function V15rHome() {
         )}
       </div>
 
-      {/* ── JOB HEALTH CARDS - RESPONSIVE ───────────────────────────────────── */}
+      {/* ── JOB HEALTH CARDS ── */}
       {projects.filter(p => resolveProjectBucket(p) === 'active').length > 0 && (
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Job Health</h2>
@@ -633,13 +572,8 @@ export default function V15rHome() {
                 const o = getOverallCompletion(p, backup)
                 const d = daysSince(p.lastMove)
                 const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
-
                 return (
-                  <div
-                    key={p.id}
-                    className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4 cursor-pointer hover:border-gray-600 transition-colors"
-                  >
-                    {/* Top row: name+type | score */}
+                  <div key={p.id} className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4 cursor-pointer hover:border-gray-600 transition-colors">
                     <div className="flex items-start justify-between mb-2">
                       <div>
                         <div className="font-bold text-sm text-gray-100">{p.name}</div>
@@ -650,18 +584,12 @@ export default function V15rHome() {
                         <div className="text-[9px] text-gray-500">Health</div>
                       </div>
                     </div>
-
-                    {/* Progress bar */}
                     <div className="w-full h-1.5 rounded-full bg-gray-700/50 overflow-hidden mb-2">
                       <div className="h-full transition-all rounded-full" style={{ width: `${Math.min(100, o)}%`, background: h.clr }} />
                     </div>
-
-                    {/* Reasons */}
                     <div className="text-[10px] text-gray-500 mb-2">
                       {h.reasons.length ? h.reasons.join(' · ') : 'On track'}
                     </div>
-
-                    {/* Sparkline: paid vs remaining contract exposure */}
                     {(() => {
                       const fin = getProjectFinancials(p, backup)
                       const paidPct = Math.round((fin.paid / Math.max(fin.contract, 1)) * 100)
@@ -679,23 +607,11 @@ export default function V15rHome() {
                         </div>
                       )
                     })()}
-
-                    {/* Chips */}
                     <div className="flex flex-wrap gap-1.5 mb-2">
-                      <span className={`text-[9px] px-2 py-0.5 rounded font-semibold ${
-                        d >= 14 ? 'bg-red-500/20 text-red-400' : d >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'
-                      }`}>{d}d stale</span>
-                      <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-blue-500/20 text-blue-400">
-                        {pct(Math.round(o))}
-                      </span>
-                      {openR > 0 && (
-                        <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-red-500/20 text-red-400">
-                          {openR} RFI
-                        </span>
-                      )}
+                      <span className={`text-[9px] px-2 py-0.5 rounded font-semibold ${d >= 14 ? 'bg-red-500/20 text-red-400' : d >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'}`}>{d}d stale</span>
+                      <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-blue-500/20 text-blue-400">{pct(Math.round(o))}</span>
+                      {openR > 0 && <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-red-500/20 text-red-400">{openR} RFI</span>}
                     </div>
-
-                    {/* Edit / Delete */}
                     <div className="flex gap-2 pt-2 border-t border-gray-700/50">
                       <button className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50 transition-colors font-semibold">
                         <Edit3 size={10} className="inline mr-1" /> Edit
@@ -711,14 +627,11 @@ export default function V15rHome() {
         </div>
       )}
 
-      {/* ── SERVICE JOBS REQUIRING ATTENTION — Priority Visual ────────────────── */}
+      {/* ── SERVICE JOBS REQUIRING ATTENTION ── */}
       {serviceJobsNeedingAttention.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Service Jobs Requiring Attention
-            </h2>
-            {/* Legend */}
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Service Jobs Requiring Attention</h2>
             <div className="flex items-center gap-3 text-[9px] text-gray-500">
               <span><span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 mr-1 align-middle" />$1k+</span>
               <span><span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 mr-1 align-middle" />$500–1k</span>
@@ -727,32 +640,24 @@ export default function V15rHome() {
           </div>
           <div className="space-y-2">
             {serviceJobsNeedingAttention.map((l: any) => (
-              <CollectionPriorityCard
-                key={l.id}
-                log={l}
-                onMarkCollected={markServiceJobCollected}
-              />
+              <CollectionPriorityCard key={l.id} log={l} onMarkCollected={markServiceJobCollected} />
             ))}
           </div>
         </div>
       )}
 
-      {/* ── AGENDA ALERTS ────────────────────────────────────────────────────── */}
+      {/* ── AGENDA ALERTS ── */}
       <div>
         <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Alerts</h2>
         {mergedAlerts.length > 0 ? (
           <div className="space-y-2">
-            {/* Merged alerts (AI + custom, sorted by position) */}
             {mergedAlerts.filter(m => m.type === 'ai').map((m) => {
               const a = m.data as typeof agendaAlerts[0]
               const i = m.idx
               const aiAlertId = 'ai-' + i
               const isEditing = editingAIAlertId === aiAlertId
               return (
-                <div
-                  key={aiAlertId}
-                  className="flex items-start gap-2 p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg"
-                >
+                <div key={aiAlertId} className="flex items-start gap-2 p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg">
                   <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: a.clr }} />
                   {isEditing ? (
                     <input
@@ -762,69 +667,33 @@ export default function V15rHome() {
                       onChange={(e) => setEditAIAlertText(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
-                          // Update existing or create custom alert for this AI alert
                           pushState(backup)
                           if (!backup.customAlerts) backup.customAlerts = []
                           const existing = backup.customAlerts.find(ca => ca.isAI && ca.manuallyEdited && ca.linkedProjectId === (a.id || ''))
-                          if (existing) {
-                            existing.title = editAIAlertText
-                          } else {
-                            backup.customAlerts.push({
-                              id: 'ai2c_' + Date.now() + '_' + i,
-                              title: editAIAlertText,
-                              description: '',
-                              action: '',
-                              isAI: true,
-                              manuallyEdited: true,
-                              scheduledAt: '',
-                              linkedProjectId: a.id || ''
-                            })
+                          if (existing) { existing.title = editAIAlertText } else {
+                            backup.customAlerts.push({ id: 'ai2c_' + Date.now() + '_' + i, title: editAIAlertText, description: '', action: '', isAI: true, manuallyEdited: true, scheduledAt: '', linkedProjectId: a.id || '' })
                           }
-                          persist()
-                          forceUpdate()
-                          setEditingAIAlertId(null)
-                          setEditAIAlertText('')
+                          persist(); forceUpdate(); setEditingAIAlertId(null); setEditAIAlertText('')
                         }
                       }}
                       onBlur={() => {
                         if (editingAIAlertId !== aiAlertId) return
-                        // Update existing or create custom alert for this AI alert
                         if (editAIAlertText.trim()) {
                           pushState(backup)
                           if (!backup.customAlerts) backup.customAlerts = []
                           const existing = backup.customAlerts.find(ca => ca.isAI && ca.manuallyEdited && ca.linkedProjectId === (a.id || ''))
-                          if (existing) {
-                            existing.title = editAIAlertText
-                          } else {
-                            backup.customAlerts.push({
-                              id: 'ai2c_' + Date.now() + '_' + i,
-                              title: editAIAlertText,
-                              description: '',
-                              action: '',
-                              isAI: true,
-                              manuallyEdited: true,
-                              scheduledAt: '',
-                              linkedProjectId: a.id || ''
-                            })
+                          if (existing) { existing.title = editAIAlertText } else {
+                            backup.customAlerts.push({ id: 'ai2c_' + Date.now() + '_' + i, title: editAIAlertText, description: '', action: '', isAI: true, manuallyEdited: true, scheduledAt: '', linkedProjectId: a.id || '' })
                           }
-                          persist()
-                          forceUpdate()
+                          persist(); forceUpdate()
                         }
-                        setEditingAIAlertId(null)
-                        setEditAIAlertText('')
+                        setEditingAIAlertId(null); setEditAIAlertText('')
                       }}
                       className="flex-1 bg-gray-900 border border-cyan-500/50 rounded px-2 py-1 text-gray-200 text-xs"
                     />
                   ) : (
                     <>
-                      <button
-                        onClick={() => {
-                          setEditingAIAlertId(aiAlertId)
-                          setEditAIAlertText(a.txt)
-                        }}
-                        className="text-gray-500 hover:text-gray-300 mt-0.5 flex-shrink-0"
-                        title="Edit alert"
-                      >
+                      <button onClick={() => { setEditingAIAlertId(aiAlertId); setEditAIAlertText(a.txt) }} className="text-gray-500 hover:text-gray-300 mt-0.5 flex-shrink-0" title="Edit alert">
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <div className="flex-1">
@@ -836,10 +705,7 @@ export default function V15rHome() {
                     </>
                   )}
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => alert('AI analysis for this item coming soon.')}
-                      className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-0.5"
-                    >
+                    <button onClick={() => alert('AI analysis for this item coming soon.')} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-0.5">
                       ✨ Ask AI
                     </button>
                   </div>
@@ -847,86 +713,40 @@ export default function V15rHome() {
               )
             })}
 
-            {/* Custom alerts (merged, sorted by position) */}
             {mergedAlerts.filter(m => m.type === 'custom').map((m) => m.data as typeof loadedCustomAlerts[0]).map((a) => (
               <div key={a.id}>
                 {editingAlertId === a.id ? (
-                  // Edit mode
                   <div className="p-3 bg-[var(--bg-card)] border border-blue-500/50 rounded-lg space-y-2">
-                    <input
-                      type="text"
-                      placeholder="Alert title"
-                      value={editingAlertData.title}
-                      onChange={(e) => setEditingAlertData({...editingAlertData, title: e.target.value})}
-                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600"
-                    />
-                    <textarea
-                      placeholder="Description"
-                      value={editingAlertData.description}
-                      onChange={(e) => setEditingAlertData({...editingAlertData, description: e.target.value})}
-                      rows={2}
-                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600 resize-none"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Action (optional)"
-                      value={editingAlertData.action}
-                      onChange={(e) => setEditingAlertData({...editingAlertData, action: e.target.value})}
-                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600"
-                    />
+                    <input type="text" placeholder="Alert title" value={editingAlertData.title} onChange={(e) => setEditingAlertData({...editingAlertData, title: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600" />
+                    <textarea placeholder="Description" value={editingAlertData.description} onChange={(e) => setEditingAlertData({...editingAlertData, description: e.target.value})} rows={2} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600 resize-none" />
+                    <input type="text" placeholder="Action (optional)" value={editingAlertData.action} onChange={(e) => setEditingAlertData({...editingAlertData, action: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600" />
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="text-[9px] text-gray-500 mb-0.5 block">Schedule Push At</label>
-                        <input
-                          type="datetime-local"
-                          value={editingAlertData.scheduledAt || ''}
-                          onChange={(e) => setEditingAlertData({...editingAlertData, scheduledAt: e.target.value})}
-                          className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
-                        />
+                        <input type="datetime-local" value={editingAlertData.scheduledAt || ''} onChange={(e) => setEditingAlertData({...editingAlertData, scheduledAt: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200" />
                       </div>
                       <div>
                         <label className="text-[9px] text-gray-500 mb-0.5 block">Link to Project</label>
-                        <select
-                          value={editingAlertData.linkedProjectId || ''}
-                          onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})}
-                          className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
-                        >
+                        <select value={editingAlertData.linkedProjectId || ''} onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200">
                           <option value="">None</option>
-                          {projects.map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
+                          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => saveAlert(a.id, editingAlertData, a.isAI)}
-                        className="flex-1 text-[10px] px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-semibold"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => {setEditingAlertId(null); setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})}}
-                        className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-semibold"
-                      >
-                        Cancel
-                      </button>
+                      <button onClick={() => saveAlert(a.id, editingAlertData, a.isAI)} className="flex-1 text-[10px] px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-semibold">Save</button>
+                      <button onClick={() => {setEditingAlertId(null); setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})}} className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-semibold">Cancel</button>
                     </div>
                   </div>
                 ) : (
-                  // Display mode
                   <div className="flex items-start justify-between gap-2 p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <div className="text-xs font-semibold text-gray-200">{a.title}</div>
                         {a.manuallyEdited ? (
-                          <span className="text-[8px] px-1.5 py-0.5 rounded flex-shrink-0 bg-yellow-500/30 text-yellow-300">
-                            ✏ Manual Edit
-                          </span>
+                          <span className="text-[8px] px-1.5 py-0.5 rounded flex-shrink-0 bg-yellow-500/30 text-yellow-300">✎ Manual Edit</span>
                         ) : a.isAI ? (
-                          <span className="text-[8px] px-1.5 py-0.5 rounded flex-shrink-0 bg-emerald-500/30 text-emerald-300">
-                            AI
-                          </span>
+                          <span className="text-[8px] px-1.5 py-0.5 rounded flex-shrink-0 bg-emerald-500/30 text-emerald-300">AI</span>
                         ) : null}
                       </div>
                       {a.description && <div className="text-[9px] text-gray-400 mt-1">{a.description}</div>}
@@ -935,94 +755,39 @@ export default function V15rHome() {
                       {a.linkedProjectId && <div className="text-[9px] text-teal-400 mt-1">Project: {projects.find(p => p.id === a.linkedProjectId)?.name || a.linkedProjectId}</div>}
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => startEditAlert(a)}
-                        className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors"
-                        title="Edit alert"
-                      >
-                        <Edit3 size={10} className="inline" />
-                      </button>
-                      <button
-                        onClick={() => dismissAlert(a.id)}
-                        className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                        title="Dismiss alert"
-                      >
-                        <X size={10} className="inline" />
-                      </button>
+                      <button onClick={() => startEditAlert(a)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors" title="Edit alert"><Edit3 size={10} className="inline" /></button>
+                      <button onClick={() => dismissAlert(a.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors" title="Dismiss alert"><X size={10} className="inline" /></button>
                     </div>
                   </div>
                 )}
               </div>
             ))}
 
-            {/* Add new alert form */}
             {addingAlert ? (
               <div className="p-3 bg-[var(--bg-card)] border border-blue-500/50 rounded-lg space-y-2">
-                <input
-                  type="text"
-                  placeholder="Alert title"
-                  value={editingAlertData.title}
-                  onChange={(e) => setEditingAlertData({...editingAlertData, title: e.target.value})}
-                  className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600"
-                />
-                <textarea
-                  placeholder="Description"
-                  value={editingAlertData.description}
-                  onChange={(e) => setEditingAlertData({...editingAlertData, description: e.target.value})}
-                  rows={2}
-                  className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600 resize-none"
-                />
-                <input
-                  type="text"
-                  placeholder="Action (optional)"
-                  value={editingAlertData.action}
-                  onChange={(e) => setEditingAlertData({...editingAlertData, action: e.target.value})}
-                  className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600"
-                />
+                <input type="text" placeholder="Alert title" value={editingAlertData.title} onChange={(e) => setEditingAlertData({...editingAlertData, title: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600" />
+                <textarea placeholder="Description" value={editingAlertData.description} onChange={(e) => setEditingAlertData({...editingAlertData, description: e.target.value})} rows={2} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600 resize-none" />
+                <input type="text" placeholder="Action (optional)" value={editingAlertData.action} onChange={(e) => setEditingAlertData({...editingAlertData, action: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-600" />
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[9px] text-gray-500 mb-0.5 block">Schedule Push At</label>
-                    <input
-                      type="datetime-local"
-                      value={editingAlertData.scheduledAt || ''}
-                      onChange={(e) => setEditingAlertData({...editingAlertData, scheduledAt: e.target.value})}
-                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
-                    />
+                    <input type="datetime-local" value={editingAlertData.scheduledAt || ''} onChange={(e) => setEditingAlertData({...editingAlertData, scheduledAt: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200" />
                   </div>
                   <div>
                     <label className="text-[9px] text-gray-500 mb-0.5 block">Link to Project</label>
-                    <select
-                      value={editingAlertData.linkedProjectId || ''}
-                      onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})}
-                      className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200"
-                    >
+                    <select value={editingAlertData.linkedProjectId || ''} onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200">
                       <option value="">None</option>
-                      {projects.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => saveAlert(null, editingAlertData, false)}
-                    className="flex-1 text-[10px] px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-semibold"
-                  >
-                    Add Alert
-                  </button>
-                  <button
-                    onClick={() => {setAddingAlert(false); setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})}}
-                    className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-semibold"
-                  >
-                    Cancel
-                  </button>
+                  <button onClick={() => saveAlert(null, editingAlertData, false)} className="flex-1 text-[10px] px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-semibold">Add Alert</button>
+                  <button onClick={() => {setAddingAlert(false); setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})}} className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-semibold">Cancel</button>
                 </div>
               </div>
             ) : (
-              <button
-                onClick={() => {setAddingAlert(true); setEditingAlertData({title: '', description: '', action: ''})}}
-                className="w-full text-[10px] px-2 py-2 rounded border border-dashed border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 transition-colors font-semibold"
-              >
+              <button onClick={() => {setAddingAlert(true); setEditingAlertData({title: '', description: '', action: ''})}} className="w-full text-[10px] px-2 py-2 rounded border border-dashed border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 transition-colors font-semibold">
                 + Add Alert
               </button>
             )}
@@ -1034,23 +799,18 @@ export default function V15rHome() {
         )}
       </div>
 
-      {/* ── AGENDA SECTIONS ──────────────────────────────────────────────────── */}
+      {/* ── AGENDA SECTIONS ── */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Agenda</h2>
-          <button
-            onClick={addAgendaCategory}
-            className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-1"
-          >
+          <button onClick={addAgendaCategory} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-1">
             <Plus size={10} /> Sub-Category
           </button>
         </div>
-
         {(backup.agendaSections || []).length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {(backup.agendaSections || []).map(sec => (
               <div key={sec.id} className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
-                {/* Board header */}
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="font-bold text-sm text-gray-200">{sec.title}</div>
@@ -1059,51 +819,22 @@ export default function V15rHome() {
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <button
-                      onClick={() => addAgendaTask(sec.id)}
-                      className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors"
-                    >+ Task</button>
-                    <button
-                      onClick={() => editAgendaCategory(sec.id)}
-                      className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors"
-                    >Edit</button>
-                    <button
-                      onClick={() => removeAgendaCategory(sec.id)}
-                      className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300 transition-colors"
-                    >Delete</button>
+                    <button onClick={() => addAgendaTask(sec.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors">+ Task</button>
+                    <button onClick={() => editAgendaCategory(sec.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors">Edit</button>
+                    <button onClick={() => removeAgendaCategory(sec.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300 transition-colors">Delete</button>
                   </div>
                 </div>
-
-                {/* Tasks */}
                 {(sec.tasks || []).length > 0 ? (
                   <div className="space-y-1">
                     {(sec.tasks || []).map((t: any) => (
                       <div key={t.id} className="flex items-center gap-2 py-1.5 group">
-                        <div
-                          className="w-2 h-2 rounded-full flex-shrink-0"
-                          style={{
-                            background: t.status === 'completed' ? '#10b981' : t.status === 'canceled' ? '#ef4444' : '#3b82f6',
-                          }}
-                        />
-                        <div className={`text-xs flex-1 ${t.status === 'done' ? 'line-through text-gray-600' : t.status === 'declined' ? 'line-through text-gray-600' : 'text-gray-300'}`}>
-                          {t.text}
-                        </div>
+                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: t.status === 'completed' ? '#10b981' : t.status === 'canceled' ? '#ef4444' : '#3b82f6' }} />
+                        <div className={`text-xs flex-1 ${t.status === 'done' ? 'line-through text-gray-600' : t.status === 'declined' ? 'line-through text-gray-600' : 'text-gray-300'}`}>{t.text}</div>
                         <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => cycleAgendaTaskStatus(sec.id, t.id)} className="cursor-pointer">
-                            {agendaStatusChip(t.status)}
-                          </button>
-                          <button
-                            onClick={() => editAgendaTask(sec.id, t.id)}
-                            className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300"
-                          >Edit</button>
-                          <button
-                            onClick={() => moveAgendaTask(sec.id, t.id)}
-                            className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300"
-                          >Move</button>
-                          <button
-                            onClick={() => removeAgendaTask(sec.id, t.id)}
-                            className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300"
-                          >✕</button>
+                          <button onClick={() => cycleAgendaTaskStatus(sec.id, t.id)} className="cursor-pointer">{agendaStatusChip(t.status)}</button>
+                          <button onClick={() => editAgendaTask(sec.id, t.id)} className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">Edit</button>
+                          <button onClick={() => moveAgendaTask(sec.id, t.id)} className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">Move</button>
+                          <button onClick={() => removeAgendaTask(sec.id, t.id)} className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300">✕</button>
                         </div>
                       </div>
                     ))}
@@ -1121,99 +852,183 @@ export default function V15rHome() {
         )}
       </div>
 
-      {/* ── RECENT LOGS ──────────────────────────────────────────────────────── */}
-      {/* Mirrors Field Log tab: uses buildProjectLogRollup for cumulative math per entry */}
+      {/* ── RECENT LOGS — tabbed ── */}
       <div>
-        <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Recent Logs</h2>
-        {recentLogs.length > 0 ? (
-          // Fragment wraps both the log list and the View More button — valid JSX
-          <>
-            <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
-              {(() => {
-                // Build rollup cache per project — same pattern as Field Log tab
-                const rollCache: Record<string, any> = {}
-                const getRoll = (projId: string) => {
-                  if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
-                  return rollCache[projId]
-                }
+        <div className="flex items-center gap-1 mb-3 p-1 rounded-lg bg-gray-900/60 border border-gray-800/60 w-fit">
+          {(['projects', 'service'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setLogsTab(tab)}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6,
+                border: 'none', cursor: 'pointer', letterSpacing: '0.04em', transition: 'all 0.15s',
+                background: logsTab === tab ? (tab === 'projects' ? '#10b981' : '#f97316') : 'transparent',
+                color: logsTab === tab ? '#fff' : '#6b7280',
+              }}
+            >
+              {tab === 'projects' ? `Projects (${logs.length})` : `Service (${serviceLogs.length})`}
+            </button>
+          ))}
+        </div>
 
-                return recentLogs.map((l: any, i: number) => {
-                  const projId = l.projId || l.projectId || ''
-                  const projRoll = getRoll(projId)
-                  // Fall back gracefully if log id not found in rollup (e.g. missing projId)
-                  const rr = projRoll.byId[l.id] || {
-                    entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
-                    entryMaterialCost: num(l.mat),
-                    entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
-                    entryTotalCost: 0,
-                    remainingAfter: projRoll.quote,
+        {logsTab === 'projects' && (
+          recentLogs.length > 0 ? (
+            <>
+              <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
+                {(() => {
+                  const rollCache: Record<string, any> = {}
+                  const getRoll = (projId: string) => {
+                    if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
+                    return rollCache[projId]
                   }
-                  const entryRevenue = rr.entryLaborCost
-                  const entryExpenses = rr.entryMaterialCost + rr.entryMileageCost
-                  const runningBalance = num(rr.remainingAfter)
-                  const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
-
-                  return (
-                    <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
-                          <span className="text-xs font-semibold text-gray-200">{l.projName}</span>
-                          <span className="text-[9px] text-gray-400">— {l.emp || 'Me'}</span>
-                        </div>
-                        <div className="text-[10px] text-blue-300">{l.phase}</div>
-                        {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
-                        {/* Expenses row: per-entry Revenue | Expenses | Net (running project balance) */}
-                        <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
-                          <span>
-                            <span className="text-gray-500">Revenue: </span>
-                            <span style={{ color: '#10b981' }}>{fmt(entryRevenue)}</span>
-                          </span>
-                          <span>
-                            <span className="text-gray-500">Expenses: </span>
-                            <span style={{ color: '#ef4444' }}>{fmt(entryExpenses)}</span>
-                          </span>
-                          <span>
-                            <span className="text-gray-500">Net: </span>
-                            <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span>
-                          </span>
+                  return recentLogs.map((l: any, i: number) => {
+                    const projId = l.projId || l.projectId || ''
+                    const projRoll = getRoll(projId)
+                    const rr = projRoll.byId[l.id] || {
+                      entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
+                      entryMaterialCost: num(l.mat),
+                      entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
+                      entryTotalCost: 0,
+                      remainingAfter: projRoll.quote,
+                    }
+                    const entryRevenue = rr.entryLaborCost
+                    const entryExpenses = rr.entryMaterialCost + rr.entryMileageCost
+                    const runningBalance = num(rr.remainingAfter)
+                    const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
+                    const entryMiCost = rr.entryMileageCost
+                    const entryTotal = rr.entryTotalCost
+                    return (
+                      <div key={l.id || i} className={`px-4 py-3 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`} style={{ borderLeft: '3px solid #10b981' }}>
+                        {/* Header */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                              <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
+                              <span className="text-xs font-bold text-gray-100">{l.projName}</span>
+                              <span className="text-[10px] text-emerald-400 font-semibold">{l.phase}</span>
+                              <span className="text-[9px] text-gray-500">— {l.emp || 'Me'}</span>
+                            </div>
+                            {/* Notes */}
+                            {l.notes && <div className="text-[10px] text-gray-300 mb-1">{l.notes}</div>}
+                            {/* Stats row */}
+                            <div className="text-[10px] font-mono text-gray-500 flex gap-3 flex-wrap mt-0.5">
+                              <span>Hrs: <span className="text-gray-200">{num(l.hrs).toFixed(1)}</span></span>
+                              <span>Miles: <span className="text-gray-200">{num(l.miles)}</span></span>
+                              <span>Mat: <span className="text-yellow-400">{fmt(num(l.mat))}</span></span>
+                              <span>Coll: <span style={{ color: '#10b981' }}>{fmt(num(l.collected))}</span></span>
+                              <span>Remaining Bal: <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span></span>
+                            </div>
+                            {/* Cumulative row */}
+                            <div className="text-[9px] font-mono text-gray-600 flex gap-3 flex-wrap mt-1">
+                              <span>Cum Hours: <span className="text-gray-500">{num(rr.cumHours).toFixed(1)}h</span></span>
+                              <span>Cum Mat: <span className="text-gray-500">{fmt(rr.cumMaterialCost)}</span></span>
+                              <span>Cum Collected: <span style={{ color: '#10b981', opacity: 0.8 }}>{fmt(rr.cumCollected)}</span></span>
+                              <span>Cum Cost: <span className="text-gray-500">{fmt(rr.cumTotalCost)}</span></span>
+                            </div>
+                          </div>
+                          {/* Right column */}
+                          <div className="text-right flex-shrink-0 font-mono space-y-0" style={{ minWidth: 90 }}>
+                            <div className="text-[11px] text-gray-100">{fmt(entryRevenue)} <span className="text-gray-500 text-[9px]">lab</span></div>
+                            <div className="text-[11px] text-yellow-400">{fmt(num(l.mat))} <span className="text-gray-500 text-[9px]">mat</span></div>
+                            <div className="text-[11px]" style={{ color: '#22d3ee' }}>{fmt(entryMiCost)} <span className="text-gray-500 text-[9px]">mi</span></div>
+                            <div className="text-[11px] font-bold" style={{ color: '#f97316' }}>{fmt(Math.abs(entryTotal))} <span className="text-gray-500 text-[9px]">total</span></div>
+                            <div className="text-[10px] font-bold border-t border-gray-800 mt-1 pt-1" style={{ color: balanceColor }}>Net: {fmt(runningBalance)}</div>
+                          </div>
                         </div>
                       </div>
-                      {/* Right side: hours | mat cost | running balance */}
-                      <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
-                        <div className="text-xs font-mono text-gray-200">{num(l.hrs).toFixed(1)}h</div>
-                        {num(l.mat) > 0 && (
-                          <div className="text-[10px] font-mono text-yellow-400">{fmt(num(l.mat))}</div>
-                        )}
-                        <div className="text-[11px] font-mono font-bold" style={{ color: balanceColor }}>
-                          Net: {fmt(runningBalance)}
-                        </div>
+                    )
+                  })
+                })()}
+              </div>
+              {hasMoreLogs ? (
+                <button onClick={() => setLogsVisible(v => v + LOGS_PAGE)} className="w-full mt-2 py-2 text-xs font-semibold text-emerald-400 bg-emerald-900/10 border border-emerald-900/30 rounded-lg hover:bg-emerald-900/20 transition-colors">
+                  View More — {Math.min(LOGS_PAGE, allLogsReversed.length - logsVisible)} of {allLogsReversed.length - logsVisible} remaining
+                </button>
+              ) : (
+                <div className="mt-2 text-center text-[10px] text-gray-600">All {allLogsReversed.length} {allLogsReversed.length === 1 ? 'entry' : 'entries'} shown</div>
+              )}
+            </>
+          ) : (
+            <div className="p-4 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">No project logs yet.</div>
+          )
+        )}
+
+        {logsTab === 'service' && (() => {
+          const allSvcReversed = [...serviceLogs].reverse()
+          const recentSvcLogs = allSvcReversed.slice(0, svcLogsVisible)
+          const hasMoreSvcLogs = allSvcReversed.length > svcLogsVisible
+          if (recentSvcLogs.length === 0) {
+            return <div className="p-4 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">No service logs yet.</div>
+          }
+          return (
+            <>
+            <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
+              {recentSvcLogs.map((l: any, i: number) => {
+                const quoted = num(l.quoted)
+                const collected = num(l.collected)
+                const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
+                const addIncome = adjustments.filter((a: any) => a?.type === 'income').reduce((s: number, a: any) => s + num(a.amount), 0)
+                const totalBillable = quoted + addIncome
+                const balance = Math.max(0, totalBillable - collected)
+                const fullyPaid = balance <= 0.5 && totalBillable > 0
+                const partial = !fullyPaid && collected > 0
+                const statusColor = fullyPaid ? '#10b981' : partial ? '#f59e0b' : '#ef4444'
+                const statusLabel = fullyPaid ? 'PAID' : partial ? 'PARTIAL' : 'UNPAID'
+                return (
+                  <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentSvcLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`} style={{ borderLeft: '3px solid #f97316' }}>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
+                        <span className="text-xs font-semibold text-gray-200">{l.customer}</span>
+                        {l.jtype && <span className="text-[9px] text-gray-400">— {l.jtype}</span>}
+                      </div>
+                      {l.address && <div className="text-[10px] text-gray-500 mb-0.5">{l.address}</div>}
+                      {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
+                      <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
+                        <span><span className="text-gray-500">Quoted: </span><span className="text-gray-200">{fmt(totalBillable)}</span></span>
+                        <span><span className="text-gray-500">Collected: </span><span style={{ color: '#10b981' }}>{fmt(collected)}</span></span>
+                        {balance > 0.5 && <span><span className="text-gray-500">Due: </span><span style={{ color: '#ef4444', fontWeight: 700 }}>{fmt(balance)}</span></span>}
                       </div>
                     </div>
-                  )
-                })
-              })()}
+                    <div className="text-right flex-shrink-0 ml-3 font-mono" style={{ minWidth: 160 }}>
+                      <div className="text-[12px] font-bold text-gray-100 mb-1">{fmt(totalBillable)} <span className="text-gray-500 text-[9px] font-normal">quote</span></div>
+                      {(() => {
+                        let settings: any = {}
+                        try { const bd = JSON.parse(localStorage.getItem('poweron_backup_data') || '{}'); settings = bd.settings || {} } catch {}
+                        const opCost = num(settings.opCost) || 43
+                        const mileRate = num(settings.mileRate) || 0.66
+                        const hrs = num(l.hrs)
+                        const miles = num(l.miles)
+                        const mat = num(l.mat)
+                        const laborCost = hrs * opCost
+                        const mileCost = miles * mileRate
+                        return (
+                          <>
+                            <div className="text-[10px]" style={{ color: '#e5e7eb' }}>{hrs.toFixed(1)}h × ${opCost.toFixed(2)} = <span style={{ color: '#f87171', fontWeight: 700 }}>{fmt(laborCost)} lab</span></div>
+                            <div className="text-[10px]" style={{ color: '#fcd34d' }}><span style={{ fontWeight: 700 }}>{fmt(mat)}</span> mat</div>
+                            <div className="text-[10px]" style={{ color: '#e5e7eb' }}>{miles}mi × ${mileRate.toFixed(2)} = <span style={{ color: '#60a5fa', fontWeight: 700 }}>{fmt(mileCost)} mi</span></div>
+                          </>
+                        )
+                      })()}
+                      <div className="mt-1 pt-1 border-t border-gray-800">
+                        <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: `${statusColor}22`, color: statusColor, border: `1px solid ${statusColor}44`, display: 'inline-block' }}>{statusLabel}</span>
+                      </div>
+                      {balance > 0.5 && <div className="text-[11px] font-bold mt-0.5" style={{ color: '#ef4444' }}>{fmt(balance)} <span className="text-gray-600 text-[9px]">due</span></div>}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
-
-            {/* ── View More / "all shown" indicator ──────────────────────── */}
-            {hasMoreLogs ? (
-              <button
-                onClick={() => setLogsVisible(v => v + LOGS_PAGE)}
-                className="w-full mt-2 py-2 text-xs font-semibold text-blue-400 bg-blue-900/10 border border-blue-900/30 rounded-lg hover:bg-blue-900/20 transition-colors"
-              >
-                View More — {Math.min(LOGS_PAGE, allLogsReversed.length - logsVisible)} of {allLogsReversed.length - logsVisible} remaining
+            {hasMoreSvcLogs ? (
+              <button onClick={() => setSvcLogsVisible(v => v + SVC_LOGS_PAGE)} className="w-full mt-2 py-2 text-xs font-semibold text-orange-400 bg-orange-900/10 border border-orange-900/30 rounded-lg hover:bg-orange-900/20 transition-colors">
+                View More — {Math.min(SVC_LOGS_PAGE, allSvcReversed.length - svcLogsVisible)} of {allSvcReversed.length - svcLogsVisible} remaining
               </button>
             ) : (
-              <div className="mt-2 text-center text-[10px] text-gray-600">
-                All {allLogsReversed.length} log {allLogsReversed.length === 1 ? 'entry' : 'entries'} shown
-              </div>
+              <div className="mt-2 text-center text-[10px] text-gray-600">All {allSvcReversed.length} {allSvcReversed.length === 1 ? 'entry' : 'entries'} shown</div>
             )}
           </>
-        ) : (
-          <div className="p-4 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">
-            No logs yet. Tap + Log to start.
-          </div>
-        )}
+          )
+        })()}
       </div>
 
       {/* ── Daily Motivation Card ── */}
@@ -1224,29 +1039,13 @@ export default function V15rHome() {
           <div style={{ fontSize: 12, color: '#1D9E75', marginBottom: 10 }}>{_motivPhrase.attr}</div>
           <div style={{ fontSize: 13, color: '#EF9F27', fontWeight: 500 }}>{_motivFireLine}</div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-            <div
-              style={{ fontSize: 11, color: '#6b7280', cursor: 'pointer' }}
-              onClick={() => {
-                setAiInput(`Who said this? ${_motivFullQuote}`)
-                setAiPanelOpen(true)
-              }}
-            >
+            <div style={{ fontSize: 11, color: '#6b7280', cursor: 'pointer' }} onClick={() => { setAiInput(`Who said this? ${_motivFullQuote}`); setAiPanelOpen(true) }}>
               Ask NEXUS who said this →
             </div>
             <button
               onClick={() => setQuoteOffset(o => (o + 1) % MOTIVATION_PHRASES.length)}
               title="Next quote"
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: '#4b5563',
-                opacity: 0.6,
-                padding: '2px 4px',
-                display: 'flex',
-                alignItems: 'center',
-                transition: 'opacity 0.15s',
-              }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4b5563', opacity: 0.6, padding: '2px 4px', display: 'flex', alignItems: 'center', transition: 'opacity 0.15s' }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0.6' }}
             >
