@@ -44,59 +44,56 @@ function AuthSpinner() {
 // ── Landing Page ─────────────────────────────────────────────────────────────
 function LandingPage({ onLogin, onRegister }: { onLogin: () => void; onRegister: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex justify-center mb-10">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-              <Zap className="w-6 h-6 text-emerald-400" fill="currentColor" />
-            </div>
-            <div>
-              <div className="text-base font-bold text-white leading-tight">PowerOn Hub</div>
-              <div className="text-xs text-gray-500 font-mono uppercase tracking-wider">v3.0 · 11 Agents</div>
-            </div>
+    <div style={{
+      minHeight: '100vh', background: '#020a04', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', padding: '24px',
+      position: 'relative', overflow: 'hidden', fontFamily: "'Barlow', system-ui, sans-serif",
+    }}>
+      <div style={{ position: 'absolute', top: '-120px', left: '-120px', width: '500px', height: '500px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(40,192,72,0.07) 0%, transparent 65%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: '-80px', right: '-80px', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(40,192,72,0.05) 0%, transparent 65%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: '24px', bottom: 0, width: '1px', background: 'linear-gradient(to bottom, transparent, rgba(40,192,72,0.08) 20%, rgba(40,192,72,0.12) 50%, rgba(40,192,72,0.06) 80%, transparent)' }} />
+      <div style={{ position: 'absolute', top: 0, right: '24px', bottom: 0, width: '1px', background: 'linear-gradient(to bottom, transparent, rgba(40,192,72,0.08) 20%, rgba(40,192,72,0.12) 50%, rgba(40,192,72,0.06) 80%, transparent)' }} />
+      <div style={{ width: '100%', maxWidth: '420px', position: 'relative', zIndex: 2 }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '28px', fontSize: '10px', color: '#50e870', letterSpacing: '2.5px', textTransform: 'uppercase', background: 'rgba(40,192,72,0.06)', border: '1px solid rgba(40,192,72,0.22)', padding: '6px 14px', borderRadius: '20px' }}>
+          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#1fc97a', boxShadow: '0 0 8px #1fc97a, 0 0 16px rgba(31,201,122,0.4)' }} />
+          Coachella Valley � C-10 Licensed
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '32px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'linear-gradient(135deg, #1a8832, #28c048)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(40,192,72,0.3), 0 0 0 1px rgba(40,192,72,0.3)' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z" fill="#fff" stroke="#fff" strokeWidth="1" strokeLinejoin="round"/></svg>
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '22px', fontWeight: 700, letterSpacing: '-0.5px', textTransform: 'uppercase', color: '#eaf6ec', lineHeight: 1 }}>Power On</div>
+            <div style={{ fontSize: '10px', color: '#4a7858', letterSpacing: '2px', textTransform: 'uppercase', marginTop: '2px' }}>Solutions Hub</div>
           </div>
         </div>
-
-        {/* Headline */}
-        <div className="text-center mb-10">
-          <h1 className="text-4xl font-extrabold text-white mb-3 tracking-tight">
-            Your electrical<br />
-            <span className="text-emerald-400">business OS</span>
+        <div style={{ marginBottom: '32px' }}>
+          <h1 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 'clamp(48px, 10vw, 68px)', fontWeight: 700, lineHeight: 0.88, textTransform: 'uppercase', letterSpacing: '-2px', color: '#eaf6ec', marginBottom: '16px' }}>
+            YOUR<br />ELECTRICAL<br /><span style={{ color: '#50e870', textShadow: '0 0 40px rgba(40,192,72,0.6), 0 0 80px rgba(40,192,72,0.3)' }}>BUSINESS OS</span>
           </h1>
-          <p className="text-sm text-gray-400">
-            AI-powered sales intelligence, field ops, and business management — built for contractors.
+          <p style={{ fontSize: '14px', color: '#7abf8a', lineHeight: 1.7, maxWidth: '340px' }}>
+            AI-powered sales intelligence, field ops, and business management � built for contractors.
           </p>
         </div>
-
-        {/* Buttons */}
-        <div className="space-y-3">
-          <button
-            onClick={onRegister}
-            className="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all flex items-center justify-center gap-2"
-          >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <button onClick={onRegister} style={{ width: '100%', padding: '16px 24px', borderRadius: '4px', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #1a8832, #28c048)', color: '#fff', fontSize: '13px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', boxShadow: '0 0 24px rgba(40,192,72,0.35), 0 0 0 1px rgba(40,192,72,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontFamily: "'Barlow', sans-serif" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
             Create Account
-            <ArrowRight size={16} />
           </button>
-          <button
-            onClick={onLogin}
-            className="w-full py-4 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-100 font-bold text-sm transition-all border border-gray-700"
-          >
+          <button onClick={onLogin} style={{ width: '100%', padding: '16px 24px', borderRadius: '4px', border: '1px solid rgba(40,192,72,0.2)', cursor: 'pointer', background: 'rgba(40,192,72,0.04)', color: '#7abf8a', fontSize: '13px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontFamily: "'Barlow', sans-serif" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
             Log In
           </button>
         </div>
-
-        <div className="mt-12 text-center">
-          <span className="text-xs font-mono text-gray-600 tracking-widest uppercase">
-            PowerOn Solutions LLC
-          </span>
+        <div style={{ marginTop: '40px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, rgba(40,192,72,0.12))' }} />
+          <span style={{ fontSize: '9px', color: '#4a7858', letterSpacing: '2px', textTransform: 'uppercase' }}>Power On Solutions LLC</span>
+          <div style={{ flex: 1, height: '1px', background: 'linear-gradient(270deg, transparent, rgba(40,192,72,0.12))' }} />
         </div>
       </div>
     </div>
   )
 }
-
 // ── Register Flow ─────────────────────────────────────────────────────────────
 function RegisterFlow({ onBack, onSuccess }: { onBack: () => void; onSuccess: () => void }) {
   const [fullName, setFullName] = useState('')
