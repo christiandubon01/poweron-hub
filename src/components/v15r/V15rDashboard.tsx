@@ -1457,7 +1457,11 @@ function V15rDashboardInner() {
 
 // ── DASHBOARD EXPORT ──
 export default function V15rDashboard() {
-  return (
-    <V15rDashboardInner />
-  )
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
+  if (!mounted) return null
+  return <V15rDashboardInner />
 }
