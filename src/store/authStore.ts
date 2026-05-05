@@ -295,7 +295,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // If user has password-only setup (no real PIN), skip PIN verification
       if (profile.passcode_hash === 'password_only') {
         const { role, ownerId } = await resolveUserRole(user.id)
-        const session = await createAppSession()
+        const session = await withTimeout(createAppSession(), 5000, null)
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         return
       }
