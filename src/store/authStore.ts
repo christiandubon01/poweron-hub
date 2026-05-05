@@ -294,6 +294,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       // If user has password-only setup (no real PIN), skip PIN verification
       if (profile.passcode_hash === 'password_only') {
+        // Clear any stale local PIN hash so PinAuth doesn't show
+        try { localStorage.removeItem('poweron_pin_hash') } catch {}
         const { role, ownerId } = await resolveUserRole(user.id)
         let session = null
         try {
