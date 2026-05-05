@@ -44,34 +44,15 @@ function pinColorForScore(score: number): string {
   return '#6b7280'                          // Archived/cold - gray
 }
 
-const pinCache: Record<string, string> = {}
-function pinSymbol(color: string) {
-  if (!pinCache[color]) {
-    const canvas = document.createElement('canvas')
-    canvas.width = 24
-    canvas.height = 36
-    const ctx = canvas.getContext('2d')!
-    ctx.beginPath()
-    ctx.moveTo(12, 36)
-    ctx.bezierCurveTo(12, 36, 0, 21, 0, 12)
-    ctx.arc(12, 12, 12, Math.PI, 0, false)
-    ctx.bezierCurveTo(24, 21, 12, 36, 12, 36)
-    ctx.closePath()
-    ctx.fillStyle = color
-    ctx.fill()
-    ctx.strokeStyle = '#0f1117'
-    ctx.lineWidth = 1.5
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.arc(12, 12, 5, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(255,255,255,0.4)'
-    ctx.fill()
-    pinCache[color] = canvas.toDataURL('image/png')
-  }
+function pinSymbol(color: string): google.maps.Symbol {
   return {
-    url: pinCache[color],
-    scaledSize: new google.maps.Size(24, 36),
-    anchor: new google.maps.Point(12, 36),
+    path: 'M 0,-1 C -0.55,-1 -1,-0.55 -1,0 C -1,0.85 0,2 0,2 C 0,2 1,0.85 1,0 C 1,-0.55 0.55,-1 0,-1 Z',
+    fillColor: color,
+    fillOpacity: 1,
+    strokeColor: '#0f1117',
+    strokeWeight: 0.2,
+    scale: 14,
+    anchor: new google.maps.Point(0, 2),
   }
 }
 
