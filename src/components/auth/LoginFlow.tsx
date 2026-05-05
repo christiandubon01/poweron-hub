@@ -1,20 +1,12 @@
 // @ts-nocheck
 /**
  * LoginFlow — top-level auth orchestrator.
- *
- * Flow:
- *   loading              → Splash / spinner
- *   unauthenticated      → LandingPage (Register / Log In) OR PinAuth if PIN stored
- *   needs_passcode_setup → InitialSetupFlow (create 6-digit PIN)
- *   needs_passcode       → PinAuth (verify mode)
- *   biometric_prompt     → BiometricPrompt
- *   locked               → PasscodeScreen lockout timer
- *   authenticated        → children (dashboard)
+ * Landing page + Login/Register styled after power_on_v5_final.html
+ * Navy #02060d, blue #1e80df, PCB dot-grid background, Barlow Condensed headers
  */
 
-import { useState } from 'react'
-import { Zap, Mail, ArrowRight, CheckCircle, Eye, EyeOff, User, Lock, AlertCircle } from 'lucide-react'
-import { clsx } from 'clsx'
+import { useState, useEffect } from 'react'
+import { Zap, ArrowRight, Eye, EyeOff, Lock, Mail, User, AlertCircle, CheckCircle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { PasscodeScreen } from '@/components/auth/PasscodeScreen'
@@ -24,78 +16,147 @@ import { InitialSetupFlow } from '@/components/auth/InitialSetupFlow'
 import { supabase } from '@/lib/supabase'
 
 const PIN_STORAGE_KEY = 'poweron_pin_hash'
-
 function hasPinStored(): boolean {
   try { return Boolean(localStorage.getItem(PIN_STORAGE_KEY)) } catch { return false }
 }
 
-// ── Spinner ──────────────────────────────────────────────────────────────────
-function AuthSpinner() {
+// ── Shared styles ─────────────────────────────────────────────────────────────
+const BG = '#02060d'
+const BLUE = '#1e80df'
+const BLUE_B = '#3d9ef5'
+const TEXT = '#d8eaf8'
+const T2 = '#8ab4d4'
+const T3 = '#4d7a9e'
+
+const inputStyle = {
+  width: '100%', padding: '13px 16px 13px 44px',
+  background: 'rgba(30,128,223,0.05)',
+  border: '1px solid rgba(30,128,223,0.18)',
+  borderRadius: '4px', color: TEXT, fontSize: '14px',
+  outline: 'none', fontFamily: "'Barlow', sans-serif",
+  transition: 'border-color 0.2s',
+}
+
+const btnPrimary = {
+  width: '100%', padding: '15px 24px',
+  background: BLUE, color: '#fff',
+  border: 'none', borderRadius: '4px', cursor: 'pointer',
+  fontSize: '12px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase' as const,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+  boxShadow: `0 0 0 1px rgba(30,128,223,0.4), 0 4px 28px rgba(30,128,223,0.28)`,
+  fontFamily: "'Barlow', sans-serif",
+  position: 'relative' as const, overflow: 'hidden' as const,
+}
+
+const btnSecondary = {
+  width: '100%', padding: '15px 24px',
+  background: 'rgba(30,128,223,0.06)',
+  border: '1px solid rgba(30,128,223,0.22)',
+  borderRadius: '4px', cursor: 'pointer',
+  color: T2, fontSize: '12px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase' as const,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+  fontFamily: "'Barlow', sans-serif",
+}
+
+// ── PCB Background wrapper ────────────────────────────────────────────────────
+function PCBPage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-bg gap-4">
-      <div className="w-12 h-12 rounded-2xl bg-green-subtle border border-green-border flex items-center justify-center">
-        <Zap className="w-6 h-6 text-green" fill="currentColor" />
+    <div style={{
+      minHeight: '100vh', background: BG,
+      backgroundImage: `
+        radial-gradient(rgba(30,128,223,0.07) 1.2px, transparent 1.2px),
+        linear-gradient(rgba(30,128,223,0.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30,128,223,0.022) 1px, transparent 1px)
+      `,
+      backgroundSize: '28px 28px, 56px 56px, 56px 56px',
+      backgroundPosition: '0 0, 14px 14px, 14px 14px',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      padding: '24px', position: 'relative', overflow: 'hidden',
+      fontFamily: "'Barlow', system-ui, sans-serif",
+    }}>
+      {/* Circuit rails */}
+      <div style={{ position: 'fixed', top: 0, left: '12px', bottom: 0, width: '1px', background: 'linear-gradient(to bottom, transparent, rgba(30,128,223,0.08) 20%, rgba(30,128,223,0.10) 50%, rgba(30,128,223,0.06) 80%, transparent)', pointerEvents: 'none', zIndex: 1 }} />
+      <div style={{ position: 'fixed', top: 0, right: '12px', bottom: 0, width: '1px', background: 'linear-gradient(to bottom, transparent, rgba(30,128,223,0.08) 20%, rgba(30,128,223,0.10) 50%, rgba(30,128,223,0.06) 80%, transparent)', pointerEvents: 'none', zIndex: 1 }} />
+      {/* Glow orb */}
+      <div style={{ position: 'fixed', top: '-100px', left: '-100px', width: '600px', height: '600px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(30,128,223,0.06) 0%, transparent 65%)', pointerEvents: 'none', zIndex: 0 }} />
+      <div style={{ position: 'relative', zIndex: 2, width: '100%' }}>
+        {children}
       </div>
-      <div className="w-5 h-5 border-2 border-green border-t-transparent rounded-full animate-spin" />
     </div>
   )
 }
 
-// ── Landing Page ─────────────────────────────────────────────────────────────
+// ── Spinner ───────────────────────────────────────────────────────────────────
+function AuthSpinner() {
+  return (
+    <PCBPage>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+        <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: `linear-gradient(135deg, rgba(30,128,223,0.3), rgba(30,128,223,0.1))`, border: '1px solid rgba(30,128,223,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Zap size={22} color={BLUE_B} fill={BLUE_B} />
+        </div>
+        <div style={{ width: '20px', height: '20px', border: `2px solid ${BLUE}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      </div>
+    </PCBPage>
+  )
+}
+
+// ── Landing Page ──────────────────────────────────────────────────────────────
 function LandingPage({ onLogin, onRegister }: { onLogin: () => void; onRegister: () => void }) {
   return (
-    <div style={{
-      minHeight: '100vh', background: '#020a04', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', padding: '24px',
-      position: 'relative', overflow: 'hidden', fontFamily: "'Barlow', system-ui, sans-serif",
-    }}>
-      <div style={{ position: 'absolute', top: '-120px', left: '-120px', width: '500px', height: '500px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(40,192,72,0.07) 0%, transparent 65%)', pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', bottom: '-80px', right: '-80px', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(40,192,72,0.05) 0%, transparent 65%)', pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', top: 0, left: '24px', bottom: 0, width: '1px', background: 'linear-gradient(to bottom, transparent, rgba(40,192,72,0.08) 20%, rgba(40,192,72,0.12) 50%, rgba(40,192,72,0.06) 80%, transparent)' }} />
-      <div style={{ position: 'absolute', top: 0, right: '24px', bottom: 0, width: '1px', background: 'linear-gradient(to bottom, transparent, rgba(40,192,72,0.08) 20%, rgba(40,192,72,0.12) 50%, rgba(40,192,72,0.06) 80%, transparent)' }} />
-      <div style={{ width: '100%', maxWidth: '420px', position: 'relative', zIndex: 2 }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '28px', fontSize: '10px', color: '#50e870', letterSpacing: '2.5px', textTransform: 'uppercase', background: 'rgba(40,192,72,0.06)', border: '1px solid rgba(40,192,72,0.22)', padding: '6px 14px', borderRadius: '20px' }}>
-          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#1fc97a', boxShadow: '0 0 8px #1fc97a, 0 0 16px rgba(31,201,122,0.4)' }} />
-          Coachella Valley � C-10 Licensed
+    <PCBPage>
+      <div style={{ maxWidth: '460px', margin: '0 auto' }}>
+        {/* Status badge */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '28px', fontSize: '10px', color: BLUE_B, letterSpacing: '2.5px', textTransform: 'uppercase', background: 'rgba(30,128,223,0.07)', border: '1px solid rgba(30,128,223,0.2)', padding: '6px 14px', borderRadius: '20px' }}>
+          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#1fc97a', boxShadow: '0 0 8px #1fc97a' }} />
+          Coachella Valley · C-10 Licensed
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '32px' }}>
-          <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'linear-gradient(135deg, #1a8832, #28c048)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(40,192,72,0.3), 0 0 0 1px rgba(40,192,72,0.3)' }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z" fill="#fff" stroke="#fff" strokeWidth="1" strokeLinejoin="round"/></svg>
+
+        {/* Logo row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '36px' }}>
+          <div style={{ width: '52px', height: '52px', borderRadius: '10px', background: `linear-gradient(135deg, rgba(30,128,223,0.2), rgba(30,128,223,0.08))`, border: '1px solid rgba(30,128,223,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 20px rgba(30,128,223,0.2)` }}>
+            <Zap size={26} color={BLUE_B} fill={BLUE_B} />
           </div>
           <div>
-            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '22px', fontWeight: 700, letterSpacing: '-0.5px', textTransform: 'uppercase', color: '#eaf6ec', lineHeight: 1 }}>Power On</div>
-            <div style={{ fontSize: '10px', color: '#4a7858', letterSpacing: '2px', textTransform: 'uppercase', marginTop: '2px' }}>Solutions Hub</div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '24px', fontWeight: 700, letterSpacing: '-0.5px', textTransform: 'uppercase', color: TEXT, lineHeight: 1 }}>Power On</div>
+            <div style={{ fontSize: '10px', color: T3, letterSpacing: '2px', textTransform: 'uppercase', marginTop: '2px' }}>Solutions Hub · v3.0</div>
           </div>
         </div>
-        <div style={{ marginBottom: '32px' }}>
-          <h1 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 'clamp(48px, 10vw, 68px)', fontWeight: 700, lineHeight: 0.88, textTransform: 'uppercase', letterSpacing: '-2px', color: '#eaf6ec', marginBottom: '16px' }}>
-            YOUR<br />ELECTRICAL<br /><span style={{ color: '#50e870', textShadow: '0 0 40px rgba(40,192,72,0.6), 0 0 80px rgba(40,192,72,0.3)' }}>BUSINESS OS</span>
-          </h1>
-          <p style={{ fontSize: '14px', color: '#7abf8a', lineHeight: 1.7, maxWidth: '340px' }}>
-            AI-powered sales intelligence, field ops, and business management � built for contractors.
-          </p>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <button onClick={onRegister} style={{ width: '100%', padding: '16px 24px', borderRadius: '4px', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #1a8832, #28c048)', color: '#fff', fontSize: '13px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', boxShadow: '0 0 24px rgba(40,192,72,0.35), 0 0 0 1px rgba(40,192,72,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontFamily: "'Barlow', sans-serif" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+
+        {/* Headline */}
+        <h1 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 'clamp(52px, 11vw, 72px)', fontWeight: 700, lineHeight: 0.88, textTransform: 'uppercase', letterSpacing: '-2px', color: TEXT, marginBottom: '20px' }}>
+          YOUR<br />ELECTRICAL<br />
+          <span style={{ color: BLUE, textShadow: `0 0 80px rgba(30,128,223,0.5), 0 0 40px rgba(30,128,223,0.25)` }}>BUSINESS OS</span>
+        </h1>
+
+        <p style={{ fontSize: '14px', color: T2, lineHeight: 1.8, maxWidth: '360px', marginBottom: '36px' }}>
+          AI-powered sales intelligence, field ops, leads, and business management — built for C-10 contractors.
+        </p>
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '40px' }}>
+          <button onClick={onRegister} style={btnPrimary}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
             Create Account
           </button>
-          <button onClick={onLogin} style={{ width: '100%', padding: '16px 24px', borderRadius: '4px', border: '1px solid rgba(40,192,72,0.2)', cursor: 'pointer', background: 'rgba(40,192,72,0.04)', color: '#7abf8a', fontSize: '13px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontFamily: "'Barlow', sans-serif" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
+          <button onClick={onLogin} style={btnSecondary}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
             Log In
           </button>
         </div>
-        <div style={{ marginTop: '40px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, rgba(40,192,72,0.12))' }} />
-          <span style={{ fontSize: '9px', color: '#4a7858', letterSpacing: '2px', textTransform: 'uppercase' }}>Power On Solutions LLC</span>
-          <div style={{ flex: 1, height: '1px', background: 'linear-gradient(270deg, transparent, rgba(40,192,72,0.12))' }} />
+
+        {/* Footer rule */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, rgba(30,128,223,0.15))' }} />
+          <span style={{ fontSize: '9px', color: T3, letterSpacing: '2px', textTransform: 'uppercase' }}>Power On Solutions LLC</span>
+          <div style={{ flex: 1, height: '1px', background: 'linear-gradient(270deg, transparent, rgba(30,128,223,0.15))' }} />
         </div>
       </div>
-    </div>
+    </PCBPage>
   )
 }
+
 // ── Register Flow ─────────────────────────────────────────────────────────────
-function RegisterFlow({ onBack, onSuccess }: { onBack: () => void; onSuccess: () => void }) {
+function RegisterFlow({ onBack }: { onBack: () => void }) {
   const [fullName, setFullName] = useState('')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
@@ -109,59 +170,26 @@ function RegisterFlow({ onBack, onSuccess }: { onBack: () => void; onSuccess: ()
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-
     if (!fullName.trim()) { setError('Full name is required.'); return }
-    if (!username.trim()) { setError('Username is required.'); return }
-    if (username.length < 3) { setError('Username must be at least 3 characters.'); return }
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) { setError('Username can only contain letters, numbers, and underscores.'); return }
-    if (!email.trim()) { setError('Email is required.'); return }
+    if (!username.trim() || username.length < 3) { setError('Username must be at least 3 characters.'); return }
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) { setError('Username: letters, numbers, underscores only.'); return }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
     if (password !== confirmPassword) { setError('Passwords do not match.'); return }
-
     setLoading(true)
     try {
-      // Check username availability
-      const { data: existing } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', username.toLowerCase().trim())
-        .maybeSingle()
-
-      if (existing) {
-        setError('Username is already taken. Please choose another.')
-        setLoading(false)
-        return
-      }
-
-      // Create Supabase auth account
+      const { data: existing } = await supabase.from('profiles').select('id').eq('username', username.toLowerCase().trim()).maybeSingle()
+      if (existing) { setError('Username already taken.'); setLoading(false); return }
       const { data, error: signUpError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          emailRedirectTo: 'https://app.poweronsolutionsllc.com',
-          data: {
-            full_name: fullName.trim(),
-            username: username.toLowerCase().trim(),
-          },
-        },
+        email: email.trim(), password,
+        options: { emailRedirectTo: 'https://app.poweronsolutionsllc.com', data: { full_name: fullName.trim(), username: username.toLowerCase().trim() } },
       })
-
       if (signUpError) throw signUpError
-
-      // Update profile with username and full_name if user was created
       if (data.user) {
-        await supabase
-          .from('profiles')
-          .update({
-            full_name: fullName.trim(),
-            username: username.toLowerCase().trim(),
-          } as any)
-          .eq('id', data.user.id)
+        await supabase.from('profiles').update({ full_name: fullName.trim(), username: username.toLowerCase().trim() } as any).eq('id', data.user.id)
       }
-
       setSent(true)
     } catch (err: any) {
-      setError(err.message ?? 'Registration failed. Please try again.')
+      setError(err.message ?? 'Registration failed.')
     } finally {
       setLoading(false)
     }
@@ -169,157 +197,93 @@ function RegisterFlow({ onBack, onSuccess }: { onBack: () => void; onSuccess: ()
 
   if (sent) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
-        <div className="w-full max-w-sm text-center">
-          <div className="flex justify-center mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-              <CheckCircle className="w-8 h-8 text-emerald-400" />
-            </div>
+      <PCBPage>
+        <div style={{ maxWidth: '420px', margin: '0 auto', textAlign: 'center' }}>
+          <div style={{ width: '64px', height: '64px', borderRadius: '14px', background: 'rgba(30,128,223,0.1)', border: '1px solid rgba(30,128,223,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+            <CheckCircle size={30} color={BLUE_B} />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-3">Check your email</h1>
-          <p className="text-sm text-gray-400 mb-2">We sent a verification link to:</p>
-          <p className="text-sm font-semibold text-white mb-6 font-mono bg-gray-800 rounded-lg px-4 py-2 inline-block">
-            {email}
-          </p>
-          <p className="text-xs text-gray-500 mb-8">
-            Click the link to verify your account. After verification, you can log in with your email and password.
-          </p>
-          <button
-            onClick={onBack}
-            className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
-          >
-            Back to home
-          </button>
+          <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '32px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, marginBottom: '12px', letterSpacing: '-1px' }}>Check your email</h2>
+          <p style={{ fontSize: '14px', color: T2, marginBottom: '8px' }}>We sent a verification link to:</p>
+          <div style={{ background: 'rgba(30,128,223,0.06)', border: '1px solid rgba(30,128,223,0.2)', borderRadius: '4px', padding: '10px 20px', fontSize: '13px', color: TEXT, fontFamily: 'monospace', marginBottom: '20px', display: 'inline-block' }}>{email}</div>
+          <p style={{ fontSize: '12px', color: T3, marginBottom: '28px' }}>Click the link to verify. Then log in with your email and password.</p>
+          <button onClick={onBack} style={{ ...btnSecondary, width: 'auto', padding: '10px 24px' }}>Back to home</button>
         </div>
-      </div>
+      </PCBPage>
     )
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6 py-8">
-      <div className="w-full max-w-sm">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <button onClick={onBack} className="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Back</button>
-          <div className="flex-1" />
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-            <Zap className="w-4 h-4 text-emerald-400" fill="currentColor" />
+    <PCBPage>
+      <div style={{ maxWidth: '420px', margin: '0 auto' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T3, fontSize: '13px', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: "'Barlow', sans-serif" }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+          Back
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '28px' }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'rgba(30,128,223,0.12)', border: '1px solid rgba(30,128,223,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Zap size={18} color={BLUE_B} fill={BLUE_B} />
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '18px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, letterSpacing: '-0.5px' }}>Create Account</div>
+            <div style={{ fontSize: '10px', color: T3, letterSpacing: '1.5px', textTransform: 'uppercase' }}>Join PowerOn Hub</div>
           </div>
         </div>
 
-        <h1 className="text-2xl font-extrabold text-white mb-1">Create account</h1>
-        <p className="text-sm text-gray-500 mb-6">Join PowerOn Hub</p>
-
-        <form onSubmit={handleRegister} className="space-y-4">
+        <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {/* Full Name */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Full Name</label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={e => setFullName(e.target.value)}
-              placeholder="Christian Dubon"
-              required
-              className="w-full px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-            />
+          <div style={{ position: 'relative' }}>
+            <User size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Full Name" required style={inputStyle} />
           </div>
 
           {/* Username */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Username</label>
-            <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm">@</span>
-              <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-zA-Z0-9_]/g, ''))}
-                placeholder="christiandubon"
-                required
-                className="w-full pl-8 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-              />
-            </div>
-            <p className="text-[10px] text-gray-600 mt-1">Letters, numbers, underscores only.</p>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: T3, fontSize: '14px', pointerEvents: 'none' }}>@</span>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-zA-Z0-9_]/g, ''))} placeholder="username" required style={{ ...inputStyle, paddingLeft: '30px' }} />
           </div>
 
           {/* Email */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Email</label>
-            <div className="relative">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-              />
-            </div>
+          <div style={{ position: 'relative' }}>
+            <Mail size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email address" required style={inputStyle} />
           </div>
 
           {/* Password */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Password</label>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Min. 8 characters"
-                required
-                className="w-full pl-10 pr-10 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-              />
-              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
+          <div style={{ position: 'relative' }}>
+            <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min 8 chars)" required style={{ ...inputStyle, paddingRight: '44px' }} />
+            <button type="button" onClick={() => setShowPassword(v => !v)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T3 }}>
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
           </div>
 
           {/* Confirm Password */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Confirm Password</label>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                placeholder="Repeat password"
-                required
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-              />
-            </div>
+          <div style={{ position: 'relative' }}>
+            <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password" required style={inputStyle} />
           </div>
 
-          {/* Error */}
           {error && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-              <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
-              <p className="text-xs text-red-400">{error}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px' }}>
+              <AlertCircle size={14} color="#f87171" />
+              <span style={{ fontSize: '12px', color: '#f87171' }}>{error}</span>
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
-          >
-            {loading
-              ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              : <><ArrowRight size={16} /> Create Account</>
-            }
+          <button type="submit" disabled={loading} style={{ ...btnPrimary, marginTop: '4px', opacity: loading ? 0.6 : 1 }}>
+            {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Create Account</>}
           </button>
         </form>
       </div>
-    </div>
+    </PCBPage>
   )
 }
 
 // ── Login Form ────────────────────────────────────────────────────────────────
 function LoginForm({ onBack }: { onBack: () => void }) {
   const { signInWithEmail, error, clearError } = useAuth()
-  const [identifier, setIdentifier] = useState('') // email or username
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -331,40 +295,17 @@ function LoginForm({ onBack }: { onBack: () => void }) {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLocalError('')
-    clearError()
+    setLocalError(''); clearError()
     if (!identifier.trim() || !password) return
     setLoading(true)
-
     try {
       let emailToUse = identifier.trim()
-
-      // If identifier doesn't look like an email, try to resolve username → email
       if (!identifier.includes('@')) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('username', identifier.toLowerCase().trim())
-          .maybeSingle()
-
-        if (!profile) {
-          setLocalError('Username not found. Try your email address instead.')
-          setLoading(false)
-          return
-        }
-
-        // Get email from auth.users via a server function or use the id to fetch email
-        // Since we can't query auth.users directly, we'll ask user to use email if username lookup fails
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user && user.id === (profile as any).id) {
-          emailToUse = user.email ?? identifier.trim()
-        } else {
-          setLocalError('Please use your email address to log in.')
-          setLoading(false)
-          return
-        }
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', identifier.toLowerCase().trim()).maybeSingle()
+        if (!profile) { setLocalError('Username not found. Try your email address.'); setLoading(false); return }
+        setLocalError('Please use your email address to log in.')
+        setLoading(false); return
       }
-
       await signInWithEmail(emailToUse, password)
     } catch (err: any) {
       setLocalError(err.message ?? 'Login failed.')
@@ -378,9 +319,7 @@ function LoginForm({ onBack }: { onBack: () => void }) {
     if (!forgotEmail.trim()) return
     setForgotLoading(true)
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
-        redirectTo: 'https://app.poweronsolutionsllc.com',
-      })
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), { redirectTo: 'https://app.poweronsolutionsllc.com' })
       if (error) throw error
       setForgotSent(true)
     } catch (err: any) {
@@ -392,139 +331,96 @@ function LoginForm({ onBack }: { onBack: () => void }) {
 
   if (showForgot) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
-        <div className="w-full max-w-sm">
-          <button onClick={() => { setShowForgot(false); setForgotSent(false); setLocalError('') }} className="text-gray-500 hover:text-gray-300 transition-colors text-sm mb-8">← Back to login</button>
-
+      <PCBPage>
+        <div style={{ maxWidth: '420px', margin: '0 auto' }}>
+          <button onClick={() => { setShowForgot(false); setForgotSent(false); setLocalError('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T3, fontSize: '13px', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: "'Barlow', sans-serif" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            Back to login
+          </button>
           {forgotSent ? (
-            <div className="text-center">
-              <div className="flex justify-center mb-6">
-                <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                  <CheckCircle className="w-7 h-7 text-emerald-400" />
-                </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '12px', background: 'rgba(30,128,223,0.1)', border: '1px solid rgba(30,128,223,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+                <CheckCircle size={26} color={BLUE_B} />
               </div>
-              <h2 className="text-xl font-bold text-white mb-2">Check your email</h2>
-              <p className="text-sm text-gray-400">We sent a password reset link to <span className="text-white font-semibold">{forgotEmail}</span>.</p>
+              <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '28px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, marginBottom: '10px', letterSpacing: '-1px' }}>Check your email</h2>
+              <p style={{ fontSize: '13px', color: T2 }}>Reset link sent to <strong style={{ color: TEXT }}>{forgotEmail}</strong></p>
             </div>
           ) : (
             <>
-              <h2 className="text-xl font-bold text-white mb-1">Reset password</h2>
-              <p className="text-sm text-gray-500 mb-6">Enter your email and we'll send a reset link.</p>
-              <form onSubmit={handleForgotPassword} className="space-y-4">
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                  <input
-                    type="email"
-                    value={forgotEmail}
-                    onChange={e => setForgotEmail(e.target.value)}
-                    placeholder="your@email.com"
-                    required
-                    className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600"
-                  />
+              <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '28px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, marginBottom: '8px', letterSpacing: '-1px' }}>Reset Password</h2>
+              <p style={{ fontSize: '13px', color: T2, marginBottom: '24px' }}>Enter your email and we'll send a reset link.</p>
+              <form onSubmit={handleForgotPassword} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ position: 'relative' }}>
+                  <Mail size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                  <input type="email" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} placeholder="your@email.com" required style={inputStyle} />
                 </div>
-                {localError && <p className="text-xs text-red-400">{localError}</p>}
-                <button
-                  type="submit"
-                  disabled={forgotLoading}
-                  className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {forgotLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Send Reset Link'}
+                {localError && <span style={{ fontSize: '12px', color: '#f87171' }}>{localError}</span>}
+                <button type="submit" disabled={forgotLoading} style={{ ...btnPrimary, opacity: forgotLoading ? 0.6 : 1 }}>
+                  {forgotLoading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : 'Send Reset Link'}
                 </button>
               </form>
             </>
           )}
         </div>
-      </div>
+      </PCBPage>
     )
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
-      <div className="w-full max-w-sm">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <button onClick={onBack} className="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Back</button>
-          <div className="flex-1" />
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-            <Zap className="w-4 h-4 text-emerald-400" fill="currentColor" />
+    <PCBPage>
+      <div style={{ maxWidth: '420px', margin: '0 auto' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T3, fontSize: '13px', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: "'Barlow', sans-serif" }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+          Back
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '28px' }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'rgba(30,128,223,0.12)', border: '1px solid rgba(30,128,223,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Zap size={18} color={BLUE_B} fill={BLUE_B} />
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '18px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, letterSpacing: '-0.5px' }}>Welcome Back</div>
+            <div style={{ fontSize: '10px', color: T3, letterSpacing: '1.5px', textTransform: 'uppercase' }}>Sign in to PowerOn Hub</div>
           </div>
         </div>
 
-        <h1 className="text-2xl font-extrabold text-white mb-1">Welcome back</h1>
-        <p className="text-sm text-gray-500 mb-6">Sign in to PowerOn Hub</p>
-
-        <form onSubmit={handleLogin} className="space-y-4">
-          {/* Email or Username */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Email or Username</label>
-            <div className="relative">
-              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input
-                type="text"
-                value={identifier}
-                onChange={e => setIdentifier(e.target.value)}
-                placeholder="you@email.com or @username"
-                required
-                autoComplete="username"
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-              />
-            </div>
+        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div style={{ position: 'relative' }}>
+            <User size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder="Email or @username" required autoComplete="username" style={inputStyle} />
           </div>
 
-          {/* Password */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Password</label>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                autoComplete="current-password"
-                className="w-full pl-10 pr-10 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600 transition-colors"
-              />
-              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
+          <div style={{ position: 'relative' }}>
+            <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required autoComplete="current-password" style={{ ...inputStyle, paddingRight: '44px' }} />
+            <button type="button" onClick={() => setShowPassword(v => !v)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T3 }}>
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
           </div>
 
-          {/* Error */}
           {(localError || error) && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-              <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
-              <p className="text-xs text-red-400">{localError || error}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px' }}>
+              <AlertCircle size={14} color="#f87171" />
+              <span style={{ fontSize: '12px', color: '#f87171' }}>{localError || error}</span>
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading || !identifier.trim() || !password}
-            className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading
-              ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              : <>Sign In <ArrowRight size={16} /></>
-            }
+          <button type="submit" disabled={loading || !identifier.trim() || !password} style={{ ...btnPrimary, opacity: (loading || !identifier.trim() || !password) ? 0.5 : 1 }}>
+            {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Sign In</>}
           </button>
         </form>
 
-        <div className="mt-4 text-center">
-          <button
-            onClick={() => { setShowForgot(true); setLocalError('') }}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-          >
+        <div style={{ marginTop: '16px', textAlign: 'center' }}>
+          <button onClick={() => { setShowForgot(true); setLocalError('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T3, fontSize: '12px', fontFamily: "'Barlow', sans-serif" }}>
             Forgot password?
           </button>
         </div>
       </div>
-    </div>
+    </PCBPage>
   )
 }
 
-// ── Set New Password Form (after recovery redirect) ───────────────────────────
+// ── Set New Password Form ─────────────────────────────────────────────────────
 function SetNewPasswordForm() {
   const { signOut } = useAuth()
   const [password, setPassword] = useState('')
@@ -551,65 +447,55 @@ function SetNewPasswordForm() {
     }
   }
 
-  if (done) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
-        <div className="w-full max-w-sm text-center">
-          <div className="flex justify-center mb-6">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-              <CheckCircle className="w-7 h-7 text-emerald-400" />
-            </div>
-          </div>
-          <h2 className="text-xl font-bold text-white mb-2">Password updated</h2>
-          <p className="text-sm text-gray-400 mb-6">Your password has been changed successfully.</p>
-          <button onClick={() => signOut()} className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors">
-            Sign in with new password
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] px-6">
-      <div className="w-full max-w-sm">
-        <div className="flex justify-center mb-8">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-            <Zap className="w-5 h-5 text-emerald-400" fill="currentColor" />
+    <PCBPage>
+      <div style={{ maxWidth: '420px', margin: '0 auto' }}>
+        {done ? (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '12px', background: 'rgba(30,128,223,0.1)', border: '1px solid rgba(30,128,223,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+              <CheckCircle size={26} color={BLUE_B} />
+            </div>
+            <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '28px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, marginBottom: '10px', letterSpacing: '-1px' }}>Password Updated</h2>
+            <p style={{ fontSize: '13px', color: T2, marginBottom: '24px' }}>Your password has been changed successfully.</p>
+            <button onClick={() => signOut()} style={{ ...btnPrimary, width: 'auto', padding: '12px 28px' }}>Sign In with New Password</button>
           </div>
-        </div>
-        <h1 className="text-2xl font-extrabold text-white mb-1">Set new password</h1>
-        <p className="text-sm text-gray-500 mb-6">Choose a strong password for your account.</p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">New Password</label>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Min. 8 characters" required className="w-full pl-10 pr-10 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600" />
-              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '28px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'rgba(30,128,223,0.12)', border: '1px solid rgba(30,128,223,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Zap size={18} color={BLUE_B} fill={BLUE_B} />
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '18px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, letterSpacing: '-0.5px' }}>Set New Password</div>
+                <div style={{ fontSize: '10px', color: T3, letterSpacing: '1.5px', textTransform: 'uppercase' }}>Choose a strong password</div>
+              </div>
+            </div>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ position: 'relative' }}>
+                <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="New password (min 8 chars)" required style={{ ...inputStyle, paddingRight: '44px' }} />
+                <button type="button" onClick={() => setShowPassword(v => !v)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T3 }}>
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <div style={{ position: 'relative' }}>
+                <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password" required style={inputStyle} />
+              </div>
+              {error && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px' }}>
+                  <AlertCircle size={14} color="#f87171" />
+                  <span style={{ fontSize: '12px', color: '#f87171' }}>{error}</span>
+                </div>
+              )}
+              <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.6 : 1 }}>
+                {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Update Password</>}
               </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Confirm Password</label>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-              <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repeat password" required className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500/50 placeholder:text-gray-600" />
-            </div>
-          </div>
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-              <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
-              <p className="text-xs text-red-400">{error}</p>
-            </div>
-          )}
-          <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50">
-            {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>Update Password <ArrowRight size={16} /></>}
-          </button>
-        </form>
+            </form>
+          </>
+        )}
       </div>
-    </div>
+    </PCBPage>
   )
 }
 
@@ -618,10 +504,8 @@ function PasscodeSetupFlow() {
   const { setupPasscode } = useAuth()
   const [step, setStep] = useState<'create' | 'confirm'>('create')
   const [first, setFirst] = useState('')
-
   const handleCreate = (passcode: string) => { setFirst(passcode); setStep('confirm') }
   const handleConfirm = (passcode: string) => { if (passcode === first) setupPasscode(passcode) }
-
   if (step === 'confirm') {
     return <PasscodeScreen key="confirm" mode="confirm" toConfirm={first} onComplete={handleConfirm} title="Confirm Passcode" subtitle="Enter the same passcode again to confirm" onCancel={() => setStep('create')} />
   }
@@ -646,18 +530,9 @@ export function LoginFlow({ children }: LoginFlowProps) {
 
     case 'unauthenticated': {
       const showPin = hasPinStored() && !pinFallback
-      if (showPin) {
-        return <PinAuth onFallbackToMagicLink={() => setPinFallback(true)} />
-      }
-
-      if (screen === 'register') {
-        return <RegisterFlow onBack={() => setScreen('landing')} onSuccess={() => setScreen('login')} />
-      }
-
-      if (screen === 'login') {
-        return <LoginForm onBack={() => setScreen('landing')} />
-      }
-
+      if (showPin) return <PinAuth onFallbackToMagicLink={() => setPinFallback(true)} />
+      if (screen === 'register') return <RegisterFlow onBack={() => setScreen('landing')} />
+      if (screen === 'login') return <LoginForm onBack={() => setScreen('landing')} />
       return <LandingPage onLogin={() => setScreen('login')} onRegister={() => setScreen('register')} />
     }
 
