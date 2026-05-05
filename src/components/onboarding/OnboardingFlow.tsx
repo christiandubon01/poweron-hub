@@ -509,13 +509,6 @@ Return ONLY the question text, no preamble.`,
         </div>
         <div className="flex items-center gap-4">
           <StepDots total={TOTAL_STEPS} current={step} />
-          <button
-            onClick={handleSkip}
-            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1"
-          >
-            <X className="w-3 h-3" />
-            Skip for now
-          </button>
         </div>
       </div>
 
@@ -590,6 +583,13 @@ Return ONLY the question text, no preamble.`,
             >
               Get Started
               <ChevronRight className="w-5 h-5" />
+            </button>
+            <button
+              onClick={handleSkip}
+              className="w-full text-xs text-zinc-500 hover:text-zinc-300 transition-colors flex items-center justify-center gap-1 py-2"
+            >
+              <X className="w-3 h-3" />
+              Skip for now
             </button>
           </div>
         )}

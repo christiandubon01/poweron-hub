@@ -1603,12 +1603,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* SERVICE NET */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Service Net' : undefined}>
                   {isCompact ? (
-                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtHeader(serviceNet)}</span>
+                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{hideFinances ? '••••' : fmtHeader(serviceNet)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Service Net</span>
                       <span className={`text-base font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {fmtHeader(serviceNet)}
+                        {hideFinances ? '••••' : fmtHeader(serviceNet)}
                       </span>
                     </>
                   )}
