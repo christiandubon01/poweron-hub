@@ -1831,8 +1831,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         )}
       </div>
 
-      {/* ── Quick Capture Floating Button (bottom-left) ── */}
-      <QuickCaptureButton backupData={backupData} onNav={onNav} setToastMessage={setToastMessage} />
+      {/* ── Quick Capture Floating Button (bottom-left) ── hidden on Orb Lab */}
+      {activeView !== 'orb-lab' && <QuickCaptureButton backupData={backupData} onNav={onNav} setToastMessage={setToastMessage} />}
     </div>
   )
 }
@@ -2234,7 +2234,8 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
       {/* Floating button — bottom-left */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 left-6 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg z-50 flex items-center justify-center transition-colors"
+        className="fixed bottom-6 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg z-50 flex items-center justify-center transition-colors"
+        style={{ left: '72px' }}
         title="Quick log"
       >
         <Plus size={24} />

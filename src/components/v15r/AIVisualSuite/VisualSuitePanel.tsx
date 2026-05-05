@@ -365,32 +365,81 @@ export default function VisualSuitePanel({
 
   const activeDesc: ModeDesc = MODE_DESCRIPTIONS[activeMode] ?? MODE_DESCRIPTIONS[0]
 
-  // ── Slider row helper ─────────────────────────────────────────────────────
-  const Slider = ({
+  // ── Draggable orb knob box ─────────────────────────────────────────────────────────────────────
+  const OrbKnob = ({
     label, value, onChange, color = '#00ff88',
-  }: { label: string; value: number; onChange: (v: number) => void; color?: string }) => (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: 2, minWidth: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#666', fontFamily: 'Courier New, monospace', letterSpacing: '0.08em' }}>
-        <span>{label}</span>
-        <span style={{ color }}>{value}</span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        value={value}
-        onChange={e => onChange(parseInt(e.target.value))}
+  }: { label: string; value: number; onChange: (v: number) => void; color?: string }) => {
+    const boxRef = useRef<HTMLDivElement>(null)
+    const dragging = useRef(false)
+    const startX = useRef(0)
+    const startVal = useRef(0)
+
+    const calcValue = (clientX: number) => {
+      const rect = boxRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const raw = Math.round(((clientX - rect.left) / rect.width) * 100)
+      onChange(Math.max(0, Math.min(100, raw)))
+    }
+
+    const onMouseDown = (e: React.MouseEvent) => {
+      dragging.current = true
+      startX.current = e.clientX
+      startVal.current = value
+      calcValue(e.clientX)
+      const onMove = (ev: MouseEvent) => { if (dragging.current) calcValue(ev.clientX) }
+      const onUp   = () => { dragging.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    }
+
+    const onTouchStart = (e: React.TouchEvent) => {
+      calcValue(e.touches[0].clientX)
+      const onMove = (ev: TouchEvent) => calcValue(ev.touches[0].clientX)
+      const onEnd  = () => { window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onEnd) }
+      window.addEventListener('touchmove', onMove, { passive: true })
+      window.addEventListener('touchend', onEnd)
+    }
+
+    const glowOpacity = value / 100
+
+    return (
+      <div
+        ref={boxRef}
+        onMouseDown={onMouseDown}
+        onTouchStart={onTouchStart}
         style={{
-          WebkitAppearance: 'none',
-          height:           3,
-          borderRadius:     2,
-          background:       `linear-gradient(to right, ${color} ${value}%, #222 ${value}%)`,
-          outline:          'none',
-          cursor:           'pointer',
-        }}
-      />
-    </div>
-  )
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          flex: 1, minWidth: 0, gap: 3,
+          padding: '4px 6px',
+          borderRadius: 7,
+          border: `1px solid ${color}44`,
+          backgroundColor: `${color}0d`,
+          boxShadow: `0 0 ${6 + value * 0.14}px ${color}${Math.round(glowOpacity * 80).toString(16).padStart(2,'0')}`,
+          cursor: 'ew-resize',
+          userSelect: 'none',
+        }}>
+        {/* Label */}
+        <span style={{
+          fontSize: 9, fontWeight: 800, letterSpacing: '0.12em',
+          color, fontFamily: 'Courier New, monospace', textTransform: 'uppercase',
+          pointerEvents: 'none',
+        }}>{label}</span>
+        {/* Value */}
+        <span style={{
+          fontSize: 13, fontWeight: 900, color: '#fff',
+          fontFamily: 'Courier New, monospace', lineHeight: 1,
+          pointerEvents: 'none',
+        }}>{value}</span>
+        {/* Track */}
+        <div style={{
+          width: '100%', height: 2, borderRadius: 2,
+          background: `linear-gradient(to right, ${color} ${value}%, #1a1a2e ${value}%)`,
+          pointerEvents: 'none',
+          boxShadow: `0 0 3px ${color}66`,
+        }} />
+      </div>
+    )
+  }
 
   // B62: Determine effective mic state — prefer NEXUS pipeline (onMicToggle) over local mic
   const isNexusMic = !!onMicToggle
@@ -440,7 +489,7 @@ export default function VisualSuitePanel({
         display:         'flex',
         alignItems:      'center',
         gap:             8,
-        padding:         '0 10px',
+        padding:         '0 30px',
         backgroundColor: '#060810',
         borderTop:       '1px solid rgba(255,255,255,0.07)',
         overflow:        'visible',
@@ -458,13 +507,13 @@ export default function VisualSuitePanel({
                   onClick={() => setOpenDropdown(isOpen ? null : bKey)}
                   style={{
                     display:         'flex', alignItems: 'center', gap: 4,
-                    padding:         '4px 8px',
+                    padding:         '7px 14px',
                     border:          `1px solid ${activeModeInBucket ? bc : '#333'}`,
-                    borderRadius:    5,
+                    borderRadius:    7,
                     backgroundColor: activeModeInBucket ? bc + '18' : 'rgba(255,255,255,0.04)',
                     color:           activeModeInBucket ? bc : '#666',
-                    fontSize:        9, fontFamily: 'Courier New, monospace',
-                    fontWeight:      700, letterSpacing: '0.08em',
+                    fontSize:        11, fontFamily: 'Courier New, monospace',
+                    fontWeight:      800, letterSpacing: '0.08em',
                     cursor:          'pointer', whiteSpace: 'nowrap',
                     transition:      'all 0.12s',
                   }}
@@ -584,12 +633,12 @@ export default function VisualSuitePanel({
         {/* Divider */}
         <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
 
-        {/* Inline sliders — RTT INT SPD NTE, label above each */}
-        <div style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center', minWidth: 0 }}>
-          <Slider label="RTT"  value={mtz}       onChange={setMtz}   color="#ff44ff" />
-          <Slider label="INT"  value={intensity}  onChange={setInt}   color="#00ff88" />
-          <Slider label="SPD"  value={speed}      onChange={setSpeed} color="#44aaff" />
-          <Slider label="NTE"  value={hue}        onChange={setHue}   color={`hsl(${hue}, 80%, 65%)`} />
+        {/* Orb knob boxes ── RTI INT SPD NTE */}
+        <div style={{ display: 'flex', gap: 6, flex: 1, alignItems: 'stretch', minWidth: 0, height: 58 }}>
+          <OrbKnob label="RTI"  value={mtz}       onChange={setMtz}   color="#ff44ff" />
+          <OrbKnob label="INT"  value={intensity}  onChange={setInt}   color="#00ff88" />
+          <OrbKnob label="SPD"  value={speed}      onChange={setSpeed} color="#44aaff" />
+          <OrbKnob label="NTE"  value={hue}        onChange={setHue}   color={`hsl(${hue}, 80%, 65%)`} />
         </div>
 
         {/* Divider */}
