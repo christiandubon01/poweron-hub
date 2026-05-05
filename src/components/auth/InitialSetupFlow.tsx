@@ -190,10 +190,19 @@ export function InitialSetupFlow() {
     setSaveErr('')
     try {
       const { error } = await supabase.auth.updateUser({ password: pw })
-      if (error) throw error
+      if (error) {
+        // If password is same as current, still allow moving forward
+        if (error.message?.toLowerCase().includes('different') || error.message?.toLowerCase().includes('same')) {
+          setPassword(pw)
+          setSaving(false)
+          setStep('pin-create')
+          return
+        }
+        throw error
+      }
       setPassword(pw)
       setSaving(false)
-      setStep('pin-create') // Move to optional PIN step
+      setStep('pin-create')
     } catch (err: any) {
       setSaveErr(err.message ?? 'Failed to set password.')
       setSaving(false)

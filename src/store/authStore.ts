@@ -281,13 +281,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         lockExpiresAt: null,
       })
 
-      if (!ps.isSet) {
+      // If profile has any passcode_hash set (including 'password_only'), treat as configured
+      const hasAnyPasscode = !!profile.passcode_hash || ps.isSet
+      if (!hasAnyPasscode) {
         set({ status: 'needs_passcode_setup', user, profile })
         return
       }
 
       if (ps.isLocked) {
         set({ status: 'locked', user, profile, lockExpiresAt: ps.lockExpiresAt })
+        return
+      }
+      // If user has password-only setup (no real PIN), skip PIN verification
+      if (profile.passcode_hash === 'password_only') {
+        const { role, ownerId } = await resolveUserRole(user.id)
+        const session = await createAppSession()
+        set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         return
       }
 
