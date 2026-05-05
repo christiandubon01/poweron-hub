@@ -328,6 +328,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [estMaterials, setEstMaterials] = useState('')
   const [estMiles, setEstMiles] = useState('')
   const [estNotes, setEstNotes] = useState('')
+  const [estTech, setEstTech] = useState('')
+  const [estMatNotes, setEstMatNotes] = useState('')
+  const [estReceiptUrl, setEstReceiptUrl] = useState('')
 
   useEffect(() => {
     if (serviceCallPrefill) {
@@ -394,6 +397,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstMiles('')
     setEstNotes('')
     setEditEstimateId(null)
+    setEstTech('')
+    setEstMatNotes('')
+    setEstReceiptUrl('')
     setShowEstimateForm(false)
   }
 
@@ -423,6 +429,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       estMaterials: estMat,
       milesRT: estMi,
       notes: estNotes,
+      technician: employees.find(e => e.id === estTech)?.name || estTech,
+      technicianId: estTech,
+      materialNotes: estMatNotes,
+      receiptUrl: estReceiptUrl,
       totalQuote,
       status: 'open',
       createdAt: new Date().toISOString(),
@@ -468,6 +478,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstMaterials(String(est.estMaterials || 0))
     setEstMiles(String(est.milesRT || 0))
     setEstNotes(est.notes || '')
+    setEstTech((est as any).technician || '')
+    setEstMatNotes((est as any).materialNotes || '')
+    setEstReceiptUrl((est as any).receiptUrl || '')
     setShowEstimateForm(true)
   }
 
@@ -1554,197 +1567,331 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════════ */}
-        {/* STEP 1: New Service Estimate Form */}
-        {/* ═══════════════════════════════════════════════════════════════════════ */}
-
+        {/* STEP 1: New Service Estimate — Modal Trigger */}
         <div className="border-t border-gray-700 pt-4">
           <button
-            onClick={() => { resetEstimateForm(); setShowEstimateForm(!showEstimateForm) }}
+            onClick={() => { resetEstimateForm(); setShowEstimateForm(true) }}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold mb-3"
           >
             <Plus size={12} /> New Service Estimate
           </button>
+        </div>
 
-          {showEstimateForm && (
-            <div className="rounded-xl border border-blue-700/50 bg-[var(--bg-input)] p-4 space-y-3 mb-4">
-              <div className="text-xs font-bold text-gray-300 uppercase">
-                {editEstimateId ? 'Edit Service Estimate' : 'New Service Estimate'}
+        {/* Service Estimate Modal */}
+        {showEstimateForm && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+            onClick={e => { if (e.target === e.currentTarget) resetEstimateForm() }}
+          >
+            <div
+              className="relative w-full max-w-6xl mx-6 rounded-2xl shadow-2xl flex flex-col"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid rgba(59,130,246,0.3)',
+                maxHeight: '90vh',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/60 flex-shrink-0">
+                <div>
+                  <h2 className="text-xl font-bold text-white">
+                    {editEstimateId ? '✏️ Edit Service Estimate' : '⚡ New Service Estimate'}
+                  </h2>
+                  <p className="text-sm text-gray-400 mt-1">Fill in the details — live profit signal updates as you go</p>
+                </div>
+                <button
+                  onClick={resetEstimateForm}
+                  className="text-gray-500 hover:text-white transition-colors text-lg leading-none"
+                >✕</button>
               </div>
 
-              {/* Form grid */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Customer / Job Name</label>
-                  <input
-                    value={estCust}
-                    onChange={e => setEstCust(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
-                  />
+              {/* Modal Body — scrollable */}
+              <div className="flex-1 overflow-y-auto px-4 py-7 space-y-3">
+
+                {/* Row 1 — Customer / Address / Date */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="md:col-span-1">
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Customer / Job Name</label>
+                    <input
+                      value={estCust}
+                      onChange={e => setEstCust(e.target.value)}
+                      placeholder="e.g. Smith Residence"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div className="md:col-span-1">
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Address</label>
+                    <input
+                      value={estAddr}
+                      onChange={e => setEstAddr(e.target.value)}
+                      placeholder="Job site address"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={estDate}
+                      onChange={e => setEstDate(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Address</label>
-                  <input
-                    value={estAddr}
-                    onChange={e => setEstAddr(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Date</label>
-                  <input
-                    type="date"
-                    value={estDate}
-                    onChange={e => setEstDate(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Job Type</label>
+
+                {/* Row 2 — Job Type */}
+                <div style={{ marginTop: '6px' }}>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Job Type</label>
                   <select
                     value={estJobType}
                     onChange={e => setEstJobType(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
                   >
-                    {JOB_TYPES.map(jt => (
-                      <option key={jt} value={jt}>
-                        {jt}
-                      </option>
-                    ))}
+                    {JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
                   </select>
                 </div>
+
+                {/* Row 3 — Numbers */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Est. Hours</label>
+                    <input
+                      type="number" step="0.5"
+                    defaultValue={estHours}
+                    onBlur={e => setEstHours(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-lg px-3 py-3 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Bill Rate $</label>
+                    <input
+                      type="number" step="0.01"
+                      defaultValue={estBillRate}
+                      onBlur={e => setEstBillRate(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Materials $</label>
+                    <input
+                      type="number" step="0.01"
+                      defaultValue={estMaterials}
+                      onBlur={e => setEstMaterials(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Miles RT</label>
+                    <input
+                      type="number" step="0.1"
+                      defaultValue={estMiles}
+                      onBlur={e => setEstMiles(e.target.value)}
+                      placeholder="0"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Technician */}
                 <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Estimated Hours</label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    value={estHours}
-                    onChange={e => setEstHours(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Technician</label>
+                  <select
+                    value={estTech}
+                    onChange={e => setEstTech(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  >
+                    <option value="">Select technician...</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Notes</label>
+                  <textarea
+                    value={estNotes}
+                    onChange={e => setEstNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Scope, special requirements, access notes..."
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
                   />
                 </div>
+
+                {/* Material Notes */}
                 <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Bill Rate $</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={estBillRate}
-                    onChange={e => setEstBillRate(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Material Notes</label>
+                  <textarea
+                    value={estMatNotes}
+                    onChange={e => setEstMatNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Describe materials purchased or needed..."
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
                   />
                 </div>
+
+                {/* Receipt URL */}
                 <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Estimated Materials $</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={estMaterials}
-                    onChange={e => setEstMaterials(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
-                  />
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Receipt URL</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={estReceiptUrl}
+                      onChange={e => setEstReceiptUrl(e.target.value)}
+                      placeholder="Paste receipt or invoice URL..."
+                      className="flex-1 rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                    {estReceiptUrl && (<a href={estReceiptUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold transition-colors flex items-center gap-1"
+                      >
+                        Open
+                      </a>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase font-bold">Miles RT</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={estMiles}
-                    onChange={e => setEstMiles(e.target.value)}
-                    className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
-                  />
-                </div>
-              </div>
 
-              {/* Notes */}
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Notes</label>
-                <textarea
-                  value={estNotes}
-                  onChange={e => setEstNotes(e.target.value)}
-                  rows={2}
-                  className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none"
-                />
-              </div>
+                {/* Live Breakdown */}
+                {(() => {
+                  const estHrs = parseFloat(estHours) || 0
+                  const estMat = parseFloat(estMaterials) || 0
+                  const estMi = parseFloat(estMiles) || 0
+                  const estRate = parseFloat(estBillRate) || billRate
+                  const labor = estHrs * estRate
+                  const mileageCost = estMi * mileRate
+                  const opCostTotal = estHrs * opCost
+                  const taxableAmount = estMat + mileageCost
+                  const taxAmount = taxableAmount * (taxRate / 100)
+                  const totalQuote = labor + estMat + mileageCost + taxAmount
+                  const profit = totalQuote - estMat - mileageCost - taxAmount - opCostTotal
+                  const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
 
-              {/* Live calculation + profit signal (matches source HTML calcServiceCall) */}
-              {(() => {
-                const estHrs = parseFloat(estHours) || 0
-                const estMat = parseFloat(estMaterials) || 0
-                const estMi = parseFloat(estMiles) || 0
-                const estRate = parseFloat(estBillRate) || billRate
-
-                const labor = estHrs * estRate
-                const mileageCost = estMi * mileRate
-                const opCostTotal = estHrs * opCost
-                const taxableAmount = estMat + mileageCost
-                const taxAmount = taxableAmount * (taxRate / 100)
-                const totalQuote = labor + estMat + mileageCost + taxAmount
-                const profit = totalQuote - estMat - mileageCost - taxAmount - opCostTotal
-                const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
-
-                return (
-                  <>
-                    {/* 5-cell summary bar matching source HTML */}
-                    <div className="grid grid-cols-6 gap-0 rounded-lg overflow-hidden border border-blue-700/30">
-                      <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
-                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Material Cost</div>
-                        <div className="font-mono text-xs font-bold text-orange-400">{fmt(estMat)}</div>
-                      </div>
-                      <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
-                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Mileage <span className="opacity-60">@${mileRate.toFixed(2)}/mi</span></div>
-                        <div className="font-mono text-xs font-bold text-red-400">{fmt(mileageCost)}</div>
-                      </div>
-                      <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
-                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Tax <span className="opacity-60">@{taxRate.toFixed(2)}% mat+mi</span></div>
-                        <div className="font-mono text-xs font-bold text-yellow-400">{fmt(taxAmount)}</div>
-                      </div>
-                      <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
-                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Op Cost <span className="opacity-60">@${opCost.toFixed(2)}/hr</span></div>
-                        <div className="font-mono text-xs font-bold text-red-500">{fmt(opCostTotal)}</div>
-                      </div>
-                      <div className="bg-[var(--bg-primary)] px-2 py-2 border-r border-gray-700">
-                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Quoted Total</div>
-                        <div className="font-mono text-xs font-bold text-gray-200">{fmt(totalQuote)}</div>
-                      </div>
-                      <div className="bg-[var(--bg-primary)] px-2 py-2">
-                        <div className="text-[8px] uppercase tracking-wider text-gray-500 mb-1">Est. Profit</div>
-                        <div className={`font-mono text-xs font-bold ${profit >= dayTarget ? 'text-emerald-400' : profit > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
-                          {fmt(profit)} <span className="text-[9px] opacity-70">({marginPct.toFixed(1)}%)</span>
+                  return (
+                    <div className="space-y-3">
+                      {/* Breakdown bar */}
+                      {/* Breakdown grid */}
+                      <div className="rounded-xl overflow-hidden border border-gray-700/50" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                        <div className="grid grid-cols-3 divide-x divide-gray-700/50">
+                          <div className="px-4 py-3">
+                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Material Cost</div>
+                            <div className="font-mono text-sm font-bold text-orange-400">{fmt(estMat)}</div>
+                          </div>
+                          <div className="px-4 py-3">
+                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Mileage <span className="opacity-50">@${mileRate.toFixed(2)}/mi</span></div>
+                            <div className="font-mono text-sm font-bold text-blue-400">{fmt(mileageCost)}</div>
+                          </div>
+                          <div className="px-4 py-3">
+                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Tax <span className="opacity-50">@{taxRate.toFixed(2)}%</span></div>
+                            <div className="font-mono text-sm font-bold text-yellow-400">{fmt(taxAmount)}</div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 divide-x divide-gray-700/50 border-t border-gray-700/50">
+                          <div className="px-4 py-3">
+                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Op Cost <span className="opacity-50">@${opCost.toFixed(2)}/hr</span></div>
+                            <div className="font-mono text-sm font-bold text-red-400">{fmt(opCostTotal)}</div>
+                          </div>
+                          <div className="px-4 py-3">
+                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Quoted Total</div>
+                            <div className="font-mono text-sm font-bold text-white">{fmt(totalQuote)}</div>
+                          </div>
+                          <div className="px-4 py-3">
+                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Est. Profit</div>
+                            <div className="font-mono text-sm font-bold text-emerald-400">
+                              {fmt(profit)} <span className="text-[10px] opacity-60">({marginPct.toFixed(1)}%)</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
+
+                      {/* Horizontal stacked bar */}
+                      {totalQuote > 0 && (() => {
+                        const segments = [
+                          { label: 'Materials', value: estMat,      color: '#f97316' },
+                          { label: 'Mileage',   value: mileageCost, color: '#60a5fa' },
+                          { label: 'Tax',       value: taxAmount,   color: '#facc15' },
+                          { label: 'Op Cost',   value: opCostTotal, color: '#f87171' },
+                          { label: 'Profit',    value: Math.max(0, profit), color: '#34d399' },
+                        ].filter(s => s.value > 0)
+                        return (
+                          <div className="space-y-2">
+                            {/* Bar */}
+                            <div className="flex rounded-lg overflow-hidden h-6 w-full">
+                              {segments.map((s, i) => (
+                                <div
+                                  key={i}
+                                  style={{ width: `${(s.value / totalQuote) * 100}%`, backgroundColor: s.color, minWidth: s.value > 0 ? 2 : 0 }}
+                                  title={`${s.label}: ${fmt(s.value)} (${((s.value / totalQuote) * 100).toFixed(1)}%)`}
+                                />
+                              ))}
+                            </div>
+                            {/* Legend */}
+                            <div className="flex flex-wrap gap-3">
+                              {segments.map((s, i) => (
+                                <div key={i} className="flex items-center gap-1.5">
+                                  <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
+                                  <span className="text-[10px] text-gray-400">{s.label}</span>
+                                  <span className="text-[10px] font-mono font-bold" style={{ color: s.color }}>{fmt(s.value)}</span>
+                                  <span className="text-[9px] text-gray-600">({((s.value / totalQuote) * 100).toFixed(1)}%)</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })()}
+
+                      {/* Profit signal */}
+                      {totalQuote > 0 && (
+                        <div className={`rounded-xl px-4 py-3 text-xs border ${
+                          profit >= dayTarget
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : profit > 0
+                            ? 'bg-yellow-500/10 border-yellow-500/25 text-yellow-400'
+                            : 'bg-red-500/10 border-red-500/25 text-red-400'
+                        }`}>
+                          {profit >= dayTarget && <span>✅ <strong>Above daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). Strong job.</span>}
+                          {profit > 0 && profit < dayTarget && <span>⚠️ <strong>Below daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). {fmt(dayTarget - profit)} short.</span>}
+                          {profit <= 0 && <span>🔴 <strong>Unprofitable</strong> — costs exceed quote by {fmt(Math.abs(profit))}. Reprice or reduce scope.</span>}
+                        </div>
+                      )}
                     </div>
+                  )
+                })()}
+              </div>
 
-                    {/* Profit signal indicator */}
-                    {totalQuote > 0 && (
-                      <div className={`rounded-lg px-3 py-2 text-xs border ${
-                        profit >= dayTarget
-                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                          : profit > 0
-                          ? 'bg-yellow-500/10 border-yellow-500/25 text-yellow-400'
-                          : 'bg-red-500/10 border-red-500/25 text-red-400'
-                      }`}>
-                        {profit >= dayTarget && <span>&#9989; <strong>Above daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). Strong job.</span>}
-                        {profit > 0 && profit < dayTarget && <span>&#9888;&#65039; <strong>Below daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). {fmt(dayTarget - profit)} short.</span>}
-                        {profit <= 0 && <span>&#128308; <strong>Unprofitable</strong> — costs exceed quote by {fmt(Math.abs(profit))}. Reprice or reduce scope.</span>}
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
-
-              <div className="flex gap-2">
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-8 py-5 border-t border-gray-700/60 flex-shrink-0" style={{ backgroundColor: 'var(--bg-secondary)' }}>
                 <button
-                  onClick={saveServiceEstimate}
-                  className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-semibold"
+                  onClick={resetEstimateForm}
+                  className="px-4 py-2 rounded-lg text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 transition-colors"
                 >
-                  {editEstimateId ? 'Update Estimate' : 'Save as Open Estimate'}
-                </button>
-                <button onClick={resetEstimateForm} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-xs">
                   Cancel
+                </button>
+                <button
+                  onClick={() => { saveServiceEstimate(); }}
+                  className="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors shadow-lg"
+                >
+                  {editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
                 </button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* ═══════════════════════════════════════════════════════════════════════ */}
         {/* STEP 2: Open Estimates Bucket */}
