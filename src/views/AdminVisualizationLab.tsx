@@ -715,6 +715,11 @@ function GeometricOrb({ orbState, healthAvg }: { orbState: OrbState; healthAvg: 
 
 // ─── Orb Lab ──────────────────────────────────────────────────────────────────
 function OrbLab({ healthAvg }: { healthAvg: number }) {
+  const [orbMounted, setOrbMounted] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setOrbMounted(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
   const [orbState, setOrbState] = useState<OrbState>('IDLE')
   const setOrbLabActive = useUIStore((s) => s.setOrbLabActive)
   // B50: Mic state
@@ -862,6 +867,7 @@ function OrbLab({ healthAvg }: { healthAvg: number }) {
     nexusStatusText === 'SPEAKING'    ? 'rgba(124,58,237,0.30)' : 'rgba(75,85,99,0.20)'
 
   // B62: Full-screen layout — canvas + 72px bar = 100% height, zero scrolling
+  if (!orbMounted) return null
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', position:'relative' }}>
       {/* FIX-ORB: mic error banner — shown inside ORB LAB when mic permission denied or pipeline fails */}
@@ -2348,16 +2354,7 @@ export default function AdminVisualizationLab({ defaultTab = 'ORB_LAB' }: AdminV
           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#00ff88' }}>Visualization Lab</span>
         </div>
         <span style={{ fontSize: 10, color: '#374151', marginLeft: 4 }}>B42 · Admin Only</span>
-        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-          {([
-            { id: 'ORB_LAB'      as MainTab, label: 'ORB LAB'                },
-            { id: 'NEURAL_MAP'   as MainTab, label: 'ELECTRICAL NEURAL MAP'  },
-            { id: 'COMBINED'     as MainTab, label: 'NEURAL MAP ECOSYSTEM'   },
-            { id: 'NEURAL_WORLD' as MainTab, label: 'NEURAL WORLD'           },
-          ]).map(({ id, label }) => (
-            <button key={id} onClick={() => setActiveTab(id)} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', border: 'none', cursor: 'pointer', backgroundColor: activeTab===id?'#00ff88':'rgba(255,255,255,0.06)', color: activeTab===id?'#000':'#9ca3af', transition: 'all 0.2s', boxShadow: activeTab===id?'0 0 16px rgba(0,255,136,0.3)':'none' }}>{label}</button>
-          ))}
-        </div>
+        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }} />
       </div>
 
       {/* Content */}
