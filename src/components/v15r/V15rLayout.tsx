@@ -145,6 +145,27 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return saved !== null ? saved === 'true' : true
   })
   // B64 — Admin sub-bucket collapse states (4 buckets)
+  const [hideFinances, setHideFinances] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('poweron_hide_finances') === 'true'
+  })
+
+  const toggleHideFinances = () => {
+    setHideFinances(v => {
+      const next = !v
+      localStorage.setItem('poweron_hide_finances', String(next))
+      return next
+    })
+  }
+
+  useEffect(() => {
+    const handler = () => {
+      setHideFinances(localStorage.getItem('poweron_hide_finances') === 'true')
+    }
+    window.addEventListener('poweron-hide-finances-changed', handler)
+    return () => window.removeEventListener('poweron-hide-finances-changed', handler)
+  }, [])
+
   const [sectionAdminCmd, setSectionAdminCmd] = useState(() => {
     if (typeof window === 'undefined') return true
     const saved = localStorage.getItem('nav_section_admin_cmd')
@@ -1485,12 +1506,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* PIPELINE */}
                 <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Pipeline' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">{fmtHeader(safeKpis.pipeline)}</span>
+                    <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Pipeline</span>
                       <span className="text-base font-bold text-green-400">
-                        {fmtHeader(safeKpis.pipeline)}
+                        {hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}
                       </span>
                     </>
                   )}
@@ -1499,12 +1520,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* PAID */}
                 <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">{fmtHeader(safeKpis.paid)}</span>
+                    <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.paid)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
                       <span className="text-base font-bold text-green-400">
-                        {fmtHeader(safeKpis.paid)}
+                        {hideFinances ? '••••' : fmtHeader(safeKpis.paid)}
                       </span>
                     </>
                   )}
@@ -1519,13 +1540,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 {/* EXPOSURE */}
                 <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Exposure' : undefined}>
                   {isCompact ? (
-                    <span className="text-sm font-bold text-red-400">{fmtHeader(safeKpis.exposure)}</span>
+                    <span className="text-sm font-bold text-red-400">{hideFinances ? '••••' : fmtHeader(safeKpis.exposure)}</span>
                   ) : (
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Exposure</span>
-                      <span className="text-base font-bold text-red-400">
-                        {fmtHeader(safeKpis.exposure)}
-                      </span>
+                      <span className="text-sm font-bold text-yellow-400">{hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}</span>
                     </>
                   )}
                 </div>
@@ -1538,7 +1557,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     <>
                       <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
                       <span className="text-base font-bold text-yellow-400">
-                        {fmtHeader(safeKpis.svcUnbilled)}
+                        {hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}
                       </span>
                     </>
                   )}

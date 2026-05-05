@@ -319,9 +319,8 @@ export default function V15rSettingsPanel() {
   // Auth (for owner role check)
   const { isOwner, user } = useAuth()
 
-  // Beta Access invite modal
   const [showBetaInviteModal, setShowBetaInviteModal] = useState(false)
-
+  const [, setHideTick] = useState(0)
   // Demo Mode store
   const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
@@ -1593,10 +1592,33 @@ const persist = useCallback((mutatedData?: BackupData) => {
             />
           )}
 
-          {/* DATA MANAGEMENT — owner only: load / clear / verify test data */}
+          {/* DATA MANAGEMENT – owner only: load / clear / verify test data */}
           {isOwner && (
             <SettingCard title="Data Management">
               <TestDataManagementPanel />
+              <div className="mt-4 pt-4 border-t border-gray-700/50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-100">Hide My Data</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Masks all financial figures in the header bar. Persists until toggled off.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const current = localStorage.getItem('poweron_hide_finances') === 'true'
+                      localStorage.setItem('poweron_hide_finances', String(!current))
+                      window.dispatchEvent(new Event('poweron-hide-finances-changed'))
+                      setHideTick(t => t + 1)
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                      localStorage.getItem('poweron_hide_finances') === 'true' ? 'bg-emerald-500' : 'bg-gray-600'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      localStorage.getItem('poweron_hide_finances') === 'true' ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </button>
+                </div>
+              </div>
             </SettingCard>
           )}
 
