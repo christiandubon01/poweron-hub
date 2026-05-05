@@ -162,6 +162,64 @@ const NEXUS_STATE_CONFIG = {
 } as const
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+function OrbKnob({
+  label, value, onChange, color = '#00ff88',
+}: { label: string; value: number; onChange: (v: number) => void; color?: string }) {
+  const trackRef = useRef<HTMLDivElement>(null)
+
+  const getVal = (clientX: number): number => {
+    const rect = trackRef.current?.getBoundingClientRect()
+    if (!rect) return value
+    return Math.max(0, Math.min(100, Math.round(((clientX - rect.left) / rect.width) * 100)))
+  }
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    onChange(getVal(e.clientX))
+    const onMove = (ev: MouseEvent) => { ev.preventDefault(); onChange(getVal(ev.clientX)) }
+    const onUp   = (ev: MouseEvent) => {
+      onChange(getVal(ev.clientX))
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    onChange(getVal(e.touches[0].clientX))
+    const onMove = (ev: TouchEvent) => onChange(getVal(ev.touches[0].clientX))
+    const onEnd  = () => { window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onEnd) }
+    window.addEventListener('touchmove', onMove, { passive: true })
+    window.addEventListener('touchend', onEnd)
+  }
+
+  const glow = Math.round((value / 100) * 80).toString(16).padStart(2, '0')
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      flex: 1, minWidth: 0, gap: 3, padding: '4px 6px',
+      borderRadius: 7, border: `1px solid ${color}44`,
+      backgroundColor: `${color}0d`,
+      boxShadow: `0 0 ${6 + value * 0.14}px ${color}${glow}`,
+      userSelect: 'none',
+    }}>
+      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.12em', color, fontFamily: 'Courier New, monospace', textTransform: 'uppercase', pointerEvents: 'none' }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', fontFamily: 'Courier New, monospace', lineHeight: 1, pointerEvents: 'none' }}>{value}</span>
+      <div
+        ref={trackRef}
+        onMouseDown={onMouseDown}
+        onTouchStart={onTouchStart}
+        style={{ position: 'relative', width: '100%', height: 12, display: 'flex', alignItems: 'center', cursor: 'ew-resize' }}
+      >
+        <div style={{ width: '100%', height: 2, borderRadius: 2, background: `linear-gradient(to right, ${color} ${value}%, #1a1a2e ${value}%)`, boxShadow: `0 0 3px ${color}66`, pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', left: `calc(${value}% - 6px)`, width: 12, height: 12, borderRadius: '50%', backgroundColor: color, boxShadow: `0 0 6px ${color}, 0 0 12px ${color}88`, border: '2px solid #000', pointerEvents: 'none' }} />
+      </div>
+    </div>
+  )
+}
+
 export default function VisualSuitePanel({
   micStream,
   ttsElement,
@@ -282,6 +340,11 @@ export default function VisualSuitePanel({
     const M  = Math.min(1, midRef2.current * stateConfig.intensityMult * int + 0.05)
     const Hi = Math.min(1, highRef.current * stateConfig.intensityMult * int + 0.05)
     const bh   = Math.abs(Math.sin(t * 0.9)) * int
+    const zoom = 0.5 + (hueRef.current / 100) * 1.5  // 0.5 – 2.0 zoom range
+    ctx.save()
+    ctx.translate(W / 2, H / 2)
+    ctx.scale(zoom, zoom)
+    ctx.translate(-W / 2, -H / 2)
 
     // AUTO advance
     if (autoRef.current) {
@@ -303,6 +366,7 @@ export default function VisualSuitePanel({
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, W, H)
     }
+    ctx.restore()
 
     rafRef.current = requestAnimationFrame(loop)
   }, [])
@@ -365,82 +429,6 @@ export default function VisualSuitePanel({
 
   const activeDesc: ModeDesc = MODE_DESCRIPTIONS[activeMode] ?? MODE_DESCRIPTIONS[0]
 
-  // ── Draggable orb knob box ─────────────────────────────────────────────────────────────────────
-  const OrbKnob = ({
-    label, value, onChange, color = '#00ff88',
-  }: { label: string; value: number; onChange: (v: number) => void; color?: string }) => {
-    const boxRef = useRef<HTMLDivElement>(null)
-    const dragging = useRef(false)
-    const startX = useRef(0)
-    const startVal = useRef(0)
-
-    const calcValue = (clientX: number) => {
-      const rect = boxRef.current?.getBoundingClientRect()
-      if (!rect) return
-      const raw = Math.round(((clientX - rect.left) / rect.width) * 100)
-      onChange(Math.max(0, Math.min(100, raw)))
-    }
-
-    const onMouseDown = (e: React.MouseEvent) => {
-      dragging.current = true
-      startX.current = e.clientX
-      startVal.current = value
-      calcValue(e.clientX)
-      const onMove = (ev: MouseEvent) => { if (dragging.current) calcValue(ev.clientX) }
-      const onUp   = () => { dragging.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-    }
-
-    const onTouchStart = (e: React.TouchEvent) => {
-      calcValue(e.touches[0].clientX)
-      const onMove = (ev: TouchEvent) => calcValue(ev.touches[0].clientX)
-      const onEnd  = () => { window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onEnd) }
-      window.addEventListener('touchmove', onMove, { passive: true })
-      window.addEventListener('touchend', onEnd)
-    }
-
-    const glowOpacity = value / 100
-
-    return (
-      <div
-        ref={boxRef}
-        onMouseDown={onMouseDown}
-        onTouchStart={onTouchStart}
-        style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          flex: 1, minWidth: 0, gap: 3,
-          padding: '4px 6px',
-          borderRadius: 7,
-          border: `1px solid ${color}44`,
-          backgroundColor: `${color}0d`,
-          boxShadow: `0 0 ${6 + value * 0.14}px ${color}${Math.round(glowOpacity * 80).toString(16).padStart(2,'0')}`,
-          cursor: 'ew-resize',
-          userSelect: 'none',
-        }}>
-        {/* Label */}
-        <span style={{
-          fontSize: 9, fontWeight: 800, letterSpacing: '0.12em',
-          color, fontFamily: 'Courier New, monospace', textTransform: 'uppercase',
-          pointerEvents: 'none',
-        }}>{label}</span>
-        {/* Value */}
-        <span style={{
-          fontSize: 13, fontWeight: 900, color: '#fff',
-          fontFamily: 'Courier New, monospace', lineHeight: 1,
-          pointerEvents: 'none',
-        }}>{value}</span>
-        {/* Track */}
-        <div style={{
-          width: '100%', height: 2, borderRadius: 2,
-          background: `linear-gradient(to right, ${color} ${value}%, #1a1a2e ${value}%)`,
-          pointerEvents: 'none',
-          boxShadow: `0 0 3px ${color}66`,
-        }} />
-      </div>
-    )
-  }
-
   // B62: Determine effective mic state — prefer NEXUS pipeline (onMicToggle) over local mic
   const isNexusMic = !!onMicToggle
   const effectiveMicActive = isNexusMic ? (micActive ?? false) : isLive
@@ -455,7 +443,8 @@ export default function VisualSuitePanel({
       display:         'flex',
       flexDirection:   'column',
       width:           '100%',
-      height:          'calc(100vh - 106px)',
+      height:          'calc(100vh - 155px)',
+      maxHeight:       '100%',
       backgroundColor: '#000',
       overflow:        'hidden',
       fontFamily:      'Courier New, monospace',
@@ -638,7 +627,7 @@ export default function VisualSuitePanel({
           <OrbKnob label="RTI"  value={mtz}       onChange={setMtz}   color="#ff44ff" />
           <OrbKnob label="INT"  value={intensity}  onChange={setInt}   color="#00ff88" />
           <OrbKnob label="SPD"  value={speed}      onChange={setSpeed} color="#44aaff" />
-          <OrbKnob label="NTE"  value={hue}        onChange={setHue}   color={`hsl(${hue}, 80%, 65%)`} />
+          <OrbKnob label="ZOM"  value={hue}        onChange={setHue}   color={`hsl(${hue}, 80%, 65%)`} />
         </div>
 
         {/* Divider */}
