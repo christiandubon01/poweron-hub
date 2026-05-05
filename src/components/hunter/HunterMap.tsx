@@ -46,13 +46,12 @@ function pinColorForScore(score: number): string {
 
 function pinSymbol(color: string): google.maps.Symbol {
   return {
-    path: 'M 0,-1 C -0.55,-1 -1,-0.55 -1,0 C -1,0.85 0,2 0,2 C 0,2 1,0.85 1,0 C 1,-0.55 0.55,-1 0,-1 Z',
+    path: google.maps.SymbolPath.CIRCLE,
     fillColor: color,
     fillOpacity: 1,
-    strokeColor: '#0f1117',
-    strokeWeight: 0.2,
-    scale: 14,
-    anchor: new google.maps.Point(0, 2),
+    strokeColor: '#ffffff',
+    strokeWeight: 2,
+    scale: 9,
   }
 }
 
