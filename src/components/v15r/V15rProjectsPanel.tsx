@@ -364,7 +364,27 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     backup.logs = [...(backup.logs || []), entry]
     p.lastCollectedAt = new Date().toISOString()
     p.lastCollectedAmount = amount
+    saveBackupDbackup.logs = [...(backup.logs || []), entry]
+    p.lastCollectedAt = new Date().toISOString()
+    p.lastCollectedAmount = amount
     saveBackupData(backup)
+    // Write disposition_detail to linked HUNTER lead if this project came from one
+    if (p.convertedFromLeadId) {
+      const leadId = p.convertedFromLeadId
+      import('@/lib/supabase').then(({ supabase: sb }) => {
+        const detail = `Full payment collected: $${amount.toLocaleString()} on ${today} — Project: ${p.name || 'Unnamed'}`
+        ;(sb as any).from('hunter_leads').update({
+          disposition_detail: detail,
+          disposition_at: new Date().toISOString(),
+        }).eq('id', leadId).then(({ error }: any) => {
+          if (error) console.error('[V15rProjectsPanel] Failed to update hunter lead disposition_detail:', error)
+        })
+      })
+    }
+    setCollectProject(null)
+    forceUpdate()
+  }
+  function handleLogPartialPayment(p: BackupProject) {ata(backup)
     setCollectProject(null)
     forceUpdate()
   }
@@ -397,11 +417,25 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.lastCollectedAt = new Date().toISOString()
     p.lastCollectedAmount = amount
     saveBackupData(backup)
+    // Write disposition_detail to linked HUNTER lead if this project came from one
+    if (p.convertedFromLeadId) {
+      const leadId = p.convertedFromLeadId
+      import('@/lib/supabase').then(({ supabase: sb }) => {
+        const detail = `Partial payment collected: $${amount.toLocaleString()} on ${today} — Project: ${p.name || 'Unnamed'}`
+        ;(sb as any).from('hunter_leads').update({
+          disposition_detail: detail,
+          disposition_at: new Date().toISOString(),
+        }).eq('id', leadId).then(({ error }: any) => {
+          if (error) console.error('[V15rProjectsPanel] Failed to update hunter lead disposition_detail:', error)
+        })
+      })
+    }
     setCollectPartialInput('')
     setCollectLoggingPartial(false)
     setCollectProject(null)
     forceUpdate()
   }
+  // ── Group projects by bucket
 
   // ── Group projects by bucket
   const active = projects.filter(p => resolveProjectBucket(p) === 'active')
