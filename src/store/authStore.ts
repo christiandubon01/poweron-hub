@@ -304,7 +304,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: window.location.origin },
+        options: { emailRedirectTo: 'https://app.poweronsolutionsllc.com' },
       })
       if (error) throw error
     } catch (err: unknown) {
