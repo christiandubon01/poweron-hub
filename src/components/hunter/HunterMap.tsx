@@ -38,20 +38,111 @@ interface HomeBase {
 }
 
 function pinColorForScore(score: number): string {
-  if (score >= 85) return '#ef4444'        // Hot - red
+  if (score >= 85) return '#34d399'        // Elite - emerald
+  if (score >= 75) return '#10b981'        // Strong - green
   if (score >= 60) return '#f59e0b'        // Warm - amber
   if (score >= 40) return '#3b82f6'        // Cool - blue
-  return '#6b7280'                          // Archived/cold - gray
+  return '#6b7280'                         // Cold - gray
 }
 
-function pinSymbol(color: string): google.maps.Symbol {
+function pinSymbol(color: string, score: number = 0): google.maps.Symbol {
+  const isElite = score >= 85
+  const isStrong = score >= 75 && score < 85
   return {
-    path: google.maps.SymbolPath.CIRCLE,
-    fillColor: color,
-    fillOpacity: 1,
-    strokeColor: '#ffffff',
-    strokeWeight: 2,
-    scale: 9,
+    path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
+    fillColor: isElite ? '#fbbf24' : color,
+    fillOpacity: isElite ? 1 : isStrong ? 0.95 : 0.85,
+    strokeColor: isElite ? '#ffffff' : color,
+    strokeWeight: isElite ? 3 : isStrong ? 4 : 2,
+    scale: isElite ? 1.6 : isStrong ? 1.25 : 1.0,
+    anchor: new google.maps.Point(0, 0),
+  }
+}
+
+function eliteGlowSymbol(): google.maps.Symbol {
+  return {
+    path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
+    fillColor: '#f59e0b',
+    fillOpacity: 0.12,
+    strokeColor: '#fbbf24',
+    strokeWeight: 5,
+    scale: 1.7,
+    anchor: new google.maps.Point(0, 0),
+  }
+}
+
+const eliteFrameCache: string[] = []
+function buildEliteFrame(flameOffset: number) {
+  const f1 = 0.6 + Math.sin(flameOffset) * 0.3
+  const f2 = 0.4 + Math.cos(flameOffset * 1.3) * 0.25
+  const rx1 = 13 + Math.sin(flameOffset * 0.7) * 2
+  const ry1 = 16 + Math.cos(flameOffset * 0.9) * 3
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="64" viewBox="0 0 40 64">',
+    '<defs>',
+    '<radialGradient id="ruby" cx="35%" cy="30%" r="65%">',
+    '<stop offset="0%" stop-color="#ff6b8a"/>',
+    '<stop offset="40%" stop-color="#c0003c"/>',
+    '<stop offset="100%" stop-color="#6b0020"/>',
+    '</radialGradient>',
+    '<filter id="glow"><feGaussianBlur stdDeviation="2.5" result="blur"/>',
+    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
+    '</defs>',
+    // Outer flame
+    '<ellipse cx="20" cy="50" rx="' + rx1 + '" ry="' + ry1 + '" fill="#f97316" opacity="' + f1.toFixed(2) + '"/>',
+    '<ellipse cx="20" cy="46" rx="9" ry="12" fill="#fbbf24" opacity="' + f2.toFixed(2) + '"/>',
+    '<ellipse cx="20" cy="42" rx="5" ry="8" fill="#fef08a" opacity="' + (f1 * 0.6).toFixed(2) + '"/>',
+    // Pin body
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" filter="url(#glow)" stroke="#ff6b8a" stroke-width="1.5"/>',
+    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="rgba(255,255,255,0.15)" transform="rotate(-20,14,17)"/>',
+    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="rgba(255,255,255,0.25)" transform="rotate(-20,13,15)"/>',
+    '<circle cx="20" cy="23" r="6" fill="rgba(255,100,130,0.4)" stroke="rgba(255,200,210,0.6)" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="rgba(255,200,210,0.7)"/>',
+    '</svg>',
+  ].join('')
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg)
+}
+// Pre-cache 12 flame frames
+for (let i = 0; i < 12; i++) {
+  eliteFrameCache.push(buildEliteFrame((i / 12) * Math.PI * 2))
+}
+
+function elitePinIcon() {
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="56" viewBox="0 0 40 56">',
+    '<defs>',
+    '<radialGradient id="ruby" cx="35%" cy="30%" r="65%">',
+    '<stop offset="0%" stop-color="#ff6b8a"/>',
+    '<stop offset="40%" stop-color="#c0003c"/>',
+    '<stop offset="100%" stop-color="#6b0020"/>',
+    '</radialGradient>',
+    '<radialGradient id="flame" cx="50%" cy="80%" r="60%">',
+    '<stop offset="0%" stop-color="#fbbf24" stop-opacity="0.9"/>',
+    '<stop offset="50%" stop-color="#f97316" stop-opacity="0.5"/>',
+    '<stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>',
+    '</radialGradient>',
+    '<filter id="glow">',
+    '<feGaussianBlur stdDeviation="2" result="blur"/>',
+    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>',
+    '</filter>',
+    '</defs>',
+    // Flame layer behind pin
+    '<ellipse cx="20" cy="44" rx="14" ry="18" fill="url(#flame)" opacity="0.7"/>',
+    '<ellipse cx="20" cy="38" rx="9" ry="14" fill="url(#flame)" opacity="0.5"/>',
+    // Pin body with ruby gradient
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" filter="url(#glow)" stroke="#ff6b8a" stroke-width="1.5"/>',
+    // Inner texture highlights
+    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="rgba(255,255,255,0.15)" transform="rotate(-20,14,17)"/>',
+    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="rgba(255,255,255,0.25)" transform="rotate(-20,13,15)"/>',
+    // Inner glow dot
+    '<circle cx="20" cy="23" r="6" fill="rgba(255,100,130,0.4)" stroke="rgba(255,200,210,0.6)" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="rgba(255,200,210,0.7)"/>',
+    '</svg>',
+  ].join('')
+  return {
+    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(40, 56),
+    anchor: new google.maps.Point(20, 52),
   }
 }
 
@@ -592,12 +683,26 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         position: { lat, lng },
         map: mapRef.current!,
         title,
-        icon: pinSymbol(pinColorForScore(score)),
-        zIndex: 500,
+        icon: score >= 85 ? elitePinIcon() : pinSymbol(pinColorForScore(score), score),
+        zIndex: score >= 85 ? 600 : 500,
         optimized: false,
       })
       m.addListener('click', () => setSelectedLeadId(id))
       markersRef.current.push(m)
+      // Animate flame for elite pins
+      if (score >= 85) {
+        let frameIdx = 0
+        const animateFlame = () => {
+          frameIdx = (frameIdx + 1) % 12
+          m.setIcon({
+            url: eliteFrameCache[frameIdx],
+            scaledSize: new google.maps.Size(40, 64),
+            anchor: new google.maps.Point(20, 52),
+          })
+          requestAnimationFrame(animateFlame)
+        }
+        requestAnimationFrame(animateFlame)
+      }
     })
   }, [isLoaded, homeBase, geocodedLeads, portalPins])
 
