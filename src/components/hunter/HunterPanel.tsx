@@ -662,6 +662,24 @@ const handleMapLeadSelect = (leadId: string) => {
               Queue
             </button>
             <button
+              onClick={async () => {
+                const { supabase: sb } = await import('@/lib/supabase')
+                const { data: { user } } = await sb.auth.getUser()
+                if (!user) return
+                const { data: t } = await (sb as any).from('user_tenants').select('tenant_id').eq('user_id', user.id).limit(1).single()
+                if (!t?.tenant_id) return
+                const { triggerGeocodingBackfill } = await import('@/services/geocoding/GeocodingClient')
+                const result = await triggerGeocodingBackfill(t.tenant_id)
+                alert(`Geocoding retry: ${result.succeeded} succeeded, ${result.failed} failed, ${result.remaining} remaining`)
+                fetchLeads()
+              }}
+              className="flex items-center gap-2 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded transition-colors"
+              title="Retry geocoding for all failed leads"
+            >
+              <RotateCcw size={14} />
+              Fix Geo
+            </button>
+            <button
               onClick={() => setShowMoreMenu(!showMoreMenu)}
               className="p-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded transition-colors"
             >
