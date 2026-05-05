@@ -133,7 +133,23 @@ function registerAuthListener() {
   if (_authListenerRegistered) return
   _authListenerRegistered = true
 
-  supabase.auth.onAuthStateChange((event) => {
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      // User clicked password reset link — show set new password form
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle()
+        useAuthStore.setState({
+          status: 'password_recovery',
+          user: session.user as any,
+          profile: profile as any,
+        })
+      }
+      return
+    }
     if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
       const { status } = useAuthStore.getState()
       if (status === 'unauthenticated') {
