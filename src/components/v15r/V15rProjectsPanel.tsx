@@ -314,7 +314,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         const { supabase: sb } = await import('@/lib/supabase')
         await (sb as any).from('hunter_leads').update({
           disposition: 'won_archived',
-          disposition_detail: `Project deleted: ${proj.name || 'Unnamed project'}`,
+          disposition_detail: `Project deleted: ${(proj.name || 'Unnamed project').split(' - ')[0].trim()}`,
           disposition_at: new Date().toISOString(),
         }).eq('id', proj.convertedFromLeadId)
       } catch (err) {

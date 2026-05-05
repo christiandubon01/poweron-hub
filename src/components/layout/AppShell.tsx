@@ -411,6 +411,7 @@ export function AppShell({ children }: AppShellProps) {
     customer: string
     address: string
     notes: string
+    leadId?: string
   } | null>(null)
   // HUNTER-C-OPEN-ESTIMATE-BRIDGE-APR24-2026-1
   // Holds prefill data mapped from a HunterLead when the operator clicks
@@ -652,8 +653,56 @@ export function AppShell({ children }: AppShellProps) {
           customer: lead.contact_name || lead.company_name || '',
           address: [lead.address, lead.city].filter(Boolean).join(', '),
           notes: lead.description || '',
+          leadId: lead.id,
         })
         setActiveView('field-log')
+        // Move lead to estimated so it leaves Pipeline
+        import('@/store/hunterStore').then(({ useHunterStore: hs }) => {
+          hs.getState().updateLeadStatus(lead.id, 'estimated' as any)
+        })
+        // Write disposition
+        import('@/lib/supabase').then(({ supabase: sb }) => {
+          (sb as any).from('hunter_leads').update({
+            disposition: 'won_archived',
+            disposition_detail: `Converted to service call: ${lead.contact_name || lead.company_name || 'Unknown'}`,
+            disposition_at: new Date().toISOString(),
+          }).eq('id', lead.id).then(({ error }: any) => {
+            if (error) console.error('[AppShell] disposition write failed:', error)
+            else console.log('[AppShell] disposition written for', lead.id)
+          })
+        })
+        // Fire scheduling + confirmed milestones if portal lead
+        if (lead.source_tag === 'customer_portal' || lead.source === 'customer_portal') {
+          import('@/lib/supabase').then(({ supabase: sb }) => {
+            (sb as any).from('portal_requests').select('id, preferred_date').eq('hunter_lead_id', lead.id).maybeSingle()
+              .then(({ data: portalReq }: any) => {
+                if (!portalReq?.id) return
+                ;(sb as any).from('job_timeline').insert([
+                  {
+                    portal_request_id: portalReq.id,
+                    event_type: 'scheduling',
+                    title: 'Scheduling in Progress',
+                    description: 'A service call has been created for your request.',
+                    event_time: new Date().toISOString(),
+                    triggered_by: 'owner',
+                  },
+                  {
+                    portal_request_id: portalReq.id,
+                    event_type: 'confirmed',
+                    title: 'Appointment Confirmed',
+                    description: 'Your service call has been scheduled.',
+                    event_time: (() => {
+                      const pd = (portalReq as any).preferred_date
+                      return pd ? new Date(pd + 'T12:00:00').toISOString() : new Date(Date.now() + 1000).toISOString()
+                    })(),
+                    triggered_by: 'owner',
+                  },
+                ]).then(({ error }: any) => {
+                  if (error) console.error('[AppShell] service_call milestone insert failed:', error)
+                })
+              })
+          })
+        }
       } else {
         setHunterLeadPrefill(prefill)
         setActiveView('projects')

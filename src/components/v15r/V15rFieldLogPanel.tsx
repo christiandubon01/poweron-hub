@@ -257,7 +257,7 @@ function interleaveWithGaps(entries: any[], dateField: string = 'date'): Array<{
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }: { serviceCallPrefill?: { customer: string; address: string; notes: string } | null; onPrefillUsed?: () => void } = {}) {
+export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }: { serviceCallPrefill?: { customer: string; address: string; notes: string; leadId?: string } | null; onPrefillUsed?: () => void } = {}) {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -318,6 +318,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   // Service Estimate workflow state (Step 1-3)
   const [showEstimateForm, setShowEstimateForm] = useState(false)
   const [editEstimateId, setEditEstimateId] = useState<string | null>(null)
+  const [portalLeadId, setPortalLeadId] = useState<string | null>(null)
   const [estCust, setEstCust] = useState('')
   const [estAddr, setEstAddr] = useState('')
   const [estDate, setEstDate] = useState(today())
@@ -334,6 +335,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       setEstCust(serviceCallPrefill.customer || '')
       setEstAddr(serviceCallPrefill.address || '')
       setEstNotes(serviceCallPrefill.notes || '')
+      setPortalLeadId(serviceCallPrefill.leadId || null)
       setShowEstimateForm(true)
       onPrefillUsed?.()
     }
@@ -434,9 +436,25 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       backup.serviceEstimates = [...serviceEstimates, estimate]
     }
     persist()
+    // If this estimate came from a portal lead, update confirmed milestone with estimate date
+    if (portalLeadId && !editEstimateId) {
+      import('@/lib/supabase').then(({ supabase: sb }) => {
+        (sb as any).from('portal_requests').select('id').eq('hunter_lead_id', portalLeadId).maybeSingle()
+          .then(({ data: pr }: any) => {
+            if (!pr?.id) return
+            const confirmedTime = estDate ? new Date(estDate + 'T12:00:00').toISOString() : new Date().toISOString()
+            ;(sb as any).from('job_timeline')
+              .update({ event_time: confirmedTime })
+              .eq('portal_request_id', pr.id)
+              .eq('event_type', 'confirmed')
+              .then(({ error }: any) => {
+                if (error) console.error('[V15rFieldLogPanel] confirmed milestone update failed:', error)
+              })
+          })
+      })
+    }
     resetEstimateForm()
   }
-
   function beginEstimateEdit(estimateId: string) {
     const est = serviceEstimates.find(e => e.id === estimateId)
     if (!est) return

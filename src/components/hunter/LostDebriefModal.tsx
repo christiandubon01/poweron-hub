@@ -55,9 +55,18 @@ export function LostDebriefModal({ lead, isOpen, onClose, onSaved }: LostDebrief
       });
 
       await updateLeadStatus(lead.id, LeadStatus.LOST);
-      // Write disposition for Lead History block
+      // Write disposition for Lead History block + update portal request status
       try {
         const { supabase: sb } = await import('@/lib/supabase')
+        // If this was a portal lead, update portal_request to dismissed so tracker shows tombstone
+        const { data: portalReq } = await (sb as any)
+          .from('portal_requests')
+          .select('id')
+          .eq('hunter_lead_id', lead.id)
+          .maybeSingle()
+        if (portalReq?.id) {
+          await (sb as any).from('portal_requests').update({ status: 'dismissed' }).eq('id', portalReq.id)
+        }
         const lossLabel = wentWithCompetitor && competitorName
           ? `Lost to competitor: ${competitorName}`
           : whatHappened
