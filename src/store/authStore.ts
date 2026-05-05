@@ -295,16 +295,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // If user has password-only setup (no real PIN), skip PIN verification
       if (profile.passcode_hash === 'password_only') {
         const { role, ownerId } = await resolveUserRole(user.id)
-        const session = await withTimeout(
-          createAppSession({
-            userId: user.id,
-            orgId: profile.org_id,
-            role: profile.role,
-            deviceInfo: getDeviceInfo(),
-          }),
-          5000,
-          null
-        )
+        let session = null
+        try {
+          session = await withTimeout(
+            createAppSession({
+              userId: user.id,
+              orgId: profile.org_id,
+              role: profile.role,
+              deviceInfo: getDeviceInfo(),
+            }),
+            5000,
+            null
+          )
+        } catch {
+          // Non-blocking — user can still access app without Redis session
+        }
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         return
       }
