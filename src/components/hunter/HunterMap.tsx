@@ -44,15 +44,15 @@ function pinColorForScore(score: number): string {
   return '#6b7280'                          // Archived/cold - gray
 }
 
-function pinSymbol(color: string): google.maps.Symbol {
+function pinSymbol(color: string) {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="36" viewBox="0 0 24 36">' +
+    '<path d="M12 0 C5.4 0 0 5.4 0 12 C0 21 12 36 12 36 C12 36 24 21 24 12 C24 5.4 18.6 0 12 0 Z" fill="' + color + '" stroke="#0f1117" stroke-width="1.5"/>' +
+    '<circle cx="12" cy="12" r="5" fill="rgba(255,255,255,0.4)"/>' +
+    '</svg>'
   return {
-    path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
-    fillColor: color,
-    fillOpacity: 1,
-    strokeColor: '#0f1117',
-    strokeWeight: 1.5,
-    scale: 1,
-    anchor: new google.maps.Point(0, 0),
+    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(24, 36),
+    anchor: new google.maps.Point(12, 36),
   }
 }
 
