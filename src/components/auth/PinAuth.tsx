@@ -19,6 +19,7 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { Zap } from 'lucide-react'
+import { useAuthStore } from '@/store/authStore'
 import { clsx } from 'clsx'
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -66,8 +67,8 @@ interface PinAuthProps {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
+  const status = useAuthStore(s => s.status)
   const hasPinStored = Boolean(getStoredHash())
-  // If onVerify is provided, we're in lock/re-auth mode — always verify regardless of localStorage
   const [mode, setMode] = useState<FlowMode>((hasPinStored || onVerify) ? 'verify' : 'setup-create')
   const [digits, setDigits]     = useState<string[]>(Array(PIN_LENGTH).fill(''))
   const [firstPin, setFirstPin] = useState('')

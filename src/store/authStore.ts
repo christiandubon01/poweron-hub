@@ -415,12 +415,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         const session = await withTimeout(validateAppSession(), 3000, null)
         set({ status: 'authenticated', appSession: session, role, ownerId })
-        // Force re-render in case React missed the state update
-        setTimeout(() => {
-          if (useAuthStore.getState().status !== 'authenticated') {
-            useAuthStore.setState({ status: 'authenticated', appSession: session, role, ownerId })
-          }
-        }, 500)
 
       } else if ('locked' in result && result.locked) {
         set({ status: 'locked', lockExpiresAt: result.lockExpiresAt })
