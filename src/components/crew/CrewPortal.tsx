@@ -456,7 +456,7 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
 // ── CrewPortal (main export) ──────────────────────────────────────────────────
 
 export function CrewPortal() {
-  const { user, ownerId, signOut } = useAuth()
+  const { user, ownerId, signOut, lockApp } = useAuth()
   const [crewMember, setCrewMember] = useState<{ name: string; role?: string } | null>(null)
   const [jobs, setJobs] = useState<AssignedJob[]>([])
   const [jobsLoading, setJobsLoading] = useState(true)
@@ -545,7 +545,7 @@ export function CrewPortal() {
           <p className="text-sm font-bold text-gray-900 truncate">{displayName}</p>
         </div>
         <button
-          onClick={() => signOut()}
+          onClick={() => lockApp()}
           className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 transition-colors active:opacity-70 flex-shrink-0"
         >
           <LogOut size={14} />
