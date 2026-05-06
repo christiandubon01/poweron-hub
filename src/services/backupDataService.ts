@@ -1032,13 +1032,17 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     saveBackupDataSilent(data) // persist locally with metadata — silent to avoid re-sync loop
 
     // Single upsert to Supabase with all metadata embedded
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, error: 'Not authenticated' }
+
     const { error } = await supabase
       .from('app_state')
       .upsert({
+        user_id: user.id,
         state_key: SUPABASE_STATE_KEY,
         data: data,
         updated_at: now,
-      }, { onConflict: 'state_key' })
+      }, { onConflict: 'user_id,state_key' })
 
     if (error) {
       console.error('[Sync] Supabase write failed:', error.message)
@@ -1068,9 +1072,13 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
     const { supabase } = await import('@/lib/supabase')
     const thisDevice = getDeviceId()
 
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, merged: false, error: 'Not authenticated' }
+
     const { data: row, error } = await supabase
       .from('app_state')
       .select('data, updated_at')
+      .eq('user_id', user.id)
       .eq('state_key', SUPABASE_STATE_KEY)
       .single()
 
@@ -1323,13 +1331,17 @@ async function saveSnapshotToSupabase(snapshot: DataSnapshot): Promise<void> {
     const { supabase } = await import('@/lib/supabase')
     // Store full snapshot list under 'poweron_snapshots' key so all devices sync
     const allSnapshots = getSnapshots()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
     await supabase
       .from('app_state')
       .upsert({
+        user_id: user.id,
         state_key: 'poweron_snapshots',
-        state_value: allSnapshots,
+        data: allSnapshots,
         updated_at: new Date().toISOString(),
-      }, { onConflict: 'state_key' })
+      }, { onConflict: 'user_id,state_key' })
       .select()
     console.log('[Snapshot] Saved', allSnapshots.length, 'snapshots to Supabase under poweron_snapshots')
   } catch (err) {
