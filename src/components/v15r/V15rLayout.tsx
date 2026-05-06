@@ -187,7 +187,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return saved !== null ? saved === 'true' : false // default collapsed
   })
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
-  const signOut = useAuthStore(s => s.signOut)
+  const { lockApp, signOut } = useAuthStore()
   const authUser = useAuthStore(s => s.user)
   const adminEmail = import.meta.env.VITE_ADMIN_EMAIL as string | undefined
   const isAdmin = !!(authUser?.email && adminEmail && authUser.email === adminEmail)
@@ -1458,16 +1458,29 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={async () => {
-                    setShowLogoutConfirm(false)
-                    localStorage.removeItem('poweron_pin_hash')
-                    await signOut()
-                  }}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors"
-                >
-                  Sign Out
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px' }}>
+          {/* Daily use: Locks the UI but keeps you "In the building" */}
+          <button 
+            onClick={async () => await lockApp()}
+            style={{ 
+              width: '100%', padding: '10px', background: '#1e80df', color: '#fff', 
+              border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' 
+            }}
+          >
+            LOCK HUB
+          </button>
+
+          {/* Account switching: Wipes the session entirely */}
+          <button 
+            onClick={async () => await signOut()}
+            style={{ 
+              width: '100%', padding: '10px', background: 'rgba(255,255,255,0.05)', color: '#8ab4d4', 
+              border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' 
+            }}
+          >
+            SIGN OUT
+          </button>
+        </div>
               </div>
             </div>
           </div>
