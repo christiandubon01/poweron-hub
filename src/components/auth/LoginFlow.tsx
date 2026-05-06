@@ -626,7 +626,8 @@ interface LoginFlowProps {
 }
 
 export function LoginFlow({ children }: LoginFlowProps) {
-  const { status, submitPasscode, signOut } = useAuth()
+  const status = useAuthStore(s => s.status)
+  const { submitPasscode, signOut } = useAuth()
   const [screen, setScreen] = useState<AuthScreen>('landing')
   const [pinFallback, setPinFallback] = useState(false)
 
