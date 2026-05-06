@@ -1080,7 +1080,7 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
       .select('data, updated_at')
       .eq('user_id', user.id)
       .eq('state_key', SUPABASE_STATE_KEY)
-      .single()
+      .maybeSingle()
 
     if (error) {
       console.warn('[Sync] Supabase read failed:', error.message)
