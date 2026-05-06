@@ -361,9 +361,6 @@ export interface MockCrewMember {
 }
 
 export const mockCrewMembers: MockCrewMember[] = [
-  { id: 'crew_1', name: 'Miguel Reyes', role: 'Journeyman', phone: '555-0101', assignedProject: 'proj_1', status: 'active' },
-  { id: 'crew_2', name: 'David Kim', role: 'Apprentice', phone: '555-0102', assignedProject: 'proj_1', status: 'active' },
-  { id: 'crew_3', name: 'James Torres', role: 'Foreman', phone: '555-0103', assignedProject: 'proj_2', status: 'active' },
 ]
 
 // ── GuardianView mocks ────────────────────────────────────────────────────────

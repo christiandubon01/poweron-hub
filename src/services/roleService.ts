@@ -209,9 +209,33 @@ export async function assignRole(
 export async function getOrgMembers(
   orgId: string
 ): Promise<RoleServiceResult<OrgMember[]>> {
-  // STUB — replace with real Supabase call
-  void orgId;
-  return { success: true, data: [..._mockMembers] };
+  try {
+    const { supabase } = await import('@/lib/supabase')
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, role')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: true })
+
+    if (error) {
+      console.warn('[roleService] getOrgMembers failed:', error.message)
+      return { success: true, data: [] }
+    }
+
+    const members: OrgMember[] = (data || []).map((p: any) => ({
+      user_id: p.id,
+      name: p.full_name || 'Unknown',
+      email: '',
+      role: p.role || 'crew',
+      assigned_at: new Date().toISOString(),
+      avatarInitials: (p.full_name || 'U').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase(),
+    }))
+
+    return { success: true, data: members }
+  } catch (err) {
+    console.warn('[roleService] getOrgMembers error:', err)
+    return { success: true, data: [] }
+  }
 }
 
 /**
