@@ -342,9 +342,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         ? await supabase.auth.signInWithPassword({ email, password })
         : await supabase.auth.signInWithOtp({ email })
       if (error) throw error
-
       if (password) {
-        // Flag that user just authenticated via password — skip PIN verification
         sessionStorage.setItem('poweron_password_authed', '1')
         await get().initialize()
       }
@@ -373,17 +371,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // ── Submit passcode ─────────────────────────────────────────────────────────
   submitPasscode: async (passcode: string) => {
     const { user, profile } = get()
-    if (!user || !profile) return
-
+    console.log('[submitPasscode] called with user:', user?.id, 'profile:', profile?.id, 'passcode length:', passcode?.length)
+    if (!user || !profile) {
+      console.error('[submitPasscode] ABORT: no user or profile', { user: !!user, profile: !!profile })
+      return
+    }
     set({ error: null })
 
     try {
+      console.log('[submitPasscode] calling verifyPasscode for user:', user.id, 'org:', profile.org_id)
       const result = await withTimeout(
         verifyPasscode(user.id, profile.org_id, passcode),
         10000,
         { success: false as const, locked: false as const, attemptsRemaining: 5 }
       )
-
+      console.log('[submitPasscode] verifyPasscode result:', JSON.stringify(result))
       if (result.success) {
         // Create Redis app session (timeout 5s — don't block login)
         await withTimeout(

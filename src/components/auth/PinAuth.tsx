@@ -70,6 +70,14 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
   const status = useAuthStore(s => s.status)
   const hasPinStored = Boolean(getStoredHash())
   const [mode, setMode] = useState<FlowMode>((hasPinStored || onVerify) ? 'verify' : 'setup-create')
+
+  // When status becomes authenticated, LoginFlow will unmount this component.
+  // Force a re-render trigger by subscribing directly.
+  useEffect(() => {
+    if (status === 'authenticated') {
+      useAuthStore.setState(s => ({ ...s }))
+    }
+  }, [status])
   const [digits, setDigits]     = useState<string[]>(Array(PIN_LENGTH).fill(''))
   const [firstPin, setFirstPin] = useState('')
 
@@ -183,6 +191,7 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     if (onVerify) {
       setAttempts(0)
       await onVerify(pin)
+      setIsSubmitting(false)
       return
     }
 

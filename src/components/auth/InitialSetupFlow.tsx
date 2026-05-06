@@ -226,22 +226,19 @@ export function InitialSetupFlow() {
     }
     setStep('saving')
     try {
+      // Save SHA-256 hash to localStorage
       const pinHash = await sha256hex(pin)
       savePinLocal(pinHash)
-      // Write PBKDF2 hash directly to Supabase — bypasses auth store listener
+      // Write PBKDF2 hash to Supabase — BLOCKING, must succeed
       if (user?.id) {
-        setPasscode(user.id, pin).catch(() => {})
+        const result = await setPasscode(user.id, pin)
+        console.log('[PIN SETUP] setPasscode result:', JSON.stringify(result))
+        if (!result.success) {
+          setSaveErr('Failed to save PIN. Please try again.')
+          setStep('pin-create')
+          return
+        }
       }
-      // Save PIN hash FIRST before any state transitions
-      savePinLocal(pinHash)
-      // Write to Supabase non-blocking
-      if (user?.id) {
-        setPasscode(user.id, pin).catch(() => {})
-      }
-      // Small delay to ensure localStorage write completes before state transition
-      await new Promise(resolve => setTimeout(resolve, 100))
-      // Verify it's saved
-      console.log('[PIN] hash saved:', localStorage.getItem('poweron_pin_hash')?.slice(0, 10))
       // Transition to authenticated
       useAuthStore.setState(state => ({ ...state, status: 'authenticated' }))
     } catch (err) {
