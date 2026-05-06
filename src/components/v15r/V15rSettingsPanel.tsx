@@ -1997,7 +1997,7 @@ const CODE_LEN = 6
 
 function SecurityCard() {
   const { user, profile } = useAuth()
-  const signOut = useAuthStore(s => s.signOut)
+  const { lockApp, signOut } = useAuthStore()
   const [showModal, setShowModal]                   = useState(false)
   const [currentCode, setCurrentCode]               = useState('')
   const [newCode, setNewCode]                       = useState('')
@@ -2107,19 +2107,29 @@ function SecurityCard() {
 
       <div className="space-y-3">
         <p className="text-xs text-gray-400">
-          Change the 6-digit passcode used to unlock the app.
+          Secure your session or change your access credentials.
         </p>
+        
         <button
           onClick={openModal}
-          className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-900/30 text-blue-300 border border-blue-700/30 hover:bg-blue-900/50 transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-900/30 text-blue-300 border border-blue-700/30 hover:bg-blue-900/50 transition-colors"
         >
           <Lock size={14} />
           Change Passcode
         </button>
 
+        {/* ── LOCK HUB (DAILY USE) ── */}
+        <button
+          onClick={async () => await lockApp()}
+          className="w-full flex items-center gap-2 px-4 py-2.5 rounded text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-900/20"
+        >
+          <Zap size={14} fill="currentColor" />
+          LOCK HUB (DAILY USE)
+        </button>
+
         <button
           onClick={() => setShowDeviceLogoutConfirm(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-red-900/20 text-red-400 border border-red-700/30 hover:bg-red-900/40 transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-red-900/20 text-red-400 border border-red-700/30 hover:bg-red-900/40 transition-colors"
         >
           <LogOut size={14} />
           Sign Out of This Device
@@ -2152,7 +2162,6 @@ function SecurityCard() {
               <button
                 onClick={async () => {
                   setShowDeviceLogoutConfirm(false)
-                  localStorage.removeItem('poweron_pin_hash')
                   await signOut()
                 }}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors"
