@@ -315,27 +315,50 @@ function LoginForm({ onBack }: { onBack: () => void }) {
     next[filled] = key
     setPinDigits(next)
     if (filled === 5) {
-      // All 6 digits entered — verify
       const pin = next.join('')
       setPinLoading(true)
       setPinError('')
       try {
-        const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin))
-        const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
-        const stored = localStorage.getItem('poweron_pin_hash')
-        if (stored && hashHex === stored) {
-          // PIN matches — trigger auth
-          window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
+        const { data: { user } } = await supabase.auth.getUser()
+        
+        if (user) {
+          const { verifyPasscode } = await import('@/lib/auth/passcode')
+          const { profile } = useAuthStore.getState()
+          
+          // Surgical Fix: Passing userId, orgId, and pin as required
+          const result = await verifyPasscode(user.id, profile?.org_id || 'placeholder', pin)
+          
+          if (result.success) {
+            sessionStorage.setItem('poweron_password_authed', '1')
+            await useAuthStore.getState().initialize()
+          } else {
+            setPinError('Incorrect PIN.')
+            setTimeout(() => { setPinDigits(Array(6).fill('')); setPinLoading(false) }, 600)
+            return
+          }
         } else {
-          setPinError('Incorrect PIN. Try again.')
-          setTimeout(() => { setPinDigits(Array(6).fill('')); setPinError(''); setPinLoading(false) }, 600)
-          return
+          // Full Logout Case — identifier must be an email or username
+          const { data, error } = await supabase.functions.invoke('verify-pin', {
+            body: { email: identifier.trim().toLowerCase(), pin }
+          })
+
+          if (error || !data?.session) {
+            setPinError(data?.error || 'Invalid PIN or Email.')
+            setTimeout(() => { setPinDigits(Array(6).fill('')); setPinLoading(false) }, 600)
+            return
+          }
+
+          await supabase.auth.setSession({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+          })
+          sessionStorage.setItem('poweron_password_authed', '1')
+          await useAuthStore.getState().initialize()
         }
-      } catch {
-        setPinError('PIN verification failed.')
+      } catch (err) {
+        setPinError('Verification failed.')
         setPinLoading(false)
       }
-      setTimeout(() => { setPinDigits(Array(6).fill('')); setPinLoading(false) }, 300)
     }
   }
 
@@ -463,8 +486,8 @@ function LoginForm({ onBack }: { onBack: () => void }) {
           </button>
         </div>
 
-        {/* PIN section — only show if PIN is stored */}
-        {hasPinStored && (
+        {/* PIN section — always show */}
+        {(
           <div style={{ marginTop: '28px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
               <div style={{ flex: 1, height: '1px', background: 'rgba(30,128,223,0.12)' }} />
@@ -612,8 +635,8 @@ export function LoginFlow({ children }: LoginFlowProps) {
       return <AuthSpinner />
 
     case 'unauthenticated': {
-      const showPin = hasPinStored() && !pinFallback
-      if (showPin) return <PinAuth onFallbackToMagicLink={() => setPinFallback(true)} />
+      // In a Locked state, status is 'needs_passcode', not 'unauthenticated'.
+      // This block handles users who haven't logged in at all.
       if (screen === 'register') return <RegisterFlow onBack={() => setScreen('landing')} />
       if (screen === 'login') return <LoginForm onBack={() => setScreen('landing')} />
       return <LandingPage onLogin={() => setScreen('login')} onRegister={() => setScreen('register')} />

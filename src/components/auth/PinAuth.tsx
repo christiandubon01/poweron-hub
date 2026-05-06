@@ -67,8 +67,8 @@ interface PinAuthProps {
 
 export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
   const hasPinStored = Boolean(getStoredHash())
-
-  const [mode, setMode]         = useState<FlowMode>(hasPinStored ? 'verify' : 'setup-create')
+  // If onVerify is provided, we're in lock/re-auth mode — always verify regardless of localStorage
+  const [mode, setMode] = useState<FlowMode>((hasPinStored || onVerify) ? 'verify' : 'setup-create')
   const [digits, setDigits]     = useState<string[]>(Array(PIN_LENGTH).fill(''))
   const [firstPin, setFirstPin] = useState('')
 
@@ -176,7 +176,15 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
       return
     }
 
-    // ── Verify: check stored hash ─────────────────────────────────────────
+    // ── Verify: check stored hash ──────────────────────────────────────────
+    // If onVerify is provided (lock screen mode), delegate directly to authStore
+    // without checking localStorage — authStore verifies against Supabase PBKDF2
+    if (onVerify) {
+      setAttempts(0)
+      await onVerify(pin)
+      return
+    }
+
     const stored = getStoredHash()
     if (!stored) {
       // PIN was cleared externally — drop back to setup
@@ -189,12 +197,7 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     const hash = await sha256(pin)
     if (hash === stored) {
       setAttempts(0)
-      if (onVerify) {
-        // B24: delegate to authStore.submitPasscode (for needs_passcode state)
-        await onVerify(pin)
-      } else {
-        window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
-      }
+      window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
       // Leave isSubmitting=true while auth state propagates
     } else {
       const next = attempts + 1

@@ -22,6 +22,7 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
+import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
 // owner   → the business owner; sees the full app (V15rLayout + all panels)
@@ -116,6 +117,7 @@ interface AuthState {
   submitPasscode:     (passcode: string) => Promise<void>
   setupPasscode:      (passcode: string) => Promise<void>
   authenticateBio:    () => Promise<void>
+  lockApp:            () => Promise<void>
   signOut:            () => Promise<void>
   skipBiometric:      () => void
   clearError:         () => void
@@ -152,7 +154,7 @@ function registerAuthListener() {
     }
     if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
       const { status } = useAuthStore.getState()
-      if (status === 'unauthenticated') {
+      if (status === 'unauthenticated' || status === 'loading') {
         useAuthStore.getState().initialize()
       }
     }
@@ -182,7 +184,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Initialize ─────────────────────────────────────────────────────────────
   // Called once on app mount. Determines which screen to show.
-  initialize: async () => {
+ 
+   initialize: async () => {
     // Register auth state listener on first initialize (lazy — avoids TDZ in prod)
     registerAuthListener()
 
@@ -226,23 +229,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       //    in case the trigger hasn't committed yet)
       let profile: Profile | null = null
       for (let attempt = 0; attempt < 3; attempt++) {
+        // Surgical fix: Selecting only verified columns to prevent crashes
         const { data, error: profileError } = await supabase
           .from('profiles')
-          .select('*')
+          .select('id, org_id, full_name, role, is_active, passcode_hash')
           .eq('id', user.id)
           .single()
 
         if (!profileError && data) {
-          profile = data
+          profile = data as any
           break
         }
-        // Wait 500ms before retry (trigger may still be committing)
         if (attempt < 2) await new Promise(r => setTimeout(r, 500))
       }
 
       if (!profile) {
-        // Profile still missing after retries – route to passcode setup anyway
-        // (setupPasscode will handle the missing profile gracefully)
+        // Safety fallback if the user exists in Auth but not in Profiles
         set({ status: 'needs_passcode_setup', user })
         return
       }
@@ -273,50 +275,52 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return
       }
 
-      // 4. Check passcode status (has its own internal timeouts, but cap the whole call at 8s)
-      const ps = await withTimeout(getPasscodeStatus(user.id), 8000, {
-        isSet: !!profile.passcode_hash,
-        isLocked: false,
-        attemptsRemaining: 5,
-        lockExpiresAt: null,
-      })
+      // 4. If user just authenticated via password AND has a passcode, skip PIN verification
+      if (sessionStorage.getItem('poweron_password_authed') === '1' && !!profile.passcode_hash) {
+        sessionStorage.removeItem('poweron_password_authed')
+        const { role, ownerId } = await resolveUserRole(user.id)
+        let session = null
+        try {
+          session = await withTimeout(
+            createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
+            5000, null
+          )
+        } catch {}
+        set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
+        return
+      }
 
-      // If profile has any passcode_hash set (including 'password_only'), treat as configured
-      const hasAnyPasscode = !!profile.passcode_hash || ps.isSet
-      if (!hasAnyPasscode) {
+      // 5. No passcode set at all → go to setup
+      if (!profile.passcode_hash) {
         set({ status: 'needs_passcode_setup', user, profile })
         return
       }
+
+      // 6. password_only → skip PIN verification
+      if (profile.passcode_hash === 'password_only') {
+        const { role, ownerId } = await resolveUserRole(user.id)
+        let session = null
+        try {
+          session = await withTimeout(
+            createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
+            5000, null
+          )
+        } catch {}
+        set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
+        return
+      }
+
+      // 7. Real PIN set — check lockout then route to PIN screen
+      const ps = await withTimeout(getPasscodeStatus(user.id), 5000, {
+        isSet: true, isLocked: false, attemptsRemaining: 5, lockExpiresAt: null,
+      })
 
       if (ps.isLocked) {
         set({ status: 'locked', user, profile, lockExpiresAt: ps.lockExpiresAt })
         return
       }
-      // If user has password-only setup (no real PIN), skip PIN verification
-      if (profile.passcode_hash === 'password_only') {
-        // Clear any stale local PIN hash so PinAuth doesn't show
-        try { localStorage.removeItem('poweron_pin_hash') } catch {}
-        const { role, ownerId } = await resolveUserRole(user.id)
-        let session = null
-        try {
-          session = await withTimeout(
-            createAppSession({
-              userId: user.id,
-              orgId: profile.org_id,
-              role: profile.role,
-              deviceInfo: getDeviceInfo(),
-            }),
-            5000,
-            null
-          )
-        } catch {
-          // Non-blocking — user can still access app without Redis session
-        }
-        set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
-        return
-      }
 
-      // 5. Passcode is set and not locked — check biometric
+      // 8. Passcode set and not locked — check biometric
       const biometric = await getBiometricCapabilities()
       if (profile.biometric_enabled && biometric.available && biometric.enrolled) {
         set({ status: 'biometric_prompt', user, profile, biometric })
@@ -337,10 +341,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { error } = password
         ? await supabase.auth.signInWithPassword({ email, password })
         : await supabase.auth.signInWithOtp({ email })
-
       if (error) throw error
 
       if (password) {
+        // Flag that user just authenticated via password — skip PIN verification
+        sessionStorage.setItem('poweron_password_authed', '1')
         await get().initialize()
       }
       // Magic link: status stays as-is; Supabase will handle the redirect
@@ -410,6 +415,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         const session = await withTimeout(validateAppSession(), 3000, null)
         set({ status: 'authenticated', appSession: session, role, ownerId })
+        // Force re-render in case React missed the state update
+        setTimeout(() => {
+          if (useAuthStore.getState().status !== 'authenticated') {
+            useAuthStore.setState({ status: 'authenticated', appSession: session, role, ownerId })
+          }
+        }, 500)
 
       } else if ('locked' in result && result.locked) {
         set({ status: 'locked', lockExpiresAt: result.lockExpiresAt })
@@ -545,14 +556,56 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   // ── Sign out ────────────────────────────────────────────────────────────────
+  // ── Lock App ──────────────────────────────────────────────────────────────
+  // Clears the Redis session but keeps the Supabase JWT. 
+  // This triggers the PIN screen while keeping user identity known.
+  lockApp: async () => {
+    const { user } = get()
+    if (user) {
+      // Robust logging: if the audit trail fails, we still lock the app
+      try {
+        await logAction({ 
+          agentName: 'SYSTEM', 
+          actionType: 'lock', 
+          target: `profiles:${user.id}`, 
+          approvalStatus: 'n/a', 
+          approvalPhrase: null, 
+          userId: user.id, 
+          beforeState: { status: get().status }, 
+          afterState: { status: 'needs_passcode' }, 
+          verificationResult: null 
+        })
+      } catch (e) {
+        console.warn('[Auth] Audit logging failed, proceeding with lock:', e)
+      }
+    }
+    await destroyAppSession()
+    set({ status: 'needs_passcode', appSession: null })
+  },
+
+  // ── Sign out ────────────────────────────────────────────────────────────────
+  // The "Hard Reset" for account switching. Wipes the JWT and all state.
   signOut: async () => {
     const { user } = get()
     if (user) {
-      await logAudit({ action: 'logout', entity_type: 'profiles', entity_id: user.id })
+      try {
+        await logAction({ 
+          agentName: 'SYSTEM', 
+          actionType: 'logout', 
+          target: `profiles:${user.id}`, 
+          approvalStatus: 'n/a', 
+          approvalPhrase: null, 
+          userId: user.id, 
+          beforeState: null, 
+          afterState: null, 
+          verificationResult: null 
+        })
+      } catch (e) {
+        console.warn('[Auth] Audit logging failed, proceeding with logout:', e)
+      }
     }
     await destroyAppSession()
     await supabase.auth.signOut()
-    // Clear role from localStorage on sign-out
     localStorage.removeItem(ROLE_STORAGE_KEY)
     localStorage.removeItem(OWNER_ID_STORAGE_KEY)
     set({
@@ -570,6 +623,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   clearError: () => set({ error: null }),
 }))
+
+// Expose to window for console debugging/testing
+if (typeof window !== 'undefined') {
+  (window as any).useAuthStore = useAuthStore
+}
 
 // ── Auth state change listener is registered lazily via registerAuthListener()
 // Called on first initialize() to avoid Vite production TDZ issues.

@@ -16,6 +16,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Zap, Eye, EyeOff, Check, ArrowRight } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
+import { setPasscode } from '@/lib/auth/passcode'
 import { useAuthStore } from '@/store/authStore'
 import { supabase } from '@/lib/supabase'
 
@@ -177,7 +178,7 @@ type FlowStep = 'password' | 'pin-create' | 'pin-confirm' | 'saving'
 
 export function InitialSetupFlow() {
   const { setupPasscode, user } = useAuth()
-  const [step, setStep]               = useState<FlowStep>('password')
+  const [step, setStep]               = useState<FlowStep>('pin-create')
   const [password, setPassword]       = useState('')
   const [pin, setPin]                 = useState('')
   const [pinConfirmErr, setPinConfirmErr] = useState('')
@@ -227,15 +228,22 @@ export function InitialSetupFlow() {
     try {
       const pinHash = await sha256hex(pin)
       savePinLocal(pinHash)
+      // Write PBKDF2 hash directly to Supabase — bypasses auth store listener
       if (user?.id) {
-        try {
-          await (supabase as any).from('user_preferences').upsert(
-            { user_id: user.id, pin_hash: pinHash, updated_at: new Date().toISOString() },
-            { onConflict: 'user_id' }
-          )
-        } catch {}
+        setPasscode(user.id, pin).catch(() => {})
       }
-      await setupPasscode(pin)
+      // Save PIN hash FIRST before any state transitions
+      savePinLocal(pinHash)
+      // Write to Supabase non-blocking
+      if (user?.id) {
+        setPasscode(user.id, pin).catch(() => {})
+      }
+      // Small delay to ensure localStorage write completes before state transition
+      await new Promise(resolve => setTimeout(resolve, 100))
+      // Verify it's saved
+      console.log('[PIN] hash saved:', localStorage.getItem('poweron_pin_hash')?.slice(0, 10))
+      // Transition to authenticated
+      useAuthStore.setState(state => ({ ...state, status: 'authenticated' }))
     } catch (err) {
       setSaveErr('Setup failed. Please try again.')
       setStep('pin-create')
@@ -246,13 +254,11 @@ export function InitialSetupFlow() {
   const handleSkipPin = async () => {
     setStep('saving')
     try {
-      // Mark passcode setup complete without a PIN by directly transitioning state
-      // We call setupPasscode with a dummy value that won't be stored
-      // Instead, directly update auth store status to authenticated
-      useAuthStore.setState(state => ({
-        ...state,
-        status: 'authenticated',
-      }))
+      // Write 'password_only' to Supabase so setup doesn't re-trigger on reload
+      if (user?.id) {
+        await supabase.from('profiles').update({ passcode_hash: 'password_only' } as any).eq('id', user.id)
+      }
+      useAuthStore.setState(state => ({ ...state, status: 'authenticated' }))
     } catch {
       setStep('pin-create')
     }
