@@ -22,6 +22,7 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
+import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase } from '@/services/backupDataService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -70,6 +71,23 @@ function loadRoleFromStorage(userId: string): { role: UserRole; ownerId: string 
   const role = (localStorage.getItem(ROLE_STORAGE_KEY) ?? 'owner') as UserRole
   const ownerId = localStorage.getItem(OWNER_ID_STORAGE_KEY) || userId
   return { role, ownerId }
+}
+
+/** Seed empty backup for brand-new users who have never imported data */
+async function seedEmptyBackupIfNeeded(): Promise<void> {
+  if (hasBackupData()) return
+  const empty = createEmptyBackup()
+  empty.settings = {
+    ...empty.settings,
+    tax: 0, markup: 20, billRate: 65, opCost: 45,
+    mileRate: 0.67, dayTarget: 8, salaryTarget: 0,
+    annualTarget: 0, overhead: { essential: [], extra: [], loans: [], vehicle: [] },
+    company: '', license: '', gcalUrl: '', amBlock: 0, pmBlock: 0,
+    wasteDefault: 10, defaultOHRate: 30, billableHrsYear: 1800,
+    defaultTemplateId: '', mtoPhases: [], phaseWeights: {},
+  }
+  saveBackupData(empty)
+  syncBackupToSupabase().catch(() => {})
 }
 
 // Timeout helper — prevents auth flow from hanging on slow Redis/network calls
@@ -276,6 +294,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Re-use cached role from localStorage; re-resolve in background occasionally
         const { role, ownerId } = loadRoleFromStorage(user.id)
         set({ status: 'authenticated', user, profile, appSession, role, ownerId })
+        seedEmptyBackupIfNeeded()
         // Fire background re-verify in case crew membership changed
         resolveUserRole(user.id).then(({ role: r, ownerId: o }) => {
           set({ role: r, ownerId: o })
@@ -295,6 +314,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
         } catch {}
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
+        seedEmptyBackupIfNeeded()
         return
       }
 
@@ -315,6 +335,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
         } catch {}
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
+        // Seed empty backup for new users who have never imported data
+        if (!hasBackupData()) {
+          const { createEmptyBackup, saveBackupData, syncToSupabase } = await import('@/services/backupDataService')
+          const empty = createEmptyBackup()
+          empty.settings = {
+            ...empty.settings,
+            tax: 0, markup: 20, billRate: 65, opCost: 45,
+            mileRate: 0.67, dayTarget: 8, salaryTarget: 0,
+            annualTarget: 0, overhead: { essential: [], extra: [], loans: [], vehicle: [] },
+            company: '', license: '', gcalUrl: '', amBlock: 0, pmBlock: 0,
+            wasteDefault: 10, defaultOHRate: 30, billableHrsYear: 1800,
+            defaultTemplateId: '', mtoPhases: [], phaseWeights: {},
+          }
+          saveBackupData(empty)
+          syncToSupabase().catch(() => {})
+        }
         return
       }
 
@@ -425,6 +461,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         const session = await withTimeout(validateAppSession(), 3000, null)
         set({ status: 'authenticated', appSession: session, role, ownerId })
+        seedEmptyBackupIfNeeded()
 
       } else if ('locked' in result && result.locked) {
         set({ status: 'locked', lockExpiresAt: result.lockExpiresAt })
@@ -503,6 +540,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         const session = await withTimeout(validateAppSession(), 3000, null)
         set({ status: 'authenticated', profile: refreshedProfile, appSession: session, role: userRole, ownerId })
+        seedEmptyBackupIfNeeded()
       }
 
     } catch (err) {
@@ -540,6 +578,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           { role: 'owner' as UserRole, ownerId: user.id }
         )
         set({ status: 'authenticated', appSession: await validateAppSession(), role, ownerId })
+        seedEmptyBackupIfNeeded()
 
       } else if (result.reason === 'cancelled') {
         // User chose to use passcode instead

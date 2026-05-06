@@ -129,8 +129,6 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     jobTypeCategory: (storeLead.lead_type || 'electrical').toLowerCase(),
     pitchPreview: storeLead.description || storeLead.pitch_script || '',
     description: storeLead.description || undefined,
-    distance: (storeLead as any).distance_from_base_miles ?? undefined,
-    distanceFromBaseMiles: (storeLead as any).distance_from_base_miles ?? undefined,
     distanceFromBaseMiles: storeLead.distanceFromBaseMiles ?? (storeLead as any).distance_from_base_miles ?? undefined,
     distance: storeLead.distanceFromBaseMiles ?? (storeLead as any).distance_from_base_miles ?? (storeLead as any).distance ?? undefined,
     lat: (storeLead as any).latitude ?? undefined,

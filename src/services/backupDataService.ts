@@ -483,7 +483,7 @@ export interface ImportMergeSummary {
 
 // ── Import helper ─────────────────────────────────────────────────────────────
 
-function createEmptyBackup(): BackupData {
+export function createEmptyBackup(): BackupData {
   return {
     logs: [], projects: [], priceBook: [], weeklyData: [], serviceLogs: [],
     triggerRules: [], calcRefs: {}, customers: [], settings: {} as any,
