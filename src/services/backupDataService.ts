@@ -1088,13 +1088,9 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
     }
 
     if (!row || !row.data) {
-      console.log('[Sync] No remote data found — using local')
-      // If we have local data, push it to seed Supabase
-      const local = getBackupData()
-      if (local) {
-        console.log('[Sync] Seeding Supabase with local data')
-        await syncToSupabase()
-      }
+      console.log('[Sync] No remote data found — clearing local stale data')
+      localStorage.removeItem('poweron_backup_data')
+      localStorage.removeItem('poweron_v2')
       return { success: true, merged: false }
     }
 
