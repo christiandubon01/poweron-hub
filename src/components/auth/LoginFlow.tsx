@@ -189,7 +189,12 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
       }
       setSent(true)
     } catch (err: any) {
-      setError(err.message ?? 'Registration failed.')
+      const msg = err.message ?? ''
+      if (msg.includes('Password should contain')) {
+        setError('Password must include uppercase, lowercase, and a number. Minimum 8 characters.')
+      } else {
+        setError(msg || 'Registration failed.')
+      }
     } finally {
       setLoading(false)
     }

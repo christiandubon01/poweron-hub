@@ -216,8 +216,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       // 1. Check Supabase session (JWT)
-      const { data: { session } } = await supabase.auth.getSession()
+      // If redirected from email verification, show login page
+      const urlParams = new URLSearchParams(window.location.search)
+      if (urlParams.get('verified') === 'true') {
+        window.history.replaceState({}, document.title, window.location.pathname)
+        await supabase.auth.signOut()
+        set({ status: 'unauthenticated' })
+        return
+      }
 
+      const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) {
         set({ status: 'unauthenticated' })
         return
