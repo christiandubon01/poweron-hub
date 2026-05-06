@@ -19,7 +19,7 @@
 const crypto = require('crypto')
 
 const RESEND_API_URL = 'https://api.resend.com/emails'
-const DEFAULT_FROM   = 'Power On Solutions <noreply@poweronsolutions.com>'
+const DEFAULT_FROM   = 'Power On Solutions <noreply@poweronsolutionsllc.com>'
 
 // ── PIN JWT helpers ────────────────────────────────────────────────────────────
 
