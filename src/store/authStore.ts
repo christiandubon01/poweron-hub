@@ -294,7 +294,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (appSession) {
         // Re-use cached role from localStorage; re-resolve in background occasionally
         const { role, ownerId } = loadRoleFromStorage(user.id)
-        await withTimeout(loadFromSupabase(), 8000, { success: false, merged: false })
+        loadFromSupabase().catch(() => {})
         set({ status: 'authenticated', user, profile, appSession, role, ownerId })
         seedEmptyBackupIfNeeded()
         // Fire background re-verify in case crew membership changed
@@ -315,7 +315,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        await withTimeout(loadFromSupabase(), 8000, { success: false, merged: false })
+        loadFromSupabase().catch(() => {})
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
         return
@@ -336,7 +336,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        await withTimeout(loadFromSupabase(), 8000, { success: false, merged: false })
+        loadFromSupabase().catch(() => {})
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
         return
@@ -447,7 +447,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         )
 
         const session = await withTimeout(validateAppSession(), 3000, null)
-        await withTimeout(loadFromSupabase(), 8000, { success: false, merged: false })
+        loadFromSupabase().catch(() => {})
         set({ status: 'authenticated', appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
 
