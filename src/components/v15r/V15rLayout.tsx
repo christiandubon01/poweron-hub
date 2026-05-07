@@ -92,8 +92,11 @@ interface V15rLayoutProps {
 }
 
 export default function V15rLayout({ activeView, onNav, activeProjectId, activeProjectName, children }: V15rLayoutProps) {
-  const [backupData, setBackupData] = useState<BackupData | null>(null)
-  const [kpis, setKpis] = useState<any>(null)
+  const [backupData, setBackupData] = useState<BackupData | null>(() => getBackupData())
+  const [kpis, setKpis] = useState<any>(() => {
+    const d = getBackupData()
+    return d ? getKPIs(d) : null
+  })
 
   // Demo Mode — display layer swap
   const { isDemoMode, hasHydrated } = useDemoStore()
