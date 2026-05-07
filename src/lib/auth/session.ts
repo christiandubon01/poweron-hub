@@ -99,7 +99,9 @@ export async function validateAppSession(): Promise<AppSession | null> {
 
   const session = await rGet<AppSession>(redisKeys.session(sessionId))
   if (!session) {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY)
+    // Redis returned null — could be a network hiccup or cold start.
+    // Do NOT remove the session ID — treat as unknown, not expired.
+    // The user will be asked to re-authenticate only if Redis confirms expiry.
     return null
   }
 
