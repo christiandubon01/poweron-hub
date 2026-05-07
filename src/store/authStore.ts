@@ -652,6 +652,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await supabase.auth.signOut()
     localStorage.removeItem(ROLE_STORAGE_KEY)
     localStorage.removeItem(OWNER_ID_STORAGE_KEY)
+    localStorage.removeItem('poweron_backup_data')
+    localStorage.removeItem('poweron_alerts_cache')
+    localStorage.removeItem('poweron_v2')
     set({
       status:        'unauthenticated',
       user:          null,
