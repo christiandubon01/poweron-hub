@@ -294,7 +294,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (appSession) {
         // Re-use cached role from localStorage; re-resolve in background occasionally
         const { role, ownerId } = loadRoleFromStorage(user.id)
-        loadFromSupabase().catch(() => {})
+        await loadFromSupabase()
         set({ status: 'authenticated', user, profile, appSession, role, ownerId })
         seedEmptyBackupIfNeeded()
         // Fire background re-verify in case crew membership changed
@@ -315,7 +315,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        loadFromSupabase().catch(() => {})
+        await loadFromSupabase()
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
         return
@@ -336,11 +336,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        loadFromSupabase().catch(() => {})
+        await loadFromSupabase()
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
         return
       }
+      // 7. Real PIN set
       // 7. Real PIN set — check lockout then route to PIN screen
       const ps = await withTimeout(getPasscodeStatus(user.id), 5000, {
         isSet: true, isLocked: false, attemptsRemaining: 5, lockExpiresAt: null,
@@ -447,7 +448,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         )
 
         const session = await withTimeout(validateAppSession(), 3000, null)
-        loadFromSupabase().catch(() => {})
+        await loadFromSupabase()
         set({ status: 'authenticated', appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
 
