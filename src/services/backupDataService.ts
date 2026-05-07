@@ -1112,10 +1112,19 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
     // Store sync metadata for UI display
     _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || '' }
 
-    // ── Case 1: No local data — use remote ──────────────────────────
+    // ── Case 1: No local data ──────────────────────────────────────────────────────────────
     if (!local) {
+      const remoteIsEmpty = !remote._lastSavedAt &&
+        (!remote.projects || remote.projects.length === 0) &&
+        (!remote.logs || remote.logs.length === 0) &&
+        (!remote.serviceLogs || remote.serviceLogs.length === 0) &&
+        (!remote.settings || (!remote.settings.company && !remote.settings.billRate))
+      if (remoteIsEmpty) {
+        console.log('[Sync] No local data and remote is empty — skipping load, letting seed run')
+        return { success: true, merged: false }
+      }
       saveBackupDataSilent(remote)
-      console.log('[Sync] No local data — Loading: remote')
+      console.log('[Sync] No local data – Loading: remote')
       return { success: true, merged: true, fromDevice: remoteDevice }
     }
 
