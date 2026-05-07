@@ -87,7 +87,8 @@ async function seedEmptyBackupIfNeeded(): Promise<void> {
     defaultTemplateId: '', mtoPhases: [], phaseWeights: {},
   }
   saveBackupData(empty)
-  syncBackupToSupabase().catch(() => {})
+  // DO NOT sync to Supabase — seed is local-only display fallback.
+  // Supabase push only happens when user creates real data.
 }
 
 // Timeout helper — prevents auth flow from hanging on slow Redis/network calls
