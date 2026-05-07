@@ -294,7 +294,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (appSession) {
         // Re-use cached role from localStorage; re-resolve in background occasionally
         const { role, ownerId } = loadRoleFromStorage(user.id)
-        await loadFromSupabase()
         set({ status: 'authenticated', user, profile, appSession, role, ownerId })
         seedEmptyBackupIfNeeded()
         // Fire background re-verify in case crew membership changed
@@ -315,12 +314,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        await loadFromSupabase()
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
         return
       }
-      // 5. No passcode set at all
+
+      // 5. No passcode set at all → go to setup
       if (!profile.passcode_hash) {
         set({ status: 'needs_passcode_setup', user, profile })
         return
@@ -336,12 +335,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        await loadFromSupabase()
         set({ status: 'authenticated', user, profile, appSession: session, role, ownerId })
-        seedEmptyBackupIfNeeded()
+        // Seed empty backup for new users who have never imported data
+        if (!hasBackupData()) {
+          const { createEmptyBackup, saveBackupData, syncToSupabase } = await import('@/services/backupDataService')
+          const empty = createEmptyBackup()
+          empty.settings = {
+            ...empty.settings,
+            tax: 0, markup: 20, billRate: 65, opCost: 45,
+            mileRate: 0.67, dayTarget: 8, salaryTarget: 0,
+            annualTarget: 0, overhead: { essential: [], extra: [], loans: [], vehicle: [] },
+            company: '', license: '', gcalUrl: '', amBlock: 0, pmBlock: 0,
+            wasteDefault: 10, defaultOHRate: 30, billableHrsYear: 1800,
+            defaultTemplateId: '', mtoPhases: [], phaseWeights: {},
+          }
+          saveBackupData(empty)
+          syncToSupabase().catch(() => {})
+        }
         return
       }
-      // 7. Real PIN set
+
       // 7. Real PIN set — check lockout then route to PIN screen
       const ps = await withTimeout(getPasscodeStatus(user.id), 5000, {
         isSet: true, isLocked: false, attemptsRemaining: 5, lockExpiresAt: null,
@@ -448,7 +461,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         )
 
         const session = await withTimeout(validateAppSession(), 3000, null)
-        await loadFromSupabase()
         set({ status: 'authenticated', appSession: session, role, ownerId })
         seedEmptyBackupIfNeeded()
 
