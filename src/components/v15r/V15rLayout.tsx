@@ -678,7 +678,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
       setToastMessage(message)
       setTimeout(() => setToastMessage(null), 4000)
-
+      // Sync imported data to Supabase immediately
+      syncToSupabase().catch(() => {})
       // Reset input
       if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (err) {
