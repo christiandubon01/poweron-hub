@@ -22,7 +22,7 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
-import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating } from '@/services/backupDataService'
+import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner } from '@/services/backupDataService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -97,10 +97,17 @@ async function seedEmptyBackupIfNeeded(): Promise<void> {
 async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
   setHydrating(true)
   try {
-    // Clear any stale data from previous user
-    localStorage.removeItem('poweron_backup_data')
-    localStorage.removeItem('poweron_v2')
-    // Load this user's data from Supabase
+    // Check if cached data belongs to a different user
+    const cacheOwner = getCacheOwner()
+    if (cacheOwner && cacheOwner !== userId) {
+      // Different user — clear their cache
+      localStorage.removeItem('poweron_backup_data')
+      localStorage.removeItem('poweron_v2')
+      clearCacheOwner()
+    }
+    // Tag this cache as belonging to current user
+    setCacheOwner(userId)
+    // Load from Supabase — timestamp resolution keeps newer data (local or remote)
     try {
       await loadFromSupabase()
     } catch {
@@ -694,6 +701,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
       // If check fails, keep local data safe
     }
+    clearCacheOwner()
     set({
       status:          'unauthenticated',
       user:            null,

@@ -1012,6 +1012,17 @@ export function exportBackup(d?: BackupData): void {
 // ── Supabase Sync ────────────────────────────────────────────────────────────
 
 const SUPABASE_STATE_KEY = 'poweron_v2'
+const CACHE_OWNER_KEY = 'poweron_cache_owner'
+
+export function setCacheOwner(userId: string): void {
+  try { localStorage.setItem(CACHE_OWNER_KEY, userId) } catch {}
+}
+export function getCacheOwner(): string | null {
+  try { return localStorage.getItem(CACHE_OWNER_KEY) } catch { return null }
+}
+export function clearCacheOwner(): void {
+  try { localStorage.removeItem(CACHE_OWNER_KEY) } catch {}
+}
 
 // ── Hydration guard ───────────────────────────────────────────────────────────
 // When true, all Supabase writes are blocked. Set to true during login bootstrap
