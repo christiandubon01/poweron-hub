@@ -325,38 +325,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }
   }, [])
 
-  // Load from Supabase on mount (after auth)
+  // Supabase initial load is handled by bootstrapAuthenticatedUser in authStore.
+  // Layout only needs to set sync status on mount.
   useEffect(() => {
     if (!isSupabaseConfigured()) {
       setSyncStatus('failed')
       return
     }
-
-    setSyncStatus('syncing')
-    loadFromSupabase().then(result => {
-      if (result.success) {
-        setSyncStatus('synced')
-        setLastSyncTime(new Date().toLocaleTimeString())
-        // Update device info from sync metadata
-        const meta = getLastSyncMeta()
-        if (meta?.savedBy) {
-          const deviceLabel = meta.savedBy.split('_')[0] || meta.savedBy
-          setLastSyncDevice(deviceLabel)
-        }
-        if (result.merged) {
-          // Remote was newer — refresh local state
-          const data = getBackupData()
-          setBackupData(data)
-          if (data) setKpis(getKPIs(data))
-          const deviceLabel = result.fromDevice ? result.fromDevice.split('_')[0] : 'cloud'
-          setToastMessage(`Loaded latest from cloud (saved by ${deviceLabel})`)
-          setTimeout(() => setToastMessage(null), 5000)
-        }
-      } else {
-        setSyncStatus('failed')
-        console.warn('[layout] Supabase load failed:', result.error)
-      }
-    }).catch(() => setSyncStatus('failed'))
+    setSyncStatus('synced')
+    setLastSyncTime(new Date().toLocaleTimeString())
   }, [])
 
   // Periodic sync to Supabase — startPeriodicSync handles the 30s debounced push.
