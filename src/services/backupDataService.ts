@@ -1018,7 +1018,10 @@ const SUPABASE_STATE_KEY = 'poweron_v2'
 // and false once tenant data is fully hydrated. Prevents empty seed or stale
 // local state from overwriting real Supabase data during account switching.
 let _isHydrating = false
-export function setHydrating(val: boolean): void { _isHydrating = val }
+export function setHydrating(val: boolean): void { 
+  _isHydrating = val 
+  console.log('[Hydration] flag set to:', val)
+}
 export function isHydrating(): boolean { return _isHydrating }
 
 /** Sync current localStorage data to Supabase app_state table.
@@ -1026,7 +1029,7 @@ export function isHydrating(): boolean { return _isHydrating }
 export async function syncToSupabase(): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, error: 'Supabase not configured' }
   if (_isHydrating) {
-    console.log('[Sync] Blocked — hydration in progress, skipping Supabase write')
+    console.warn('[Sync] BLOCKED by hydration flag — this should clear after login')
     return { success: false, error: 'Hydration in progress' }
   }
   try {
