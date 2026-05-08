@@ -1092,6 +1092,10 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
  */
 export async function loadFromSupabase(forceRemote = false): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, merged: false, error: 'Supabase not configured' }
+  if (_isHydrating && forceRemote) {
+    console.log('[Sync] Realtime load blocked — hydration in progress')
+    return { success: false, merged: false, error: 'Hydration in progress' }
+  }
 
   try {
     const { supabase } = await import('@/lib/supabase')
