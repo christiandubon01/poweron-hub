@@ -20,7 +20,52 @@
  * Then push to git → Netlify auto-deploys from the connected branch.
  */
 
-const STORAGE_KEY = 'poweron_backup_data'
+const LEGACY_STORAGE_KEY = 'poweron_backup_data'
+const STORAGE_KEY = LEGACY_STORAGE_KEY
+
+// ── Tenant-scoped local cache ────────────────────────────────────────────────
+// Live authenticated app data must never be read from a browser-global key.
+// The generic legacy key is only kept as a compatibility mirror/migration source.
+let _activeTenantUserId: string | null = null
+let _tenantDataReady = false
+
+function getTenantStorageKey(userId: string): string {
+  return `poweron_backup_data_${userId}`
+}
+
+export function setActiveTenantUser(userId: string): void {
+  _activeTenantUserId = userId
+  _tenantDataReady = false
+}
+
+export function markTenantDataReady(userId: string): void {
+  if (_activeTenantUserId === userId) _tenantDataReady = true
+}
+
+export function clearActiveTenantUser(): void {
+  _activeTenantUserId = null
+  _tenantDataReady = false
+}
+
+export function getActiveTenantUserId(): string | null {
+  return _activeTenantUserId
+}
+
+export function isTenantDataReady(): boolean {
+  return !!_activeTenantUserId && _tenantDataReady
+}
+
+function attachTenantOwner(data: BackupData, userId: string): BackupData {
+  return { ...(data as any), _tenantUserId: userId } as BackupData
+}
+
+function tenantOwnerMatches(data: any, userId: string): boolean {
+  return !data?._tenantUserId || data._tenantUserId === userId
+}
+
+function getEffectiveStorageKey(userId = _activeTenantUserId): string {
+  return userId ? getTenantStorageKey(userId) : LEGACY_STORAGE_KEY
+}
 
 // ── Device ID System ─────────────────────────────────────────────────────────
 const DEVICE_ID_KEY = 'poweron_device_id'
@@ -287,53 +332,51 @@ export function isSupabaseConfigured(): boolean {
 
 // ── LocalStorage CRUD ────────────────────────────────────────────────────────
 
-export function hasBackupData(): boolean {
-  try { return localStorage.getItem(STORAGE_KEY) !== null } catch { return false }
+export function hasBackupData(userId = _activeTenantUserId): boolean {
+  try { return localStorage.getItem(getEffectiveStorageKey(userId)) !== null } catch { return false }
 }
 
-export function getBackupData(): BackupData | null {
+export function getBackupData(userId = _activeTenantUserId): BackupData | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const key = getEffectiveStorageKey(userId)
+    const raw = localStorage.getItem(key)
     if (raw) {
-      const data = JSON.parse(raw) as BackupData
-      // ISSUE 4: Price book dual-storage reconciliation
-      // Step 1: If local priceBook empty, hydrate from poweron_v2
+      const data = JSON.parse(raw) as BackupData & { _tenantUserId?: string }
+      if (userId && !tenantOwnerMatches(data, userId)) {
+        console.warn('[backupDataService] Ignoring cache owned by another tenant')
+        return null
+      }
+      // ISSUE 4: Price book dual-storage reconciliation. Only run legacy poweron_v2
+      // reconciliation when no active tenant exists; authenticated sessions must not
+      // hydrate from browser-global poweron_v2.
       const localPBArr = Array.isArray(data.priceBook) ? data.priceBook : (data.priceBook ? Object.values(data.priceBook) : [])
-      try {
-        const v2Raw = localStorage.getItem('poweron_v2')
-        if (v2Raw) {
-          const v2Data = JSON.parse(v2Raw)
-          const v2PB = Array.isArray(v2Data?.priceBook) ? v2Data.priceBook : (v2Data?.priceBook ? Object.values(v2Data.priceBook) : [])
-          if (localPBArr.length === 0 && v2PB.length > 0) {
-            // Hydrate from poweron_v2
-            console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2PB.length, 'items')
-            data.priceBook = Array.isArray(v2Data.priceBook) ? v2Data.priceBook : Object.values(v2Data.priceBook || {})
-          } else if (localPBArr.length > v2PB.length && v2PB.length >= 0) {
-            // Step 2: One-time migration — local has MORE items, merge into poweron_v2
-            const v2Ids = new Set(v2PB.map((i: any) => i.id).filter(Boolean))
-            const diff = localPBArr.filter((i: any) => i.id && !v2Ids.has(i.id))
-            if (diff.length > 0) {
-              const merged = [...v2PB, ...diff]
-              v2Data.priceBook = merged
-              localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
-              console.log('[backupDataService] One-time migration: merged', diff.length, 'extra items into poweron_v2')
+      if (!userId) {
+        try {
+          const v2Raw = localStorage.getItem('poweron_v2')
+          if (v2Raw) {
+            const v2Data = JSON.parse(v2Raw)
+            const v2PB = Array.isArray(v2Data?.priceBook) ? v2Data.priceBook : (v2Data?.priceBook ? Object.values(v2Data.priceBook) : [])
+            if (localPBArr.length === 0 && v2PB.length > 0) {
+              console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2PB.length, 'items')
+              data.priceBook = Array.isArray(v2Data.priceBook) ? v2Data.priceBook : Object.values(v2Data.priceBook || {})
+            } else if (localPBArr.length > v2PB.length && v2PB.length >= 0) {
+              const v2Ids = new Set(v2PB.map((i: any) => i.id).filter(Boolean))
+              const diff = localPBArr.filter((i: any) => i.id && !v2Ids.has(i.id))
+              if (diff.length > 0) {
+                const merged = [...v2PB, ...diff]
+                v2Data.priceBook = merged
+                localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+                console.log('[backupDataService] One-time migration: merged', diff.length, 'extra items into poweron_v2')
+              }
             }
           }
-        }
-      } catch { /* ignore poweron_v2 parse errors */ }
-      // Runtime migration: if legacy object-shape priceBook found, convert once and re-save silently
+        } catch { /* ignore poweron_v2 parse errors */ }
+      }
       if (data && data.priceBook && !Array.isArray(data.priceBook) && typeof data.priceBook === 'object') {
         console.warn('[backupDataService] Migrating legacy object-shape priceBook to array — one-time conversion')
         data.priceBook = Object.values(data.priceBook as Record<string, BackupPriceBookItem>)
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-        } catch (e) {
-          console.error('[backupDataService] Failed to persist migrated priceBook:', e)
-        }
+        try { localStorage.setItem(key, JSON.stringify(data)) } catch (e) { console.error('[backupDataService] Failed to persist migrated priceBook:', e) }
       }
-      // Runtime migration: backfill serviceLog.statusEvents for historical exposure tracking (DASHBOARD-EXPOSURE-EVENTS-APR21-2026-1).
-      // Idempotent via per-log presence check. Seeds a single event dated to log.date with current payStatus/collected/invoiced=false.
-      // Chart reader (Dashboard CFOT) reads statusEvents to reconstruct Unbilled vs Pending Invoice over time.
       if (data && Array.isArray(data.serviceLogs)) {
         let backfilled = 0
         for (const sl of data.serviceLogs as any[]) {
@@ -349,20 +392,9 @@ export function getBackupData(): BackupData | null {
         }
         if (backfilled > 0) {
           console.log(`[backupDataService] Backfilled statusEvents on ${backfilled} service log(s) — one-time migration`)
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-          } catch (e) {
-            console.error('[backupDataService] Failed to persist backfilled statusEvents:', e)
-          }
+          try { localStorage.setItem(key, JSON.stringify(data)) } catch (e) { console.error('[backupDataService] Failed to persist backfilled statusEvents:', e) }
         }
       }
-
-      // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
-      // Close the gap between p.paid scalar and log-stream collections.
-      // Legacy payment handlers wrote p.paid directly without creating a d.logs[] entry,
-      // so the Dashboard CFOT chart (which reads logs) under-reported historical collections.
-      // This backfill synthesizes one log entry per project to close the scalar gap.
-      // Idempotent via p._paidScalarBackfilledAt flag — never runs twice on the same project.
       if (data && Array.isArray(data.projects) && Array.isArray(data.logs)) {
         let paidBackfilled = 0
         for (const p of data.projects as any[]) {
@@ -375,11 +407,10 @@ export function getBackupData(): BackupData | null {
           }
           const loggedSum = (data.logs as any[])
             .filter(l => l && l.projId === p.id)
-            .reduce((s, l) => s + (Number(l.collected) || 0), 0)
+            .reduce((sum, l) => sum + (Number(l.collected) || 0), 0)
           const manualAdj = Number((p.finance && p.finance.manualPaidAdjustment) || 0)
           const gap = scalarPaid - (loggedSum + manualAdj)
           if (gap > 0.005) {
-            // Pick the best historical date we have: lastCollectedAt, else _lastSavedAt, else today.
             const gapDate = (p.lastCollectedAt && String(p.lastCollectedAt).slice(0, 10))
               || (data._lastSavedAt && String(data._lastSavedAt).slice(0, 10))
               || new Date().toISOString().slice(0, 10)
@@ -406,31 +437,26 @@ export function getBackupData(): BackupData | null {
         }
         if (paidBackfilled > 0) {
           console.log(`[backupDataService] Backfilled paid-scalar gap on ${paidBackfilled} project(s) — one-time migration`)
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-          } catch (e) {
-            console.error('[backupDataService] Failed to persist paid-scalar backfill:', e)
-          }
+          try { localStorage.setItem(key, JSON.stringify(data)) } catch (e) { console.error('[backupDataService] Failed to persist paid-scalar backfill:', e) }
         }
       }
-      return data
+      return data as BackupData
     }
-    // If no data under STORAGE_KEY, try poweron_v2 as fallback
-    const v2Raw = localStorage.getItem('poweron_v2')
-    if (v2Raw) {
-      console.log('[backupDataService] No data in', STORAGE_KEY, '— loading from poweron_v2')
-      const v2Parsed = JSON.parse(v2Raw) as BackupData
-      // Runtime migration: legacy poweron_v2 may be object-shape too
-      if (v2Parsed && v2Parsed.priceBook && !Array.isArray(v2Parsed.priceBook) && typeof v2Parsed.priceBook === 'object') {
-        console.warn('[backupDataService] Migrating legacy object-shape priceBook (from poweron_v2) to array — one-time conversion')
-        v2Parsed.priceBook = Object.values(v2Parsed.priceBook as Record<string, BackupPriceBookItem>)
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(v2Parsed))
-        } catch (e) {
-          console.error('[backupDataService] Failed to persist migrated priceBook:', e)
+
+    // Only unauthenticated/legacy flows may fall back to poweron_v2. Authenticated
+    // tenant sessions must not read browser-global fallback state.
+    if (!userId) {
+      const v2Raw = localStorage.getItem('poweron_v2')
+      if (v2Raw) {
+        console.log('[backupDataService] No data in', LEGACY_STORAGE_KEY, '— loading from poweron_v2')
+        const v2Parsed = JSON.parse(v2Raw) as BackupData
+        if (v2Parsed && v2Parsed.priceBook && !Array.isArray(v2Parsed.priceBook) && typeof v2Parsed.priceBook === 'object') {
+          console.warn('[backupDataService] Migrating legacy object-shape priceBook (from poweron_v2) to array — one-time conversion')
+          v2Parsed.priceBook = Object.values(v2Parsed.priceBook as Record<string, BackupPriceBookItem>)
+          try { localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(v2Parsed)) } catch (e) { console.error('[backupDataService] Failed to persist migrated priceBook:', e) }
         }
+        return v2Parsed
       }
-      return v2Parsed
     }
     return null
   } catch (err) {
@@ -439,25 +465,32 @@ export function getBackupData(): BackupData | null {
   }
 }
 
-export function saveBackupData(data: BackupData): void {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) }
-  catch (err) { console.error('[backupDataService] Failed to save:', err) }
-  // Notify same-tab listeners (e.g. V15rLayout KPI bar) that data has changed.
-  // window.storage only fires for cross-tab writes, so we dispatch a custom event here.
-  try { window.dispatchEvent(new CustomEvent('poweron-data-saved')) } catch { /* ignore */ }
-  // ISSUE 4: Keep poweron_v2 price book in sync to prevent dual-storage divergence
+export function saveBackupData(data: BackupData, userId = _activeTenantUserId): void {
   try {
-    const v2Raw = localStorage.getItem('poweron_v2')
-    if (v2Raw && data.priceBook) {
-      const v2Data = JSON.parse(v2Raw)
-      const pbArr = Array.isArray(data.priceBook) ? data.priceBook : Object.values(data.priceBook)
-      if (pbArr.length > 0) {
-        v2Data.priceBook = pbArr
-        v2Data._lastSavedAt = data._lastSavedAt
-        localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+    const owned = userId ? attachTenantOwner(data, userId) : data
+    const key = getEffectiveStorageKey(userId)
+    localStorage.setItem(key, JSON.stringify(owned))
+    // Keep legacy key as display compatibility only for the active tenant. Reads
+    // during authenticated sessions still use the tenant key, not this key.
+    if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
+  } catch (err) { console.error('[backupDataService] Failed to save:', err) }
+  try { window.dispatchEvent(new CustomEvent('poweron-data-saved')) } catch { /* ignore */ }
+  // Do not mirror tenant data into poweron_v2; that key is browser-global and
+  // was a source of cross-account bleed.
+  if (!userId) {
+    try {
+      const v2Raw = localStorage.getItem('poweron_v2')
+      if (v2Raw && data.priceBook) {
+        const v2Data = JSON.parse(v2Raw)
+        const pbArr = Array.isArray(data.priceBook) ? data.priceBook : Object.values(data.priceBook)
+        if (pbArr.length > 0) {
+          v2Data.priceBook = pbArr
+          v2Data._lastSavedAt = data._lastSavedAt
+          localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+        }
       }
-    }
-  } catch { /* ignore poweron_v2 sync errors */ }
+    } catch { /* ignore poweron_v2 sync errors */ }
+  }
 }
 
 /**
@@ -466,12 +499,20 @@ export function saveBackupData(data: BackupData): void {
  * Use ONLY for internal sync operations (embedding metadata, saving remote pulls)
  * to prevent re-triggering the sync loop.
  */
-function saveBackupDataSilent(data: BackupData): void {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch { /* ignore */ }
+function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): void {
+  try {
+    const owned = userId ? attachTenantOwner(data, userId) : data
+    const key = getEffectiveStorageKey(userId)
+    localStorage.setItem(key, JSON.stringify(owned))
+    if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
+  } catch { /* ignore */ }
 }
 
-export function clearBackupData(): void {
-  try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+export function clearBackupData(userId = _activeTenantUserId): void {
+  try { localStorage.removeItem(getEffectiveStorageKey(userId)) } catch { /* ignore */ }
+  if (userId) {
+    try { localStorage.removeItem(LEGACY_STORAGE_KEY) } catch { /* ignore */ }
+  }
 }
 
 // ── Import merge summary type ────────────────────────────────────────────────
@@ -1028,6 +1069,8 @@ export function clearCacheOwner(): void {
 // When true, all Supabase writes are blocked. Set to true during login bootstrap
 // and false once tenant data is fully hydrated. Prevents empty seed or stale
 // local state from overwriting real Supabase data during account switching.
+// Legacy hydration flag kept for backward compatibility/debugging only.
+// Tenant readiness below is the actual sync guard.
 let _isHydrating = false
 export function setHydrating(val: boolean): void { 
   _isHydrating = val 
@@ -1035,37 +1078,47 @@ export function setHydrating(val: boolean): void {
 }
 export function isHydrating(): boolean { return _isHydrating }
 
-/** Sync current localStorage data to Supabase app_state table.
- *  Includes device ID metadata so we know which device last saved. */
-export async function syncToSupabase(): Promise<{ success: boolean; error?: string }> {
-  if (!isSupabaseConfigured()) return { success: false, error: 'Supabase not configured' }
+/** Sync current tenant-scoped localStorage data to Supabase app_state table.
+ *  Refuses to run until the authenticated tenant has completed bootstrap. */
+export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  if (!isSupabaseConfigured()) return { success: false, skipped: true, error: 'Supabase not configured' }
+  if (!userId) return { success: false, skipped: true, error: 'No active tenant user' }
+  if (!_tenantDataReady || _activeTenantUserId !== userId) {
+    console.warn('[Sync] BLOCKED: tenant data not ready', { active: _activeTenantUserId, userId, ready: _tenantDataReady })
+    return { success: false, skipped: true, error: 'Tenant data not ready' }
+  }
   if (_isHydrating) {
     console.warn('[Sync] BLOCKED by hydration flag — this should clear after login')
-    return { success: false, error: 'Hydration in progress' }
+    return { success: false, skipped: true, error: 'Hydration in progress' }
   }
   try {
     const { supabase } = await import('@/lib/supabase')
-    const data = getBackupData()
-    if (!data) return { success: false, error: 'No local data to sync' }
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, skipped: true, error: 'Not authenticated' }
+    if (user.id !== userId) {
+      console.error('[Sync] BLOCKED: Supabase user mismatch', { sessionUser: user.id, activeTenant: userId })
+      return { success: false, skipped: true, error: 'Authenticated user mismatch' }
+    }
+
+    const data = getBackupData(userId)
+    if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
     const now = new Date().toISOString()
     const deviceId = getDeviceId()
 
-    // Embed device metadata + update timestamp
-    data._lastSavedAt = now
-    data._syncMeta = { savedBy: deviceId, savedAt: now }
-    saveBackupDataSilent(data) // persist locally with metadata — silent to avoid re-sync loop
-
-    // Single upsert to Supabase with all metadata embedded
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { success: false, error: 'Not authenticated' }
+    const payload = attachTenantOwner({
+      ...(data as any),
+      _lastSavedAt: now,
+      _syncMeta: { savedBy: deviceId, savedAt: now },
+    } as BackupData, userId)
+    saveBackupDataSilent(payload, userId)
 
     const { error } = await supabase
       .from('app_state')
       .upsert({
-        user_id: user.id,
+        user_id: userId,
         state_key: SUPABASE_STATE_KEY,
-        data: data,
+        data: payload,
         updated_at: now,
       }, { onConflict: 'user_id,state_key' })
 
@@ -1075,7 +1128,7 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
     }
 
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
-    console.log(`[Sync] Synced to Supabase at ${now} by ${deviceId}`)
+    console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`)
     return { success: true }
   } catch (err: any) {
     console.error('[Sync] Supabase sync error:', err)
@@ -1084,17 +1137,17 @@ export async function syncToSupabase(): Promise<{ success: boolean; error?: stri
 }
 
 /**
- * Load backup from Supabase — TIMESTAMP-ONLY resolution.
- * Remote newer = remote wins. No "richness guard".
- * This ensures cross-device sync always uses the latest save.
- *
- * Returns { merged: true, fromDevice } when remote data was loaded.
+ * Load backup from Supabase for one explicit tenant.
+ * During login/bootstrap this function is read-only against Supabase:
+ * remote row wins if present; no row creates a local-only empty cache.
  */
-export async function loadFromSupabase(forceRemote = false): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string }> {
-  if (!isSupabaseConfigured()) return { success: false, merged: false, error: 'Supabase not configured' }
+export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, maybeForceRemote = false): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string; status?: 'loaded_remote' | 'seeded_empty' | 'failed' }> {
+  const explicitUserId = typeof userIdOrForceRemote === 'string' ? userIdOrForceRemote : null
+  const forceRemote = typeof userIdOrForceRemote === 'boolean' ? userIdOrForceRemote : maybeForceRemote
+  if (!isSupabaseConfigured()) return { success: false, merged: false, status: 'failed', error: 'Supabase not configured' }
   if (_isHydrating && forceRemote) {
     console.log('[Sync] Realtime load blocked — hydration in progress')
-    return { success: false, merged: false, error: 'Hydration in progress' }
+    return { success: false, merged: false, status: 'failed', error: 'Hydration in progress' }
   }
 
   try {
@@ -1102,35 +1155,55 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
     const thisDevice = getDeviceId()
 
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { success: false, merged: false, error: 'Not authenticated' }
+    if (!user) return { success: false, merged: false, status: 'failed', error: 'Not authenticated' }
+
+    const userId = explicitUserId || _activeTenantUserId || user.id
+    if (user.id !== userId) {
+      console.error('[Sync] loadFromSupabase blocked: user mismatch', { requested: userId, sessionUser: user.id })
+      return { success: false, merged: false, status: 'failed', error: 'Authenticated user mismatch' }
+    }
+
+    setActiveTenantUser(userId)
 
     const { data: row, error } = await supabase
       .from('app_state')
-      .select('data, updated_at')
-      .eq('user_id', user.id)
+      .select('user_id,data,updated_at')
+      .eq('user_id', userId)
       .eq('state_key', SUPABASE_STATE_KEY)
       .maybeSingle()
 
     if (error) {
       console.warn('[Sync] Supabase read failed:', error.message)
-      return { success: false, merged: false, error: error.message }
+      return { success: false, merged: false, status: 'failed', error: error.message }
+    }
+
+    if (row?.user_id && row.user_id !== userId) {
+      return { success: false, merged: false, status: 'failed', error: 'Supabase returned wrong tenant row' }
     }
 
     if (!row || !row.data) {
-      console.log('[Sync] No remote data found — clearing local stale data')
-      localStorage.removeItem('poweron_backup_data')
-      localStorage.removeItem('poweron_v2')
-      return { success: true, merged: false }
+      console.log('[Sync] No remote data found — seeding tenant-local empty cache only')
+      const empty = attachTenantOwner(createEmptyBackup(), userId)
+      saveBackupDataSilent(empty, userId)
+      markTenantDataReady(userId)
+      return { success: true, merged: false, status: 'seeded_empty' }
     }
 
-    const remote = row.data as BackupData
-    const local = getBackupData()
+    const remote = attachTenantOwner(row.data as BackupData, userId)
 
-    // Extract device metadata from remote
     const remoteMeta = (remote as any)._syncMeta as { savedBy?: string; savedAt?: string } | undefined
     const remoteDevice = remoteMeta?.savedBy || 'unknown'
+    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '' }
 
-    // Diagnostic logging
+    // Explicit bootstrap load: remote is authoritative. Never push local here.
+    if (explicitUserId) {
+      saveBackupDataSilent(remote, userId)
+      markTenantDataReady(userId)
+      console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    }
+
+    const local = getBackupData(userId)
     const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
     const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
 
@@ -1138,65 +1211,38 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
     console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
     console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
 
-    // Store sync metadata for UI display
-    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || '' }
-
-    // ── Case 1: No local data ──────────────────────────────────────────────────────────────
     if (!local) {
-      const remoteIsEmpty = !remote._lastSavedAt &&
-        (!remote.projects || remote.projects.length === 0) &&
-        (!remote.logs || remote.logs.length === 0) &&
-        (!remote.serviceLogs || remote.serviceLogs.length === 0) &&
-        (!remote.settings || (!remote.settings.company && !remote.settings.billRate))
-      if (remoteIsEmpty) {
-        console.log('[Sync] No local data and remote is empty — skipping load, letting seed run')
+      saveBackupDataSilent(remote, userId)
+      markTenantDataReady(userId)
+      console.log('[Sync] No local tenant data – Loading: remote')
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    }
+
+    if (forceRemote || remoteTime > localTime) {
+      if (forceRemote && remoteDevice === thisDevice && localTime > remoteTime) {
+        console.log(`[Sync] forceRemote skipped — remote is from this device (${thisDevice})`)
         return { success: true, merged: false }
       }
-      saveBackupDataSilent(remote)
-      console.log('[Sync] No local data – Loading: remote')
-      return { success: true, merged: true, fromDevice: remoteDevice }
+      saveBackupDataSilent(remote, userId)
+      markTenantDataReady(userId)
+      console.log(`[Sync] Loading remote tenant data (saved by ${remoteDevice})`)
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
     }
 
-    // ── Case 2: Remote is newer — ALWAYS use remote (no richness guard) ──
-    if (remoteTime > localTime) {
-      saveBackupDataSilent(remote)
-      console.log(`[Sync] Remote is newer — Loading: remote (saved by ${remoteDevice})`)
-      return { success: true, merged: true, fromDevice: remoteDevice }
-    }
-
-    // ── Case 3: Local is newer ──────────────────────────────────────
+    // Local-newer auto-push was the contamination path. Keep local in memory/cache;
+    // do not push from load. User actions or explicit Save to Cloud will sync.
     if (localTime > remoteTime) {
-      if (forceRemote) {
-        // Realtime event triggered this pull. Normally we accept remote regardless
-        // of timestamp — the Realtime event proves remote changed, so pushing local
-        // would overwrite it. Exception: if remote was saved by THIS device, the
-        // Realtime event is just echoing our own push, and our local is genuinely
-        // newer. Skip the pull to avoid clobbering unsaved in-memory state.
-        if (remoteDevice === thisDevice) {
-          console.log(`[Sync] forceRemote skipped — remote is from this device (${thisDevice})`)
-          return { success: true, merged: false }
-        }
-        saveBackupDataSilent(remote)
-        console.log(`[Sync] forceRemote=true — accepting remote data (saved by ${remoteDevice})`)
-        return { success: true, merged: true, fromDevice: remoteDevice }
-      }
-      if (_isHydrating) {
-        console.log('[Sync] Local is newer but hydrating — skipping push, clearing stale local data')
-        localStorage.removeItem('poweron_backup_data')
-        localStorage.removeItem('poweron_v2')
-        return { success: true, merged: false }
-      }
-      console.log('[Sync] Local is newer — pushing to Supabase, Loading: local')
-      await syncToSupabase()
+      console.log('[Sync] Local tenant cache is newer — keeping local, not pushing during load')
+      markTenantDataReady(userId)
       return { success: true, merged: false }
     }
 
-    // ── Case 4: Same timestamp — no action needed ───────────────────
+    markTenantDataReady(userId)
     console.log('[Sync] Timestamps match — no sync needed')
     return { success: true, merged: false }
   } catch (err: any) {
     console.error('[Sync] Supabase load error:', err)
-    return { success: false, merged: false, error: err?.message || 'Unknown error' }
+    return { success: false, merged: false, status: 'failed', error: err?.message || 'Unknown error' }
   }
 }
 

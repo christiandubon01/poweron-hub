@@ -192,6 +192,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const { lockApp, signOut } = useAuthStore()
   const authUser = useAuthStore(s => s.user)
+  const authStatus = useAuthStore(s => s.status)
+  const tenantDataReady = useAuthStore(s => s.tenantDataReady)
+  const tenantUserId = useAuthStore(s => s.tenantUserId)
   const adminEmail = import.meta.env.VITE_ADMIN_EMAIL as string | undefined
   const isAdmin = !!(authUser?.email && adminEmail && authUser.email === adminEmail)
 
@@ -340,8 +343,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // The status polling interval ONLY updates UI indicators, never calls syncToSupabase.
   useEffect(() => {
     if (!isSupabaseConfigured()) return
+    if (authStatus !== 'authenticated') return
+    if (!tenantDataReady) return
+    if (!tenantUserId || tenantUserId !== authUser?.id) return
 
-    // Start the 30s debounced periodic sync — this is the ONLY sync timer
+    // Start the debounced periodic sync only after the authenticated tenant is hydrated.
     const stopSync = startPeriodicSync()
 
     // Status polling — UI only, no Supabase push
@@ -355,11 +361,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }, 30000)
 
     return () => { stopSync(); clearInterval(interval) }
-  }, [])
+  }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
 
   // BUG 1 FIX — Supabase Realtime sync + stale-data detection
   // Runs after the initial loadFromSupabase() so we don't double-pull on mount.
   useEffect(() => {
+    if (authStatus !== 'authenticated') return
+    if (!tenantDataReady) return
+    if (!tenantUserId || tenantUserId !== authUser?.id) return
+
     const cleanupRealtime = initRealtimeSync((table) => {
       // When any realtime change fires, refresh local KPIs immediately
       const data = getBackupData()
@@ -370,7 +380,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       console.log(`[Layout] Realtime refresh triggered by table: ${table}`)
     })
     return () => cleanupRealtime()
-  }, [])
+  }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
 
   // Initialize Phase B event bus + agent subscriptions
   useEffect(() => {
@@ -678,8 +688,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
       setToastMessage(message)
       setTimeout(() => setToastMessage(null), 4000)
-      // Sync imported data to Supabase immediately
-      syncToSupabase().catch(() => {})
+      // Sync imported data to Supabase immediately, but only after tenant hydration.
+      if (authStatus === 'authenticated' && tenantDataReady && tenantUserId === authUser?.id) {
+        syncToSupabase().catch(() => {})
+      }
       // Reset input
       if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (err) {
@@ -1618,6 +1630,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 title={syncStatus === 'failed' ? 'Tap to retry sync' : syncStatus === 'synced' ? 'Synced to cloud' : 'Sync pending...'}
                 onClick={async () => {
                   if (syncStatus === 'failed' || syncStatus === 'idle') {
+                    if (authStatus !== 'authenticated' || !tenantDataReady || tenantUserId !== authUser?.id) {
+                      setToastMessage('Workspace still loading — sync blocked')
+                      setTimeout(() => setToastMessage(null), 3000)
+                      return
+                    }
                     setSyncStatus('syncing')
                     const result = await forceSyncToCloud()
                     if (result.success) {

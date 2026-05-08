@@ -22,7 +22,7 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
-import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner } from '@/services/backupDataService'
+import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser } from '@/services/backupDataService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -73,9 +73,10 @@ function loadRoleFromStorage(userId: string): { role: UserRole; ownerId: string 
   return { role, ownerId }
 }
 
-/** Seed empty backup for brand-new users who have never imported data */
-async function seedEmptyBackupIfNeeded(): Promise<void> {
-  if (hasBackupData()) return
+/** Seed empty backup for brand-new users who have never imported data.
+ *  Tenant-scoped and local-only. Never writes to Supabase. */
+async function seedEmptyBackupIfNeeded(userId: string): Promise<void> {
+  if (hasBackupData(userId)) return
   const empty = createEmptyBackup()
   empty.settings = {
     ...empty.settings,
@@ -86,42 +87,40 @@ async function seedEmptyBackupIfNeeded(): Promise<void> {
     wasteDefault: 10, defaultOHRate: 30, billableHrsYear: 1800,
     defaultTemplateId: '', mtoPhases: [], phaseWeights: {},
   }
-  saveBackupData(empty)
-  // DO NOT sync to Supabase — seed is local-only display fallback.
-  // Supabase push only happens when user creates real data.
+  saveBackupData(empty, userId)
 }
 
 /** Bootstrap authenticated user — loads tenant data before marking authenticated.
  *  This is the ONLY place loadFromSupabase should be called during login.
- *  Blocks all Supabase writes during hydration to prevent data overwrites. */
+ *  It is read-only against Supabase; new users get local-only empty state. */
 async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
   setHydrating(true)
+  setActiveTenantUser(userId)
   try {
-    // Check if cached data belongs to a different user or is untagged
+    // Legacy owner tag is kept only as a diagnostic/compatibility marker.
     const cacheOwner = getCacheOwner()
-    if (!cacheOwner || cacheOwner !== userId) {
-      // No owner tag or different user — clear everything
+    if (cacheOwner && cacheOwner !== userId) {
       localStorage.removeItem('poweron_backup_data')
       localStorage.removeItem('poweron_v2')
       localStorage.removeItem('poweron_snapshots')
-      Object.keys(localStorage)
-        .filter(k => k.startsWith('poweron_backup_data_'))
-        .forEach(k => localStorage.removeItem(k))
       clearCacheOwner()
     }
-    // Tag this cache as belonging to current user
     setCacheOwner(userId)
-    // Load from Supabase — timestamp resolution keeps newer data (local or remote)
-    try {
-      await loadFromSupabase()
-    } catch {
-      console.warn('[Auth] loadFromSupabase failed during bootstrap')
+
+    const result = await loadFromSupabase(userId)
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to load workspace data')
     }
-    // If still no data after load, seed empty locally only
-    seedEmptyBackupIfNeeded()
+
+    // loadFromSupabase(userId) seeds empty tenant-local data when no remote row exists.
+    // This is a final safety fallback only.
+    await seedEmptyBackupIfNeeded(userId)
+    markTenantDataReady(userId)
   } catch (err) {
-    console.warn('[Auth] bootstrapAuthenticatedUser failed (non-blocking):', err)
-    seedEmptyBackupIfNeeded()
+    console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
+    clearActiveTenantUser()
+    clearCacheOwner()
+    throw err
   } finally {
     setHydrating(false)
   }
@@ -219,11 +218,14 @@ function registerAuthListener() {
       // normal app use (e.g. after a sync push) must not trigger a re-auth cycle.
     }
     if (event === 'SIGNED_OUT') {
+      clearActiveTenantUser()
       useAuthStore.setState({
-        status:    'unauthenticated',
-        user:      null,
-        profile:   null,
-        appSession: null,
+        status:          'unauthenticated',
+        user:            null,
+        profile:         null,
+        appSession:      null,
+        tenantDataReady: false,
+        tenantUserId:    null,
       })
     }
   })
@@ -683,28 +685,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     }
     await destroyAppSession()
+    clearActiveTenantUser()
     await supabase.auth.signOut()
     localStorage.removeItem(ROLE_STORAGE_KEY)
     localStorage.removeItem(OWNER_ID_STORAGE_KEY)
     localStorage.removeItem('poweron_alerts_cache')
+    localStorage.removeItem('poweron_backup_data')
     localStorage.removeItem('poweron_v2')
-    // Only clear backup data if Supabase has a valid copy (size > 10000 bytes)
-    // This prevents data loss when signing out with a stale/broken Supabase row
-    try {
-      const { supabase } = await import('@/lib/supabase')
-      const { data: row } = await supabase
-        .from('app_state')
-        .select('data')
-        .eq('user_id', user?.id)
-        .eq('state_key', 'poweron_v2')
-        .maybeSingle()
-      const remoteSize = row?.data ? JSON.stringify(row.data).length : 0
-      if (remoteSize > 10000) {
-        localStorage.removeItem('poweron_backup_data')
-      }
-    } catch {
-      // If check fails, keep local data safe
-    }
+    localStorage.removeItem('poweron_snapshots')
     clearCacheOwner()
     set({
       status:          'unauthenticated',
