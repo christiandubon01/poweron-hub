@@ -110,6 +110,7 @@ export type AuthStatus =
   | 'needs_passcode'
   | 'biometric_prompt'
   | 'locked'
+  | 'hydrating_user_data'
   | 'authenticated'
   | 'password_recovery'
 
@@ -121,6 +122,8 @@ interface AuthState {
   biometric:      BiometricCapabilities | null
   lockExpiresAt:  Date | null
   error:          string | null
+  tenantDataReady: boolean
+  tenantUserId:   string | null
 
   // ── Role fields (V3 Session 5) ────────────────────────────────────────────
   // role:    Determines which portal the user sees after auth.
@@ -176,6 +179,8 @@ function registerAuthListener() {
       if (status === 'unauthenticated' || status === 'loading') {
         useAuthStore.getState().initialize()
       }
+      // Do NOT re-initialize if already authenticated — TOKEN_REFRESHED during
+      // normal app use (e.g. after a sync push) must not trigger a re-auth cycle.
     }
     if (event === 'SIGNED_OUT') {
       useAuthStore.setState({
@@ -652,9 +657,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await supabase.auth.signOut()
     localStorage.removeItem(ROLE_STORAGE_KEY)
     localStorage.removeItem(OWNER_ID_STORAGE_KEY)
-    localStorage.removeItem('poweron_backup_data')
     localStorage.removeItem('poweron_alerts_cache')
     localStorage.removeItem('poweron_v2')
+    // Only clear backup data if Supabase has a valid copy (size > 10000 bytes)
+    // This prevents data loss when signing out with a stale/broken Supabase row
+    try {
+      const { supabase } = await import('@/lib/supabase')
+      const { data: row } = await supabase
+        .from('app_state')
+        .select('data')
+        .eq('user_id', user?.id)
+        .eq('state_key', 'poweron_v2')
+        .maybeSingle()
+      const remoteSize = row?.data ? JSON.stringify(row.data).length : 0
+      if (remoteSize > 10000) {
+        localStorage.removeItem('poweron_backup_data')
+      }
+    } catch {
+      // If check fails, keep local data safe
+    }
     set({
       status:        'unauthenticated',
       user:          null,
