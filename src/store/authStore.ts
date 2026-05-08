@@ -97,10 +97,10 @@ async function seedEmptyBackupIfNeeded(): Promise<void> {
 async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
   setHydrating(true)
   try {
-    // Check if cached data belongs to a different user
+    // Check if cached data belongs to a different user or is untagged
     const cacheOwner = getCacheOwner()
-    if (cacheOwner && cacheOwner !== userId) {
-      // Different user — clear their cache including user-scoped keys
+    if (!cacheOwner || cacheOwner !== userId) {
+      // No owner tag or different user — clear everything
       localStorage.removeItem('poweron_backup_data')
       localStorage.removeItem('poweron_v2')
       localStorage.removeItem('poweron_snapshots')
