@@ -66,7 +66,7 @@ function PreviewModal({ snapshot, onClose, onConfirmRestore }: PreviewModalProps
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div>
-            <h3 className="text-base font-bold text-gray-100">Snapshot Preview</h3>
+            <h3 className="text-base font-bold text-gray-100">Restore Point Preview</h3>
             <p className="text-xs text-gray-400 mt-0.5">{snapshot.label}</p>
           </div>
           <button
@@ -260,7 +260,7 @@ function ManualSnapshotForm({ onSaved, onCancel }: ManualSnapshotFormProps) {
           ) : (
             <>
               <CheckCircle size={14} />
-              Save Snapshot
+              Save Restore Point
             </>
           )}
         </button>
@@ -468,7 +468,7 @@ export default function SnapshotPanel() {
         <div>
           <h3 className="text-base font-bold text-gray-100 flex items-center gap-2">
             <Clock size={16} className="text-blue-400" />
-            Snapshot History
+            Restore Points
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
             Rolling point-in-time saves — preview before you restore
@@ -479,7 +479,7 @@ export default function SnapshotPanel() {
           className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors flex items-center gap-2"
         >
           <Plus size={14} />
-          Create manual snapshot
+          Create Restore Point
         </button>
       </div>
 
