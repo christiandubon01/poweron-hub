@@ -1013,11 +1013,22 @@ export function exportBackup(d?: BackupData): void {
 
 const SUPABASE_STATE_KEY = 'poweron_v2'
 
+// ── Hydration guard ───────────────────────────────────────────────────────────
+// When true, all Supabase writes are blocked. Set to true during login bootstrap
+// and false once tenant data is fully hydrated. Prevents empty seed or stale
+// local state from overwriting real Supabase data during account switching.
+let _isHydrating = false
+export function setHydrating(val: boolean): void { _isHydrating = val }
+export function isHydrating(): boolean { return _isHydrating }
+
 /** Sync current localStorage data to Supabase app_state table.
  *  Includes device ID metadata so we know which device last saved. */
 export async function syncToSupabase(): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured()) return { success: false, error: 'Supabase not configured' }
-
+  if (_isHydrating) {
+    console.log('[Sync] Blocked — hydration in progress, skipping Supabase write')
+    return { success: false, error: 'Hydration in progress' }
+  }
   try {
     const { supabase } = await import('@/lib/supabase')
     const data = getBackupData()
