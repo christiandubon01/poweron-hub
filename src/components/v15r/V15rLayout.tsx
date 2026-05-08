@@ -45,7 +45,7 @@ import {
   Globe,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
-import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, createEmptyBackup, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
 // BUG 2 FIX — Active-only pipeline formula
@@ -92,7 +92,7 @@ interface V15rLayoutProps {
 }
 
 export default function V15rLayout({ activeView, onNav, activeProjectId, activeProjectName, children }: V15rLayoutProps) {
-  const [backupData, setBackupData] = useState<BackupData | null>(() => getBackupData())
+  const [backupData, setBackupData] = useState<BackupData | null>(() => getBackupData() ?? createEmptyBackup())
   const [kpis, setKpis] = useState<any>(() => {
     const d = getBackupData()
     return d ? getKPIs(d) : null

@@ -101,7 +101,11 @@ async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
     localStorage.removeItem('poweron_backup_data')
     localStorage.removeItem('poweron_v2')
     // Load this user's data from Supabase
-    await withTimeout(loadFromSupabase(), 8000, { success: false, merged: false })
+    try {
+      await loadFromSupabase()
+    } catch {
+      console.warn('[Auth] loadFromSupabase failed during bootstrap')
+    }
     // If still no data after load, seed empty locally only
     seedEmptyBackupIfNeeded()
   } catch (err) {
