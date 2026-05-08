@@ -23,7 +23,7 @@ import {
   shortTimestamp,
   type Snapshot,
 } from '@/services/snapshotService'
-import { getBackupData, saveBackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -356,7 +356,7 @@ export default function SnapshotPanel() {
       }
 
       // Step 3: Apply snapshot data to app state (save to localStorage via backupDataService)
-      saveBackupData(snap.snapshot_data as any)
+      saveBackupDataAndSync(snap.snapshot_data as any, 'snapshotRestore')
 
       // Step 4: Refresh snapshot list (pre-restore backup should now appear)
       await loadSnapshots()

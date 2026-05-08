@@ -296,9 +296,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const projects = backup.projects || []
   syncAllProjectFinanceBuckets(backup)
 
-  function persist() {
+  function persist(changedKey: string = 'projects') {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, changedKey)
     forceUpdate()
   }
 

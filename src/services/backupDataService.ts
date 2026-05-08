@@ -470,11 +470,28 @@ export function saveBackupData(data: BackupData, userId = _activeTenantUserId): 
     const owned = userId ? attachTenantOwner(data, userId) : data
     const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
+
     // Keep legacy key as display compatibility only for the active tenant. Reads
     // during authenticated sessions still use the tenant key, not this key.
     if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
-  } catch (err) { console.error('[backupDataService] Failed to save:', err) }
-  try { window.dispatchEvent(new CustomEvent('poweron-data-saved')) } catch { /* ignore */ }
+
+    // Global save trigger:
+    // Any normal user-facing save inside a fully hydrated tenant marks data dirty
+    // so startPeriodicSync() can push it to Supabase.
+    // Bootstrap/remote-load saves must not mark dirty before tenantDataReady.
+    if (userId && _activeTenantUserId === userId && _tenantDataReady) {
+      _dataChanged = true
+    }
+  } catch (err) {
+    console.error('[backupDataService] Failed to save:', err)
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent('poweron-data-saved'))
+  } catch {
+    /* ignore */
+  }
+
   // Do not mirror tenant data into poweron_v2; that key is browser-global and
   // was a source of cross-account bleed.
   if (!userId) {
@@ -489,7 +506,9 @@ export function saveBackupData(data: BackupData, userId = _activeTenantUserId): 
           localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
         }
       }
-    } catch { /* ignore poweron_v2 sync errors */ }
+    } catch {
+      /* ignore poweron_v2 sync errors */
+    }
   }
 }
 
