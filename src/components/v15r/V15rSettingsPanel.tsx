@@ -363,20 +363,24 @@ function DataSyncCenter({
               ? 'bg-emerald-500/15 text-emerald-200 border-emerald-400/30 shadow-sm shadow-emerald-950'
               : 'bg-red-500/10 text-red-300 border-red-500/30'
           }`}>
-            {supabaseUp ? 'Saved-capable cloud connection' : 'Supabase not configured'}
+            {supabaseUp ? 'Cloud Sync Done' : 'Supabase not configured'}
           </span>
-          <span className="text-[11px] px-2.5 py-1 rounded-full border border-cyan-400/15 bg-slate-900/70 text-gray-400">
-            app_state: poweron_v2
-          </span>
-          <span className="text-[11px] px-2.5 py-1 rounded-full border border-cyan-400/15 bg-slate-900/70 text-gray-400">
-            Restore backend: snapshots table
-          </span>
+          {user?.email === 'christian@poweronsolutionsllc.com' && (
+            <>
+              <span className="text-[11px] px-2.5 py-1 rounded-full border border-cyan-400/15 bg-slate-900/70 text-gray-400">
+                app_state: poweron_v2
+              </span>
+              <span className="text-[11px] px-2.5 py-1 rounded-full border border-cyan-400/15 bg-slate-900/70 text-gray-400">
+                Restore backend: snapshots table
+              </span>
+            </>
+          )}
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="p-3 rounded-xl border border-cyan-400/15 bg-slate-950/60 shadow-inner shadow-blue-950/20">
             <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Last Sync</p>
-            <p className="text-xs text-gray-100 mt-1 truncate">{lastSync}</p>
+            <p className="text-sm font-bold text-gray-100 mt-1 truncate">{lastSync}</p>
           </div>
           <div className="p-3 rounded-xl border border-cyan-400/15 bg-slate-950/60 shadow-inner shadow-blue-950/20">
             <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Projects</p>
