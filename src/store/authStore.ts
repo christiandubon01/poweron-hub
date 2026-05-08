@@ -691,15 +691,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // If check fails, keep local data safe
     }
     set({
-      status:        'unauthenticated',
-      user:          null,
-      profile:       null,
-      appSession:    null,
-      biometric:     null,
-      lockExpiresAt: null,
-      error:         null,
-      role:          'owner',
-      ownerId:       null,
+      status:          'unauthenticated',
+      user:            null,
+      profile:         null,
+      appSession:      null,
+      biometric:       null,
+      lockExpiresAt:   null,
+      error:           null,
+      role:            'owner',
+      ownerId:         null,
+      tenantDataReady: false,
+      tenantUserId:    null,
     })
   },
 
