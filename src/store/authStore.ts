@@ -100,9 +100,13 @@ async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
     // Check if cached data belongs to a different user
     const cacheOwner = getCacheOwner()
     if (cacheOwner && cacheOwner !== userId) {
-      // Different user — clear their cache
+      // Different user — clear their cache including user-scoped keys
       localStorage.removeItem('poweron_backup_data')
       localStorage.removeItem('poweron_v2')
+      localStorage.removeItem('poweron_snapshots')
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('poweron_backup_data_'))
+        .forEach(k => localStorage.removeItem(k))
       clearCacheOwner()
     }
     // Tag this cache as belonging to current user
