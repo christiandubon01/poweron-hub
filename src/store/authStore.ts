@@ -22,7 +22,7 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
-import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase } from '@/services/backupDataService'
+import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating } from '@/services/backupDataService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -89,6 +89,27 @@ async function seedEmptyBackupIfNeeded(): Promise<void> {
   saveBackupData(empty)
   // DO NOT sync to Supabase — seed is local-only display fallback.
   // Supabase push only happens when user creates real data.
+}
+
+/** Bootstrap authenticated user — loads tenant data before marking authenticated.
+ *  This is the ONLY place loadFromSupabase should be called during login.
+ *  Blocks all Supabase writes during hydration to prevent data overwrites. */
+async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
+  setHydrating(true)
+  try {
+    // Clear any stale data from previous user
+    localStorage.removeItem('poweron_backup_data')
+    localStorage.removeItem('poweron_v2')
+    // Load this user's data from Supabase
+    await withTimeout(loadFromSupabase(), 8000, { success: false, merged: false })
+    // If still no data after load, seed empty locally only
+    seedEmptyBackupIfNeeded()
+  } catch (err) {
+    console.warn('[Auth] bootstrapAuthenticatedUser failed (non-blocking):', err)
+    seedEmptyBackupIfNeeded()
+  } finally {
+    setHydrating(false)
+  }
 }
 
 // Timeout helper — prevents auth flow from hanging on slow Redis/network calls
