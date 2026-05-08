@@ -26,7 +26,7 @@ import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
 import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense, type OpenPermit } from '@/services/ownerProfileService'
-import { pushState, clear as clearHistory, setMaxHistoryDepth } from '@/services/undoRedoService'
+import { pushState } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
 import SnapshotPanel from '@/components/SnapshotPanel'
@@ -1499,36 +1499,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
             </SettingCard>
           </div>
 
-          {/* 8. UNDO/REDO CONFIG */}
-          <SettingCard title="Undo/Redo Config">
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Max History Depth</label>
-                <input
-                  type="number"
-                  defaultValue={50}
-                  onChange={(e) => {
-                    const val = Math.max(1, parseInt(e.target.value) || 50)
-                    setMaxHistoryDepth(val)
-                  }}
-                  min="1"
-                  max="500"
-                  className="w-full px-3 py-2 border rounded text-sm theme-input"
-                />
-              </div>
-              <button
-                onClick={() => {
-                  if (window.confirm('Clear all undo/redo history?')) {
-                    clearHistory()
-                  }
-                }}
-                className="w-full px-3 py-2 bg-red-600/30 hover:bg-red-600/40 text-red-300 rounded text-xs font-medium border border-red-500/30"
-              >
-                Clear History
-              </button>
-            </div>
-          </SettingCard>
-
           {/* QUICKBOOKS BATCH IMPORT */}
           <QuickBooksBatchImport persist={persist} forceUpdate={forceUpdate} />
 
@@ -1554,12 +1524,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
               </p>
             </div>
           </SettingCard>
-
-          {/* IMPORT HISTORY */}
-          <ImportHistoryCard />
-
-          {/* B21 — BACKUP AND RESTORE */}
-          <MilestoneBackupCard />
 
           {/* 10. MTO PHASES */}
           <SettingCard title="MTO Phases">
@@ -1839,18 +1803,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
           {user?.email && user.email === (import.meta.env.VITE_ADMIN_EMAIL as string) && (
             <AdminTemplateSwitcherCard />
           )}
-
-          {/* SYSTEM INFO */}
-          <SettingCard title="System Info">
-            <div className="space-y-2 text-xs text-gray-400">
-              <p><span className="text-gray-500 font-semibold">Last Saved:</span> {lastSync}</p>
-              <p><span className="text-gray-500 font-semibold">Projects:</span> {backup.projects?.length || 0}</p>
-              <p><span className="text-gray-500 font-semibold">Logs:</span> {backup.logs?.length || 0}</p>
-              <p><span className="text-gray-500 font-semibold">Snapshots:</span> {snapshots.length}</p>
-              <p><span className="text-gray-500 font-semibold">Schema:</span> v{backup._schemaVersion || 0}</p>
-              <p><span className="text-gray-500 font-semibold">Imports:</span> {(backup.imports || []).length}</p>
-            </div>
-          </SettingCard>
 
         </div>
       </div>
