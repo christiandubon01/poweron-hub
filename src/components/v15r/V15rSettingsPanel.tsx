@@ -356,44 +356,44 @@ function DataSyncCenter({
 
   return (
     <SettingCard title="Data & Sync Center">
-      <div className="space-y-5">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="space-y-6 rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-950/70 via-blue-950/25 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/30">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-cyan-400/10 bg-slate-950/40 p-3">
           <span className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold ${
             supabaseUp
-              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              ? 'bg-emerald-500/15 text-emerald-200 border-emerald-400/30 shadow-sm shadow-emerald-950'
               : 'bg-red-500/10 text-red-300 border-red-500/30'
           }`}>
             {supabaseUp ? 'Saved-capable cloud connection' : 'Supabase not configured'}
           </span>
-          <span className="text-[11px] px-2.5 py-1 rounded-full border border-gray-700 bg-gray-900/60 text-gray-400">
+          <span className="text-[11px] px-2.5 py-1 rounded-full border border-cyan-400/15 bg-slate-900/70 text-gray-400">
             app_state: poweron_v2
           </span>
-          <span className="text-[11px] px-2.5 py-1 rounded-full border border-gray-700 bg-gray-900/60 text-gray-400">
+          <span className="text-[11px] px-2.5 py-1 rounded-full border border-cyan-400/15 bg-slate-900/70 text-gray-400">
             Restore backend: snapshots table
           </span>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Last Sync</p>
-            <p className="text-xs text-gray-200 mt-1 truncate">{lastSync}</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3 rounded-xl border border-cyan-400/15 bg-slate-950/60 shadow-inner shadow-blue-950/20">
+            <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Last Sync</p>
+            <p className="text-xs text-gray-100 mt-1 truncate">{lastSync}</p>
           </div>
-          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Projects</p>
+          <div className="p-3 rounded-xl border border-cyan-400/15 bg-slate-950/60 shadow-inner shadow-blue-950/20">
+            <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Projects</p>
             <p className="text-lg font-bold text-gray-100 mt-1">{projects.length}</p>
           </div>
-          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Service Logs</p>
+          <div className="p-3 rounded-xl border border-cyan-400/15 bg-slate-950/60 shadow-inner shadow-blue-950/20">
+            <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Service Logs</p>
             <p className="text-lg font-bold text-gray-100 mt-1">{serviceLogs.length}</p>
           </div>
-          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Data Size</p>
+          <div className="p-3 rounded-xl border border-cyan-400/15 bg-slate-950/60 shadow-inner shadow-blue-950/20">
+            <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Data Size</p>
             <p className="text-lg font-bold text-gray-100 mt-1">{dataSizeMb} MB</p>
           </div>
         </div>
 
         {syncMessage && (
-          <div className={`text-xs px-3 py-2 rounded border ${
+          <div className={`text-xs px-3 py-2 rounded-xl border ${
             syncMessage.startsWith('Sync failed')
               ? 'bg-red-500/10 text-red-300 border-red-500/25'
               : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
@@ -402,52 +402,55 @@ function DataSyncCenter({
           </div>
         )}
 
-        <div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Live Data Actions</h3>
-          <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/45 p-3">
+          <h3 className="text-[11px] font-bold uppercase tracking-wider text-cyan-200/70 mb-3">Live Data Actions</h3>
+          <div className="grid grid-cols-2 gap-2.5">
             <button
               onClick={handleSaveLiveData}
               disabled={!supabaseUp || syncing}
-              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-green-600/25 hover:bg-green-600/35 text-green-300 border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-2.5 rounded-lg text-xs font-semibold border transition flex items-center justify-center gap-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border-emerald-400/30 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {syncing ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
               Save Live Data Now
             </button>
             <button
-              onClick={() => window.location.reload()}
-              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border-cyan-500/30"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('poweron:snapshots-refresh'))
+                window.location.reload()
+              }}
+              className="px-3 py-2.5 rounded-lg text-xs font-semibold border transition flex items-center justify-center gap-2 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border-cyan-400/30"
             >
               <RefreshCw size={12} />
               Refresh App View
             </button>
             <button
               onClick={onExport}
-              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-blue-600/25 hover:bg-blue-600/35 text-blue-300 border-blue-500/30"
+              className="px-3 py-2.5 rounded-lg text-xs font-semibold border transition flex items-center justify-center gap-2 bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 border-blue-400/30"
             >
               <Download size={12} />
               Export Current Data
             </button>
             <button
               onClick={onImport}
-              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-purple-600/25 hover:bg-purple-600/35 text-purple-300 border-purple-500/30"
+              className="px-3 py-2.5 rounded-lg text-xs font-semibold border transition flex items-center justify-center gap-2 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 border-indigo-400/30"
             >
               <Upload size={12} />
               Import Backup File
             </button>
           </div>
-          <p className="text-[10px] text-gray-600 mt-2">
+          <p className="text-[10px] text-gray-500 mt-3">
             Live data actions affect the current tenant state. Restore points are separate safety backups.
           </p>
         </div>
 
-        <div>
-          <div className="flex items-center justify-between mb-2">
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/45 p-3">
+          <div className="flex items-center justify-between mb-3">
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">Restore Points</h3>
-              <p className="text-[10px] text-gray-600 mt-0.5">Preview, pin, delete, or restore point-in-time backups.</p>
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-cyan-200/70">Restore Points</h3>
+              <p className="text-[10px] text-gray-500 mt-0.5">Preview, pin, delete, or restore point-in-time backups.</p>
             </div>
           </div>
-          <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-3">
+          <div className="rounded-xl border border-cyan-400/15 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/30">
             <SnapshotPanel />
           </div>
         </div>
@@ -455,25 +458,25 @@ function DataSyncCenter({
         <div className="space-y-2">
           <button
             onClick={() => setShowDiagnostics(v => !v)}
-            className="w-full px-3 py-2 rounded border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 text-gray-300 text-xs font-medium flex items-center justify-between"
+            className="w-full px-3 py-2.5 rounded-xl border border-cyan-400/15 bg-slate-950/50 hover:bg-slate-900/70 text-gray-300 text-xs font-semibold flex items-center justify-between transition-colors"
           >
             <span>Advanced Diagnostics</span>
             <span>{showDiagnostics ? 'Hide' : 'Show'}</span>
           </button>
           {showDiagnostics && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-              <div className="p-3 rounded border border-gray-800 bg-gray-900/40">
-                <p className="text-gray-500 uppercase text-[10px] font-bold">User Email</p>
+              <div className="p-3 rounded-xl border border-cyan-400/10 bg-slate-950/50">
+                <p className="text-cyan-200/60 uppercase text-[10px] font-bold tracking-wider">User Email</p>
                 <p className="text-gray-300 mt-1 break-all">{user?.email || 'Unknown'}</p>
               </div>
-              <div className="p-3 rounded border border-gray-800 bg-gray-900/40">
-                <p className="text-gray-500 uppercase text-[10px] font-bold">User ID</p>
+              <div className="p-3 rounded-xl border border-cyan-400/10 bg-slate-950/50">
+                <p className="text-cyan-200/60 uppercase text-[10px] font-bold tracking-wider">User ID</p>
                 <p className="text-gray-300 mt-1">
                   {user?.id ? `${user.id.slice(0, 8)}…${user.id.slice(-6)}` : 'Unknown'}
                 </p>
               </div>
-              <div className="p-3 rounded border border-gray-800 bg-gray-900/40">
-                <p className="text-gray-500 uppercase text-[10px] font-bold">Counts</p>
+              <div className="p-3 rounded-xl border border-cyan-400/10 bg-slate-950/50">
+                <p className="text-cyan-200/60 uppercase text-[10px] font-bold tracking-wider">Counts</p>
                 <p className="text-gray-300 mt-1">{projects.length} projects · {serviceLogs.length} service logs · {logs.length} field logs</p>
               </div>
             </div>
@@ -481,13 +484,13 @@ function DataSyncCenter({
 
           <button
             onClick={() => setShowDangerZone(v => !v)}
-            className="w-full px-3 py-2 rounded border border-red-900/40 bg-red-950/20 hover:bg-red-950/30 text-red-300 text-xs font-medium flex items-center justify-between"
+            className="w-full px-3 py-2.5 rounded-xl border border-red-900/40 bg-red-950/20 hover:bg-red-950/30 text-red-300 text-xs font-semibold flex items-center justify-between transition-colors"
           >
             <span>Danger Zone</span>
             <span>{showDangerZone ? 'Hide' : 'Show'}</span>
           </button>
           {showDangerZone && (
-            <div className="rounded border border-red-900/40 bg-red-950/20 p-3">
+            <div className="rounded-xl border border-red-900/40 bg-red-950/20 p-3">
               <p className="text-xs text-red-300 mb-2">
                 Reset only app settings to defaults. This does not replace the dedicated Restore Points system.
               </p>
@@ -511,6 +514,7 @@ export default function V15rSettingsPanel() {
 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+  const settings = backup.settings || {} as any
 
   // Auth (for owner role check)
   const { isOwner, user } = useAuth()
@@ -521,6 +525,7 @@ export default function V15rSettingsPanel() {
   const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
+  const [gcalUrlDraft, setGcalUrlDraft] = useState(settings.gcalUrl || '')
 
 const persist = useCallback((mutatedData?: BackupData) => {
   const data = mutatedData || getBackupData()
@@ -531,8 +536,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
     forceUpdate()
   }
 }, [forceUpdate])
-
-  const settings = backup.settings || {} as any
 
   const snapshots = useMemo(() => {
     if (!backup) return []
@@ -704,6 +707,15 @@ const persist = useCallback((mutatedData?: BackupData) => {
     }
   }, [persist])
 
+  const handleUpdateGoogleCalendarUrl = useCallback(() => {
+    const data = getBackupData()
+    if (data) {
+      pushState(data)
+      data.settings.gcalUrl = gcalUrlDraft
+      persist(data)
+    }
+  }, [gcalUrlDraft, persist])
+
   const phaseWeights = settings.phaseWeights || {}
   const mtoPhases = settings.mtoPhases || ['Underground', 'Rough In', 'Trim', 'Finish']
   const overhead = settings.overhead || { essential: [], extra: [], loans: [], vehicle: [] }
@@ -723,6 +735,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
   const lastSync = backup._lastSavedAt ? new Date(backup._lastSavedAt).toLocaleString() : 'Never'
   const supabaseUp = isSupabaseConfigured()
+  const connectedIntegrations = 1 + (settings.gcalUrl ? 1 : 0)
 
   const phaseWeightTotal = Object.values(phaseWeights).reduce((s: number, v: any) => s + num(v), 0)
 
@@ -785,6 +798,121 @@ const persist = useCallback((mutatedData?: BackupData) => {
         <div>
           <h1 className="text-3xl font-bold text-gray-100">Settings Hub</h1>
           <p className="text-gray-500 text-sm mt-1">Business identity, overhead, sync, and configuration</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div className="rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Business Profile</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100 truncate">{settings.company || 'My Company'}</h3>
+            </div>
+            <div className="rounded-xl border border-cyan-400/25 bg-cyan-400/10 p-2 text-cyan-300">
+              <BookOpen size={18} />
+            </div>
+          </div>
+          <div className="mt-4 space-y-1 text-xs text-gray-400">
+            <p className="truncate">License: <span className="text-gray-200">{settings.license || 'Not set'}</span></p>
+            <p>OH Rate: <span className="text-gray-200">{fmt(num(settings.defaultOHRate || overheadCalc.costPerHr || 0))}/hr</span></p>
+          </div>
+          <button type="button" className="mt-4 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors">
+            Edit Profile
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-blue-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-300/80">Overhead Target</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100">{fmt(overheadCalc.monthlyTotal)}/mo</h3>
+            </div>
+            <div className="rounded-xl border border-blue-400/25 bg-blue-400/10 p-2 text-blue-300">
+              <Target size={18} />
+            </div>
+          </div>
+          <div className="mt-4 space-y-1 text-xs text-gray-400">
+            <p>Annual: <span className="text-gray-200">{fmt(overheadCalc.annualTotal)}</span></p>
+            <p>Real Cost/Hr: <span className="text-gray-200">{fmt(overheadCalc.costPerHr)}</span></p>
+          </div>
+          <button type="button" className="mt-4 w-full rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-400/15 transition-colors">
+            View Details
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300/80">Data Sync Health</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100">{supabaseUp ? '98%' : 'Local'}</h3>
+            </div>
+            <div className="rounded-xl border border-emerald-400/25 bg-emerald-400/10 p-2 text-emerald-300">
+              <RefreshCw size={18} />
+            </div>
+          </div>
+          <div className="mt-4 space-y-1 text-xs text-gray-400">
+            <p>{supabaseUp ? 'Cloud ready' : 'Supabase not configured'}</p>
+            <p className="truncate">Last sync: <span className="text-gray-200">{lastSync}</span></p>
+          </div>
+          <button type="button" className="mt-4 w-full rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 transition-colors">
+            Data & Sync Center
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">Active Integrations</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100">{connectedIntegrations}/4</h3>
+            </div>
+            <div className="rounded-xl border border-sky-400/25 bg-sky-400/10 p-2 text-sky-300">
+              <Zap size={18} />
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-1.5 text-[10px] font-semibold">
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200">QuickBooks</span>
+            <span className={`rounded-full border px-2 py-1 ${settings.gcalUrl ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>Google Calendar</span>
+          </div>
+          <div className="mt-4 rounded-xl border border-sky-400/20 bg-sky-950/30 p-3">
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-sky-200/80 mb-2">
+              Google Calendar Embed Code / URL
+            </label>
+            <textarea
+              value={gcalUrlDraft}
+              onChange={(e) => setGcalUrlDraft(e.target.value)}
+              placeholder="Paste Google Calendar embed URL"
+              className="w-full h-16 px-3 py-2 rounded-lg border border-sky-400/20 bg-slate-950/70 text-xs text-gray-100 placeholder:text-gray-600 resize-none focus:border-sky-400/50 focus:outline-none"
+            />
+            <p className="mt-2 text-[10px] leading-snug text-gray-500">
+              Google Calendar → Settings → Integrate calendar → copy the embed code or public URL, then paste it here to render your calendar.
+            </p>
+            <button
+              type="button"
+              onClick={handleUpdateGoogleCalendarUrl}
+              className="mt-3 w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
+            >
+              Update URL
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/70 p-4 shadow-lg shadow-blue-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300/80">Security Status</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100">Locked</h3>
+            </div>
+            <div className="rounded-xl border border-indigo-400/25 bg-indigo-400/10 p-2 text-indigo-300">
+              <Lock size={18} />
+            </div>
+          </div>
+          <div className="mt-4 space-y-1 text-xs text-gray-400">
+            <p>App secured</p>
+            <p className="text-gray-500">Passcode protection enabled</p>
+          </div>
+          <button type="button" className="mt-4 w-full rounded-lg border border-indigo-400/25 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-400/15 transition-colors">
+            Security Center
+          </button>
         </div>
       </div>
 
@@ -1430,26 +1558,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
               >
                 Auto-Balance to 100%
               </button>
-            </div>
-          </SettingCard>
-
-          {/* 4. GOOGLE CALENDAR URL */}
-          <SettingCard title="Google Calendar URL">
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Embed URL</label>
-              <textarea
-                value={settings.gcalUrl || ''}
-                onChange={(e) => {
-                  const data = getBackupData()
-                  if (data) {
-                    pushState(data)
-                    data.settings.gcalUrl = e.target.value
-                    persist(data)
-                  }
-                }}
-                placeholder="Paste Google Calendar embed URL"
-                className="w-full h-20 px-3 py-2 border rounded text-xs resize-none focus:border-blue-500 focus:outline-none theme-input"
-              />
             </div>
           </SettingCard>
 

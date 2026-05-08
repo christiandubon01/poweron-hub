@@ -172,7 +172,7 @@ function RestoreConfirmModal({ snapshot, onCancel, onConfirm }: RestoreConfirmMo
 }
 
 interface ManualSnapshotFormProps {
-  onSaved: () => void
+  onSaved: () => void | Promise<void>
   onCancel: () => void
 }
 
@@ -204,7 +204,7 @@ function ManualSnapshotForm({ onSaved, onCancel }: ManualSnapshotFormProps) {
         return
       }
 
-      onSaved()
+      await onSaved()
     } catch (err) {
       setError('Unexpected error saving snapshot')
     } finally {
@@ -213,8 +213,8 @@ function ManualSnapshotForm({ onSaved, onCancel }: ManualSnapshotFormProps) {
   }
 
   return (
-    <div className="border border-gray-700 rounded-lg p-4 bg-gray-900/50 space-y-3">
-      <h4 className="text-sm font-semibold text-gray-300">Create Manual Snapshot</h4>
+    <div className="border border-cyan-400/15 rounded-xl p-4 bg-slate-950/60 space-y-3 shadow-inner shadow-blue-950/20">
+      <h4 className="text-sm font-semibold text-gray-100">Create Manual Snapshot</h4>
       <div>
         <label className="block text-xs text-gray-500 mb-1">
           Label <span className="text-red-400">*</span>
@@ -225,7 +225,7 @@ function ManualSnapshotForm({ onSaved, onCancel }: ManualSnapshotFormProps) {
           onChange={e => setLabel(e.target.value)}
           placeholder="e.g. Before rate update"
           maxLength={200}
-          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+          className="w-full px-3 py-2 text-sm bg-slate-950/80 border border-cyan-400/15 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:border-cyan-400/50"
         />
       </div>
       <div>
@@ -236,21 +236,21 @@ function ManualSnapshotForm({ onSaved, onCancel }: ManualSnapshotFormProps) {
           onChange={e => setDescription(e.target.value)}
           placeholder="What changed?"
           maxLength={500}
-          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+          className="w-full px-3 py-2 text-sm bg-slate-950/80 border border-cyan-400/15 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:border-cyan-400/50"
         />
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
       <div className="flex gap-2 justify-end">
         <button
           onClick={onCancel}
-          className="px-3 py-1.5 text-sm rounded-lg border border-gray-600 text-gray-400 hover:bg-gray-700 transition-colors"
+          className="px-3 py-1.5 text-sm rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 transition-colors"
         >
           Cancel
         </button>
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors flex items-center gap-2"
+          className="px-3 py-1.5 text-sm rounded-lg border border-cyan-400/30 bg-cyan-500/15 hover:bg-cyan-500/25 disabled:opacity-50 text-cyan-100 font-semibold transition-colors flex items-center gap-2"
         >
           {saving ? (
             <>
@@ -464,10 +464,10 @@ export default function SnapshotPanel() {
       )}
 
       {/* Header row */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-base font-bold text-gray-100 flex items-center gap-2">
-            <Clock size={16} className="text-blue-400" />
+            <Clock size={16} className="text-cyan-300" />
             Restore Points
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
@@ -476,7 +476,7 @@ export default function SnapshotPanel() {
         </div>
         <button
           onClick={() => setShowManualForm(v => !v)}
-          className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors flex items-center gap-2"
+          className="px-3 py-1.5 text-sm rounded-lg border border-cyan-400/30 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-100 font-semibold transition-colors flex items-center gap-2 shadow-sm shadow-blue-950/30"
         >
           <Plus size={14} />
           Create Restore Point
@@ -486,9 +486,13 @@ export default function SnapshotPanel() {
       {/* Manual snapshot form */}
       {showManualForm && (
         <ManualSnapshotForm
-          onSaved={() => {
+          onSaved={async () => {
             setShowManualForm(false)
-            loadSnapshots()
+            await loadSnapshots()
+            window.dispatchEvent(new CustomEvent('poweron:snapshots-refresh'))
+            setTimeout(() => {
+              loadSnapshots()
+            }, 500)
             showToast('Snapshot saved')
           }}
           onCancel={() => setShowManualForm(false)}
@@ -509,7 +513,7 @@ export default function SnapshotPanel() {
           No snapshots yet — auto-snapshots are created when you save estimates, projects, or payments.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="overflow-hidden rounded-xl border border-cyan-400/10 bg-slate-950/50">
           {snapshots.map(snap => {
             const isPreviewed = previewedIds.has(snap.id)
             const isRestoring = restoring === snap.id
@@ -518,17 +522,17 @@ export default function SnapshotPanel() {
             return (
               <div
                 key={snap.id}
-                className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                className={`flex items-start gap-3 p-3 border-b last:border-b-0 transition-colors ${
                   snap.is_pinned
-                    ? 'border-yellow-700/60 bg-yellow-900/10'
-                    : 'border-gray-700 bg-gray-800/40 hover:bg-gray-800/70'
+                    ? 'border-yellow-500/20 bg-yellow-500/10'
+                    : 'border-cyan-400/10 bg-slate-950/20 hover:bg-slate-900/70'
                 }`}
               >
                 {/* Pin icon */}
                 <button
                   onClick={() => handlePin(snap.id, snap.is_pinned)}
-                  className={`mt-0.5 p-1 rounded hover:bg-gray-700 transition-colors flex-shrink-0 ${
-                    snap.is_pinned ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-400'
+                  className={`mt-0.5 p-1 rounded-lg transition-colors flex-shrink-0 ${
+                    snap.is_pinned ? 'text-yellow-300 bg-yellow-400/10' : 'text-gray-600 hover:text-cyan-300 hover:bg-cyan-400/10'
                   }`}
                   title={snap.is_pinned ? 'Unpin' : 'Pin to top'}
                 >
@@ -538,9 +542,9 @@ export default function SnapshotPanel() {
                 {/* Snapshot info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start gap-2">
-                    <span className="text-sm font-medium text-gray-200 truncate">{snap.label}</span>
+                    <span className="text-sm font-semibold text-gray-100 truncate">{snap.label}</span>
                     {snap.is_pinned && (
-                      <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded bg-yellow-900/40 text-yellow-400 border border-yellow-700/40">
+                      <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-yellow-400/10 text-yellow-300 border border-yellow-400/25">
                         pinned
                       </span>
                     )}
@@ -556,7 +560,7 @@ export default function SnapshotPanel() {
                   {/* Preview */}
                   <button
                     onClick={() => handlePreview(snap.id)}
-                    className="px-2.5 py-1 text-xs rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors flex items-center gap-1.5"
+                    className="px-2.5 py-1 text-xs rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/15 transition-colors flex items-center gap-1.5"
                     title="Preview snapshot data"
                   >
                     <Eye size={12} />
@@ -569,8 +573,8 @@ export default function SnapshotPanel() {
                     disabled={!isPreviewed || isRestoring}
                     className={`px-2.5 py-1 text-xs rounded-lg transition-colors flex items-center gap-1.5 ${
                       isPreviewed && !isRestoring
-                        ? 'border border-orange-700 text-orange-300 hover:bg-orange-900/30'
-                        : 'border border-gray-700 text-gray-600 cursor-not-allowed opacity-50'
+                        ? 'border border-amber-400/25 bg-amber-400/10 text-amber-200 hover:bg-amber-400/15'
+                        : 'border border-gray-700/70 bg-gray-900/30 text-gray-600 cursor-not-allowed opacity-50'
                     }`}
                     title={isPreviewed ? 'Restore to this snapshot' : 'Preview first to enable restore'}
                   >
@@ -586,7 +590,7 @@ export default function SnapshotPanel() {
                   <button
                     onClick={() => handleDelete(snap.id)}
                     disabled={isDeleting}
-                    className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors disabled:opacity-40"
+                    className="p-1.5 rounded-lg text-gray-600 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-40"
                     title="Delete snapshot"
                   >
                     {isDeleting ? (
@@ -607,7 +611,7 @@ export default function SnapshotPanel() {
         <div className="pt-1 flex justify-end">
           <button
             onClick={loadSnapshots}
-            className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+            className="text-xs font-medium text-cyan-300/70 hover:text-cyan-200 transition-colors"
           >
             Refresh list
           </button>
