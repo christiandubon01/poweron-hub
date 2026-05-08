@@ -663,6 +663,19 @@ export function LoginFlow({ children }: LoginFlowProps) {
     case 'password_recovery':
       return <SetNewPasswordForm />
 
+    case 'hydrating_user_data':
+      return (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          height: '100vh', background: '#02060d', flexDirection: 'column', gap: '16px'
+        }}>
+          <div style={{ width: '32px', height: '32px', border: '3px solid #1e80df',
+            borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ color: '#6b7280', fontSize: '14px' }}>Loading your workspace...</div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+        </div>
+      )
+
     case 'authenticated':
       return <>{children}</>
 
