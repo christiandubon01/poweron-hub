@@ -30,6 +30,7 @@ import { pushState, clear as clearHistory, setMaxHistoryDepth } from '@/services
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
 import SnapshotPanel from '@/components/SnapshotPanel'
+import { createSnapshot as createCloudSnapshot } from '@/services/snapshotService'
 import { ProposalQueue } from '@/components/ProposalQueue'
 import { useDemoStore } from '@/store/demoStore'
 import { DEMO_COMPANY, DEMO_OWNER, DEMO_LICENSE } from '@/services/demoDataService'
@@ -309,6 +310,201 @@ function AdminTemplateSwitcherCard() {
   )
 }
 
+
+function DataSyncCenter({
+  backup,
+  user,
+  supabaseUp,
+  lastSync,
+  onExport,
+  onImport,
+  onResetDefaults,
+}: {
+  backup: BackupData
+  user: any
+  supabaseUp: boolean
+  lastSync: string
+  onExport: () => void
+  onImport: () => void
+  onResetDefaults: () => void
+}) {
+  const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
+  const [showDangerZone, setShowDangerZone] = useState(false)
+
+  const projects = backup.projects || []
+  const serviceLogs = backup.serviceLogs || []
+  const logs = backup.logs || []
+  const dataSizeBytes = (() => {
+    try { return new Blob([JSON.stringify(backup)]).size } catch { return JSON.stringify(backup || {}).length }
+  })()
+  const dataSizeMb = (dataSizeBytes / 1024 / 1024).toFixed(2)
+
+  const handleSaveLiveData = async () => {
+    setSyncing(true)
+    setSyncMessage(null)
+    try {
+      const result = await forceSyncToCloud()
+      setSyncMessage(result.success ? 'Live data saved to Supabase.' : `Sync failed: ${result.error || 'Unknown error'}`)
+    } catch (err: any) {
+      setSyncMessage(`Sync failed: ${err?.message || 'Unknown error'}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <SettingCard title="Data & Sync Center">
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold ${
+            supabaseUp
+              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              : 'bg-red-500/10 text-red-300 border-red-500/30'
+          }`}>
+            {supabaseUp ? 'Saved-capable cloud connection' : 'Supabase not configured'}
+          </span>
+          <span className="text-[11px] px-2.5 py-1 rounded-full border border-gray-700 bg-gray-900/60 text-gray-400">
+            app_state: poweron_v2
+          </span>
+          <span className="text-[11px] px-2.5 py-1 rounded-full border border-gray-700 bg-gray-900/60 text-gray-400">
+            Restore backend: snapshots table
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
+            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Last Sync</p>
+            <p className="text-xs text-gray-200 mt-1 truncate">{lastSync}</p>
+          </div>
+          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
+            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Projects</p>
+            <p className="text-lg font-bold text-gray-100 mt-1">{projects.length}</p>
+          </div>
+          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
+            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Service Logs</p>
+            <p className="text-lg font-bold text-gray-100 mt-1">{serviceLogs.length}</p>
+          </div>
+          <div className="p-3 rounded-lg border border-gray-800 bg-gray-900/40">
+            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Data Size</p>
+            <p className="text-lg font-bold text-gray-100 mt-1">{dataSizeMb} MB</p>
+          </div>
+        </div>
+
+        {syncMessage && (
+          <div className={`text-xs px-3 py-2 rounded border ${
+            syncMessage.startsWith('Sync failed')
+              ? 'bg-red-500/10 text-red-300 border-red-500/25'
+              : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
+          }`}>
+            {syncMessage}
+          </div>
+        )}
+
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Live Data Actions</h3>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={handleSaveLiveData}
+              disabled={!supabaseUp || syncing}
+              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-green-600/25 hover:bg-green-600/35 text-green-300 border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {syncing ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+              Save Live Data Now
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border-cyan-500/30"
+            >
+              <RefreshCw size={12} />
+              Refresh App View
+            </button>
+            <button
+              onClick={onExport}
+              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-blue-600/25 hover:bg-blue-600/35 text-blue-300 border-blue-500/30"
+            >
+              <Download size={12} />
+              Export Current Data
+            </button>
+            <button
+              onClick={onImport}
+              className="px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 bg-purple-600/25 hover:bg-purple-600/35 text-purple-300 border-purple-500/30"
+            >
+              <Upload size={12} />
+              Import Backup File
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-600 mt-2">
+            Live data actions affect the current tenant state. Restore points are separate safety backups.
+          </p>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">Restore Points</h3>
+              <p className="text-[10px] text-gray-600 mt-0.5">Preview, pin, delete, or restore point-in-time backups.</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-3">
+            <SnapshotPanel />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <button
+            onClick={() => setShowDiagnostics(v => !v)}
+            className="w-full px-3 py-2 rounded border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 text-gray-300 text-xs font-medium flex items-center justify-between"
+          >
+            <span>Advanced Diagnostics</span>
+            <span>{showDiagnostics ? 'Hide' : 'Show'}</span>
+          </button>
+          {showDiagnostics && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+              <div className="p-3 rounded border border-gray-800 bg-gray-900/40">
+                <p className="text-gray-500 uppercase text-[10px] font-bold">User Email</p>
+                <p className="text-gray-300 mt-1 break-all">{user?.email || 'Unknown'}</p>
+              </div>
+              <div className="p-3 rounded border border-gray-800 bg-gray-900/40">
+                <p className="text-gray-500 uppercase text-[10px] font-bold">User ID</p>
+                <p className="text-gray-300 mt-1">
+                  {user?.id ? `${user.id.slice(0, 8)}…${user.id.slice(-6)}` : 'Unknown'}
+                </p>
+              </div>
+              <div className="p-3 rounded border border-gray-800 bg-gray-900/40">
+                <p className="text-gray-500 uppercase text-[10px] font-bold">Counts</p>
+                <p className="text-gray-300 mt-1">{projects.length} projects · {serviceLogs.length} service logs · {logs.length} field logs</p>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => setShowDangerZone(v => !v)}
+            className="w-full px-3 py-2 rounded border border-red-900/40 bg-red-950/20 hover:bg-red-950/30 text-red-300 text-xs font-medium flex items-center justify-between"
+          >
+            <span>Danger Zone</span>
+            <span>{showDangerZone ? 'Hide' : 'Show'}</span>
+          </button>
+          {showDangerZone && (
+            <div className="rounded border border-red-900/40 bg-red-950/20 p-3">
+              <p className="text-xs text-red-300 mb-2">
+                Reset only app settings to defaults. This does not replace the dedicated Restore Points system.
+              </p>
+              <button
+                onClick={onResetDefaults}
+                className="w-full px-3 py-2 bg-red-600/30 hover:bg-red-600/40 text-red-300 rounded text-xs font-medium border border-red-500/30"
+              >
+                Reset Settings to Defaults
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </SettingCard>
+  )
+}
+
 export default function V15rSettingsPanel() {
   const backup = getBackupData()
   if (!backup) return <NoData />
@@ -414,22 +610,64 @@ const persist = useCallback((mutatedData?: BackupData) => {
     }
   }, [])
 
-  const handleImportBackup = useCallback(async () => {
+    const handleImportBackup = useCallback(async () => {
+    const confirmed = window.confirm(
+      'Import Backup File?\n\nA restore point will be created before import so you can roll back if needed.'
+    )
+    if (!confirmed) return
+
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.json'
+
     input.onchange = async (e: any) => {
       const file = e.target.files?.[0]
       if (!file) return
+
       try {
-        const { data, summary } = await importBackupFromFile(file)
+        const beforeImportData = getBackupData()
+
+        if (beforeImportData) {
+          const snapshot = await createCloudSnapshot(
+            `Pre-import restore point — ${new Date().toLocaleString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            })}`,
+            beforeImportData as any
+          )
+
+          if (snapshot) {
+            window.dispatchEvent(new CustomEvent('poweron:snapshots-refresh'))
+          }
+        }
+
+        const { summary } = await importBackupFromFile(file)
+
+        const syncResult = await forceSyncToCloud()
         forceUpdate()
-        const parts = Object.entries(summary.merged).map(([k, v]) => `${v} ${k}`).join(', ')
-        alert(summary.total > 0 ? `Merged: ${parts} — existing data preserved ✓` : 'Import complete — no new records found (all duplicates)')
-      } catch {
+
+        const parts = Object.entries(summary.merged)
+          .map(([k, v]) => `${v} ${k}`)
+          .join(', ')
+
+        const importMsg = summary.total > 0
+          ? `Merged: ${parts} — existing data preserved ✓`
+          : 'Import complete — no new records found (all duplicates)'
+
+        const syncMsg = syncResult.success
+          ? '\n\nLive data synced to Supabase ✓'
+          : `\n\nImport completed, but cloud sync failed: ${syncResult.error || 'Unknown error'}`
+
+        alert(importMsg + syncMsg)
+      } catch (err) {
+        console.error('[DataSyncCenter] Import failed:', err)
         alert('Failed to import backup')
       }
     }
+
     input.click()
   }, [forceUpdate])
 
@@ -1238,91 +1476,21 @@ const persist = useCallback((mutatedData?: BackupData) => {
             </div>
           </SettingCard>
 
-          {/* 6. DATA & SYNC */}
-          <SettingCard title="Data & Sync">
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 rounded" style={{ backgroundColor: 'var(--bg-input)' }}>
-                <div className={`w-3 h-3 rounded-full ${supabaseUp ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-300">Supabase Status</p>
-                  <p className="text-xs text-gray-500">{supabaseUp ? 'Configured' : 'Not configured'}</p>
-                </div>
-              </div>
-              <div className="text-xs text-gray-400">
-                <p className="font-semibold text-gray-300 mb-1">Last Sync</p>
-                <p>{lastSync}</p>
-              </div>
-              {/* Save to Cloud button — forces immediate full sync */}
-              <button
-                onClick={async () => {
-                  const btn = document.activeElement as HTMLButtonElement
-                  if (btn) btn.disabled = true
-                  const result = await forceSyncToCloud()
-                  if (result.success) {
-                    alert('Synced to cloud successfully!')
-                  } else {
-                    alert('Sync failed: ' + (result.error || 'Unknown error'))
-                  }
-                  if (btn) btn.disabled = false
-                }}
-                disabled={!supabaseUp}
-                className="w-full px-3 py-2 bg-green-600/30 hover:bg-green-600/40 text-green-300 rounded text-xs font-medium border border-green-500/30 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Save size={14} />
-                Save to Cloud Now
-              </button>
-              <p className="text-xs text-gray-500">Forces an immediate full sync of all local data to Supabase. Use after making important changes like marking payments or updating project status.</p>
-            </div>
-          </SettingCard>
+          {/* 6. DATA & SYNC CENTER */}
+          <DataSyncCenter
+            backup={backup}
+            user={user}
+            supabaseUp={supabaseUp}
+            lastSync={lastSync}
+            onExport={handleExportBackup}
+            onImport={handleImportBackup}
+            onResetDefaults={handleResetDefaults}
+          />
 
         </div>
 
         {/* RIGHT COLUMN */}
         <div className="space-y-6">
-
-          {/* 7. SNAPSHOT MANAGER */}
-          <SettingCard title="Snapshot Manager">
-            <div className="space-y-3">
-              <button
-                onClick={handleSaveSnapshot}
-                className="w-full px-3 py-2 bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 rounded text-xs font-medium border border-blue-500/30 transition flex items-center justify-center gap-2"
-              >
-                <Save size={14} />
-                Save Snapshot
-              </button>
-              <div className="max-h-64 overflow-y-auto space-y-2">
-                {snapshots.length > 0 ? (
-                  snapshots.map((snap: any) => (
-                    <div key={snap.id} className="p-3 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
-                      <p className="text-xs font-semibold text-gray-200">{snap.name}</p>
-                      <p className="text-xs text-gray-500 mt-1">{new Date(snap.date).toLocaleString()}</p>
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={() => handleRestoreSnapshot(snap)}
-                          className="flex-1 text-xs px-2 py-1 bg-green-600/30 hover:bg-green-600/40 text-green-300 rounded"
-                        >
-                          Restore
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSnapshot(snap.id)}
-                          className="flex-1 text-xs px-2 py-1 bg-red-600/30 hover:bg-red-600/40 text-red-300 rounded"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-gray-500 text-center py-4">No snapshots</p>
-                )}
-              </div>
-            </div>
-          </SettingCard>
-
-          {/* Cloud Snapshot History (Supabase-backed) */}
-          <SettingCard title="Cloud Snapshot History">
-            <SnapshotPanel />
-          </SettingCard>
 
           {/* MiroFish Proposal Queue */}
           <div data-section="proposals">
@@ -1330,93 +1498,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
               <ProposalQueue maxHeight="600px" />
             </SettingCard>
           </div>
-
-          {/* Version History */}
-          <SettingCard title="Version History">
-            <div className="space-y-4">
-              {/* Create snapshot */}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={snapshotName}
-                  onChange={(e) => setSnapshotName(e.target.value)}
-                  placeholder="Snapshot description..."
-                  className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500"
-                />
-                <button
-                  onClick={() => {
-                    if (snapshotName.trim()) {
-                      createSnapshot(snapshotName.trim())
-                      setVersionSnapshots(getSnapshots())
-                      setSnapshotName('')
-                    }
-                  }}
-                  className="px-4 py-2 bg-cyan-600/20 text-cyan-400 rounded-lg text-sm font-medium hover:bg-cyan-600/30"
-                >
-                  Save Snapshot
-                </button>
-              </div>
-
-              {/* Quick Create Snapshot Now button */}
-              <button
-                onClick={() => {
-                  createSnapshot(`Manual snapshot ${new Date().toLocaleTimeString()}`)
-                  setVersionSnapshots(getSnapshots())
-                  alert('Snapshot created successfully ✓')
-                }}
-                className="w-full px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-lg text-sm font-medium hover:bg-emerald-600/30 transition"
-              >
-                Create Snapshot Now
-              </button>
-
-              {/* Snapshot list */}
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {versionSnapshots.length === 0 ? (
-                  <p className="text-gray-500 text-sm text-center py-4">No snapshots yet</p>
-                ) : (
-                  versionSnapshots.slice(0, 10).map((snap) => (
-                    <div key={snap.id} className="flex items-center justify-between p-3 bg-gray-900/50 border border-gray-700/50 rounded-lg">
-                      <div>
-                        <p className="text-gray-200 text-sm">{snap.changeSummary}</p>
-                        <p className="text-gray-500 text-xs mt-1">
-                          {new Date(snap.timestamp).toLocaleString()} — {snap.device}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        {showRestoreConfirm === snap.id ? (
-                          <>
-                            <button
-                              onClick={() => {
-                                restoreSnapshot(snap.id)
-                                setShowRestoreConfirm(null)
-                                window.location.reload()
-                              }}
-                              className="px-3 py-1.5 bg-red-600/20 text-red-400 rounded text-xs font-medium"
-                            >
-                              Confirm Restore
-                            </button>
-                            <button
-                              onClick={() => setShowRestoreConfirm(null)}
-                              className="px-3 py-1.5 bg-gray-700 text-gray-400 rounded text-xs"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => setShowRestoreConfirm(snap.id)}
-                            className="px-3 py-1.5 bg-gray-700/50 text-gray-400 rounded text-xs hover:text-gray-200"
-                          >
-                            Restore
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </SettingCard>
 
           {/* 8. UNDO/REDO CONFIG */}
           <SettingCard title="Undo/Redo Config">
@@ -1444,32 +1525,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 className="w-full px-3 py-2 bg-red-600/30 hover:bg-red-600/40 text-red-300 rounded text-xs font-medium border border-red-500/30"
               >
                 Clear History
-              </button>
-            </div>
-          </SettingCard>
-
-          {/* 9. EXPORT/IMPORT */}
-          <SettingCard title="Export / Import">
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={handleExportBackup}
-                className="px-3 py-2 bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 rounded text-xs font-medium border border-blue-500/30 flex items-center justify-center gap-1"
-              >
-                <Download size={12} />
-                Export
-              </button>
-              <button
-                onClick={handleImportBackup}
-                className="px-3 py-2 bg-purple-600/30 hover:bg-purple-600/40 text-purple-300 rounded text-xs font-medium border border-purple-500/30 flex items-center justify-center gap-1"
-              >
-                <Upload size={12} />
-                Import
-              </button>
-              <button
-                onClick={handleResetDefaults}
-                className="col-span-2 px-3 py-2 bg-red-600/30 hover:bg-red-600/40 text-red-300 rounded text-xs font-medium border border-red-500/30"
-              >
-                Reset to Defaults
               </button>
             </div>
           </SettingCard>

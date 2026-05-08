@@ -2,50 +2,33 @@
 /**
  * snapshotService.ts — PowerOn Hub V2 Snapshot System
  *
- * Rolling point-in-time saves of app state to Supabase `snapshots` table.
- * All writes are fire-and-forget background operations — they never interrupt UI.
- *
- * Rules (per spec):
- * - No auto-deploy, no auto-overwrite
- * - User must browse history, preview, and explicitly confirm before any restore
- * - Max 50 snapshots returned in list (oldest auto-pruned by query limit)
- * - Pinned snapshots always appear first
+ * Matches current Supabase `public.snapshots` schema:
+ * id, org_id, user_id, snapshot_data, label, created_at
  */
 
 import { supabase } from '@/lib/supabase'
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 export interface Snapshot {
   id: string
-  user_id: string
-  label: string
-  description: string | null
-  snapshot_data: Record<string, unknown>
-  created_at: string
-  is_pinned: boolean
+  org_id?: string | null
+  user_id: string | null
+  label: string | null
+  snapshot_data: Record<string, unknown> | null
+  created_at: string | null
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Get current authenticated user ID.
- * Returns null if not authenticated (graceful degradation — snapshot silently skipped).
- */
 async function getCurrentUserId(): Promise<string | null> {
   try {
     const {
       data: { user },
     } = await supabase.auth.getUser()
+
     return user?.id ?? null
   } catch {
     return null
   }
 }
 
-/**
- * Format a short timestamp label fragment: "Mar 29 2:14pm"
- */
 export function shortTimestamp(date: Date = new Date()): string {
   return date.toLocaleString('en-US', {
     month: 'short',
@@ -56,16 +39,11 @@ export function shortTimestamp(date: Date = new Date()): string {
   })
 }
 
-// ── Core Functions ───────────────────────────────────────────────────────────
+function buildSnapshotLabel(label: string, description?: string): string {
+  if (!description) return label.slice(0, 255)
+  return `${label} — ${description}`.slice(0, 255)
+}
 
-/**
- * createSnapshot — saves a named point-in-time snapshot to Supabase.
- *
- * @param label       Human-readable label, e.g. "VAULT — estimate saved — Mar 29 2:14pm"
- * @param data        The state data to snapshot (any serialisable object)
- * @param description Optional extra description
- * @returns The created snapshot record, or null on failure
- */
 export async function createSnapshot(
   label: string,
   data: Record<string, unknown>,
@@ -73,8 +51,8 @@ export async function createSnapshot(
 ): Promise<Snapshot | null> {
   try {
     const userId = await getCurrentUserId()
+
     if (!userId) {
-      // Not authenticated — skip silently, app works offline
       console.warn('[snapshotService] createSnapshot skipped — no authenticated user')
       return null
     }
@@ -83,12 +61,10 @@ export async function createSnapshot(
       .from('snapshots')
       .insert({
         user_id: userId,
-        label: label.slice(0, 255),
-        description: description ? description.slice(0, 1000) : null,
+        label: buildSnapshotLabel(label, description),
         snapshot_data: data,
-        is_pinned: false,
       })
-      .select('id, user_id, label, description, snapshot_data, created_at, is_pinned')
+      .select('id, org_id, user_id, label, snapshot_data, created_at')
       .single()
 
     if (error) {
@@ -103,11 +79,6 @@ export async function createSnapshot(
   }
 }
 
-/**
- * listSnapshots — returns up to 50 snapshots for the current user,
- * sorted by: pinned first, then created_at DESC.
- * snapshot_data is excluded from the list for performance (use getSnapshot for full data).
- */
 export async function listSnapshots(): Promise<Omit<Snapshot, 'snapshot_data'>[]> {
   try {
     const userId = await getCurrentUserId()
@@ -115,9 +86,8 @@ export async function listSnapshots(): Promise<Omit<Snapshot, 'snapshot_data'>[]
 
     const { data, error } = await supabase
       .from('snapshots')
-      .select('id, user_id, label, description, created_at, is_pinned')
+      .select('id, org_id, user_id, label, created_at')
       .eq('user_id', userId)
-      .order('is_pinned', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(50)
 
@@ -133,10 +103,6 @@ export async function listSnapshots(): Promise<Omit<Snapshot, 'snapshot_data'>[]
   }
 }
 
-/**
- * getSnapshot — returns full snapshot record including snapshot_data.
- * Used for the Preview modal.
- */
 export async function getSnapshot(id: string): Promise<Snapshot | null> {
   try {
     const userId = await getCurrentUserId()
@@ -144,7 +110,7 @@ export async function getSnapshot(id: string): Promise<Snapshot | null> {
 
     const { data, error } = await supabase
       .from('snapshots')
-      .select('id, user_id, label, description, snapshot_data, created_at, is_pinned')
+      .select('id, org_id, user_id, label, snapshot_data, created_at')
       .eq('id', id)
       .eq('user_id', userId)
       .single()
@@ -161,13 +127,16 @@ export async function getSnapshot(id: string): Promise<Snapshot | null> {
   }
 }
 
-/**
- * deleteSnapshot — hard deletes a snapshot by id.
- * RLS ensures users can only delete their own records.
- */
 export async function deleteSnapshot(id: string): Promise<boolean> {
   try {
-    const { error } = await supabase.from('snapshots').delete().eq('id', id)
+    const userId = await getCurrentUserId()
+    if (!userId) return false
+
+    const { error } = await supabase
+      .from('snapshots')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId)
 
     if (error) {
       console.error('[snapshotService] deleteSnapshot error:', error.message)
@@ -181,47 +150,19 @@ export async function deleteSnapshot(id: string): Promise<boolean> {
   }
 }
 
-/**
- * pinSnapshot — toggle the pinned status of a snapshot.
- * Pinned snapshots float to the top of the list.
- */
-export async function pinSnapshot(id: string, pinned: boolean): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('snapshots')
-      .update({ is_pinned: pinned })
-      .eq('id', id)
-
-    if (error) {
-      console.error('[snapshotService] pinSnapshot error:', error.message)
-      return false
-    }
-
-    return true
-  } catch (err) {
-    console.error('[snapshotService] pinSnapshot exception:', err)
-    return false
-  }
+export async function pinSnapshot(_id: string, _pinned: boolean): Promise<boolean> {
+  console.warn('[snapshotService] pinSnapshot skipped — current snapshots table has no is_pinned column')
+  return false
 }
 
-// ── Auto-snapshot helpers ────────────────────────────────────────────────────
-
-/**
- * autoSnapshot — fires a background snapshot with no UI interrupt.
- * Swallows all errors — the app continues normally regardless.
- *
- * @param agentName   e.g. "VAULT", "BLUEPRINT", "LEDGER"
- * @param action      e.g. "estimate saved", "project updated", "payment recorded"
- * @param data        Current app state / relevant data object to snapshot
- */
 export function autoSnapshot(
   agentName: string,
   action: string,
   data: Record<string, unknown>
 ): void {
-  // Fire and forget — intentionally no await
   const label = `${agentName} — ${action} — ${shortTimestamp()}`
+
   createSnapshot(label, data).catch(() => {
-    // Silent — offline or auth failure is expected
+    /* silent */
   })
 }

@@ -23,7 +23,7 @@ import {
   shortTimestamp,
   type Snapshot,
 } from '@/services/snapshotService'
-import { getBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
+import { getBackupData, saveBackupDataAndSync, forceSyncToCloud } from '@/services/backupDataService'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -305,6 +305,18 @@ export default function SnapshotPanel() {
     loadSnapshots()
   }, [loadSnapshots])
 
+  useEffect(() => {
+    const handleRefresh = () => {
+      loadSnapshots()
+    }
+
+    window.addEventListener('poweron:snapshots-refresh', handleRefresh)
+
+    return () => {
+      window.removeEventListener('poweron:snapshots-refresh', handleRefresh)
+    }
+  }, [loadSnapshots])
+
   // ── Toast ────────────────────────────────────────────────────────────────
 
   function showToast(msg: string) {
@@ -355,19 +367,31 @@ export default function SnapshotPanel() {
         return
       }
 
-      // Step 3: Apply snapshot data to app state (save to localStorage via backupDataService)
-      saveBackupDataAndSync(snap.snapshot_data as any, 'snapshotRestore')
+      // Step 3: Apply snapshot data to app state and wait for cloud write
+      await saveBackupDataAndSync(snap.snapshot_data as any, 'snapshotRestore')
 
-      // Step 4: Refresh snapshot list (pre-restore backup should now appear)
+      // Step 3B: Force a final Supabase sync before reload so hydration pulls restored data
+      const syncResult = await forceSyncToCloud()
+      if (!syncResult.success) {
+        showToast(`Restore saved locally, but cloud sync failed: ${syncResult.error || 'Unknown error'}`)
+        return
+      }
+
+      // Step 4: Refresh snapshot list
       await loadSnapshots()
 
-      // Step 5: Notify app to refresh relevant panels
-      // Dispatch a storage event so panels that listen for changes can react
+      // Step 5: Notify app that live state was restored
       window.dispatchEvent(new CustomEvent('poweron:state-restored', {
         detail: { snapshotId: snapId, label: snapLabel },
       }))
 
-      showToast(`Restored: ${snapLabel}`)
+      showToast(`Restored: ${snapLabel}. Reloading workspace...`)
+
+      // Restore replaces the live app state. A full reload prevents stale KPI,
+      // project, and dashboard state from staying mounted after restore.
+      setTimeout(() => {
+        window.location.reload()
+      }, 1500)
     } catch (err) {
       console.error('[SnapshotPanel] Restore error:', err)
       showToast('Restore failed — check console')
