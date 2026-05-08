@@ -1180,6 +1180,12 @@ export async function loadFromSupabase(forceRemote = false): Promise<{ success: 
         console.log(`[Sync] forceRemote=true — accepting remote data (saved by ${remoteDevice})`)
         return { success: true, merged: true, fromDevice: remoteDevice }
       }
+      if (_isHydrating) {
+        console.log('[Sync] Local is newer but hydrating — skipping push, clearing stale local data')
+        localStorage.removeItem('poweron_backup_data')
+        localStorage.removeItem('poweron_v2')
+        return { success: true, merged: false }
+      }
       console.log('[Sync] Local is newer — pushing to Supabase, Loading: local')
       await syncToSupabase()
       return { success: true, merged: false }
