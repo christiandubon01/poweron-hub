@@ -45,7 +45,7 @@ function StepDots({ current }: { current: number }) {
           }}
         />
       ))}
-      <span style={{ fontSize: '9px', color: '#9ca3af', marginLeft: '4px', fontFamily: 'monospace' }}>
+      <span style={{ fontSize: '8px', color: '#9ca3af', marginLeft: '4px', fontFamily: 'monospace' }}>
         {current}/5
       </span>
     </div>
@@ -84,22 +84,33 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
     setRejectReason('')
   }
 
+  const buttonBase = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    borderRadius: '8px',
+    padding: '5px 9px',
+    fontSize: '10px',
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+  } as const
+
   return (
     <div style={{
-      background: '#1e2235',
-      border: `1px solid ${proposal.impactLevel === 'high' || proposal.impactLevel === 'critical' ? impact.border : 'rgba(255,255,255,0.08)'}`,
+      background: 'rgba(15,23,42,0.78)',
+      border: '1px solid rgba(34,211,238,0.10)',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.025)',
       borderRadius: '10px',
-      padding: '14px',
-      transition: 'all 0.2s',
+      padding: '9px 10px',
     }}>
-      {/* Header: impact badge + agent source */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '6px', flexWrap: 'wrap' }}>
         <span style={{
           background: impact.bg,
           color: impact.text,
           border: `1px solid ${impact.border}`,
-          fontSize: '9px',
-          fontWeight: 700,
+          fontSize: '8px',
+          fontWeight: 800,
           padding: '2px 8px',
           borderRadius: '999px',
           textTransform: 'uppercase',
@@ -107,23 +118,28 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
         }}>
           {proposal.impactLevel}
         </span>
+
         <span style={{
-          background: 'rgba(139,92,246,0.15)',
-          color: '#a78bfa',
-          fontSize: '9px',
-          fontWeight: 600,
+          background: 'rgba(34,211,238,0.10)',
+          color: '#67e8f9',
+          border: '1px solid rgba(34,211,238,0.18)',
+          fontSize: '8px',
+          fontWeight: 700,
           padding: '2px 8px',
           borderRadius: '999px',
         }}>
-          from {proposal.proposingAgent.toUpperCase()}
+          {proposal.proposingAgent?.toUpperCase?.() || 'AI'}
         </span>
+
         <StepDots current={proposal.mirofishStep} />
+
         {proposal.status === 'deferred' && (
           <span style={{
-            background: 'rgba(107,114,128,0.2)',
-            color: '#9ca3af',
-            fontSize: '9px',
-            fontWeight: 600,
+            background: 'rgba(148,163,184,0.12)',
+            color: '#94a3b8',
+            border: '1px solid rgba(148,163,184,0.16)',
+            fontSize: '8px',
+            fontWeight: 700,
             padding: '2px 8px',
             borderRadius: '999px',
           }}>
@@ -132,23 +148,21 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
         )}
       </div>
 
-      {/* Title */}
       <h4 style={{
-        margin: '0 0 4px',
-        fontSize: '15px',
+        margin: '0 0 6px',
+        fontSize: '12px',
         fontWeight: 700,
-        color: 'white',
-        lineHeight: '1.3',
+        color: '#f8fafc',
+        lineHeight: '1.18',
       }}>
         {proposal.title}
       </h4>
 
-      {/* Summary — 2 lines max, ellipsis */}
       <p style={{
-        margin: '0 0 12px',
-        fontSize: '12px',
-        color: '#9ca3af',
-        lineHeight: '1.5',
+        margin: '0 0 8px',
+        fontSize: '10px',
+        color: '#8794aa',
+        lineHeight: '1.3',
         display: '-webkit-box',
         WebkitLineClamp: 2,
         WebkitBoxOrient: 'vertical',
@@ -157,22 +171,23 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
         {proposal.description}
       </p>
 
-      {/* Inline confirmation or action buttons */}
       {confirming === 'approve' ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '12px', color: '#d1d5db' }}>Confirm approval?</span>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          borderTop: '1px solid rgba(34,211,238,0.10)',
+          paddingTop: '10px',
+        }}>
+          <span style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: 700 }}>Mark active?</span>
           <button
             onClick={handleApproveConfirm}
             disabled={loading}
             style={{
-              background: '#22c55e',
-              color: '#111',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '5px 14px',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: loading ? 'wait' : 'pointer',
+              ...buttonBase,
+              background: 'rgba(34,197,94,0.95)',
+              color: '#052e16',
+              border: '1px solid rgba(34,197,94,0.8)',
               opacity: loading ? 0.6 : 1,
             }}
           >
@@ -181,21 +196,17 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
           <button
             onClick={() => setConfirming(null)}
             style={{
-              background: 'rgba(255,255,255,0.08)',
-              color: '#9ca3af',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '5px 14px',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
+              ...buttonBase,
+              background: 'rgba(148,163,184,0.10)',
+              color: '#cbd5e1',
+              border: '1px solid rgba(148,163,184,0.16)',
             }}
           >
             Cancel
           </button>
         </div>
       ) : confirming === 'reject' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(239,68,68,0.12)', paddingTop: '10px' }}>
           <input
             type="text"
             value={rejectReason}
@@ -203,12 +214,12 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
             placeholder="Reason for rejection..."
             autoFocus
             style={{
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(239,68,68,0.3)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              fontSize: '12px',
-              color: 'white',
+              background: 'rgba(15,23,42,0.85)',
+              border: '1px solid rgba(239,68,68,0.26)',
+              borderRadius: '8px',
+              padding: '8px 10px',
+              fontSize: '11px',
+              color: '#f8fafc',
               outline: 'none',
             }}
             onKeyDown={e => e.key === 'Enter' && handleRejectConfirm()}
@@ -218,15 +229,12 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
               onClick={handleRejectConfirm}
               disabled={loading || !rejectReason.trim()}
               style={{
-                background: '#ef4444',
+                ...buttonBase,
+                background: 'rgba(239,68,68,0.95)',
                 color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '5px 14px',
-                fontSize: '12px',
-                fontWeight: 700,
-                cursor: (loading || !rejectReason.trim()) ? 'not-allowed' : 'pointer',
+                border: '1px solid rgba(239,68,68,0.8)',
                 opacity: (loading || !rejectReason.trim()) ? 0.5 : 1,
+                cursor: (loading || !rejectReason.trim()) ? 'not-allowed' : 'pointer',
               }}
             >
               {loading ? '...' : 'Confirm Reject'}
@@ -234,14 +242,10 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
             <button
               onClick={() => { setConfirming(null); setRejectReason('') }}
               style={{
-                background: 'rgba(255,255,255,0.08)',
-                color: '#9ca3af',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '5px 14px',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
+                ...buttonBase,
+                background: 'rgba(148,163,184,0.10)',
+                color: '#cbd5e1',
+                border: '1px solid rgba(148,163,184,0.16)',
               }}
             >
               Cancel
@@ -249,72 +253,45 @@ function ProposalCard({ proposal, onApprove, onReject, onDefer }: ProposalCardPr
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
             onClick={() => setConfirming('approve')}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              background: '#22c55e',
-              color: '#111',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '6px 14px',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'opacity 0.2s',
+              ...buttonBase,
+              background: 'rgba(34,197,94,0.92)',
+              color: '#052e16',
+              border: '1px solid rgba(34,197,94,0.7)',
             }}
           >
-            <Check size={12} /> Approve
+            <Check size={11} /> Active
           </button>
           <button
             onClick={() => setConfirming('reject')}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              background: '#ef4444',
+              ...buttonBase,
+              background: 'rgba(239,68,68,0.90)',
               color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '6px 14px',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'opacity 0.2s',
+              border: '1px solid rgba(239,68,68,0.7)',
             }}
           >
-            <X size={12} /> Reject
+            <X size={11} /> Reject
           </button>
           <button
             onClick={() => onDefer(proposal.id!)}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              background: 'rgba(255,255,255,0.08)',
-              color: '#9ca3af',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: '6px',
-              padding: '6px 14px',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
+              ...buttonBase,
+              background: 'rgba(148,163,184,0.10)',
+              color: '#cbd5e1',
+              border: '1px solid rgba(148,163,184,0.16)',
             }}
           >
-            <Clock size={12} /> Defer
+            <Clock size={11} /> Defer
           </button>
         </div>
       )}
     </div>
   )
 }
-
-// ── History Item ─────────────────────────────────────────────────────────────
-
 function HistoryItem({ proposal }: { proposal: MiroFishProposal }) {
   const isApproved = proposal.status === 'confirmed' || proposal.status === 'completed'
   const date = new Date(proposal.createdAt).toLocaleDateString()
@@ -539,3 +516,4 @@ export function ProposalQueue({ orgId: overrideOrgId, maxHeight = '500px' }: Pro
     </div>
   )
 }
+
