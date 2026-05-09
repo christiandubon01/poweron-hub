@@ -1254,13 +1254,33 @@ const persist = useCallback((mutatedData?: BackupData) => {
           {/* HUNTER Operations — Home Base + cron run status */}
           {isAdminOwner && showAdminTools && (
           <SettingCard title="HUNTER Operations">
-            <div className="flex flex-col gap-5">
-              <HomeBaseSettings />
-              <div className="border-t border-gray-800 pt-4">
-                <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2 tracking-wider">
-                  Cron Run Status
-                </h4>
-                <CronStatusPanel />
+            <div className="rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/30 to-slate-950/90 p-5 shadow-2xl shadow-cyan-950/20">
+              <div className="mb-5 flex flex-col gap-3 border-b border-cyan-400/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-cyan-50">HUNTER Command Center</h3>
+                  <p className="mt-1 text-sm text-slate-400">Home base, lead radius, and scheduled source runs.</p>
+                </div>
+                <span className="w-fit rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-cyan-200">
+                  Admin tools
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-4">
+                <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-cyan-200/80">
+                    Home Base
+                  </h4>
+                  <HomeBaseSettings />
+                </div>
+
+                <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-cyan-200/80">
+                    Cron Run Status
+                  </h4>
+                  <div className="[&_button]:mb-2 [&_button]:rounded-xl [&_button]:border [&_button]:border-cyan-400/10 [&_button]:bg-slate-950/60 [&_button]:shadow-sm [&_button]:shadow-blue-950/20 [&_button:hover]:bg-cyan-400/10 [&_svg]:shrink-0 [&_span]:tabular-nums [&_span.font-medium]:text-cyan-50">
+                    <CronStatusPanel />
+                  </div>
+                </div>
               </div>
             </div>
           </SettingCard>
