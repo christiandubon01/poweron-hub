@@ -2403,8 +2403,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
           {/* AI DEVELOPMENT */}
           {showAIDevelopment && (
-          <SettingCard title="">
-            <div className="space-y-4 rounded-2xl border border-sky-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
+          <div className="space-y-4 rounded-2xl border border-sky-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
               <div className="flex items-center justify-between gap-3 border-b border-sky-400/10 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-gray-100">AI development workspace</h3>
@@ -2554,7 +2553,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 <NexusVoiceSelector />
               </div>
             </div>
-          </SettingCard>
           )}
 
           {/* 3. PHASE WEIGHTS EDITOR */}
@@ -4126,8 +4124,7 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
 
   if (!hasData) {
     return (
-      <SettingCard title="">
-        <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
+      <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
           <div className="flex items-start justify-between gap-3 border-b border-cyan-400/10 pb-3">
             <div>
               <h3 className="text-sm font-bold text-cyan-50">Skill progress map</h3>
@@ -4160,13 +4157,11 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
             </div>
           </div>
         </div>
-      </SettingCard>
     )
   }
 
   return (
-    <SettingCard title="">
-      <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
+    <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
         <div className="flex items-start justify-between gap-3 border-b border-cyan-400/10 pb-3">
           <div>
             <h3 className="text-sm font-bold text-cyan-50">Skill progress map</h3>
@@ -4357,10 +4352,8 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
         </div>
         )}
       </div>
-    </SettingCard>
   )
 }
-
 // ── Owner Profile Sub-Component ──────────────────────────────────────────────
 
 /**
@@ -4453,8 +4446,7 @@ function OwnerProfileCard() {
     : 'bg-gray-600/20 text-gray-400 border-gray-600/30'
 
   return (
-    <SettingCard title="My Profile — Strategic Context for NEXUS">
-      <div className="rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
+    <div className="rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
         <div className="mb-4 flex flex-col gap-3 border-b border-cyan-400/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-base font-bold text-cyan-50">Strategic Context for NEXUS</h3>
@@ -4626,7 +4618,6 @@ function OwnerProfileCard() {
 
         </div>
       </div>
-    </SettingCard>
   )
 }
 
