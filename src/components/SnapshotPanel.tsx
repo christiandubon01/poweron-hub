@@ -48,6 +48,84 @@ function formatDate(iso: string): string {
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
+function asRecord(value: any): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function itemCount(data: any, key: string): number {
+  const value = asRecord(data)[key]
+  return Array.isArray(value) ? value.length : 0
+}
+
+function hasObjectData(data: any, key: string): boolean {
+  const value = asRecord(data)[key]
+  return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '0 KB'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function snapshotDataSize(data: any): string {
+  try {
+    return formatBytes(new Blob([JSON.stringify(data ?? {})]).size)
+  } catch {
+    return 'Unavailable'
+  }
+}
+
+function companyName(data: any): string {
+  return asRecord(asRecord(data).settings).company || 'Not set'
+}
+
+function calendarStatus(data: any): string {
+  return asRecord(asRecord(data).settings).gcalUrl ? 'Present' : 'Not set'
+}
+
+function areaStatus(data: any, key: string, kind: 'array' | 'object'): string {
+  if (kind === 'array') {
+    const count = itemCount(data, key)
+    return count > 0 ? `${count} item${count === 1 ? '' : 's'}` : 'No data'
+  }
+  return hasObjectData(data, key) ? 'Saved' : 'No data'
+}
+
+function labelFromKey(key: string): string {
+  return key
+    .replace(/^_/, '')
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^\w/, c => c.toUpperCase())
+}
+
+function getIncludedAreas(data: any) {
+  const known = [
+    { key: 'settings', label: 'Settings', kind: 'object' },
+    { key: 'projects', label: 'Projects', kind: 'array' },
+    { key: 'serviceLogs', label: 'Service Logs', kind: 'array' },
+    { key: 'logs', label: 'Field Logs', kind: 'array' },
+    { key: 'imports', label: 'Imports', kind: 'array' },
+    { key: 'customers', label: 'Customers', kind: 'array' },
+    { key: 'employees', label: 'Employees', kind: 'array' },
+    { key: 'templates', label: 'Templates', kind: 'array' },
+    { key: 'priceBook', label: 'Price Book', kind: 'array' },
+  ]
+
+  const knownKeys = new Set(known.map(area => area.key))
+  const extra = Object.entries(asRecord(data))
+    .filter(([key, value]) => !knownKeys.has(key) && !key.startsWith('_') && value && typeof value === 'object')
+    .filter(([, value]) => Array.isArray(value) ? value.length > 0 : Object.keys(value as any).length > 0)
+    .map(([key, value]) => ({
+      key,
+      label: labelFromKey(key),
+      kind: Array.isArray(value) ? 'array' : 'object',
+    }))
+
+  return [...known, ...extra]
+}
+
 interface PreviewModalProps {
   snapshot: Snapshot
   onClose: () => void
@@ -56,36 +134,118 @@ interface PreviewModalProps {
 
 function PreviewModal({ snapshot, onClose, onConfirmRestore }: PreviewModalProps) {
   const [showConfirm, setShowConfirm] = useState(false)
+  const snapshotData = snapshot.snapshot_data || {}
+  const currentData = getBackupData() || {}
+  const summaryCards = [
+    { label: 'Projects', value: itemCount(snapshotData, 'projects') },
+    { label: 'Service Logs', value: itemCount(snapshotData, 'serviceLogs') },
+    { label: 'Field Logs', value: itemCount(snapshotData, 'logs') },
+    { label: 'Data Size', value: snapshotDataSize(snapshotData) },
+  ]
+  const changes = [
+    { label: 'Projects', current: itemCount(currentData, 'projects'), restore: itemCount(snapshotData, 'projects') },
+    { label: 'Service Logs', current: itemCount(currentData, 'serviceLogs'), restore: itemCount(snapshotData, 'serviceLogs') },
+    { label: 'Field Logs', current: itemCount(currentData, 'logs'), restore: itemCount(snapshotData, 'logs') },
+    { label: 'Company Name', current: companyName(currentData), restore: companyName(snapshotData) },
+    { label: 'Google Calendar URL', current: calendarStatus(currentData), restore: calendarStatus(snapshotData) },
+  ]
+  const includedAreas = getIncludedAreas(snapshotData)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
       <div
-        className="w-full max-w-2xl rounded-xl border border-gray-700 flex flex-col"
-        style={{ backgroundColor: 'var(--bg-card, #1f2937)', maxHeight: '85vh' }}
+        className="w-full max-w-4xl rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-950 via-blue-950/30 to-slate-950 shadow-2xl shadow-blue-950/40 flex flex-col"
+        style={{ maxHeight: '88vh' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
+        <div className="flex items-start justify-between gap-4 p-5 border-b border-cyan-400/15">
           <div>
-            <h3 className="text-base font-bold text-gray-100">Restore Point Preview</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{snapshot.label}</p>
+            <p className="text-xs uppercase tracking-wider text-cyan-200/70 font-bold">Restore Point Preview</p>
+            <h3 className="text-lg font-bold text-gray-100 mt-1">{snapshot.label || 'Untitled restore point'}</h3>
+            <p className="text-xs text-gray-400 mt-1">
+              Created {formatDate(snapshot.created_at)} - Snapshot of saved app state
+            </p>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-cyan-400/10 text-gray-400 hover:text-gray-200 transition-colors"
           >
             <X size={18} />
           </button>
         </div>
 
-        {/* Data preview */}
-        <div className="flex-1 overflow-auto p-4">
-          <pre className="text-xs text-gray-300 bg-gray-900 rounded-lg p-4 overflow-auto whitespace-pre-wrap break-all leading-relaxed">
-            {JSON.stringify(snapshot.snapshot_data, null, 2)}
-          </pre>
+        <div className="flex-1 overflow-auto p-5 space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {summaryCards.map(card => (
+              <div key={card.label} className="rounded-xl border border-cyan-400/15 bg-slate-950/65 p-3 shadow-inner shadow-blue-950/20">
+                <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">{card.label}</p>
+                <p className="text-lg font-bold text-gray-100 mt-1">{card.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <section className="rounded-xl border border-cyan-400/15 bg-slate-950/55 overflow-hidden">
+            <div className="px-4 py-3 border-b border-cyan-400/10">
+              <h4 className="text-sm font-bold text-gray-100">What will change</h4>
+              <p className="text-xs text-gray-500 mt-0.5">Current app data compared with this restore point.</p>
+            </div>
+            <div className="divide-y divide-cyan-400/10">
+              {changes.map(change => {
+                const unchanged = change.current === change.restore
+                return (
+                  <div key={change.label} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-2 px-4 py-3 text-sm">
+                    <div className="font-semibold text-gray-200">{change.label}</div>
+                    <div>
+                      <span className="block text-[10px] uppercase tracking-wider text-gray-500 font-bold">Current</span>
+                      <span className="text-gray-300">{String(change.current)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Restore Point</span>
+                      <span className="text-gray-100">{String(change.restore)}</span>
+                    </div>
+                    <div className="md:text-right">
+                      <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${
+                        unchanged
+                          ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200'
+                          : 'border-amber-400/25 bg-amber-400/10 text-amber-200'
+                      }`}>
+                        {unchanged ? 'Unchanged' : 'Will change'}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-cyan-400/15 bg-slate-950/55 p-4">
+            <h4 className="text-sm font-bold text-gray-100">Areas included in this restore point</h4>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {includedAreas.map(area => (
+                <div key={area.key} className="flex items-center justify-between gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/50 px-3 py-2">
+                  <span className="text-sm text-gray-200 truncate">{area.label}</span>
+                  <span className="text-[11px] rounded-full border border-cyan-400/15 bg-cyan-400/10 px-2 py-0.5 text-cyan-100 whitespace-nowrap">
+                    {areaStatus(snapshotData, area.key, area.kind)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <details className="rounded-xl border border-gray-700/70 bg-slate-950/70">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-300 hover:text-gray-100">
+              Technical Details / Raw Data
+            </summary>
+            <div className="border-t border-gray-800 p-4">
+              <pre className="max-h-72 overflow-auto rounded-lg bg-gray-950/90 p-4 text-xs leading-relaxed text-gray-300 whitespace-pre-wrap break-all">
+                {JSON.stringify(snapshot.snapshot_data, null, 2)}
+              </pre>
+            </div>
+          </details>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between p-4 border-t border-gray-700 gap-3">
+        <div className="flex items-center justify-between p-4 border-t border-cyan-400/15 gap-3">
           <div className="text-xs text-gray-500">
             Saved {formatDate(snapshot.created_at)}
           </div>
