@@ -32,6 +32,7 @@ import { VoiceSettings } from '@/components/voice/VoiceSettings'
 import SnapshotPanel from '@/components/SnapshotPanel'
 import { createSnapshot as createCloudSnapshot } from '@/services/snapshotService'
 import { ProposalQueue } from '@/components/ProposalQueue'
+import { runScoutAnalysis } from '@/agents/scout'
 import { useDemoStore } from '@/store/demoStore'
 import { DEMO_COMPANY, DEMO_OWNER, DEMO_LICENSE } from '@/services/demoDataService'
 import {
@@ -583,10 +584,13 @@ export default function V15rSettingsPanel() {
   const settings = backup.settings || {} as any
 
   // Auth (for owner role check)
-  const { isOwner, user } = useAuth()
+  const { isOwner, user, profile: authProfile } = useAuth()
 
   const [showBetaInviteModal, setShowBetaInviteModal] = useState(false)
   const [, setHideTick] = useState(0)
+  const [scoutScanning, setScoutScanning] = useState(false)
+  const [scoutScanMessage, setScoutScanMessage] = useState('')
+  const [proposalQueueKey, setProposalQueueKey] = useState(0)
   // Demo Mode store
   const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
@@ -671,6 +675,23 @@ export default function V15rSettingsPanel() {
     setSettingsHubVisibility(prev => ({ ...prev, showAIDevelopment: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showAIDevelopment) : next }))
     restartSettingsHubGlare()
   }
+  const runAIDevelopmentScoutScan = useCallback(async () => {
+    const orgId = authProfile?.org_id
+    if (!orgId || scoutScanning) return
+
+    setScoutScanning(true)
+    setScoutScanMessage('')
+    try {
+      const result = await runScoutAnalysis(orgId, { targetCount: 5 })
+      setProposalQueueKey(key => key + 1)
+      setScoutScanMessage(`Scan complete: ${result.verifiedCount} suggestion${result.verifiedCount === 1 ? '' : 's'} queued.`)
+    } catch (err) {
+      console.error('[Settings] SCOUT scan failed:', err)
+      setScoutScanMessage('Scan failed. Try again in a moment.')
+    } finally {
+      setScoutScanning(false)
+    }
+  }, [authProfile?.org_id, scoutScanning])
   const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
   const [overheadEntryModes, setOverheadEntryModes] = useState<Record<string, 'monthly' | 'yearly'>>({})
 
@@ -2176,9 +2197,24 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       <h4 className="text-sm font-bold text-gray-100">Proposals</h4>
                       <p className="text-xs text-gray-500 mt-0.5">MiroFish proposal queue.</p>
                     </div>
-                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">Queue</span>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={runAIDevelopmentScoutScan}
+                        disabled={scoutScanning || !authProfile?.org_id}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition-colors hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} className={scoutScanning ? 'animate-spin' : ''} />
+                        {scoutScanning ? 'Scanning' : 'Scan Now'}
+                      </button>
+                      {scoutScanMessage && (
+                        <span className={`text-[10px] ${scoutScanMessage.includes('failed') ? 'text-red-300' : 'text-emerald-300'}`}>
+                          {scoutScanMessage}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <ProposalQueue maxHeight="600px" />
+                  <ProposalQueue key={proposalQueueKey} maxHeight="600px" />
                 </div>
 
                 <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
@@ -3542,6 +3578,7 @@ function PriorityCard({ rank, domain, score, target }: { rank: number; domain: S
 function SkillIntelligenceCard() {
   const [skillMap] = useState(() => getLocalSkillMap())
   const [signals] = useState(() => getLocalSkillSignals())
+  const [ownerProfile] = useState(() => getLocalOwnerProfile())
   const [, setTick] = useState(0)
 
   // Calculate velocities (30-day score gains)
@@ -3582,17 +3619,69 @@ function SkillIntelligenceCard() {
       .slice(0, 20)
   }, [signals])
 
-  const hasData = SKILL_DOMAINS.some(d => (skillMap[d]?.score ?? 0) > 0)
+  const skillRows = useMemo(() => {
+    const manualRows = ownerProfile.skill_inventory.map((name: string) => ({
+      id: `manual-${name}`,
+      name,
+      source: 'Manual' as const,
+      score: 60,
+      detail: 'Owner profile',
+    }))
+
+    const aiRows = SKILL_DOMAINS
+      .filter(domain => (skillMap[domain]?.score ?? 0) > 0 || signals.some(s => s.skill === domain))
+      .map(domain => {
+        const score = Math.round(skillMap[domain]?.score ?? 0)
+        const evidenceCount = signals.filter(s => s.skill === domain).length
+        return {
+          id: `ai-${domain}`,
+          name: SKILL_LABELS[domain],
+          source: 'AI' as const,
+          score,
+          detail: evidenceCount === 1 ? '1 signal' : `${evidenceCount} signals`,
+        }
+      })
+
+    return [...manualRows, ...aiRows].slice(0, 14)
+  }, [ownerProfile.skill_inventory, signals, skillMap])
+
+  const hasData = skillRows.length > 0
 
   if (!hasData) {
     return (
       <SettingCard title="My Development — Skill Intelligence">
-        <div className="text-center py-8">
-          <BarChart2 size={40} className="mx-auto text-gray-600 mb-3" />
-          <p className="text-gray-400 text-sm font-medium">No skill signals captured yet</p>
-          <p className="text-gray-600 text-xs mt-1">
-            Use NEXUS chat, save journal entries, or log field notes — skill signals are captured automatically.
-          </p>
+        <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
+          <div className="flex items-start justify-between gap-3 border-b border-cyan-400/10 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-cyan-50">Skill progress map</h3>
+              <p className="mt-0.5 text-xs text-slate-500">Manual skills and AI-recognized signals.</p>
+            </div>
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
+              Waiting
+            </span>
+          </div>
+
+          <div className="flex flex-1 flex-col justify-center">
+            <div className="mx-auto w-full max-w-sm rounded-xl border border-slate-700/60 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/20">
+              <div className="mb-4 flex items-center justify-center gap-2 text-slate-400">
+                <BarChart2 size={18} className="text-cyan-300/70" />
+                <p className="text-sm font-semibold text-slate-300">No skill signals captured yet</p>
+              </div>
+              <div className="space-y-2">
+                {[68, 45, 78, 32, 56].map((width, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <div className="h-2 w-16 rounded bg-slate-800/80" />
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-800/90">
+                      <div className="h-full rounded-full bg-cyan-400/20" style={{ width: `${width}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 text-center text-xs text-slate-600">
+                Use NEXUS chat, save journal entries, or log field notes to begin capturing skill evidence.
+              </p>
+            </div>
+          </div>
         </div>
       </SettingCard>
     )
@@ -3600,7 +3689,78 @@ function SkillIntelligenceCard() {
 
   return (
     <SettingCard title="My Development — Skill Intelligence">
-      <div className="space-y-8">
+      <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
+        <div className="flex items-start justify-between gap-3 border-b border-cyan-400/10 pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-cyan-50">Skill progress map</h3>
+            <p className="mt-0.5 text-xs text-slate-500">Manual skills and AI-recognized signals.</p>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-1 text-[10px] font-semibold text-slate-300">
+              {ownerProfile.skill_inventory.length} Manual
+            </span>
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
+              {skillRows.filter(row => row.source === 'AI').length} AI
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-2">
+            {skillRows.map(row => (
+              <div key={row.id} className="rounded-xl border border-cyan-400/10 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-200">{row.name}</span>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                    row.source === 'Manual'
+                      ? 'border-slate-400/20 bg-slate-400/10 text-slate-300'
+                      : 'border-cyan-400/20 bg-cyan-400/10 text-cyan-200'
+                  }`}>
+                    {row.source}
+                  </span>
+                  <span className="w-10 text-right text-[11px] font-semibold text-cyan-100">{row.score}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-800/90">
+                  <div
+                    className={`h-full rounded-full ${row.source === 'Manual' ? 'bg-slate-400/70' : 'bg-gradient-to-r from-cyan-400 to-sky-300'}`}
+                    style={{ width: `${Math.max(8, Math.min(100, row.score))}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600">
+                  <span>{row.detail}</span>
+                  <span>{row.source === 'Manual' ? 'Baseline' : 'Confidence'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {recentSignals.length > 0 && (
+          <div className="mt-3 border-t border-cyan-400/10 pt-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-300">
+              <BookOpen size={13} className="text-cyan-300" />
+              Recent evidence
+            </div>
+            <div className="space-y-1.5">
+              {recentSignals.slice(0, 3).map((s, i) => {
+                const date = new Date(s.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                return (
+                  <div key={i} className="rounded-lg border border-slate-700/60 bg-slate-950/70 px-2.5 py-2 text-[11px]">
+                    <div className="flex items-center gap-2 text-slate-500">
+                      <span className="font-semibold text-cyan-200">{SKILL_LABELS[s.skill as SkillDomain] || s.skill}</span>
+                      <span>{s.source?.replace('_', ' ')}</span>
+                      <span className="ml-auto">{date}</span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-slate-400">{s.evidence}</p>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {false && (
+        <div className="space-y-8">
 
         {/* SECTION 1: Skill Map Bar Chart */}
         <div>
@@ -3692,7 +3852,8 @@ function SkillIntelligenceCard() {
             </div>
           )}
         </div>
-
+        </div>
+        )}
       </div>
     </SettingCard>
   )
@@ -3791,18 +3952,29 @@ function OwnerProfileCard() {
 
   return (
     <SettingCard title="My Profile — Strategic Context for NEXUS">
-      <div className="space-y-6">
+      <div className="rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
+        <div className="mb-4 flex flex-col gap-3 border-b border-cyan-400/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-base font-bold text-cyan-50">Strategic Context for NEXUS</h3>
+            <p className="mt-1 text-xs text-slate-400">Skills, gaps, registrations, goals, and current capacity.</p>
+          </div>
+          <span className="w-fit rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-cyan-200">
+            Local-first profile
+          </span>
+        </div>
 
         {/* Save status */}
         {(saving || saveMsg) && (
-          <div className={`text-xs px-3 py-1.5 rounded border ${saving ? 'text-blue-400 border-blue-500/30 bg-blue-900/20' : 'text-green-400 border-green-500/30 bg-green-900/20'}`}>
+          <div className={`mb-4 text-xs px-3 py-1.5 rounded-lg border ${saving ? 'text-blue-300 border-blue-400/30 bg-blue-900/20' : 'text-green-300 border-green-400/30 bg-green-900/20'}`}>
             {saving ? 'Saving…' : saveMsg}
           </div>
         )}
 
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+
         {/* Skills inventory */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Skills Inventory</label>
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20">
+          <label className="block text-xs font-semibold text-cyan-200/80 uppercase mb-2 tracking-wider">Skills Inventory</label>
           <p className="text-[10px] text-gray-600 mb-2">Things you can do. e.g. "Service work", "Rough-in", "Solar installation", "Commercial TI"</p>
           <div className="flex flex-wrap gap-1.5 mb-2">
             {profile.skill_inventory.map((skill: string, i: number) => (
@@ -3829,8 +4001,8 @@ function OwnerProfileCard() {
         </div>
 
         {/* Knowledge gaps */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Knowledge Gaps / Actively Learning</label>
+        <div className="rounded-xl border border-amber-400/10 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20">
+          <label className="block text-xs font-semibold text-amber-200/80 uppercase mb-2 tracking-wider">Knowledge Gaps / Actively Learning</label>
           <p className="text-[10px] text-gray-600 mb-2">Things you're learning or need to develop. e.g. "Permitting", "Load calculations", "Arc flash"</p>
           <div className="flex flex-wrap gap-1.5 mb-2">
             {profile.knowledge_gaps.map((gap: string, i: number) => (
@@ -3857,8 +4029,8 @@ function OwnerProfileCard() {
         </div>
 
         {/* City Licenses */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">City Licenses / Registrations</label>
+        <div className="rounded-xl border border-emerald-400/10 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20">
+          <label className="block text-xs font-semibold text-emerald-200/80 uppercase mb-2 tracking-wider">City Licenses / Registrations</label>
           <div className="space-y-1.5 mb-3">
             {profile.active_city_licenses.length === 0 && (
               <p className="text-[10px] text-gray-600 italic">No cities added yet.</p>
@@ -3899,8 +4071,8 @@ function OwnerProfileCard() {
 
 
         {/* Business Goals */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Business Goals</label>
+        <div className="rounded-xl border border-sky-400/10 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20">
+          <label className="block text-xs font-semibold text-sky-200/80 uppercase mb-2 tracking-wider">Business Goals</label>
           <p className="text-[10px] text-gray-600 mb-2">e.g. "Hit $150K active pipeline before hiring", "Close MTZ Solar RMO"</p>
           <div className="space-y-1.5 mb-2">
             {profile.business_goals.map((goal: string, i: number) => (
@@ -3927,8 +4099,8 @@ function OwnerProfileCard() {
         </div>
 
         {/* Bandwidth Notes */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Current Bandwidth / Constraints</label>
+        <div className="rounded-xl border border-violet-400/10 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20 lg:col-span-2">
+          <label className="block text-xs font-semibold text-violet-200/80 uppercase mb-2 tracking-wider">Current Bandwidth / Constraints</label>
           <p className="text-[10px] text-gray-600 mb-2">Free-text. e.g. "Running solo, maxed at 2 active projects" or "Looking to add 1 helper by Q3"</p>
           <textarea
             value={profile.bandwidth_notes}
@@ -3950,6 +4122,7 @@ function OwnerProfileCard() {
           />
         </div>
 
+        </div>
       </div>
     </SettingCard>
   )

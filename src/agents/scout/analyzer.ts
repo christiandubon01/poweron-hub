@@ -27,6 +27,10 @@ export interface RawProposal {
   reasoning:    string
 }
 
+export interface AnalyzeDataOptions {
+  targetCount?: number
+}
+
 // ── Validation ──────────────────────────────────────────────────────────────
 
 function isValidCategory(v: unknown): v is ProposalCategory {
@@ -65,11 +69,14 @@ function validateProposal(raw: unknown): RawProposal | null {
  * @param snapshot - The gathered data snapshot from dataGatherer
  * @returns Array of validated RawProposals (3-8 typically)
  */
-export async function analyzeData(snapshot: ScoutDataSnapshot): Promise<RawProposal[]> {
+export async function analyzeData(snapshot: ScoutDataSnapshot, options: AnalyzeDataOptions = {}): Promise<RawProposal[]> {
 
   // Build a concise data summary for the prompt
   // (full snapshot can be large — summarize key metrics to stay in context)
   const dataSummary = buildDataSummary(snapshot)
+  const targetInstruction = options.targetCount
+    ? `Generate exactly ${options.targetCount} proposals if the data supports that many. If fewer than ${options.targetCount} valid, evidence-backed proposals exist, return only the valid proposals and do not fabricate filler.`
+    : 'Generate proposals using the default SCOUT guidance.'
 
   const response = await fetch('/.netlify/functions/claude', {
     method: 'POST',
@@ -80,7 +87,7 @@ export async function analyzeData(snapshot: ScoutDataSnapshot): Promise<RawPropo
       system:     SCOUT_SYSTEM_PROMPT,
       messages:   [{
         role:    'user',
-        content: `Analyze the following data snapshot and generate proposals.\n\n${dataSummary}`,
+        content: `Analyze the following data snapshot and generate proposals.\n${targetInstruction}\n\n${dataSummary}`,
       }],
     }),
   })
@@ -126,7 +133,7 @@ export async function analyzeData(snapshot: ScoutDataSnapshot): Promise<RawPropo
     }
   }
 
-  return validated
+  return options.targetCount ? validated.slice(0, options.targetCount) : validated
 }
 
 

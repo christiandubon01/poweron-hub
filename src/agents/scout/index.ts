@@ -34,13 +34,17 @@ export interface ScoutRunResult {
   rejections:       Array<{ title: string; reason: string }>
 }
 
+export interface ScoutRunOptions {
+  targetCount?: number
+}
+
 // ── Orchestrator ────────────────────────────────────────────────────────────
 
 /**
  * Run a full SCOUT analysis cycle.
  * Call this on demand to trigger pattern detection and proposal generation.
  */
-export async function runScoutAnalysis(orgId: string): Promise<ScoutRunResult> {
+export async function runScoutAnalysis(orgId: string, options: ScoutRunOptions = {}): Promise<ScoutRunResult> {
   const runId     = crypto.randomUUID()
   const startedAt = new Date().toISOString()
   const startMs   = Date.now()
@@ -51,7 +55,7 @@ export async function runScoutAnalysis(orgId: string): Promise<ScoutRunResult> {
 
   // ── Step 2: Analyze with Claude ───────────────────────────────────────
   console.log('[SCOUT] Analyzing patterns...')
-  const rawProposals = await analyzeData(snapshot)
+  const rawProposals = await analyzeData(snapshot, { targetCount: options.targetCount })
   console.log(`[SCOUT] ${rawProposals.length} raw proposals generated`)
 
   // ── Step 3: MiroFish verification ─────────────────────────────────────
