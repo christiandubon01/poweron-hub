@@ -682,11 +682,12 @@ export default function V15rSettingsPanel() {
     setScoutScanning(true)
     setScoutScanMessage('')
     try {
+      console.info('[Settings] Starting SCOUT scan', { orgId, targetCount: 5 })
       const result = await runScoutAnalysis(orgId, { targetCount: 5 })
       setProposalQueueKey(key => key + 1)
       setScoutScanMessage(`Scan complete: ${result.verifiedCount} suggestion${result.verifiedCount === 1 ? '' : 's'} queued.`)
     } catch (err) {
-      console.error('[Settings] SCOUT scan failed:', err)
+      console.error('[Settings] SCOUT scan failed:', { orgId, error: err })
       setScoutScanMessage('Scan failed. Try again in a moment.')
     } finally {
       setScoutScanning(false)
@@ -2218,7 +2219,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 </div>
 
                 <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
-                  <SkillIntelligenceCard />
+                  <SkillIntelligenceCard orgId={authProfile?.org_id} refreshKey={proposalQueueKey} />
                 </div>
               </div>
 
@@ -2433,7 +2434,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
           {/* MY DEVELOPMENT — SKILL INTELLIGENCE */}
           {false && (
-          <SkillIntelligenceCard />
+          <SkillIntelligenceCard orgId={authProfile?.org_id} refreshKey={proposalQueueKey} />
           )}
 
           {/* MY PROFILE */}
@@ -3575,11 +3576,142 @@ function PriorityCard({ rank, domain, score, target }: { rank: number; domain: S
   )
 }
 
-function SkillIntelligenceCard() {
-  const [skillMap] = useState(() => getLocalSkillMap())
-  const [signals] = useState(() => getLocalSkillSignals())
-  const [ownerProfile] = useState(() => getLocalOwnerProfile())
-  const [, setTick] = useState(0)
+const ELECTRICIAN_OWNER_BASELINE_SKILLS = [
+  { name: 'Estimating accuracy', score: 54, detail: 'Suggested baseline for estimate quality and win/loss learning' },
+  { name: 'Project aging control', score: 50, detail: 'Suggested baseline for keeping active work from drifting' },
+  { name: 'Change order discipline', score: 48, detail: 'Suggested baseline for scope control and margin protection' },
+  { name: 'Permit / inspection readiness', score: 52, detail: 'Suggested baseline for city approvals and inspection prep' },
+  { name: 'Crew scheduling', score: 46, detail: 'Suggested baseline for dispatch, capacity, and labor planning' },
+  { name: 'Material planning', score: 49, detail: 'Suggested baseline for procurement and price-book awareness' },
+  { name: 'Cash flow follow-up', score: 47, detail: 'Suggested baseline for AR aging and payment cadence' },
+  { name: 'Client communication', score: 56, detail: 'Suggested baseline for expectations, updates, and closeout' },
+]
+
+function skillStatus(score: number): 'Strong' | 'Improving' | 'Watch' | 'Needs attention' {
+  if (score >= 78) return 'Strong'
+  if (score >= 62) return 'Improving'
+  if (score >= 45) return 'Watch'
+  return 'Needs attention'
+}
+
+function inferSkillRowsFromBusinessData(backup: BackupData | null, proposalHistory: any[]) {
+  const projects = backup?.projects || []
+  const serviceLogs = backup?.serviceLogs || backup?.service_logs || []
+  const fieldLogs = backup?.fieldLogs || backup?.field_logs || backup?.logs || []
+  const invoices = backup?.invoices || []
+  const imports = backup?.imports || []
+  const joinedText = JSON.stringify({ projects, serviceLogs, fieldLogs, proposalHistory, imports }).toLowerCase()
+  const activeProjects = projects.filter((p: any) => !['complete', 'completed', 'closed', 'done'].includes(String(p.status || '').toLowerCase()))
+  const proposals = proposalHistory || []
+  const now = Date.now()
+  const MS_30D = 30 * 24 * 60 * 60 * 1000
+  const recentProposalCount = proposals.filter((p: any) => new Date(p.created_at || p.updated_at || 0).getTime() >= now - MS_30D).length
+
+  const specs = [
+    {
+      domain: 'estimating' as SkillDomain,
+      name: 'Estimating accuracy',
+      score: 42 + Math.min(28, proposals.length * 4 + imports.length * 2) + (joinedText.includes('estimate') || joinedText.includes('quote') ? 10 : 0),
+      detail: `${proposals.length} proposal${proposals.length === 1 ? '' : 's'} and ${imports.length} import${imports.length === 1 ? '' : 's'} reviewed`,
+    },
+    {
+      domain: 'project_management' as SkillDomain,
+      name: 'Project aging control',
+      score: 40 + Math.min(32, activeProjects.length * 6 + fieldLogs.length),
+      detail: `${activeProjects.length} active project${activeProjects.length === 1 ? '' : 's'} in current data`,
+    },
+    {
+      domain: 'project_management' as SkillDomain,
+      name: 'Change order discipline',
+      score: 38 + (joinedText.includes('change order') || joinedText.includes('scope') ? 28 : 8) + Math.min(16, proposals.length * 2),
+      detail: joinedText.includes('change order') || joinedText.includes('scope') ? 'Scope/change-order language found' : 'No direct change-order history found',
+    },
+    {
+      domain: 'permitting_compliance' as SkillDomain,
+      name: 'Permit / inspection readiness',
+      score: 40 + (joinedText.includes('permit') ? 18 : 0) + (joinedText.includes('inspection') || joinedText.includes('inspector') ? 18 : 0),
+      detail: joinedText.includes('permit') || joinedText.includes('inspection') ? 'Permit/inspection activity found' : 'Limited permit evidence found',
+    },
+    {
+      domain: 'crew_management' as SkillDomain,
+      name: 'Crew scheduling',
+      score: 42 + (joinedText.includes('crew') || joinedText.includes('schedule') || joinedText.includes('dispatch') ? 24 : 6) + Math.min(12, activeProjects.length * 2),
+      detail: 'Inferred from active workload and scheduling language',
+    },
+    {
+      domain: 'field_execution' as SkillDomain,
+      name: 'Material planning',
+      score: 40 + (joinedText.includes('material') ? 24 : 0) + Math.min(20, fieldLogs.length * 2),
+      detail: `${fieldLogs.length} field/service log${fieldLogs.length === 1 ? '' : 's'} reviewed`,
+    },
+    {
+      domain: 'financial_literacy' as SkillDomain,
+      name: 'Cash flow follow-up',
+      score: 40 + Math.min(24, invoices.length * 4) + (joinedText.includes('invoice') || joinedText.includes('payment') || joinedText.includes('aging') ? 18 : 0),
+      detail: `${invoices.length} invoice record${invoices.length === 1 ? '' : 's'} in backup data`,
+    },
+    {
+      domain: 'client_communication' as SkillDomain,
+      name: 'Client communication',
+      score: 44 + (joinedText.includes('client') || joinedText.includes('customer') || joinedText.includes('gc') ? 22 : 8) + Math.min(12, recentProposalCount * 2),
+      detail: recentProposalCount > 0 ? `${recentProposalCount} recent proposal activity item${recentProposalCount === 1 ? '' : 's'}` : 'Inferred from customer/project records',
+    },
+  ]
+
+  return specs
+    .filter(spec => spec.score >= 50 || proposals.length > 0 || projects.length > 0 || serviceLogs.length > 0 || fieldLogs.length > 0)
+    .map(spec => ({
+      id: `derived-${spec.name}`,
+      name: spec.name,
+      source: 'AI' as const,
+      score: Math.max(30, Math.min(92, Math.round(spec.score))),
+      detail: spec.detail,
+      status: skillStatus(spec.score),
+      trend: recentProposalCount > 0 ? 'improving' : 'stable',
+    }))
+}
+
+function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshKey?: number }) {
+  const [skillMap, setSkillMap] = useState(() => getLocalSkillMap(orgId))
+  const [signals, setSignals] = useState<StoredSkillSignal[]>(() => getLocalSkillSignals(orgId))
+  const [ownerProfile, setOwnerProfile] = useState(() => getLocalOwnerProfile())
+  const [proposalHistory, setProposalHistory] = useState<any[]>([])
+  const [analyzingSkills, setAnalyzingSkills] = useState(false)
+  const [skillMessage, setSkillMessage] = useState('')
+
+  const refreshSkillIntelligence = useCallback(async () => {
+    setAnalyzingSkills(true)
+    setSkillMessage('')
+    try {
+      setSkillMap(getLocalSkillMap(orgId))
+      setSignals(getLocalSkillSignals(orgId))
+      setOwnerProfile(getLocalOwnerProfile())
+      if (orgId) {
+        const { data, error } = await supabase
+          .from('agent_proposals')
+          .select('id,title,description,category,status,source_data,created_at,updated_at')
+          .eq('org_id', orgId)
+          .order('created_at', { ascending: false })
+          .limit(50)
+        if (error) {
+          console.warn('[SkillIntelligence] Proposal history refresh failed:', error)
+        } else {
+          setProposalHistory(data || [])
+        }
+      }
+      setSkillMessage('Skill map refreshed')
+    } catch (err) {
+      console.warn('[SkillIntelligence] Refresh failed:', err)
+      setSkillMessage('Skill refresh failed')
+    } finally {
+      setAnalyzingSkills(false)
+      setTimeout(() => setSkillMessage(''), 3000)
+    }
+  }, [orgId])
+
+  useEffect(() => {
+    refreshSkillIntelligence()
+  }, [refreshSkillIntelligence, refreshKey])
 
   // Calculate velocities (30-day score gains)
   const velocities = useMemo(() => {
@@ -3626,6 +3758,8 @@ function SkillIntelligenceCard() {
       source: 'Manual' as const,
       score: 60,
       detail: 'Owner profile',
+      status: 'Improving' as const,
+      trend: 'stable',
     }))
 
     const aiRows = SKILL_DOMAINS
@@ -3639,11 +3773,29 @@ function SkillIntelligenceCard() {
           source: 'AI' as const,
           score,
           detail: evidenceCount === 1 ? '1 signal' : `${evidenceCount} signals`,
+          status: skillStatus(score),
+          trend: (velocities[domain] || 0) > 0.5 ? 'improving' : (velocities[domain] || 0) < -0.5 ? 'degrading' : 'stable',
         }
       })
 
-    return [...manualRows, ...aiRows].slice(0, 14)
-  }, [ownerProfile.skill_inventory, signals, skillMap])
+    const derivedRows = inferSkillRowsFromBusinessData(getBackupData(), proposalHistory)
+      .filter(row => !aiRows.some(ai => ai.name === row.name))
+    const baselineRows = ELECTRICIAN_OWNER_BASELINE_SKILLS.map(row => ({
+      id: `suggested-${row.name}`,
+      name: row.name,
+      source: 'Suggested' as const,
+      score: row.score,
+      detail: row.detail,
+      status: skillStatus(row.score),
+      trend: 'stable',
+    }))
+
+    const intelligenceRows = aiRows.length + derivedRows.length > 0
+      ? [...aiRows, ...derivedRows].slice(0, 10)
+      : baselineRows
+
+    return [...manualRows, ...intelligenceRows].slice(0, 16)
+  }, [ownerProfile.skill_inventory, signals, skillMap, velocities, proposalHistory])
 
   const hasData = skillRows.length > 0
 
@@ -3695,15 +3847,33 @@ function SkillIntelligenceCard() {
             <h3 className="text-sm font-bold text-cyan-50">Skill progress map</h3>
             <p className="mt-0.5 text-xs text-slate-500">Manual skills and AI-recognized signals.</p>
           </div>
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={refreshSkillIntelligence}
+              disabled={analyzingSkills}
+              className="inline-flex items-center gap-1 rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold text-cyan-100 transition-colors hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Refresh skills"
+            >
+              <RefreshCw size={11} className={analyzingSkills ? 'animate-spin' : ''} />
+              {analyzingSkills ? 'Analyzing' : 'Refresh Skills'}
+            </button>
             <span className="rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-1 text-[10px] font-semibold text-slate-300">
-              {ownerProfile.skill_inventory.length} Manual
+              {skillRows.filter(row => row.source === 'Manual').length} Manual
             </span>
             <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
               {skillRows.filter(row => row.source === 'AI').length} AI
             </span>
+            <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[10px] font-semibold text-amber-200">
+              {skillRows.filter(row => row.source === 'Suggested').length} Suggested
+            </span>
           </div>
         </div>
+        {skillMessage && (
+          <div className={`mt-2 text-right text-[10px] ${skillMessage.includes('failed') ? 'text-red-300' : 'text-emerald-300'}`}>
+            {skillMessage}
+          </div>
+        )}
 
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="space-y-2">
@@ -3714,7 +3884,9 @@ function SkillIntelligenceCard() {
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
                     row.source === 'Manual'
                       ? 'border-slate-400/20 bg-slate-400/10 text-slate-300'
-                      : 'border-cyan-400/20 bg-cyan-400/10 text-cyan-200'
+                      : row.source === 'Suggested'
+                        ? 'border-amber-400/20 bg-amber-400/10 text-amber-200'
+                        : 'border-cyan-400/20 bg-cyan-400/10 text-cyan-200'
                   }`}>
                     {row.source}
                   </span>
@@ -3722,13 +3894,16 @@ function SkillIntelligenceCard() {
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-slate-800/90">
                   <div
-                    className={`h-full rounded-full ${row.source === 'Manual' ? 'bg-slate-400/70' : 'bg-gradient-to-r from-cyan-400 to-sky-300'}`}
+                    className={`h-full rounded-full ${row.source === 'Manual' ? 'bg-slate-400/70' : row.source === 'Suggested' ? 'bg-gradient-to-r from-amber-300 to-yellow-200' : 'bg-gradient-to-r from-cyan-400 to-sky-300'}`}
                     style={{ width: `${Math.max(8, Math.min(100, row.score))}%` }}
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600">
                   <span>{row.detail}</span>
-                  <span>{row.source === 'Manual' ? 'Baseline' : 'Confidence'}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-400">{row.status}</span>
+                    {row.trend && <span className="capitalize">{row.trend}</span>}
+                  </span>
                 </div>
               </div>
             ))}

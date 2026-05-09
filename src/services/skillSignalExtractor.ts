@@ -109,9 +109,16 @@ function getDefaultSkillMap(): SkillMap {
   return defaults as SkillMap
 }
 
-export function getLocalSkillMap(): SkillMap {
+function scopedLocalKey(baseKey: string, orgId?: string): string {
+  const resolvedOrgId = orgId || (() => {
+    try { return localStorage.getItem('poweron_org_id') || '' } catch { return '' }
+  })()
+  return resolvedOrgId ? `${baseKey}:${resolvedOrgId}` : baseKey
+}
+
+export function getLocalSkillMap(orgId?: string): SkillMap {
   try {
-    const raw = localStorage.getItem(LOCAL_SKILL_MAP_KEY)
+    const raw = localStorage.getItem(scopedLocalKey(LOCAL_SKILL_MAP_KEY, orgId))
     if (!raw) return getDefaultSkillMap()
     const parsed = JSON.parse(raw)
     // Ensure all domains are present
@@ -125,42 +132,42 @@ export function getLocalSkillMap(): SkillMap {
   }
 }
 
-function saveLocalSkillMap(map: SkillMap): void {
+function saveLocalSkillMap(map: SkillMap, orgId?: string): void {
   try {
-    localStorage.setItem(LOCAL_SKILL_MAP_KEY, JSON.stringify(map))
+    localStorage.setItem(scopedLocalKey(LOCAL_SKILL_MAP_KEY, orgId), JSON.stringify(map))
   } catch { /* non-critical */ }
 }
 
-export function getLocalSkillSignals(): StoredSkillSignal[] {
+export function getLocalSkillSignals(orgId?: string): StoredSkillSignal[] {
   try {
-    const raw = localStorage.getItem(LOCAL_SKILL_SIGNALS_KEY)
+    const raw = localStorage.getItem(scopedLocalKey(LOCAL_SKILL_SIGNALS_KEY, orgId))
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
   }
 }
 
-function saveLocalSkillSignals(signals: StoredSkillSignal[]): void {
+function saveLocalSkillSignals(signals: StoredSkillSignal[], orgId?: string): void {
   try {
     // Keep last 500 signals to avoid bloat
     const trimmed = signals.slice(-500)
-    localStorage.setItem(LOCAL_SKILL_SIGNALS_KEY, JSON.stringify(trimmed))
+    localStorage.setItem(scopedLocalKey(LOCAL_SKILL_SIGNALS_KEY, orgId), JSON.stringify(trimmed))
   } catch { /* non-critical */ }
 }
 
-export function getLocalDevelopmentLog(): DevelopmentLogEntry[] {
+export function getLocalDevelopmentLog(orgId?: string): DevelopmentLogEntry[] {
   try {
-    const raw = localStorage.getItem(LOCAL_DEV_LOG_KEY)
+    const raw = localStorage.getItem(scopedLocalKey(LOCAL_DEV_LOG_KEY, orgId))
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
   }
 }
 
-function saveLocalDevelopmentLog(log: DevelopmentLogEntry[]): void {
+function saveLocalDevelopmentLog(log: DevelopmentLogEntry[], orgId?: string): void {
   try {
     const trimmed = log.slice(-200)
-    localStorage.setItem(LOCAL_DEV_LOG_KEY, JSON.stringify(trimmed))
+    localStorage.setItem(scopedLocalKey(LOCAL_DEV_LOG_KEY, orgId), JSON.stringify(trimmed))
   } catch { /* non-critical */ }
 }
 
@@ -364,9 +371,9 @@ export function processSkillSignals(
       if (signals.length === 0) return
 
       // Load current state
-      const skillMap = getLocalSkillMap()
-      const allSignals = getLocalSkillSignals()
-      const devLog = getLocalDevelopmentLog()
+      const skillMap = getLocalSkillMap(orgId)
+      const allSignals = getLocalSkillSignals(orgId)
+      const devLog = getLocalDevelopmentLog(orgId)
 
       // Apply signals to map
       const { updatedMap, stored } = applySignalsToMap(skillMap, signals, context)
@@ -394,9 +401,9 @@ export function processSkillSignals(
       }
 
       // Persist locally (fast, synchronous)
-      saveLocalSkillMap(updatedMap)
-      saveLocalSkillSignals(updatedSignals)
-      saveLocalDevelopmentLog(devLog)
+      saveLocalSkillMap(updatedMap, orgId)
+      saveLocalSkillSignals(updatedSignals, orgId)
+      saveLocalDevelopmentLog(devLog, orgId)
 
       // Sync to Supabase in background (slower, optional)
       if (orgId) {
