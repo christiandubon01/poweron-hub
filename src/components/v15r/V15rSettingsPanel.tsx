@@ -924,6 +924,22 @@ const persist = useCallback((mutatedData?: BackupData) => {
     reader.readAsDataURL(file)
   }, [forceUpdate])
 
+  const hasWideExpandedPanel =
+    (isAdminOwner && showAdminTools) ||
+    showActiveIntegrations ||
+    showBusinessSetup ||
+    showOverheadManager ||
+    showProjectsConfiguration ||
+    showAIDevelopment ||
+    showDataSyncCenter
+  const hasCompactExpandedPanel = showBusinessSetup || showSecurityCenter
+  const expandedLayoutClass = hasWideExpandedPanel && hasCompactExpandedPanel
+    ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1.85fr)_minmax(320px,1fr)] gap-6 items-start'
+    : 'grid grid-cols-1 gap-6 items-start'
+  const compactColumnClass = hasWideExpandedPanel && hasCompactExpandedPanel
+    ? 'space-y-6 xl:sticky xl:top-6'
+    : 'space-y-6 xl:max-w-[520px]'
+
   return (
     <div className="min-h-screen p-6 space-y-6" style={{ backgroundColor: 'var(--bg-secondary)' }}>
       {/* Phase R1: synchronized diagonal glare sweep — local keyframes.
@@ -1215,8 +1231,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
+      <div className={expandedLayoutClass}>
+        <div className="space-y-6">
           {/* HUNTER Operations — Home Base + cron run status */}
           {isAdminOwner && showAdminTools && (
           <SettingCard title="HUNTER Operations">
@@ -1334,120 +1350,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
           {showBusinessSetup && (
           <>
-          {/* 0. THEME & BRANDING */}
-          <SettingCard title="Theme & Branding">
-            <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25 [&_input]:min-h-9">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
-                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-gray-100">Brand Preview</h3>
-                      <p className="text-xs text-gray-500 mt-0.5">How your company identity appears in PowerOn.</p>
-                    </div>
-                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">
-                      {currentTheme === 'dark' ? 'Dark mode' : 'Light mode'}
-                    </span>
-                  </div>
-                  <div className="flex min-h-[92px] items-center gap-4 rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
-                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10">
-                      {brandPreviewLogo ? (
-                        <img src={brandPreviewLogo} alt={`${brandName} logo preview`} className="max-h-12 max-w-12 object-contain" />
-                      ) : (
-                        <Sparkles size={24} className="text-cyan-200" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-200/60">Current Brand</p>
-                      <h3 className="mt-1 truncate text-xl font-bold text-gray-100">{brandName}</h3>
-                      <p className="mt-1 text-xs text-gray-500">{brandPreviewLogo ? 'Logo asset ready' : 'Default brand mark shown'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
-                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-gray-100">Appearance</h3>
-                      <p className="text-xs text-gray-500 mt-0.5">Switch the app theme style.</p>
-                    </div>
-                  </div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-3">Light/Dark Theme</label>
-                  <button
-                    onClick={handleThemeToggle}
-                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors ${
-                      currentTheme === 'dark'
-                        ? 'border-cyan-400/20 bg-slate-900/80 text-gray-100 hover:bg-slate-900'
-                        : 'border-sky-300/50 bg-sky-100 text-blue-700 hover:bg-sky-200'
-                    }`}
-                  >
-                    <span className="flex items-center gap-3">
-                      {currentTheme === 'dark' ? <Moon size={18} /> : <Sun size={18} />}
-                      {currentTheme === 'dark' ? 'Dark Theme' : 'Light Theme'}
-                    </span>
-                    <span className="rounded-full border border-current/20 px-2 py-1 text-[10px] uppercase tracking-wider">
-                      Active
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
-                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-gray-100">Logo Assets</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Upload the logo variants used across light and dark surfaces.</p>
-                  </div>
-                  <Image size={18} className="text-cyan-300" />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="flex flex-col rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
-                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Dark Logo (Base64)</label>
-                    <div className="flex h-full flex-col gap-2">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0]
-                          if (file) handleLogoUpload('dark', file)
-                        }}
-                        className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
-                      />
-                      {settings.logoDark && (
-                        <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/70 p-3">
-                          <Image size={16} className="text-cyan-300" />
-                          <span className="text-xs text-gray-400 truncate">Dark logo uploaded</span>
-                          <img src={settings.logoDark} alt="Dark logo" className="h-8 object-contain ml-auto" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
-                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Light Logo (Base64)</label>
-                    <div className="flex h-full flex-col gap-2">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0]
-                          if (file) handleLogoUpload('light', file)
-                        }}
-                        className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
-                      />
-                      {settings.logoLight && (
-                        <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/70 p-3">
-                          <Image size={16} className="text-blue-300" />
-                          <span className="text-xs text-gray-400 truncate">Light logo uploaded</span>
-                          <img src={settings.logoLight} alt="Light logo" className="h-8 object-contain ml-auto" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </SettingCard>
-
           {/* 1. GENERAL / BUSINESS IDENTITY */}
           <SettingCard title="General / Business Identity">
             <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25 [&_input]:h-9 [&_input]:border-cyan-400/20 [&_input]:bg-slate-950/70 [&_input]:text-gray-100 [&_input]:focus:border-cyan-300/60">
@@ -2373,7 +2275,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         {/* RIGHT COLUMN */}
-        <div className="space-y-6">
+        <div className={compactColumnClass}>
 
           {/* MiroFish Proposal Queue */}
           {false && (
@@ -2469,6 +2371,121 @@ const persist = useCallback((mutatedData?: BackupData) => {
           {false && (
           <SettingCard title="NEXUS Voice">
             <NexusVoiceSelector />
+          </SettingCard>
+          )}
+
+          {showBusinessSetup && (
+          <SettingCard title="Theme & Branding">
+            <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25 [&_input]:min-h-9">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">Brand Preview</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">How your company identity appears in PowerOn.</p>
+                    </div>
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">
+                      {currentTheme === 'dark' ? 'Dark mode' : 'Light mode'}
+                    </span>
+                  </div>
+                  <div className="flex min-h-[92px] items-center gap-4 rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10">
+                      {brandPreviewLogo ? (
+                        <img src={brandPreviewLogo} alt={`${brandName} logo preview`} className="max-h-12 max-w-12 object-contain" />
+                      ) : (
+                        <Sparkles size={24} className="text-cyan-200" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-200/60">Current Brand</p>
+                      <h3 className="mt-1 truncate text-xl font-bold text-gray-100">{brandName}</h3>
+                      <p className="mt-1 text-xs text-gray-500">{brandPreviewLogo ? 'Logo asset ready' : 'Default brand mark shown'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">Appearance</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Switch the app theme style.</p>
+                    </div>
+                  </div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-3">Light/Dark Theme</label>
+                  <button
+                    onClick={handleThemeToggle}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors ${
+                      currentTheme === 'dark'
+                        ? 'border-cyan-400/20 bg-slate-900/80 text-gray-100 hover:bg-slate-900'
+                        : 'border-sky-300/50 bg-sky-100 text-blue-700 hover:bg-sky-200'
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      {currentTheme === 'dark' ? <Moon size={18} /> : <Sun size={18} />}
+                      {currentTheme === 'dark' ? 'Dark Theme' : 'Light Theme'}
+                    </span>
+                    <span className="rounded-full border border-current/20 px-2 py-1 text-[10px] uppercase tracking-wider">
+                      Active
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Logo Assets</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Upload the logo variants used across light and dark surfaces.</p>
+                  </div>
+                  <Image size={18} className="text-cyan-300" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="flex flex-col rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Dark Logo (Base64)</label>
+                    <div className="flex h-full flex-col gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) handleLogoUpload('dark', file)
+                        }}
+                        className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
+                      />
+                      {settings.logoDark && (
+                        <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/70 p-3">
+                          <Image size={16} className="text-cyan-300" />
+                          <span className="text-xs text-gray-400 truncate">Dark logo uploaded</span>
+                          <img src={settings.logoDark} alt="Dark logo" className="h-8 object-contain ml-auto" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Light Logo (Base64)</label>
+                    <div className="flex h-full flex-col gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) handleLogoUpload('light', file)
+                        }}
+                        className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
+                      />
+                      {settings.logoLight && (
+                        <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/70 p-3">
+                          <Image size={16} className="text-blue-300" />
+                          <span className="text-xs text-gray-400 truncate">Light logo uploaded</span>
+                          <img src={settings.logoLight} alt="Light logo" className="h-8 object-contain ml-auto" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </SettingCard>
           )}
 
