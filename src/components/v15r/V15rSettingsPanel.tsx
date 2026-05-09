@@ -2403,7 +2403,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
           {/* AI DEVELOPMENT */}
           {showAIDevelopment && (
-          <SettingCard title="AI Development">
+          <SettingCard title="">
             <div className="space-y-4 rounded-2xl border border-sky-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
               <div className="flex items-center justify-between gap-3 border-b border-sky-400/10 pb-3">
                 <div>
@@ -2534,7 +2534,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   )}
                 </div>
 
-                <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                <div>
                   <SkillIntelligenceCard orgId={authProfile?.org_id} refreshKey={proposalQueueKey} />
                 </div>
               </div>
@@ -4126,7 +4126,7 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
 
   if (!hasData) {
     return (
-      <SettingCard title="My Development — Skill Intelligence">
+      <SettingCard title="">
         <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
           <div className="flex items-start justify-between gap-3 border-b border-cyan-400/10 pb-3">
             <div>
@@ -4165,7 +4165,7 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
   }
 
   return (
-    <SettingCard title="My Development — Skill Intelligence">
+    <SettingCard title="">
       <div className="flex h-[600px] flex-col rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/25 to-slate-950/90 p-4 shadow-2xl shadow-cyan-950/20">
         <div className="flex items-start justify-between gap-3 border-b border-cyan-400/10 pb-3">
           <div>
