@@ -1215,8 +1215,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)] gap-6 items-start">
-        <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
           {/* HUNTER Operations — Home Base + cron run status */}
           {isAdminOwner && showAdminTools && (
           <SettingCard title="HUNTER Operations">
@@ -2373,7 +2373,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         {/* RIGHT COLUMN */}
-        <div className="space-y-6 xl:sticky xl:top-6">
+        <div className="space-y-6">
 
           {/* MiroFish Proposal Queue */}
           {false && (
