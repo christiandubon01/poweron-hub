@@ -96,8 +96,8 @@ function getSyncedGlareDelay(): string {
   return `-${Date.now() % GLARE_ANIMATION_MS}ms`
 }
 
-function GlareOverlay({ active }: { active: boolean }) {
-  const delayRef = useRef<string>(getSyncedGlareDelay())
+function GlareOverlay({ active, resetKey }: { active: boolean; resetKey: number }) {
+  const delayRef = useRef<string>(resetKey === 0 ? getSyncedGlareDelay() : '0ms')
 
   if (!active) return null
 
@@ -609,6 +609,7 @@ export default function V15rSettingsPanel() {
     },
     setSettingsHubVisibility,
   ] = useState<SettingsHubVisibility>(() => loadSettingsHubVisibility())
+  const [glareSyncKey, setGlareSyncKey] = useState(0)
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -637,22 +638,39 @@ export default function V15rSettingsPanel() {
     showProjectsConfiguration,
     showAIDevelopment,
   ])
-  const setShowBusinessSetup = (next: boolean | ((prev: boolean) => boolean)) =>
+  const restartSettingsHubGlare = () => setGlareSyncKey(key => key + 1)
+  const setShowBusinessSetup = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showBusinessSetup: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showBusinessSetup) : next }))
-  const setShowOverheadManager = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowOverheadManager = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showOverheadManager: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showOverheadManager) : next }))
-  const setShowDataSyncCenter = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowDataSyncCenter = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showDataSyncCenter: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showDataSyncCenter) : next }))
-  const setShowAdminTools = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowAdminTools = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showAdminTools: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showAdminTools) : next }))
-  const setShowActiveIntegrations = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowActiveIntegrations = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showActiveIntegrations: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showActiveIntegrations) : next }))
-  const setShowSecurityCenter = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowSecurityCenter = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showSecurityCenter: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showSecurityCenter) : next }))
-  const setShowProjectsConfiguration = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowProjectsConfiguration = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showProjectsConfiguration: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showProjectsConfiguration) : next }))
-  const setShowAIDevelopment = (next: boolean | ((prev: boolean) => boolean)) =>
+    restartSettingsHubGlare()
+  }
+  const setShowAIDevelopment = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showAIDevelopment: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showAIDevelopment) : next }))
+    restartSettingsHubGlare()
+  }
   const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
   const [overheadEntryModes, setOverheadEntryModes] = useState<Record<string, 'monthly' | 'yearly'>>({})
 
@@ -1005,7 +1023,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 items-stretch">
         <div className="relative flex h-full flex-col rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showBusinessSetup} />
+          <GlareOverlay key={`business-${glareSyncKey}`} active={showBusinessSetup} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Business Profile</p>
@@ -1034,7 +1052,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         <div className="relative flex h-full flex-col rounded-2xl border border-blue-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showOverheadManager} />
+          <GlareOverlay key={`overhead-${glareSyncKey}`} active={showOverheadManager} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-300/80">Overhead Target</p>
@@ -1063,7 +1081,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         <div className="relative flex h-full flex-col rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showDataSyncCenter} />
+          <GlareOverlay key={`data-sync-${glareSyncKey}`} active={showDataSyncCenter} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300/80">Data Sync Health</p>
@@ -1092,7 +1110,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         <div className="relative flex h-full flex-col rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showActiveIntegrations} />
+          <GlareOverlay key={`integrations-${glareSyncKey}`} active={showActiveIntegrations} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">Active Integrations</p>
@@ -1144,7 +1162,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         <div className="relative flex h-full flex-col rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showSecurityCenter} />
+          <GlareOverlay key={`security-${glareSyncKey}`} active={showSecurityCenter} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300/80">Security Status</p>
@@ -1175,7 +1193,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
         <div className="relative flex h-full flex-col rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showProjectsConfiguration} />
+          <GlareOverlay key={`projects-${glareSyncKey}`} active={showProjectsConfiguration} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Projects Configuration</p>
@@ -1203,7 +1221,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         </div>
 
         <div className="relative flex h-full flex-col rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
-          <GlareOverlay active={showAIDevelopment} />
+          <GlareOverlay key={`ai-${glareSyncKey}`} active={showAIDevelopment} resetKey={glareSyncKey} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">AI Development</p>
