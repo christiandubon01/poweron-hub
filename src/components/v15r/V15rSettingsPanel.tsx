@@ -48,6 +48,68 @@ import TestDataManagementPanel from '@/components/testdata/TestDataManagementPan
 import { HomeBaseSettings } from '@/components/settings/HomeBaseSettings'
 import { CronStatusPanel } from '@/components/hunter/CronStatusPanel'
 
+// ── Settings Hub visibility persistence (Phase R1) ──────────────────────────
+const SETTINGS_HUB_VISIBILITY_KEY = 'poweron_settings_hub_visibility_v1'
+
+type SettingsHubVisibility = {
+  showBusinessSetup: boolean
+  showOverheadManager: boolean
+  showDataSyncCenter: boolean
+  showAdminTools: boolean
+  showActiveIntegrations: boolean
+  showSecurityCenter: boolean
+  showProjectsConfiguration: boolean
+  showAIDevelopment: boolean
+}
+
+const SETTINGS_HUB_VISIBILITY_DEFAULTS: SettingsHubVisibility = {
+  showBusinessSetup: true,
+  showOverheadManager: false,
+  showDataSyncCenter: false,
+  showAdminTools: false,
+  showActiveIntegrations: false,
+  showSecurityCenter: false,
+  showProjectsConfiguration: false,
+  showAIDevelopment: false,
+}
+
+function loadSettingsHubVisibility(): SettingsHubVisibility {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(SETTINGS_HUB_VISIBILITY_KEY) : null
+    if (!raw) return { ...SETTINGS_HUB_VISIBILITY_DEFAULTS }
+    const parsed = JSON.parse(raw) as Partial<SettingsHubVisibility>
+    return { ...SETTINGS_HUB_VISIBILITY_DEFAULTS, ...parsed }
+  } catch {
+    return { ...SETTINGS_HUB_VISIBILITY_DEFAULTS }
+  }
+}
+
+// ── Synchronized diagonal glare (Phase R1) ──────────────────────────────────
+// Cards whose section is open share a single animation phase. We achieve this
+// with a negative animation-delay equal to (Date.now() % GLARE_ANIMATION_MS),
+// so a card mounted mid-cycle joins at the current point, instead of starting
+// its own animation timeline.
+const GLARE_ANIMATION_MS = 4200
+function getSyncedGlareDelay(): string {
+  // Negative delay → CSS animation appears as if it began (Date.now() % period) ms ago.
+  if (typeof Date === 'undefined') return '0ms'
+  return `-${Date.now() % GLARE_ANIMATION_MS}ms`
+}
+
+function GlareOverlay({ active }: { active: boolean }) {
+  const delayRef = useRef<string>(getSyncedGlareDelay())
+
+  if (!active) return null
+
+  return (
+    <span
+      aria-hidden="true"
+      className="poweron-glare-sweep pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
+      style={{ animationDelay: delayRef.current }}
+    />
+  )
+}
+
 function NoData() {
   return (
     <div className="flex items-center justify-center min-h-screen" style={{ backgroundColor: 'var(--bg-secondary)' }}>
@@ -530,14 +592,67 @@ export default function V15rSettingsPanel() {
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
   const [gcalUrlDraft, setGcalUrlDraft] = useState(settings.gcalUrl || '')
-  const [showBusinessSetup, setShowBusinessSetup] = useState(true)
-  const [showOverheadManager, setShowOverheadManager] = useState(true)
-  const [showDataSyncCenter, setShowDataSyncCenter] = useState(true)
-  const [showAdminTools, setShowAdminTools] = useState(true)
-  const [showActiveIntegrations, setShowActiveIntegrations] = useState(true)
-  const [showSecurityCenter, setShowSecurityCenter] = useState(true)
-  const [showProjectsConfiguration, setShowProjectsConfiguration] = useState(true)
-  const [showAIDevelopment, setShowAIDevelopment] = useState(true)
+  // ── Settings Hub visibility (Phase R1) ────────────────────────────────────
+  // Persisted via localStorage key SETTINGS_HUB_VISIBILITY_KEY.
+  // Defaults: only Business Setup is visible by default; all other sections
+  // start hidden so the Hub opens compact and the user opens what they need.
+  const [
+    {
+      showBusinessSetup,
+      showOverheadManager,
+      showDataSyncCenter,
+      showAdminTools,
+      showActiveIntegrations,
+      showSecurityCenter,
+      showProjectsConfiguration,
+      showAIDevelopment,
+    },
+    setSettingsHubVisibility,
+  ] = useState<SettingsHubVisibility>(() => loadSettingsHubVisibility())
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SETTINGS_HUB_VISIBILITY_KEY,
+        JSON.stringify({
+          showBusinessSetup,
+          showOverheadManager,
+          showDataSyncCenter,
+          showAdminTools,
+          showActiveIntegrations,
+          showSecurityCenter,
+          showProjectsConfiguration,
+          showAIDevelopment,
+        }),
+      )
+    } catch {
+      /* localStorage may be unavailable (privacy mode); ignore */
+    }
+  }, [
+    showBusinessSetup,
+    showOverheadManager,
+    showDataSyncCenter,
+    showAdminTools,
+    showActiveIntegrations,
+    showSecurityCenter,
+    showProjectsConfiguration,
+    showAIDevelopment,
+  ])
+  const setShowBusinessSetup = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showBusinessSetup: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showBusinessSetup) : next }))
+  const setShowOverheadManager = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showOverheadManager: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showOverheadManager) : next }))
+  const setShowDataSyncCenter = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showDataSyncCenter: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showDataSyncCenter) : next }))
+  const setShowAdminTools = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showAdminTools: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showAdminTools) : next }))
+  const setShowActiveIntegrations = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showActiveIntegrations: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showActiveIntegrations) : next }))
+  const setShowSecurityCenter = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showSecurityCenter: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showSecurityCenter) : next }))
+  const setShowProjectsConfiguration = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showProjectsConfiguration: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showProjectsConfiguration) : next }))
+  const setShowAIDevelopment = (next: boolean | ((prev: boolean) => boolean)) =>
+    setSettingsHubVisibility(prev => ({ ...prev, showAIDevelopment: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showAIDevelopment) : next }))
   const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
   const [overheadEntryModes, setOverheadEntryModes] = useState<Record<string, 'monthly' | 'yearly'>>({})
 
@@ -811,6 +926,45 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
   return (
     <div className="min-h-screen p-6 space-y-6" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+      {/* Phase R1: synchronized diagonal glare sweep — local keyframes.
+          The sweep runs across the full GLARE_ANIMATION_MS period; cards mounted
+          mid-cycle use a negative animation-delay (see getSyncedGlareDelay) so
+          every open card animates in lockstep. */}
+      <style>{`
+        @keyframes poweron-glare-sweep {
+          0%   { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+          12%  { opacity: 0.75; }
+          50%  { opacity: 0.55; }
+          88%  { opacity: 0; }
+          100% { transform: translateX(220%) skewX(-18deg); opacity: 0; }
+        }
+        .poweron-glare-sweep::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: 0;
+          width: 38%;
+          background: linear-gradient(
+            115deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(165, 243, 252, 0.12) 35%,
+            rgba(207, 250, 254, 0.45) 50%,
+            rgba(165, 243, 252, 0.12) 65%,
+            rgba(255, 255, 255, 0) 100%
+          );
+          filter: blur(0.5px);
+          animation-name: poweron-glare-sweep;
+          animation-duration: ${GLARE_ANIMATION_MS}ms;
+          animation-timing-function: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+          animation-iteration-count: infinite;
+          animation-delay: inherit;
+          will-change: transform, opacity;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .poweron-glare-sweep::before { animation: none; opacity: 0; }
+        }
+      `}</style>
       {/* HEADER */}
       <div className="mb-8 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -833,8 +987,9 @@ const persist = useCallback((mutatedData?: BackupData) => {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-        <div className="rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 items-stretch">
+        <div className="relative flex h-full flex-col rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showBusinessSetup} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Business Profile</p>
@@ -848,21 +1003,22 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p className="truncate">License: <span className="text-gray-200">{settings.license || 'Not set'}</span></p>
             <p>OH Rate: <span className="text-gray-200">{fmt(num(settings.defaultOHRate || overheadCalc.costPerHr || 0))}/hr</span></p>
           </div>
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showBusinessSetup ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showBusinessSetup ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
               {showBusinessSetup ? 'Setup visible' : 'Setup hidden'}
             </span>
+            <button
+              type="button"
+              onClick={() => setShowBusinessSetup(v => !v)}
+              className="w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
+            >
+              {showBusinessSetup ? 'Hide Business Setup' : 'Show Business Setup'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowBusinessSetup(v => !v)}
-            className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
-          >
-            {showBusinessSetup ? 'Hide Business Setup' : 'Show Business Setup'}
-          </button>
         </div>
 
-        <div className="rounded-2xl border border-blue-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20">
+        <div className="relative flex h-full flex-col rounded-2xl border border-blue-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showOverheadManager} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-300/80">Overhead Target</p>
@@ -876,16 +1032,22 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p>Annual: <span className="text-gray-200">{fmt(overheadCalc.annualTotal)}</span></p>
             <p>Real Cost/Hr: <span className="text-gray-200">{fmt(overheadCalc.costPerHr)}</span></p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowOverheadManager(v => !v)}
-            className="mt-4 w-full rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-400/15 transition-colors"
-          >
-            {showOverheadManager ? 'Hide Overhead Manager' : 'Show Overhead Manager'}
-          </button>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showOverheadManager ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showOverheadManager ? 'Manager visible' : 'Manager hidden'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowOverheadManager(v => !v)}
+              className="w-full rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-400/15 transition-colors"
+            >
+              {showOverheadManager ? 'Hide Overhead Manager' : 'Show Overhead Manager'}
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20">
+        <div className="relative flex h-full flex-col rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showDataSyncCenter} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300/80">Data Sync Health</p>
@@ -899,21 +1061,22 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p>{supabaseUp ? 'Cloud ready' : 'Supabase not configured'}</p>
             <p className="truncate">Last sync: <span className="text-gray-200">{lastSync}</span></p>
           </div>
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showDataSyncCenter ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showDataSyncCenter ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
               {showDataSyncCenter ? 'Sync center visible' : 'Sync center hidden'}
             </span>
+            <button
+              type="button"
+              onClick={() => setShowDataSyncCenter(v => !v)}
+              className="w-full rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 transition-colors"
+            >
+              {showDataSyncCenter ? 'Hide Data & Sync Center' : 'Show Data & Sync Center'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowDataSyncCenter(v => !v)}
-            className="mt-3 w-full rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 transition-colors"
-          >
-            {showDataSyncCenter ? 'Hide Data & Sync Center' : 'Show Data & Sync Center'}
-          </button>
         </div>
 
-        <div className="rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20">
+        <div className="relative flex h-full flex-col rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showActiveIntegrations} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">Active Integrations</p>
@@ -950,16 +1113,22 @@ const persist = useCallback((mutatedData?: BackupData) => {
             </button>
           </div>
           )}
-          <button
-            type="button"
-            onClick={() => setShowActiveIntegrations(v => !v)}
-            className="mt-4 w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
-          >
-            {showActiveIntegrations ? 'Hide Integrations' : 'Show Integrations'}
-          </button>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showActiveIntegrations ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showActiveIntegrations ? 'Integrations visible' : 'Integrations hidden'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowActiveIntegrations(v => !v)}
+              className="w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
+            >
+              {showActiveIntegrations ? 'Hide Integrations' : 'Show Integrations'}
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/70 p-4 shadow-lg shadow-blue-950/20">
+        <div className="relative flex h-full flex-col rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showSecurityCenter} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300/80">Security Status</p>
@@ -973,23 +1142,24 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p>App secured</p>
             <p className="text-gray-500">Passcode protection enabled</p>
           </div>
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showSecurityCenter ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showSecurityCenter ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
               {showSecurityCenter ? 'Security center visible' : 'Security center hidden'}
             </span>
+            <button
+              type="button"
+              onClick={() => setShowSecurityCenter(v => !v)}
+              className="w-full rounded-lg border border-indigo-400/25 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-400/15 transition-colors"
+            >
+              {showSecurityCenter ? 'Hide Security Center' : 'Show Security Center'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowSecurityCenter(v => !v)}
-            className="mt-3 w-full rounded-lg border border-indigo-400/25 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-400/15 transition-colors"
-          >
-            {showSecurityCenter ? 'Hide Security Center' : 'Show Security Center'}
-          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-        <div className="rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20 xl:col-span-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+        <div className="relative flex h-full flex-col rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showProjectsConfiguration} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Projects Configuration</p>
@@ -1002,21 +1172,22 @@ const persist = useCallback((mutatedData?: BackupData) => {
           <p className="mt-4 text-xs leading-relaxed text-gray-400">
             Phase weights, MTO phases, and project workflow setup
           </p>
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showProjectsConfiguration ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showProjectsConfiguration ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
               {showProjectsConfiguration ? 'Project setup visible' : 'Project setup hidden'}
             </span>
+            <button
+              type="button"
+              onClick={() => setShowProjectsConfiguration(v => !v)}
+              className="w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
+            >
+              {showProjectsConfiguration ? 'Hide Projects Configuration' : 'Show Projects Configuration'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowProjectsConfiguration(v => !v)}
-            className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
-          >
-            {showProjectsConfiguration ? 'Hide Projects Configuration' : 'Show Projects Configuration'}
-          </button>
         </div>
 
-        <div className="rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 xl:col-span-2">
+        <div className="relative flex h-full flex-col rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 overflow-hidden">
+          <GlareOverlay active={showAIDevelopment} />
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">AI Development</p>
@@ -1029,18 +1200,18 @@ const persist = useCallback((mutatedData?: BackupData) => {
           <p className="mt-4 text-xs leading-relaxed text-gray-400">
             Proposals, NEXUS profile, voice, and skill intelligence
           </p>
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showAIDevelopment ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+          <div className="mt-auto pt-4 flex flex-col gap-3">
+            <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showAIDevelopment ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
               {showAIDevelopment ? 'AI tools visible' : 'AI tools hidden'}
             </span>
+            <button
+              type="button"
+              onClick={() => setShowAIDevelopment(v => !v)}
+              className="w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
+            >
+              {showAIDevelopment ? 'Hide AI Development' : 'Show AI Development'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowAIDevelopment(v => !v)}
-            className="mt-3 w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
-          >
-            {showAIDevelopment ? 'Hide AI Development' : 'Show AI Development'}
-          </button>
         </div>
       </div>
 
@@ -4027,3 +4198,4 @@ function ImportHistoryCard() {
     </SettingCard>
   )
 }
+
