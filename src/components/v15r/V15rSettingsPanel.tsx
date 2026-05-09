@@ -25,7 +25,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
 import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
-import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense, type OpenPermit } from '@/services/ownerProfileService'
+import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
@@ -532,7 +532,14 @@ export default function V15rSettingsPanel() {
   const [gcalUrlDraft, setGcalUrlDraft] = useState(settings.gcalUrl || '')
   const [showBusinessSetup, setShowBusinessSetup] = useState(true)
   const [showOverheadManager, setShowOverheadManager] = useState(true)
+  const [showDataSyncCenter, setShowDataSyncCenter] = useState(true)
+  const [showAdminTools, setShowAdminTools] = useState(true)
+  const [showActiveIntegrations, setShowActiveIntegrations] = useState(true)
+  const [showSecurityCenter, setShowSecurityCenter] = useState(true)
+  const [showProjectsConfiguration, setShowProjectsConfiguration] = useState(true)
+  const [showAIDevelopment, setShowAIDevelopment] = useState(true)
   const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
+  const [overheadEntryModes, setOverheadEntryModes] = useState<Record<string, 'monthly' | 'yearly'>>({})
 
 const persist = useCallback((mutatedData?: BackupData) => {
   const data = mutatedData || getBackupData()
@@ -743,11 +750,16 @@ const persist = useCallback((mutatedData?: BackupData) => {
   const lastSync = backup._lastSavedAt ? new Date(backup._lastSavedAt).toLocaleString() : 'Never'
   const supabaseUp = isSupabaseConfigured()
   const connectedIntegrations = 1 + (settings.gcalUrl ? 1 : 0)
+  const isAdminOwner = user?.email === 'christian@poweronsolutionsllc.com'
 
   const phaseWeightTotal = Object.values(phaseWeights).reduce((s: number, v: any) => s + num(v), 0)
 
   // Theme handling
   const currentTheme = settings.theme || 'dark'
+  const brandName = settings.company || 'My Company'
+  const brandPreviewLogo = currentTheme === 'dark'
+    ? settings.logoDark || settings.logoLight
+    : settings.logoLight || settings.logoDark
   const handleThemeToggle = useCallback(() => {
     const data = getBackupData()
     if (data) {
@@ -800,12 +812,25 @@ const persist = useCallback((mutatedData?: BackupData) => {
   return (
     <div className="min-h-screen p-6 space-y-6" style={{ backgroundColor: 'var(--bg-secondary)' }}>
       {/* HEADER */}
-      <div className="flex items-center gap-3 mb-8">
-        <Settings size={32} className="text-blue-400" />
-        <div>
-          <h1 className="text-3xl font-bold text-gray-100">Settings Hub</h1>
-          <p className="text-gray-500 text-sm mt-1">Business identity, overhead, sync, and configuration</p>
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Settings size={32} className="text-blue-400" />
+          <div>
+            <h1 className="text-3xl font-bold text-gray-100">Settings Hub</h1>
+            <p className="text-gray-500 text-sm mt-1">Business identity, overhead, sync, and configuration</p>
+          </div>
         </div>
+        {isAdminOwner && (
+          <button
+            type="button"
+            onClick={() => setShowAdminTools(v => !v)}
+            className="flex items-center gap-2 rounded-full border border-cyan-400/25 bg-slate-950/70 px-4 py-2 text-xs font-semibold text-cyan-200 shadow-lg shadow-blue-950/20 transition-colors hover:bg-cyan-400/10"
+          >
+            <span className={`h-2.5 w-2.5 rounded-full ${showAdminTools ? 'bg-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.75)] animate-pulse' : 'bg-gray-600'}`} />
+            <Shield size={14} />
+            {showAdminTools ? 'Admin Tools On' : 'Admin Tools Off'}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
@@ -874,8 +899,17 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p>{supabaseUp ? 'Cloud ready' : 'Supabase not configured'}</p>
             <p className="truncate">Last sync: <span className="text-gray-200">{lastSync}</span></p>
           </div>
-          <button type="button" className="mt-4 w-full rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 transition-colors">
-            Data & Sync Center
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showDataSyncCenter ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showDataSyncCenter ? 'Sync center visible' : 'Sync center hidden'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDataSyncCenter(v => !v)}
+            className="mt-3 w-full rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 transition-colors"
+          >
+            {showDataSyncCenter ? 'Hide Data & Sync Center' : 'Show Data & Sync Center'}
           </button>
         </div>
 
@@ -893,6 +927,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200">QuickBooks</span>
             <span className={`rounded-full border px-2 py-1 ${settings.gcalUrl ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>Google Calendar</span>
           </div>
+          {false && (
           <div className="mt-4 rounded-xl border border-sky-400/20 bg-sky-950/30 p-3">
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-sky-200/80 mb-2">
               Google Calendar Embed Code / URL
@@ -914,6 +949,14 @@ const persist = useCallback((mutatedData?: BackupData) => {
               Update URL
             </button>
           </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowActiveIntegrations(v => !v)}
+            className="mt-4 w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
+          >
+            {showActiveIntegrations ? 'Hide Integrations' : 'Show Integrations'}
+          </button>
         </div>
 
         <div className="rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/70 p-4 shadow-lg shadow-blue-950/20">
@@ -930,8 +973,73 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p>App secured</p>
             <p className="text-gray-500">Passcode protection enabled</p>
           </div>
-          <button type="button" className="mt-4 w-full rounded-lg border border-indigo-400/25 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-400/15 transition-colors">
-            Security Center
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showSecurityCenter ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showSecurityCenter ? 'Security center visible' : 'Security center hidden'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowSecurityCenter(v => !v)}
+            className="mt-3 w-full rounded-lg border border-indigo-400/25 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-400/15 transition-colors"
+          >
+            {showSecurityCenter ? 'Hide Security Center' : 'Show Security Center'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div className="rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/20 xl:col-span-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Projects Configuration</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100">Project workflow setup</h3>
+            </div>
+            <div className="rounded-xl border border-cyan-400/25 bg-cyan-400/10 p-2 text-cyan-300">
+              <BarChart2 size={18} />
+            </div>
+          </div>
+          <p className="mt-4 text-xs leading-relaxed text-gray-400">
+            Phase weights, MTO phases, and project workflow setup
+          </p>
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showProjectsConfiguration ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showProjectsConfiguration ? 'Project setup visible' : 'Project setup hidden'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowProjectsConfiguration(v => !v)}
+            className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
+          >
+            {showProjectsConfiguration ? 'Hide Projects Configuration' : 'Show Projects Configuration'}
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-sky-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950/70 p-4 shadow-lg shadow-blue-950/20 xl:col-span-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">AI Development</p>
+              <h3 className="mt-2 text-base font-bold text-gray-100">AI Development</h3>
+            </div>
+            <div className="rounded-xl border border-sky-400/25 bg-sky-400/10 p-2 text-sky-300">
+              <Sparkles size={18} />
+            </div>
+          </div>
+          <p className="mt-4 text-xs leading-relaxed text-gray-400">
+            Proposals, NEXUS profile, voice, and skill intelligence
+          </p>
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showAIDevelopment ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showAIDevelopment ? 'AI tools visible' : 'AI tools hidden'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAIDevelopment(v => !v)}
+            className="mt-3 w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
+          >
+            {showAIDevelopment ? 'Hide AI Development' : 'Show AI Development'}
           </button>
         </div>
       </div>
@@ -939,6 +1047,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           {/* HUNTER Operations — Home Base + cron run status */}
+          {isAdminOwner && showAdminTools && (
           <SettingCard title="HUNTER Operations">
             <div className="flex flex-col gap-5">
               <HomeBaseSettings />
@@ -950,85 +1059,225 @@ const persist = useCallback((mutatedData?: BackupData) => {
               </div>
             </div>
           </SettingCard>
+          )}
 
+          {/* ACTIVE INTEGRATIONS */}
+          {showActiveIntegrations && (
+          <SettingCard title="Active Integrations">
+            <div className="space-y-4 rounded-2xl border border-sky-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-sky-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <div className="flex items-center justify-between gap-3 border-b border-sky-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">Google Calendar</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Render your public calendar inside PowerOn.</p>
+                    </div>
+                    <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${settings.gcalUrl ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+                      {settings.gcalUrl ? 'Connected' : 'Not connected'}
+                    </span>
+                  </div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-sky-200/80 mb-2">
+                    Google Calendar Embed Code / URL
+                  </label>
+                  <textarea
+                    value={gcalUrlDraft}
+                    onChange={(e) => setGcalUrlDraft(e.target.value)}
+                    placeholder="Paste Google Calendar embed URL"
+                    className="w-full h-20 px-3 py-2 rounded-lg border border-sky-400/20 bg-slate-950/70 text-xs text-gray-100 placeholder:text-gray-600 resize-none focus:border-sky-400/50 focus:outline-none"
+                  />
+                  <p className="mt-2 text-[10px] leading-snug text-gray-500">
+                    Google Calendar → Settings → Integrate calendar → copy the embed code or public URL, then paste it here to render your calendar.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleUpdateGoogleCalendarUrl}
+                    className="mt-3 w-full rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-400/15 transition-colors"
+                  >
+                    Update URL
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">AI Agent / Anthropic</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Supports PDF extraction, estimate review, and profit analysis.</p>
+                    </div>
+                    <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-red-400/20 bg-red-500/10 text-red-200'}`}>
+                      {(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'Configured' : 'Not configured'}
+                    </span>
+                  </div>
+                  <div className="rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <p className="text-sm text-gray-300 mb-2">Anthropic API Key</p>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full ${(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                      <span className="text-xs text-gray-400">
+                        {(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'Configured — QuickBooks PDF import enabled' : 'Not configured — set VITE_ANTHROPIC_API_KEY in .env'}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-gray-500 italic">AI features require VITE_ANTHROPIC_API_KEY in environment variables.</p>
+                </div>
+
+                <div className="rounded-xl border border-blue-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <div className="flex items-center justify-between gap-3 border-b border-blue-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">QuickBooks Integration</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">API sync foundation for invoices and estimates.</p>
+                    </div>
+                    <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2 py-1 text-[11px] font-semibold text-yellow-200">Coming soon</span>
+                  </div>
+                  <div className="flex items-center gap-3 rounded-lg border border-blue-400/10 bg-slate-950/70 p-3">
+                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-300">Not connected — PDF import available</p>
+                      <p className="text-xs text-gray-500 mt-1">Connect your QuickBooks account to automatically sync invoices and estimates. Requires QuickBooks Online API setup.</p>
+                    </div>
+                  </div>
+                  <button
+                    disabled
+                    className="mt-3 w-full px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 opacity-50 cursor-not-allowed"
+                    style={{ backgroundColor: 'rgba(99,102,241,0.1)', color: '#818cf8', borderColor: 'rgba(99,102,241,0.2)' }}
+                  >
+                    Connect QuickBooks — Coming in V3
+                  </button>
+                  <p className="mt-2 text-[10px] text-gray-600 italic">
+                    OAuth 2.0 flow via Intuit platform. Set VITE_QUICKBOOKS_CLIENT_ID and VITE_QUICKBOOKS_CLIENT_SECRET in .env to enable.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-indigo-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <div className="flex items-center justify-between gap-3 border-b border-indigo-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">QuickBooks Batch Import</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Extract invoice and estimate PDFs into PowerOn records.</p>
+                    </div>
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">PDF import</span>
+                  </div>
+                  <QuickBooksBatchImport persist={persist} forceUpdate={forceUpdate} embedded />
+                </div>
+              </div>
+            </div>
+          </SettingCard>
+          )}
+
+          {showBusinessSetup && (
+          <>
           {/* 0. THEME & BRANDING */}
           <SettingCard title="Theme & Branding">
-            <div className="space-y-4">
-              {/* Theme Toggle */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-3">Light/Dark Theme</label>
-                <button
-                  onClick={handleThemeToggle}
-                  className={`flex items-center gap-3 px-4 py-2 rounded font-medium transition-colors ${
-                    currentTheme === 'dark'
-                      ? 'bg-gray-800 text-gray-100 border border-gray-700'
-                      : 'bg-sky-100 text-blue-700 border border-sky-300'
-                  }`}
-                >
-                  {currentTheme === 'dark' ? (
-                    <>
-                      <Moon size={18} />
-                      Dark Theme
-                    </>
-                  ) : (
-                    <>
-                      <Sun size={18} />
-                      Light Theme
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Dark Logo Upload */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Dark Logo (Base64)</label>
-                <div className="flex flex-col gap-2">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) handleLogoUpload('dark', file)
-                    }}
-                    className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
-                  />
-                  {settings.logoDark && (
-                    <div className="flex items-center gap-3 p-3 bg-gray-900 rounded border border-gray-700">
-                      <Image size={16} className="text-gray-400" />
-                      <span className="text-xs text-gray-400 truncate">Dark logo uploaded</span>
-                      <img src={settings.logoDark} alt="Dark logo" className="h-8 object-contain ml-auto" />
+            <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25 [&_input]:min-h-9">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">Brand Preview</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">How your company identity appears in PowerOn.</p>
                     </div>
-                  )}
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">
+                      {currentTheme === 'dark' ? 'Dark mode' : 'Light mode'}
+                    </span>
+                  </div>
+                  <div className="flex min-h-[92px] items-center gap-4 rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10">
+                      {brandPreviewLogo ? (
+                        <img src={brandPreviewLogo} alt={`${brandName} logo preview`} className="max-h-12 max-w-12 object-contain" />
+                      ) : (
+                        <Sparkles size={24} className="text-cyan-200" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-200/60">Current Brand</p>
+                      <h3 className="mt-1 truncate text-xl font-bold text-gray-100">{brandName}</h3>
+                      <p className="mt-1 text-xs text-gray-500">{brandPreviewLogo ? 'Logo asset ready' : 'Default brand mark shown'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-100">Appearance</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Switch the app theme style.</p>
+                    </div>
+                  </div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-3">Light/Dark Theme</label>
+                  <button
+                    onClick={handleThemeToggle}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors ${
+                      currentTheme === 'dark'
+                        ? 'border-cyan-400/20 bg-slate-900/80 text-gray-100 hover:bg-slate-900'
+                        : 'border-sky-300/50 bg-sky-100 text-blue-700 hover:bg-sky-200'
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      {currentTheme === 'dark' ? <Moon size={18} /> : <Sun size={18} />}
+                      {currentTheme === 'dark' ? 'Dark Theme' : 'Light Theme'}
+                    </span>
+                    <span className="rounded-full border border-current/20 px-2 py-1 text-[10px] uppercase tracking-wider">
+                      Active
+                    </span>
+                  </button>
                 </div>
               </div>
 
-              {/* Light Logo Upload */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Light Logo (Base64)</label>
-                <div className="flex flex-col gap-2">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) handleLogoUpload('light', file)
-                    }}
-                    className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
-                  />
-                  {settings.logoLight && (
-                    <div className="flex items-center gap-3 p-3 bg-gray-900 rounded border border-gray-700">
-                      <Image size={16} className="text-gray-400" />
-                      <span className="text-xs text-gray-400 truncate">Light logo uploaded</span>
-                      <img src={settings.logoLight} alt="Light logo" className="h-8 object-contain ml-auto" />
+              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Logo Assets</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Upload the logo variants used across light and dark surfaces.</p>
+                  </div>
+                  <Image size={18} className="text-cyan-300" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="flex flex-col rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Dark Logo (Base64)</label>
+                    <div className="flex h-full flex-col gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) handleLogoUpload('dark', file)
+                        }}
+                        className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
+                      />
+                      {settings.logoDark && (
+                        <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/70 p-3">
+                          <Image size={16} className="text-cyan-300" />
+                          <span className="text-xs text-gray-400 truncate">Dark logo uploaded</span>
+                          <img src={settings.logoDark} alt="Dark logo" className="h-8 object-contain ml-auto" />
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
+
+                  <div className="flex flex-col rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Light Logo (Base64)</label>
+                    <div className="flex h-full flex-col gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) handleLogoUpload('light', file)
+                        }}
+                        className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"
+                      />
+                      {settings.logoLight && (
+                        <div className="flex min-h-12 items-center gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/70 p-3">
+                          <Image size={16} className="text-blue-300" />
+                          <span className="text-xs text-gray-400 truncate">Light logo uploaded</span>
+                          <img src={settings.logoLight} alt="Light logo" className="h-8 object-contain ml-auto" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </SettingCard>
 
           {/* 1. GENERAL / BUSINESS IDENTITY */}
-          {showBusinessSetup && (
           <SettingCard title="General / Business Identity">
             <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25 [&_input]:h-9 [&_input]:border-cyan-400/20 [&_input]:bg-slate-950/70 [&_input]:text-gray-100 [&_input]:focus:border-cyan-300/60">
               <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -1467,6 +1716,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
               })()}
             </div>
           </SettingCard>
+          </>
           )}
 
           {/* 2. OVERHEAD MANAGER */}
@@ -1502,11 +1752,24 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 })}
               </div>
 
-              <div className="text-sm text-gray-300 bg-blue-900/20 border border-cyan-400/20 p-4 rounded-xl shadow-inner shadow-blue-950/20">
-                Monthly: <span className="font-bold text-blue-300">{fmt(overheadCalc.monthlyTotal)}</span> | Annual: <span className="font-bold text-blue-300">{fmt(overheadCalc.annualTotal)}</span> | Real Cost/Hr: <span className="font-bold text-blue-300">{fmt(overheadCalc.costPerHr)}</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-3 shadow-inner shadow-blue-950/20">
+                  <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Monthly Overhead</p>
+                  <p className="mt-1 text-lg font-bold text-cyan-100">{fmt(overheadCalc.monthlyTotal)}</p>
+                </div>
+                <div className="rounded-xl border border-blue-400/15 bg-blue-950/20 p-3 shadow-inner shadow-blue-950/20">
+                  <p className="text-[10px] uppercase tracking-wider text-blue-200/60 font-bold">Annual Overhead</p>
+                  <p className="mt-1 text-lg font-bold text-blue-100">{fmt(overheadCalc.annualTotal)}</p>
+                </div>
+                <div className="rounded-xl border border-emerald-400/15 bg-emerald-950/15 p-3 shadow-inner shadow-blue-950/20">
+                  <p className="text-[10px] uppercase tracking-wider text-emerald-200/60 font-bold">Real Cost / Hr</p>
+                  <p className="mt-1 text-lg font-bold text-emerald-100">{fmt(overheadCalc.costPerHr)}</p>
+                </div>
               </div>
 
-              {(['essential', 'extra', 'loans', 'vehicle'] as const).filter((key) => key === openOverheadCategory).map((key) => (
+              {(['essential', 'extra', 'loans', 'vehicle'] as const).filter((key) => key === openOverheadCategory).map((key) => {
+                const bucketMonthlyTotal = num(Object.values(overhead[key] || []).reduce((s: number, i: any) => s + num(i.monthly), 0))
+                return (
                 <div key={key} className="rounded-xl border border-cyan-400/15 bg-slate-950/55 shadow-inner shadow-blue-950/20 overflow-hidden">
                   <button
                     type="button"
@@ -1517,7 +1780,10 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       <h3 className="font-bold text-gray-100 capitalize">{key}</h3>
                       <p className="text-xs text-gray-500 mt-0.5">{(overhead[key] || []).length} expense{(overhead[key] || []).length === 1 ? '' : 's'}</p>
                     </div>
-                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">Open</span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">{fmt(bucketMonthlyTotal)} / mo</span>
+                      <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[11px] font-semibold text-blue-100">{fmt(bucketMonthlyTotal * 12)} / yr</span>
+                    </div>
                   </button>
                   <div className="p-4">
                     <button
@@ -1540,10 +1806,11 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     </button>
                   </div>
                   <div className="px-4 pb-4">
-                    <div className="grid grid-cols-[1fr_96px_96px_40px] gap-2 px-3 py-2 text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold border border-cyan-400/10 border-b-0 rounded-t-lg bg-slate-950/70">
-                      <span>Expense name</span>
-                      <span>Monthly input</span>
-                      <span className="text-right">Yearly</span>
+                    <div className="grid grid-cols-[minmax(220px,1fr)_150px_130px_130px_40px] gap-2 px-3 py-2 text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold border border-cyan-400/10 border-b-0 rounded-t-lg bg-slate-950/70">
+                      <span>Expense Name</span>
+                      <span className="text-center">Mode</span>
+                      <span className="text-center">Monthly</span>
+                      <span className="text-center">Yearly</span>
                       <span />
                     </div>
                   <div className={`rounded-b-lg border border-cyan-400/10 bg-slate-950/40 ${(overhead[key] || []).length > 15 ? 'max-h-96 overflow-y-auto' : ''}`}>
@@ -1551,12 +1818,30 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       <div className="px-3 py-4 text-sm text-gray-500">No expenses yet.</div>
                     )}
                     {(overhead[key] || []).map((item: any) => (
-                      <div key={item.id} className="grid grid-cols-[1fr_96px_96px_40px] items-center gap-2 text-sm px-3 py-2.5 border-b last:border-b-0 border-cyan-400/10 bg-slate-900/45">
+                      <div key={item.id} className="grid grid-cols-[minmax(220px,1fr)_150px_130px_130px_40px] items-center gap-2 text-sm px-3 py-2.5 border-b last:border-b-0 border-cyan-400/10 bg-slate-900/45">
                         <span className="text-gray-300 truncate">{item.name}</span>
+                          <div className="flex w-32 justify-self-center rounded-lg border border-cyan-400/15 bg-slate-950/70 p-0.5">
+                            {(['monthly', 'yearly'] as const).map((mode) => {
+                              const isActive = (overheadEntryModes[item.id] || 'monthly') === mode
+                              return (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  onClick={() => setOverheadEntryModes(prev => ({ ...prev, [item.id]: mode }))}
+                                  className={`flex-1 rounded-md px-2 py-1 text-[10px] font-semibold capitalize transition-colors ${
+                                    isActive ? 'bg-cyan-400/15 text-cyan-100' : 'text-gray-500 hover:text-gray-300'
+                                  }`}
+                                >
+                                  {mode}
+                                </button>
+                              )
+                            })}
+                          </div>
                           <input
                             type="number"
                             step="0.01"
-                            value={item.monthly || 0}
+                            value={(overheadEntryModes[item.id] || 'monthly') === 'monthly' ? item.monthly || 0 : num(item.monthly).toFixed(2)}
+                            readOnly={(overheadEntryModes[item.id] || 'monthly') === 'yearly'}
                             onChange={(e) => {
                               const data = getBackupData()
                               if (data && data.settings.overhead && data.settings.overhead[key]) {
@@ -1568,9 +1853,34 @@ const persist = useCallback((mutatedData?: BackupData) => {
                                 }
                               }
                             }}
-                            className="w-20 px-2 py-1 bg-slate-950/80 border border-cyan-400/20 rounded-lg text-gray-100 text-xs focus:outline-none focus:border-cyan-300/60"
+                            className={`w-28 justify-self-center px-2 py-1 border rounded-lg text-xs text-center focus:outline-none ${
+                              (overheadEntryModes[item.id] || 'monthly') === 'monthly'
+                                ? 'bg-slate-950/80 border-cyan-400/20 text-gray-100 focus:border-cyan-300/60'
+                                : 'bg-slate-900/50 border-slate-700/70 text-gray-500 cursor-not-allowed'
+                            }`}
                           />
-                          <span className="text-gray-400 w-16 text-right">{fmt(num(item.monthly) * 12)}</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={(num(item.monthly) * 12).toFixed(2)}
+                            readOnly={(overheadEntryModes[item.id] || 'monthly') === 'monthly'}
+                            onChange={(e) => {
+                              const data = getBackupData()
+                              if (data && data.settings.overhead && data.settings.overhead[key]) {
+                                pushState(data)
+                                const idx = data.settings.overhead[key].findIndex((x: any) => x.id === item.id)
+                                if (idx >= 0) {
+                                  data.settings.overhead[key][idx].monthly = (parseFloat(e.target.value) || 0) / 12
+                                  persist(data)
+                                }
+                              }
+                            }}
+                            className={`w-28 justify-self-center px-2 py-1 border rounded-lg text-xs text-center focus:outline-none ${
+                              (overheadEntryModes[item.id] || 'monthly') === 'yearly'
+                                ? 'bg-slate-950/80 border-cyan-400/20 text-gray-100 focus:border-cyan-300/60'
+                                : 'bg-slate-900/50 border-slate-700/70 text-gray-500 cursor-not-allowed'
+                            }`}
+                          />
                           <button
                             onClick={() => {
                               const data = getBackupData()
@@ -1589,12 +1899,202 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   </div>
                   </div>
                 </div>
-              ))}
+                )
+              })}
+            </div>
+          </SettingCard>
+          )}
+
+          {/* PROJECTS CONFIGURATION */}
+          {showProjectsConfiguration && (
+          <SettingCard title="Projects Configuration">
+            <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
+              <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-100">Project workflow setup</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Phase weights and MTO phase labels used across project planning.</p>
+                </div>
+                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${phaseWeightTotal === 100 ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>
+                  Total: {phaseWeightTotal}%
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)] gap-4">
+                <div className="rounded-xl border border-blue-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-100">Phase Weights Editor</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Balance project phase percentages.</p>
+                    </div>
+                    <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${phaseWeightTotal === 100 ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-red-400/20 bg-red-400/10 text-red-200'}`}>
+                      {phaseWeightTotal === 100 ? 'Balanced' : 'Needs 100%'}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {Object.entries(phaseWeights).map(([phase, weight]) => (
+                      <div key={phase} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1fr)_64px_32px] items-center gap-3 rounded-lg border border-blue-400/10 bg-slate-900/60 px-3 py-2">
+                        <span className="truncate text-sm font-medium text-gray-200">{phase}</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="50"
+                          value={weight as number}
+                          onChange={(e) => {
+                            const data = getBackupData()
+                            if (data) {
+                              pushState(data)
+                              data.settings.phaseWeights[phase] = parseInt(e.target.value) || 0
+                              saveBackupData(data)
+                              forceUpdate()
+                            }
+                          }}
+                          className="w-full accent-cyan-400"
+                        />
+                        <span className="text-right text-sm font-bold text-cyan-300">{(weight as number).toFixed(0)}%</span>
+                        <button
+                          onClick={() => {
+                            const data = getBackupData()
+                            if (data) {
+                              pushState(data)
+                              delete data.settings.phaseWeights[phase]
+                              saveBackupData(data)
+                              forceUpdate()
+                            }
+                          }}
+                          className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
+                        >
+                          X
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className={`mt-3 rounded-lg border px-3 py-2 text-sm font-semibold ${phaseWeightTotal === 100 ? 'border-emerald-400/15 bg-emerald-400/10 text-emerald-200' : 'border-red-400/15 bg-red-400/10 text-red-200'}`}>
+                    Total: {phaseWeightTotal}% {phaseWeightTotal === 100 ? 'Balanced' : 'should equal 100%'}
+                  </div>
+                  <button
+                    onClick={() => {
+                      const data = getBackupData()
+                      if (data && Object.keys(data.settings.phaseWeights).length > 0) {
+                        pushState(data)
+                        const numPhases = Object.keys(data.settings.phaseWeights).length
+                        const baseWeight = Math.floor(100 / numPhases)
+                        const remainder = 100 % numPhases
+                        Object.entries(data.settings.phaseWeights).forEach(([ph], idx) => {
+                          data.settings.phaseWeights[ph] = baseWeight + (idx < remainder ? 1 : 0)
+                        })
+                        saveBackupData(data)
+                        forceUpdate()
+                      }
+                    }}
+                    className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
+                  >
+                    Auto-Balance to 100%
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-100">MTO Phases</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Material takeoff phase labels.</p>
+                    </div>
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">
+                      {mtoPhases.length} phases
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {mtoPhases.map((phase: string, i: number) => (
+                      <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/60 px-3 py-2 text-sm">
+                        <span className="truncate font-medium text-gray-200">{phase}</span>
+                        <button
+                          onClick={() => {
+                            const data = getBackupData()
+                            if (data) {
+                              pushState(data)
+                              data.settings.mtoPhases = data.settings.mtoPhases.filter((_: string, idx: number) => idx !== i)
+                              persist(data)
+                            }
+                          }}
+                          className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
+                        >
+                          X
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      const name = prompt('New MTO phase:')
+                      if (!name) return
+                      const data = getBackupData()
+                      if (data) {
+                        pushState(data)
+                        if (!data.settings.mtoPhases) data.settings.mtoPhases = []
+                        data.settings.mtoPhases.push(name)
+                        persist(data)
+                      }
+                    }}
+                    className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
+                  >
+                    + Add Phase
+                  </button>
+                </div>
+              </div>
+            </div>
+          </SettingCard>
+          )}
+
+          {/* AI DEVELOPMENT */}
+          {showAIDevelopment && (
+          <SettingCard title="AI Development">
+            <div className="space-y-4 rounded-2xl border border-sky-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
+              <div className="flex items-center justify-between gap-3 border-b border-sky-400/10 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-100">AI development workspace</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Proposals, NEXUS profile, voice, and skill intelligence.</p>
+                </div>
+                <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-3 py-1 text-xs font-semibold text-sky-100">
+                  NEXUS tools
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-sky-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20" data-section="proposals">
+                  <div className="flex items-center justify-between gap-3 border-b border-sky-400/10 pb-3 mb-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-100">Proposals</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">MiroFish proposal queue.</p>
+                    </div>
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">Queue</span>
+                  </div>
+                  <ProposalQueue maxHeight="600px" />
+                </div>
+
+                <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                  <SkillIntelligenceCard />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-blue-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                <OwnerProfileCard />
+              </div>
+
+              <div className="rounded-xl border border-indigo-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+                <div className="flex items-center justify-between gap-3 border-b border-indigo-400/10 pb-3 mb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-gray-100">NEXUS Voice</h4>
+                    <p className="text-xs text-gray-500 mt-0.5">Voice selection and sample playback.</p>
+                  </div>
+                  <span className="rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2 py-1 text-[11px] font-semibold text-indigo-100">Voice</span>
+                </div>
+                <NexusVoiceSelector />
+              </div>
             </div>
           </SettingCard>
           )}
 
           {/* 3. PHASE WEIGHTS EDITOR */}
+          {false && (
           <SettingCard title="Phase Weights Editor">
             <div className="space-y-3">
               {Object.entries(phaseWeights).map(([phase, weight]) => (
@@ -1658,8 +2158,10 @@ const persist = useCallback((mutatedData?: BackupData) => {
               </button>
             </div>
           </SettingCard>
+          )}
 
           {/* 5. AI AGENT SETTINGS */}
+          {false && (
           <SettingCard title="AI Agent Settings">
             <div className="space-y-4">
               <div className="p-3 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
@@ -1682,7 +2184,10 @@ const persist = useCallback((mutatedData?: BackupData) => {
             </div>
           </SettingCard>
 
+          )}
+
           {/* 6. DATA & SYNC CENTER */}
+          {showDataSyncCenter && (
           <DataSyncCenter
             backup={backup}
             user={user}
@@ -1692,6 +2197,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
             onImport={handleImportBackup}
             onResetDefaults={handleResetDefaults}
           />
+          )}
 
         </div>
 
@@ -1699,16 +2205,19 @@ const persist = useCallback((mutatedData?: BackupData) => {
         <div className="space-y-6">
 
           {/* MiroFish Proposal Queue */}
+          {false && (
           <div data-section="proposals">
             <SettingCard title="Proposals">
               <ProposalQueue maxHeight="600px" />
             </SettingCard>
           </div>
+          )}
 
           {/* QUICKBOOKS BATCH IMPORT */}
-          <QuickBooksBatchImport persist={persist} forceUpdate={forceUpdate} />
+          {false && <QuickBooksBatchImport persist={persist} forceUpdate={forceUpdate} />}
 
           {/* QUICKBOOKS INTEGRATION (FOUNDATION) */}
+          {false && (
           <SettingCard title="QuickBooks Integration">
             <div className="space-y-3">
               <div className="flex items-center gap-3 p-3 rounded" style={{ backgroundColor: 'var(--bg-input)' }}>
@@ -1731,7 +2240,10 @@ const persist = useCallback((mutatedData?: BackupData) => {
             </div>
           </SettingCard>
 
+          )}
+
           {/* 10. MTO PHASES */}
+          {false && (
           <SettingCard title="MTO Phases">
             <div className="space-y-2">
               {mtoPhases.map((phase: string, i: number) => (
@@ -1770,18 +2282,34 @@ const persist = useCallback((mutatedData?: BackupData) => {
               </button>
             </div>
           </SettingCard>
+          )}
 
           {/* MY DEVELOPMENT — SKILL INTELLIGENCE */}
+          {false && (
           <SkillIntelligenceCard />
+          )}
 
           {/* MY PROFILE */}
+          {false && (
           <OwnerProfileCard />
+          )}
 
           {/* NEXUS VOICE */}
+          {false && (
           <SettingCard title="NEXUS Voice">
             <NexusVoiceSelector />
           </SettingCard>
+          )}
 
+          {showSecurityCenter && (
+          <div className="space-y-4 rounded-2xl border border-indigo-400/15 bg-gradient-to-br from-slate-950/70 via-indigo-950/15 to-slate-950/80 p-3 shadow-2xl shadow-blue-950/20">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <div>
+                <h3 className="text-sm font-bold text-gray-100">Security Center</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Access, demo, test data, and owner controls.</p>
+              </div>
+              <span className="rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2 py-1 text-[11px] font-semibold text-indigo-100">Protected</span>
+            </div>
           {/* AUDIT ACCESS */}
           <AuditAccessCard />
 
@@ -2008,6 +2536,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
           {/* ADMIN TEMPLATE SWITCHER — only visible when logged-in user matches VITE_ADMIN_EMAIL */}
           {user?.email && user.email === (import.meta.env.VITE_ADMIN_EMAIL as string) && (
             <AdminTemplateSwitcherCard />
+          )}
+          </div>
           )}
 
         </div>
@@ -2477,7 +3007,7 @@ function SecurityCard() {
 
 // ── QuickBooks Batch Import Sub-Component ────────────────────────────────────
 
-function QuickBooksBatchImport({ persist, forceUpdate }: { persist: () => void; forceUpdate: () => void }) {
+function QuickBooksBatchImport({ persist, forceUpdate, embedded = false }: { persist: () => void; forceUpdate: () => void; embedded?: boolean }) {
   const [batchItems, setBatchItems] = useState<QBBatchItem[]>([])
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
@@ -2563,8 +3093,7 @@ function QuickBooksBatchImport({ persist, forceUpdate }: { persist: () => void; 
 
   const accepted = batchItems.filter(i => i.status === 'accepted').length
 
-  return (
-    <SettingCard title="QuickBooks Batch Import">
+  const content = (
       <div className="space-y-3">
         <p className="text-xs text-gray-500">Upload up to 20 QuickBooks PDF invoices/estimates for batch processing.</p>
 
@@ -2672,6 +3201,11 @@ function QuickBooksBatchImport({ persist, forceUpdate }: { persist: () => void; 
 
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
+  )
+
+  return embedded ? content : (
+    <SettingCard title="QuickBooks Batch Import">
+      {content}
     </SettingCard>
   )
 }
@@ -2961,12 +3495,6 @@ function OwnerProfileCard() {
   const [licenseCity, setLicenseCity] = useState('')
   const [licenseStatus, setLicenseStatus] = useState<'active' | 'pending' | 'needed'>('active')
 
-  // Open permit form
-  const [permitProject, setPermitProject] = useState('')
-  const [permitCity, setPermitCity] = useState('')
-  const [permitNumber, setPermitNumber] = useState('')
-  const [permitStatus, setPermitStatus] = useState('')
-
   // Derive a stable org_id from the Supabase URL env var (project ref = first subdomain segment)
   const orgId = (() => {
     try {
@@ -3017,30 +3545,6 @@ function OwnerProfileCard() {
     persist(updated)
   }
 
-  // ── Open permit helpers ───────────────────────────────────────────────────
-
-  const addPermit = () => {
-    const projectName = permitProject.trim()
-    const city = permitCity.trim()
-    if (!projectName || !city) return
-    const entry: OpenPermit = {
-      projectName,
-      city,
-      permitNumber: permitNumber.trim() || '—',
-      status: permitStatus.trim() || 'Open',
-    }
-    const updated = { ...profile, open_permits: [...profile.open_permits, entry] }
-    setPermitProject('')
-    setPermitCity('')
-    setPermitNumber('')
-    setPermitStatus('')
-    persist(updated)
-  }
-
-  const removePermit = (idx: number) => {
-    const updated = { ...profile, open_permits: profile.open_permits.filter((_: any, i: number) => i !== idx) }
-    persist(updated)
-  }
 
   // ── Tag input key handler ─────────────────────────────────────────────────
 
@@ -3167,62 +3671,6 @@ function OwnerProfileCard() {
           </div>
         </div>
 
-        {/* Open Permits */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Open Permits</label>
-          <div className="space-y-1.5 mb-3">
-            {profile.open_permits.length === 0 && (
-              <p className="text-[10px] text-gray-600 italic">No open permits tracked.</p>
-            )}
-            {profile.open_permits.map((pmt: OpenPermit, i: number) => (
-              <div key={i} className="flex items-center justify-between text-xs px-3 py-1.5 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
-                <div>
-                  <span className="text-gray-200 font-medium">{pmt.projectName}</span>
-                  <span className="text-gray-500 ml-2">{pmt.city}</span>
-                  {pmt.permitNumber !== '—' && <span className="text-gray-600 ml-2">#{pmt.permitNumber}</span>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-500 italic">{pmt.status}</span>
-                  <button onClick={() => removePermit(i)} className="text-gray-600 hover:text-red-400">×</button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <input
-              type="text"
-              value={permitProject}
-              onChange={e => setPermitProject(e.target.value)}
-              placeholder="Project name"
-              className="text-xs px-3 py-2 rounded border theme-input"
-            />
-            <input
-              type="text"
-              value={permitCity}
-              onChange={e => setPermitCity(e.target.value)}
-              placeholder="City"
-              className="text-xs px-3 py-2 rounded border theme-input"
-            />
-            <input
-              type="text"
-              value={permitNumber}
-              onChange={e => setPermitNumber(e.target.value)}
-              placeholder="Permit # (optional)"
-              className="text-xs px-3 py-2 rounded border theme-input"
-            />
-            <input
-              type="text"
-              value={permitStatus}
-              onChange={e => setPermitStatus(e.target.value)}
-              placeholder="Status (e.g. Open, Finaled)"
-              className="text-xs px-3 py-2 rounded border theme-input"
-            />
-          </div>
-          <button
-            onClick={addPermit}
-            className="text-xs px-3 py-2 bg-purple-600/30 text-purple-300 rounded border border-purple-500/30 hover:bg-purple-600/40"
-          >+ Add Permit</button>
-        </div>
 
         {/* Business Goals */}
         <div>
