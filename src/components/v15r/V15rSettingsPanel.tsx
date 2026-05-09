@@ -32,7 +32,9 @@ import { VoiceSettings } from '@/components/voice/VoiceSettings'
 import SnapshotPanel from '@/components/SnapshotPanel'
 import { createSnapshot as createCloudSnapshot } from '@/services/snapshotService'
 import { ProposalQueue } from '@/components/ProposalQueue'
-import { runScoutAnalysis } from '@/agents/scout'
+import { generateScoutSuggestions, queueScoutProposal } from '@/agents/scout'
+import type { RawProposal } from '@/agents/scout'
+import { subscribe as subscribeAgentEvent } from '@/services/agentEventBus'
 import { useDemoStore } from '@/store/demoStore'
 import { DEMO_COMPANY, DEMO_OWNER, DEMO_LICENSE } from '@/services/demoDataService'
 import {
@@ -72,6 +74,95 @@ const SETTINGS_HUB_VISIBILITY_DEFAULTS: SettingsHubVisibility = {
   showSecurityCenter: false,
   showProjectsConfiguration: false,
   showAIDevelopment: false,
+}
+
+type ScoutStagedSuggestion = {
+  id: string
+  proposal: RawProposal
+  selected: boolean
+}
+
+type ScoutScanHistoryItem = {
+  id: string
+  orgId: string
+  title: string
+  reason: string
+  category: string
+  impact_score: number
+  risk_score: number
+  status: 'not_selected' | 'dismissed' | 'rejected'
+  createdAt: string
+}
+
+const SCOUT_SCAN_LIMIT_PER_24H = 10
+const SCOUT_SCAN_WINDOW_MS = 24 * 60 * 60 * 1000
+const SCOUT_SCAN_HISTORY_LIMIT = 100
+const SCOUT_SCAN_HISTORY_PAGE_SIZE = 15
+const scoutScanUsageKey = (orgId: string) => `poweron_scout_scan_usage:${orgId}`
+const scoutScanHistoryKey = (orgId: string) => `poweron_scout_scan_history:${orgId}`
+
+function normalizeScoutHistoryPart(value: unknown): string {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function scoutScanHistoryStableKey(item: Pick<ScoutScanHistoryItem, 'title' | 'category' | 'orgId'>): string {
+  return [
+    normalizeScoutHistoryPart(item.orgId),
+    normalizeScoutHistoryPart(item.category),
+    normalizeScoutHistoryPart(item.title),
+  ].join('|')
+}
+
+function dedupeScoutScanHistory(items: ScoutScanHistoryItem[]): ScoutScanHistoryItem[] {
+  const seen = new Set<string>()
+  const deduped: ScoutScanHistoryItem[] = []
+  for (const item of items) {
+    const key = scoutScanHistoryStableKey(item)
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(item)
+    if (deduped.length >= SCOUT_SCAN_HISTORY_LIMIT) break
+  }
+  return deduped
+}
+
+function loadScoutScanUsage(orgId: string): number[] {
+  try {
+    const raw = localStorage.getItem(scoutScanUsageKey(orgId))
+    const parsed = raw ? JSON.parse(raw) : []
+    const cutoff = Date.now() - SCOUT_SCAN_WINDOW_MS
+    return Array.isArray(parsed) ? parsed.filter((ts: unknown) => typeof ts === 'number' && ts >= cutoff) : []
+  } catch {
+    return []
+  }
+}
+
+function saveScoutScanUsage(orgId: string, usage: number[]): void {
+  try {
+    const cutoff = Date.now() - SCOUT_SCAN_WINDOW_MS
+    localStorage.setItem(scoutScanUsageKey(orgId), JSON.stringify(usage.filter(ts => ts >= cutoff)))
+  } catch { /* non-critical */ }
+}
+
+function loadScoutScanHistory(orgId?: string): ScoutScanHistoryItem[] {
+  if (!orgId) return []
+  try {
+    const raw = localStorage.getItem(scoutScanHistoryKey(orgId))
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed)
+      ? dedupeScoutScanHistory(parsed
+        .filter((item: any) => (item?.orgId === orgId || !item?.orgId) && item?.status !== 'queued')
+        .map((item: any) => ({ ...item, orgId })))
+      : []
+  } catch {
+    return []
+  }
+}
+
+function saveScoutScanHistory(orgId: string, items: ScoutScanHistoryItem[]): void {
+  try {
+    localStorage.setItem(scoutScanHistoryKey(orgId), JSON.stringify(dedupeScoutScanHistory(items.map(item => ({ ...item, orgId })))))
+  } catch { /* non-critical */ }
 }
 
 function loadSettingsHubVisibility(): SettingsHubVisibility {
@@ -589,7 +680,11 @@ export default function V15rSettingsPanel() {
   const [showBetaInviteModal, setShowBetaInviteModal] = useState(false)
   const [, setHideTick] = useState(0)
   const [scoutScanning, setScoutScanning] = useState(false)
+  const [scoutQueueing, setScoutQueueing] = useState(false)
   const [scoutScanMessage, setScoutScanMessage] = useState('')
+  const [scoutSuggestions, setScoutSuggestions] = useState<ScoutStagedSuggestion[]>([])
+  const [scoutScanHistory, setScoutScanHistory] = useState<ScoutScanHistoryItem[]>(() => loadScoutScanHistory())
+  const [scoutScanHistoryVisible, setScoutScanHistoryVisible] = useState(SCOUT_SCAN_HISTORY_PAGE_SIZE)
   const [proposalQueueKey, setProposalQueueKey] = useState(0)
   // Demo Mode store
   const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
@@ -642,6 +737,10 @@ export default function V15rSettingsPanel() {
     showProjectsConfiguration,
     showAIDevelopment,
   ])
+  useEffect(() => {
+    setScoutScanHistory(loadScoutScanHistory(authProfile?.org_id))
+    setScoutScanHistoryVisible(SCOUT_SCAN_HISTORY_PAGE_SIZE)
+  }, [authProfile?.org_id])
   const restartSettingsHubGlare = () => setGlareSyncKey(key => key + 1)
   const setShowBusinessSetup = (next: boolean | ((prev: boolean) => boolean)) => {
     setSettingsHubVisibility(prev => ({ ...prev, showBusinessSetup: typeof next === 'function' ? (next as (p: boolean) => boolean)(prev.showBusinessSetup) : next }))
@@ -679,20 +778,145 @@ export default function V15rSettingsPanel() {
     const orgId = authProfile?.org_id
     if (!orgId || scoutScanning) return
 
+    const usage = loadScoutScanUsage(orgId)
+    const remaining = SCOUT_SCAN_LIMIT_PER_24H - usage.length
+    if (remaining <= 0) {
+      setScoutScanMessage('Scan limit reached: 10 suggestions in 24h.')
+      return
+    }
+
     setScoutScanning(true)
     setScoutScanMessage('')
     try {
-      console.info('[Settings] Starting SCOUT scan', { orgId, targetCount: 5 })
-      const result = await runScoutAnalysis(orgId, { targetCount: 5 })
-      setProposalQueueKey(key => key + 1)
-      setScoutScanMessage(`Scan complete: ${result.verifiedCount} suggestion${result.verifiedCount === 1 ? '' : 's'} queued.`)
+      const targetCount = Math.min(5, remaining)
+      console.info('[Settings] Starting SCOUT suggestion scan', { orgId, targetCount, remaining })
+      const result = await generateScoutSuggestions(orgId, { targetCount })
+      const staged = result.suggestions.map((proposal, index) => ({
+        id: `${result.runId}-${index}`,
+        proposal,
+        selected: true,
+      }))
+      setScoutSuggestions(staged)
+      saveScoutScanUsage(orgId, [...usage, ...staged.map(() => Date.now())])
+      setScoutScanMessage(`Scan complete: ${staged.length} suggestion${staged.length === 1 ? '' : 's'} ready.`)
     } catch (err) {
       console.error('[Settings] SCOUT scan failed:', { orgId, error: err })
-      setScoutScanMessage('Scan failed. Try again in a moment.')
+      const message = err instanceof Error ? err.message : String(err)
+      const compactReason = message.includes('Claude proxy unavailable')
+        ? 'Claude proxy unavailable'
+        : message.includes('invalid JSON')
+          ? 'analyzer returned invalid JSON'
+          : 'try again in a moment'
+      setScoutScanMessage(`Scan failed: ${compactReason}.`)
     } finally {
       setScoutScanning(false)
     }
   }, [authProfile?.org_id, scoutScanning])
+  const toggleScoutSuggestion = useCallback((id: string) => {
+    setScoutSuggestions(prev => prev.map(item => item.id === id ? { ...item, selected: !item.selected } : item))
+  }, [])
+
+  const addScoutScanHistoryItems = useCallback((orgId: string, items: ScoutScanHistoryItem[]) => {
+    setScoutScanHistory(prev => {
+      const nextHistory = dedupeScoutScanHistory([...items, ...prev])
+      saveScoutScanHistory(orgId, nextHistory)
+      return nextHistory
+    })
+  }, [])
+
+  const makeScoutScanHistoryItem = useCallback((
+    orgId: string,
+    item: ScoutStagedSuggestion,
+    status: ScoutScanHistoryItem['status'],
+    reason?: string,
+    idSuffix = status,
+  ): ScoutScanHistoryItem => ({
+    id: `${item.id}-${idSuffix}`,
+    orgId,
+    title: item.proposal.title,
+    reason: reason || item.proposal.reasoning || item.proposal.description,
+    category: item.proposal.category,
+    impact_score: item.proposal.impact_score,
+    risk_score: item.proposal.risk_score,
+    status,
+    createdAt: new Date().toISOString(),
+  }), [])
+
+  const queueScoutSuggestion = useCallback(async (itemId: string) => {
+    const orgId = authProfile?.org_id
+    if (!orgId || scoutQueueing) return
+    const item = scoutSuggestions.find(candidate => candidate.id === itemId)
+    if (!item) return
+
+    setScoutQueueing(true)
+    try {
+      const result = await queueScoutProposal(orgId, item.proposal)
+      if (result.passed) {
+        setScoutSuggestions(prev => prev.filter(candidate => candidate.id !== itemId))
+        setProposalQueueKey(key => key + 1)
+        setScoutScanMessage('Suggestion moved to Proposal Queue.')
+      } else {
+        setScoutSuggestions(prev => prev.filter(candidate => candidate.id !== itemId))
+        addScoutScanHistoryItems(orgId, [
+          makeScoutScanHistoryItem(orgId, item, 'rejected', result.rejectionReason || 'Rejected by SCOUT verification', result.proposalId || 'rejected'),
+        ])
+        setScoutScanMessage(`Suggestion rejected by verification: ${result.rejectionReason || 'not approved'}.`)
+      }
+    } catch (err) {
+      console.error('[Settings] Queue SCOUT suggestion failed:', { orgId, error: err })
+      setScoutScanMessage('Queue failed: try again in a moment.')
+    } finally {
+      setScoutQueueing(false)
+    }
+  }, [authProfile?.org_id, scoutQueueing, scoutSuggestions, addScoutScanHistoryItems, makeScoutScanHistoryItem])
+
+  const dismissScoutSuggestion = useCallback((itemId: string) => {
+    const orgId = authProfile?.org_id
+    if (!orgId) return
+    const item = scoutSuggestions.find(candidate => candidate.id === itemId)
+    if (!item) return
+    setScoutSuggestions(prev => prev.filter(candidate => candidate.id !== itemId))
+    addScoutScanHistoryItems(orgId, [makeScoutScanHistoryItem(orgId, item, 'dismissed')])
+    setScoutScanMessage('Suggestion dismissed and saved to Recent Scan History.')
+  }, [authProfile?.org_id, scoutSuggestions, addScoutScanHistoryItems, makeScoutScanHistoryItem])
+
+  const moveSelectedScoutSuggestionsToQueue = useCallback(async () => {
+    const orgId = authProfile?.org_id
+    if (!orgId || scoutQueueing || scoutSuggestions.length === 0) return
+
+    const selected = scoutSuggestions.filter(item => item.selected)
+    if (selected.length === 0) {
+      setScoutScanMessage('Select at least one suggestion to queue.')
+      return
+    }
+
+    setScoutQueueing(true)
+    try {
+      const rejected: ScoutScanHistoryItem[] = []
+      const queuedIds: string[] = []
+      const rejectedIds: string[] = []
+
+      for (const item of selected) {
+        const result = await queueScoutProposal(orgId, item.proposal)
+        if (result.passed) queuedIds.push(item.id)
+        else {
+          rejectedIds.push(item.id)
+          rejected.push(makeScoutScanHistoryItem(orgId, item, 'rejected', result.rejectionReason || 'Rejected by SCOUT verification', result.proposalId || 'rejected'))
+        }
+      }
+
+      if (rejected.length > 0) addScoutScanHistoryItems(orgId, rejected)
+      const handledIds = new Set([...queuedIds, ...rejectedIds])
+      setScoutSuggestions(prev => prev.filter(item => !handledIds.has(item.id)))
+      setProposalQueueKey(key => key + 1)
+      setScoutScanMessage(`Moved ${queuedIds.length} to queue${rejected.length ? `, ${rejected.length} rejected by verification` : ''}.`)
+    } catch (err) {
+      console.error('[Settings] Queue selected SCOUT suggestions failed:', { orgId, error: err })
+      setScoutScanMessage('Queue failed: try again in a moment.')
+    } finally {
+      setScoutQueueing(false)
+    }
+  }, [authProfile?.org_id, scoutQueueing, scoutSuggestions, addScoutScanHistoryItems, makeScoutScanHistoryItem])
   const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
   const [overheadEntryModes, setOverheadEntryModes] = useState<Record<string, 'monthly' | 'yearly'>>({})
 
@@ -2215,7 +2439,99 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       )}
                     </div>
                   </div>
+                  {scoutSuggestions.length > 0 && (
+                    <div className="mb-3 rounded-xl border border-cyan-400/15 bg-slate-950/70 p-3 shadow-inner shadow-blue-950/20">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold text-cyan-100">Scan suggestions</p>
+                          <p className="text-[10px] text-slate-500">Choose which suggestions become queue items.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={moveSelectedScoutSuggestionsToQueue}
+                          disabled={scoutQueueing || scoutSuggestions.every(item => !item.selected)}
+                          className="rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-semibold text-emerald-100 transition-colors hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {scoutQueueing ? 'Moving...' : 'Move Selected to Queue'}
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {scoutSuggestions.map(item => (
+                          <div key={item.id} className="flex gap-2 rounded-lg border border-slate-700/60 bg-slate-950/70 p-2 text-left">
+                            <label className="mt-1 flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center">
+                              <input
+                                type="checkbox"
+                                checked={item.selected}
+                                onChange={() => toggleScoutSuggestion(item.id)}
+                                className="h-3.5 w-3.5 accent-cyan-400"
+                                aria-label={`Select ${item.proposal.title}`}
+                              />
+                            </label>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="truncate text-xs font-semibold text-slate-200">{item.proposal.title}</p>
+                                <span className="ml-auto rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 text-[9px] font-semibold text-cyan-200">
+                                  {item.proposal.category}
+                                </span>
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-[11px] text-slate-500">{item.proposal.reasoning || item.proposal.description}</p>
+                              <div className="mt-1 flex gap-2 text-[10px] text-slate-600">
+                                <span>Impact {item.proposal.impact_score}/10</span>
+                                <span>Risk {item.proposal.risk_score}/10</span>
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => queueScoutSuggestion(item.id)}
+                                  disabled={scoutQueueing}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-100 transition-colors hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Check size={11} />
+                                  Queue
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => dismissScoutSuggestion(item.id)}
+                                  disabled={scoutQueueing}
+                                  className="inline-flex items-center gap-1 rounded-md border border-slate-600/70 bg-slate-800/40 px-2.5 py-1 text-[10px] font-semibold text-slate-300 transition-colors hover:bg-slate-700/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Trash2 size={11} />
+                                  Dismiss
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <ProposalQueue key={proposalQueueKey} maxHeight="600px" />
+                  {scoutScanHistory.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-950/50 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Recent scan history</p>
+                        <span className="text-[10px] text-slate-600">{Math.min(scoutScanHistoryVisible, scoutScanHistory.length)} / {scoutScanHistory.length}</span>
+                      </div>
+                      <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                        {scoutScanHistory.slice(0, scoutScanHistoryVisible).map(item => (
+                          <div key={item.id} className="flex items-center gap-2 text-[10px]">
+                            <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'rejected' ? 'bg-red-400' : item.status === 'dismissed' ? 'bg-amber-400' : 'bg-slate-500'}`} />
+                            <span className="min-w-0 flex-1 truncate text-slate-400">{item.title}</span>
+                            <span className="capitalize text-slate-600">{item.status.replace('_', ' ')}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {scoutScanHistoryVisible < Math.min(SCOUT_SCAN_HISTORY_LIMIT, scoutScanHistory.length) && (
+                        <button
+                          type="button"
+                          onClick={() => setScoutScanHistoryVisible(count => Math.min(count + SCOUT_SCAN_HISTORY_PAGE_SIZE, SCOUT_SCAN_HISTORY_LIMIT, scoutScanHistory.length))}
+                          className="mt-2 w-full rounded-lg border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-[10px] font-semibold text-slate-300 transition-colors hover:bg-slate-800/80"
+                        >
+                          Show 15 more
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
@@ -3663,7 +3979,7 @@ function inferSkillRowsFromBusinessData(backup: BackupData | null, proposalHisto
     .map(spec => ({
       id: `derived-${spec.name}`,
       name: spec.name,
-      source: 'AI' as const,
+      source: 'Accepted AI' as const,
       score: Math.max(30, Math.min(92, Math.round(spec.score))),
       detail: spec.detail,
       status: skillStatus(spec.score),
@@ -3691,6 +4007,7 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
           .from('agent_proposals')
           .select('id,title,description,category,status,source_data,created_at,updated_at')
           .eq('org_id', orgId)
+          .in('status', ['confirmed', 'completed'])
           .order('created_at', { ascending: false })
           .limit(50)
         if (error) {
@@ -3712,6 +4029,14 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
   useEffect(() => {
     refreshSkillIntelligence()
   }, [refreshSkillIntelligence, refreshKey])
+
+  useEffect(() => {
+    if (!orgId) return
+    return subscribeAgentEvent('PROPOSAL_APPROVED' as any, (event: any) => {
+      if (event?.payload?.orgId && event.payload.orgId !== orgId) return
+      refreshSkillIntelligence()
+    })
+  }, [orgId, refreshSkillIntelligence])
 
   // Calculate velocities (30-day score gains)
   const velocities = useMemo(() => {
@@ -3770,7 +4095,7 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
         return {
           id: `ai-${domain}`,
           name: SKILL_LABELS[domain],
-          source: 'AI' as const,
+          source: 'Active AI' as const,
           score,
           detail: evidenceCount === 1 ? '1 signal' : `${evidenceCount} signals`,
           status: skillStatus(score),
@@ -3862,7 +4187,7 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
               {skillRows.filter(row => row.source === 'Manual').length} Manual
             </span>
             <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
-              {skillRows.filter(row => row.source === 'AI').length} AI
+              {skillRows.filter(row => row.source === 'Active AI' || row.source === 'Accepted AI').length} Active AI
             </span>
             <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[10px] font-semibold text-amber-200">
               {skillRows.filter(row => row.source === 'Suggested').length} Suggested
@@ -3886,7 +4211,9 @@ function SkillIntelligenceCard({ orgId, refreshKey }: { orgId?: string; refreshK
                       ? 'border-slate-400/20 bg-slate-400/10 text-slate-300'
                       : row.source === 'Suggested'
                         ? 'border-amber-400/20 bg-amber-400/10 text-amber-200'
-                        : 'border-cyan-400/20 bg-cyan-400/10 text-cyan-200'
+                        : row.source === 'Accepted AI'
+                          ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200'
+                          : 'border-cyan-400/20 bg-cyan-400/10 text-cyan-200'
                   }`}>
                     {row.source}
                   </span>

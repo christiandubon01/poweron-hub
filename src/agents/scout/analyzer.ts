@@ -7,12 +7,14 @@
 
 import { SCOUT_SYSTEM_PROMPT } from './systemPrompt'
 import type { ScoutDataSnapshot } from './dataGatherer'
+import { callClaude, extractText } from '@/services/claudeProxy'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export const PROPOSAL_CATEGORIES = [
   'operations', 'financial', 'scheduling', 'compliance',
   'relationship', 'pricing', 'staffing',
+  'nec_compliance', 'safety', 'feature', 'optimization', 'cost_savings',
 ] as const
 
 export type ProposalCategory = typeof PROPOSAL_CATEGORIES[number]
@@ -70,6 +72,10 @@ function validateProposal(raw: unknown): RawProposal | null {
  * @returns Array of validated RawProposals (3-8 typically)
  */
 export async function analyzeData(snapshot: ScoutDataSnapshot, options: AnalyzeDataOptions = {}): Promise<RawProposal[]> {
+  console.log('[Scout:analyzer] Starting analysis', {
+    orgId: snapshot.orgId,
+    targetCount: options.targetCount ?? null,
+  })
 
   // Build a concise data summary for the prompt
   // (full snapshot can be large — summarize key metrics to stay in context)
@@ -78,10 +84,9 @@ export async function analyzeData(snapshot: ScoutDataSnapshot, options: AnalyzeD
     ? `Generate exactly ${options.targetCount} proposals if the data supports that many. If fewer than ${options.targetCount} valid, evidence-backed proposals exist, return only the valid proposals and do not fabricate filler.`
     : 'Generate proposals using the default SCOUT guidance.'
 
-  const response = await fetch('/.netlify/functions/claude', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  let rawText = ''
+  try {
+    const response = await callClaude({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 4096,
       system:     SCOUT_SYSTEM_PROMPT,
@@ -89,37 +94,50 @@ export async function analyzeData(snapshot: ScoutDataSnapshot, options: AnalyzeD
         role:    'user',
         content: `Analyze the following data snapshot and generate proposals.\n${targetInstruction}\n\n${dataSummary}`,
       }],
-    }),
+    })
+    rawText = extractText(response).trim()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[Scout:analyzer] Claude proxy call failed:', message)
+    if (/proxy|api key|ai service|claude api|anthropic/i.test(message)) {
+      throw new Error(`Claude proxy unavailable: ${message}`)
+    }
+    throw err
+  }
+
+  console.log('[Scout:analyzer] Response received', {
+    chars: rawText.length,
+    preview: rawText.slice(0, 120),
   })
-
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`SCOUT analyzer API call failed: ${response.status} ${errText}`)
-  }
-
-  const data = await response.json() as {
-    content: Array<{ type: string; text: string }>
-  }
-
-  const rawText = data.content[0]?.text ?? ''
 
   // Parse JSON array from response
   let parsed: unknown
   try {
     parsed = JSON.parse(rawText)
-  } catch {
+  } catch (err) {
     // Try to extract JSON array from markdown wrapping
     const arrayMatch = rawText.match(/\[[\s\S]*\]/)
     if (!arrayMatch) {
-      console.error('[Scout:analyzer] Non-JSON response:', rawText.slice(0, 300))
-      return []
+      console.error('[Scout:analyzer] Invalid JSON response:', {
+        error: err instanceof Error ? err.message : String(err),
+        preview: rawText.slice(0, 300),
+      })
+      throw new Error('analyzer returned invalid JSON')
     }
-    parsed = JSON.parse(arrayMatch[0])
+    try {
+      parsed = JSON.parse(arrayMatch[0])
+    } catch (innerErr) {
+      console.error('[Scout:analyzer] Extracted JSON array failed to parse:', {
+        error: innerErr instanceof Error ? innerErr.message : String(innerErr),
+        preview: arrayMatch[0].slice(0, 300),
+      })
+      throw new Error('analyzer returned invalid JSON')
+    }
   }
 
   if (!Array.isArray(parsed)) {
-    console.error('[Scout:analyzer] Response is not an array')
-    return []
+    console.error('[Scout:analyzer] Response is not an array:', typeof parsed)
+    throw new Error('analyzer returned invalid JSON')
   }
 
   // Validate each proposal
@@ -132,6 +150,12 @@ export async function analyzeData(snapshot: ScoutDataSnapshot, options: AnalyzeD
       console.warn('[Scout:analyzer] Invalid proposal skipped:', item)
     }
   }
+
+  console.log('[Scout:analyzer] Validation complete', {
+    parsed: parsed.length,
+    valid: validated.length,
+    targetCount: options.targetCount ?? null,
+  })
 
   return options.targetCount ? validated.slice(0, options.targetCount) : validated
 }

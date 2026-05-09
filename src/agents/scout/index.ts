@@ -38,35 +38,168 @@ export interface ScoutRunOptions {
   targetCount?: number
 }
 
+export interface ScoutSuggestionRunResult {
+  runId:        string
+  startedAt:    string
+  completedAt:  string
+  durationMs:   number
+  snapshot:     ScoutDataSnapshot
+  suggestions:  RawProposal[]
+}
+
+export interface ScoutQueueResult {
+  proposalId: string | null
+  passed: boolean
+  rejectionReason?: string
+}
+
 // ── Orchestrator ────────────────────────────────────────────────────────────
 
 /**
  * Run a full SCOUT analysis cycle.
  * Call this on demand to trigger pattern detection and proposal generation.
  */
+type DbProposalCategory =
+  | 'nec_compliance'
+  | 'operations'
+  | 'safety'
+  | 'feature'
+  | 'optimization'
+  | 'cost_savings'
+
+function normalizeProposalCategory(category: string | undefined): DbProposalCategory {
+  switch (category) {
+    case 'nec_compliance':
+    case 'operations':
+    case 'safety':
+    case 'feature':
+    case 'optimization':
+    case 'cost_savings':
+      return category
+    case 'financial':
+    case 'pricing':
+      return 'cost_savings'
+    case 'scheduling':
+    case 'staffing':
+    case 'relationship':
+      return 'operations'
+    case 'compliance':
+      return 'nec_compliance'
+    default:
+      return 'optimization'
+  }
+}
+
+export async function generateScoutSuggestions(orgId: string, options: ScoutRunOptions = {}): Promise<ScoutSuggestionRunResult> {
+  const runId     = crypto.randomUUID()
+  const startedAt = new Date().toISOString()
+  const startMs   = Date.now()
+
+  console.log('[SCOUT] Suggestion scan started', {
+    runId,
+    orgId,
+    targetCount: options.targetCount ?? null,
+  })
+
+  const snapshot = await gatherScoutData(orgId)
+  console.log('[SCOUT] Suggestion snapshot gathered', {
+    orgId,
+    activeProjects: snapshot.activeProjects.length,
+    fieldLogs: snapshot.fieldLogs.length,
+    outdatedPricing: snapshot.outdatedPricing.length,
+    overdueItems: snapshot.overdueItems.length,
+    costVariances: snapshot.costVariances.length,
+    dormantGCs: snapshot.dormantGCs.length,
+    weeklyTracker: snapshot.weeklyTracker.length,
+    openInvoices: snapshot.openInvoices.length,
+  })
+
+  const suggestions = await analyzeData(snapshot, { targetCount: options.targetCount })
+  const completedAt = new Date().toISOString()
+  const durationMs  = Date.now() - startMs
+
+  console.log('[SCOUT] Suggestion scan complete', {
+    runId,
+    orgId,
+    suggestionCount: suggestions.length,
+    durationMs,
+  })
+
+  return {
+    runId,
+    startedAt,
+    completedAt,
+    durationMs,
+    snapshot,
+    suggestions,
+  }
+}
+
+export async function queueScoutProposal(orgId: string, proposal: RawProposal): Promise<ScoutQueueResult> {
+  const verification = await verifyProposal(proposal, orgId)
+
+  if (!verification.passed) {
+    await insertRejectedProposal(orgId, proposal, verification)
+    return {
+      proposalId: null,
+      passed: false,
+      rejectionReason: verification.rejectionReason ?? 'Rejected by SCOUT verification',
+    }
+  }
+
+  const proposalId = await insertProposal(orgId, proposal, verification)
+  return {
+    proposalId,
+    passed: !!proposalId,
+    rejectionReason: proposalId ? undefined : 'Proposal insert failed',
+  }
+}
+
 export async function runScoutAnalysis(orgId: string, options: ScoutRunOptions = {}): Promise<ScoutRunResult> {
   const runId     = crypto.randomUUID()
   const startedAt = new Date().toISOString()
   const startMs   = Date.now()
 
+  console.log('[SCOUT] Run started', {
+    runId,
+    orgId,
+    targetCount: options.targetCount ?? null,
+  })
+
   // ── Step 1: Gather data ───────────────────────────────────────────────
   console.log('[SCOUT] Gathering data...')
   const snapshot = await gatherScoutData(orgId)
+  console.log('[SCOUT] Snapshot gathered', {
+    orgId,
+    activeProjects: snapshot.activeProjects.length,
+    fieldLogs: snapshot.fieldLogs.length,
+    outdatedPricing: snapshot.outdatedPricing.length,
+    overdueItems: snapshot.overdueItems.length,
+    costVariances: snapshot.costVariances.length,
+    dormantGCs: snapshot.dormantGCs.length,
+    weeklyTracker: snapshot.weeklyTracker.length,
+    openInvoices: snapshot.openInvoices.length,
+  })
 
   // ── Step 2: Analyze with Claude ───────────────────────────────────────
   console.log('[SCOUT] Analyzing patterns...')
   const rawProposals = await analyzeData(snapshot, { targetCount: options.targetCount })
-  console.log(`[SCOUT] ${rawProposals.length} raw proposals generated`)
+  console.log('[SCOUT] Analyzer complete', {
+    proposalCount: rawProposals.length,
+    targetCount: options.targetCount ?? null,
+  })
 
   // ── Step 3: MiroFish verification ─────────────────────────────────────
   console.log('[SCOUT] Running MiroFish verification...')
   const proposalIds:  string[] = []
   const rejections:   Array<{ title: string; reason: string }> = []
+  let verifiedPassedCount = 0
 
   for (const proposal of rawProposals) {
     const verification = await verifyProposal(proposal, orgId)
 
     if (verification.passed) {
+      verifiedPassedCount += 1
       // Insert as 'proposed' — passed all 5 MiroFish steps
       const id = await insertProposal(orgId, proposal, verification)
       if (id) proposalIds.push(id)
@@ -83,6 +216,12 @@ export async function runScoutAnalysis(orgId: string, options: ScoutRunOptions =
   const completedAt = new Date().toISOString()
   const durationMs  = Date.now() - startMs
 
+  console.log('[SCOUT] Verification and insert complete', {
+    verifiedCount: verifiedPassedCount,
+    insertedCount: proposalIds.length,
+    rejectedCount: rejections.length,
+    durationMs,
+  })
   console.log(`[SCOUT] Complete: ${proposalIds.length} proposed, ${rejections.length} rejected (${durationMs}ms)`)
 
   // Phase F: embed verified proposals into vector memory (fire-and-forget)
@@ -147,6 +286,7 @@ async function insertProposal(
   verification: MiroFishResult
 ): Promise<string | null> {
   try {
+    const category = normalizeProposalCategory(proposal.category)
     const { data, error } = await supabase
       .from('agent_proposals')
       .insert({
@@ -154,8 +294,8 @@ async function insertProposal(
         proposing_agent: 'scout',
         title:           proposal.title,
         description:     proposal.description,
-        category:        proposal.category,
-        source_data:     proposal.source_data,
+        category,
+        source_data:     { ...proposal.source_data, original_category: proposal.category },
         impact_score:    proposal.impact_score / 10,  // DB stores 0-1 NUMERIC(3,2)
         risk_score:      proposal.risk_score / 10,    // DB stores 0-1 NUMERIC(3,2)
         status:          'proposed',
@@ -166,7 +306,13 @@ async function insertProposal(
       .single()
 
     if (error) {
-      console.error('[SCOUT] Proposal insert failed:', error.message)
+      console.error('[SCOUT] Proposal insert failed:', {
+        message: error.message,
+        code: error.code,
+        category,
+        originalCategory: proposal.category,
+        title: proposal.title,
+      })
       return null
     }
 
@@ -178,7 +324,7 @@ async function insertProposal(
         entity_id:   data?.id as string,
         description: `SCOUT proposal created: "${proposal.title}" (impact: ${proposal.impact_score}, risk: ${proposal.risk_score}, confidence: ${verification.confidenceScore})`,
         metadata: {
-          category:         proposal.category,
+          category,
           impact_score:     proposal.impact_score,
           risk_score:       proposal.risk_score,
           confidence_score: verification.confidenceScore,
@@ -197,7 +343,7 @@ async function insertProposal(
       entityId:    data?.id as string | undefined,
       entityLabel: proposal.title,
       summary:     `SCOUT flagged: ${proposal.title} — impact: ${impactLevel}`,
-      details:     { title: proposal.title, category: proposal.category, impact_score: proposal.impact_score, risk_score: proposal.risk_score },
+      details:     { title: proposal.title, category, original_category: proposal.category, impact_score: proposal.impact_score, risk_score: proposal.risk_score },
     })
 
     return data?.id as string ?? null
@@ -216,6 +362,7 @@ async function insertRejectedProposal(
   verification: MiroFishResult
 ): Promise<void> {
   try {
+    const category = normalizeProposalCategory(proposal.category)
     await supabase
       .from('agent_proposals')
       .insert({
@@ -223,9 +370,10 @@ async function insertRejectedProposal(
         proposing_agent: 'scout',
         title:           proposal.title,
         description:     proposal.description,
-        category:        proposal.category,
+        category,
         source_data:     {
           ...proposal.source_data,
+          original_category: proposal.category,
           rejection_reason: verification.rejectionReason,
         },
         impact_score:    proposal.impact_score / 10,
@@ -242,7 +390,8 @@ async function insertRejectedProposal(
         entity_type: 'agent_proposals',
         description: `SCOUT proposal rejected: "${proposal.title}" at MiroFish step ${verification.finalStep} — ${verification.rejectionReason}`,
         metadata: {
-          category:          proposal.category,
+          category,
+          original_category: proposal.category,
           failed_step:       verification.finalStep,
           rejection_reason:  verification.rejectionReason,
         },
@@ -509,6 +658,8 @@ export function initScoutAutoDetection(): void {
 if (typeof window !== 'undefined') {
   (window as any).__scout = {
     detectGap,
+    generateScoutSuggestions,
+    queueScoutProposal,
     runScoutAnalysis,
     analyzeUserIdea,
   }
