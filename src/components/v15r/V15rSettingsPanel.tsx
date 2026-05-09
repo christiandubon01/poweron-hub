@@ -530,6 +530,9 @@ export default function V15rSettingsPanel() {
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
   const [gcalUrlDraft, setGcalUrlDraft] = useState(settings.gcalUrl || '')
+  const [showBusinessSetup, setShowBusinessSetup] = useState(true)
+  const [showOverheadManager, setShowOverheadManager] = useState(true)
+  const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
 
 const persist = useCallback((mutatedData?: BackupData) => {
   const data = mutatedData || getBackupData()
@@ -820,8 +823,17 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p className="truncate">License: <span className="text-gray-200">{settings.license || 'Not set'}</span></p>
             <p>OH Rate: <span className="text-gray-200">{fmt(num(settings.defaultOHRate || overheadCalc.costPerHr || 0))}/hr</span></p>
           </div>
-          <button type="button" className="mt-4 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors">
-            Edit Profile
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${showBusinessSetup ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+              {showBusinessSetup ? 'Setup visible' : 'Setup hidden'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowBusinessSetup(v => !v)}
+            className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
+          >
+            {showBusinessSetup ? 'Hide Business Setup' : 'Show Business Setup'}
           </button>
         </div>
 
@@ -839,8 +851,12 @@ const persist = useCallback((mutatedData?: BackupData) => {
             <p>Annual: <span className="text-gray-200">{fmt(overheadCalc.annualTotal)}</span></p>
             <p>Real Cost/Hr: <span className="text-gray-200">{fmt(overheadCalc.costPerHr)}</span></p>
           </div>
-          <button type="button" className="mt-4 w-full rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-400/15 transition-colors">
-            View Details
+          <button
+            type="button"
+            onClick={() => setShowOverheadManager(v => !v)}
+            className="mt-4 w-full rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-400/15 transition-colors"
+          >
+            {showOverheadManager ? 'Hide Overhead Manager' : 'Show Overhead Manager'}
           </button>
         </div>
 
@@ -1012,8 +1028,18 @@ const persist = useCallback((mutatedData?: BackupData) => {
           </SettingCard>
 
           {/* 1. GENERAL / BUSINESS IDENTITY */}
+          {showBusinessSetup && (
           <SettingCard title="General / Business Identity">
-            <div className="space-y-4">
+            <div className="space-y-4 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25 [&_input]:h-9 [&_input]:border-cyan-400/20 [&_input]:bg-slate-950/70 [&_input]:text-gray-100 [&_input]:focus:border-cyan-300/60">
+              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Business profile</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Core business identity used across app documents.</p>
+                  </div>
+                  <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">Identity</span>
+                </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Company Name</label>
                 <input
@@ -1047,7 +1073,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">License</label>
                 <input
@@ -1064,8 +1089,18 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
                 />
               </div>
+              </div>
+              </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Rates & pricing</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Hourly, mileage, markup, tax, and waste defaults.</p>
+                  </div>
+                  <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[11px] font-semibold text-blue-100">Pricing</span>
+                </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Bill Rate ($/hr)</label>
                   <input
@@ -1098,9 +1133,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Owner Labor Cost ($/hr)</label>
                   <input
@@ -1118,10 +1150,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
-                <div />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Mile Rate ($/mi)</label>
                   <input
@@ -1155,9 +1183,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Tax %</label>
                   <input
@@ -1192,8 +1217,17 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   />
                 </div>
               </div>
+              </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Targets</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Daily, annual, and schedule planning targets.</p>
+                  </div>
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-100">Goals</span>
+                </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Daily Target ($)</label>
                   <input
@@ -1226,9 +1260,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">AM Block (min)</label>
                   <input
@@ -1261,8 +1292,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Salary Target ($/yr)</label>
                 <input
@@ -1296,6 +1325,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   className="w-full px-3 py-2 border rounded text-sm theme-input"
                 />
               </div>
+              </div>
+              </div>
 
               {(() => {
                 const currentYear = new Date().getFullYear()
@@ -1313,25 +1344,34 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 const ytdPct = annualTarget > 0 ? Math.min(100, Math.round((ytdRevenue / annualTarget) * 100)) : 0
 
                 return (
-                  <div className="space-y-3">
+                  <div className="rounded-xl border border-cyan-400/10 bg-gradient-to-br from-slate-950/70 to-cyan-950/20 p-4">
+                    <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-100">Progress</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">Year-to-date revenue against the annual target.</p>
+                      </div>
+                      <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-100">{ytdPct}%</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">YTD Revenue</label>
-                      <div className="w-full px-3 py-2 border rounded text-sm theme-input">
+                      <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
                         ${(ytdRevenue / 1000).toFixed(1)}k
                       </div>
                     </div>
 
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Progress to Target</label>
-                      <div className="w-full flex items-center gap-2 rounded p-3 border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
-                        <div className="flex-1 h-3 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="w-full flex items-center gap-2 rounded-lg p-3 border border-cyan-400/20 bg-slate-950/70">
+                        <div className="flex-1 h-3 bg-slate-800 rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-gradient-to-r from-green-500 to-blue-500 transition-all"
+                            className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all"
                             style={{ width: `${ytdPct}%` }}
                           />
                         </div>
                         <span className="text-sm font-semibold text-gray-300 w-12 text-right">{ytdPct}%</span>
                       </div>
+                    </div>
                     </div>
                   </div>
                 )
@@ -1360,9 +1400,18 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 const isOnPace = currentMonthlyPace >= requiredMonthlyRevenue && personalIncomeGoal > 0
 
                 return (
-                  <div className="space-y-3 mt-4 pt-4 border-t border-gray-700">
-                    <h3 className="text-sm font-semibold text-gray-300">Personal Income Goal</h3>
+                  <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                    <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-100">Personal Income Goal</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">Revenue needed to support owner income after overhead.</p>
+                      </div>
+                      <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${isOnPace ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/25 bg-amber-400/10 text-amber-100'}`}>
+                        {isOnPace ? 'On pace' : 'Watch pace'}
+                      </span>
+                    </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Annual Personal Income Goal ($)</label>
                       <input
@@ -1401,41 +1450,76 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Required Monthly Revenue</label>
-                      <div className="w-full px-3 py-2 border rounded text-sm theme-input">
+                      <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
                         {personalIncomeGoal > 0 ? fmt(requiredMonthlyRevenue) : '—'}
                       </div>
                     </div>
 
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Current Monthly Pace</label>
-                      <div className={`w-full px-3 py-2 border rounded text-sm font-semibold ${isOnPace ? 'bg-green-900/20 border-green-600/30 text-green-300' : 'bg-red-900/20 border-red-600/30 text-red-300'}`}>
+                      <div className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold ${isOnPace ? 'bg-emerald-900/20 border-emerald-500/30 text-emerald-200' : 'bg-amber-900/20 border-amber-500/30 text-amber-200'}`}>
                         {monthsElapsed > 0 ? fmt(currentMonthlyPace) : '—'}
                       </div>
+                    </div>
                     </div>
                   </div>
                 )
               })()}
             </div>
           </SettingCard>
+          )}
 
           {/* 2. OVERHEAD MANAGER */}
+          {showOverheadManager && (
           <SettingCard title="Overhead Manager">
-            <div className="space-y-5">
-              <div className="grid grid-cols-4 gap-2 text-xs font-semibold text-gray-400 p-3 rounded" style={{ backgroundColor: 'var(--bg-input)' }}>
-                <div>Essential: {fmt(num(Object.values(overhead.essential || []).reduce((s: number, i: any) => s + num(i.monthly), 0)))}</div>
-                <div>Extra: {fmt(num(Object.values(overhead.extra || []).reduce((s: number, i: any) => s + num(i.monthly), 0)))}</div>
-                <div>Loans: {fmt(num(Object.values(overhead.loans || []).reduce((s: number, i: any) => s + num(i.monthly), 0)))}</div>
-                <div>Vehicle: {fmt(num(Object.values(overhead.vehicle || []).reduce((s: number, i: any) => s + num(i.monthly), 0)))}</div>
+            <div className="space-y-5 rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/70 via-blue-950/20 to-slate-950/80 p-4 shadow-2xl shadow-blue-950/25">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                {(['essential', 'extra', 'loans', 'vehicle'] as const).map((key) => {
+                  const categoryItems = overhead[key] || []
+                  const total = fmt(num(Object.values(categoryItems).reduce((s: number, i: any) => s + num(i.monthly), 0)))
+                  const isOpen = openOverheadCategory === key
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setOpenOverheadCategory(key)}
+                      className={`rounded-xl border p-4 text-left transition-colors ${
+                        isOpen
+                          ? 'border-cyan-300/50 bg-cyan-400/10 shadow-lg shadow-cyan-950/20'
+                          : 'border-cyan-400/15 bg-slate-950/60 hover:bg-slate-900/70'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm font-bold text-gray-100 capitalize">{key}</p>
+                        {isOpen && (
+                          <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-100">Open</span>
+                        )}
+                      </div>
+                      <p className="text-xl font-bold text-cyan-100 mt-2">{total}</p>
+                      <p className="text-xs text-gray-400 mt-2">{categoryItems.length} expense{categoryItems.length === 1 ? '' : 's'}</p>
+                    </button>
+                  )
+                })}
               </div>
 
-              <div className="text-sm text-gray-300 bg-blue-900/20 border border-blue-700/30 p-3 rounded">
+              <div className="text-sm text-gray-300 bg-blue-900/20 border border-cyan-400/20 p-4 rounded-xl shadow-inner shadow-blue-950/20">
                 Monthly: <span className="font-bold text-blue-300">{fmt(overheadCalc.monthlyTotal)}</span> | Annual: <span className="font-bold text-blue-300">{fmt(overheadCalc.annualTotal)}</span> | Real Cost/Hr: <span className="font-bold text-blue-300">{fmt(overheadCalc.costPerHr)}</span>
               </div>
 
-              {(['essential', 'extra', 'loans', 'vehicle'] as const).map((key) => (
-                <div key={key} className="rounded p-3 border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
-                  <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold text-gray-200 capitalize">{key}</h3>
+              {(['essential', 'extra', 'loans', 'vehicle'] as const).filter((key) => key === openOverheadCategory).map((key) => (
+                <div key={key} className="rounded-xl border border-cyan-400/15 bg-slate-950/55 shadow-inner shadow-blue-950/20 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setOpenOverheadCategory(key)}
+                    className="flex w-full justify-between items-center p-4 border-b border-cyan-400/10 text-left"
+                  >
+                    <div>
+                      <h3 className="font-bold text-gray-100 capitalize">{key}</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">{(overhead[key] || []).length} expense{(overhead[key] || []).length === 1 ? '' : 's'}</p>
+                    </div>
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">Open</span>
+                  </button>
+                  <div className="p-4">
                     <button
                       onClick={() => {
                         const name = prompt(`Add ${key} expense:`)
@@ -1450,16 +1534,25 @@ const persist = useCallback((mutatedData?: BackupData) => {
                           persist(data)
                         }
                       }}
-                      className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40"
+                      className="text-xs px-3 py-1.5 border border-cyan-400/25 bg-cyan-400/10 text-cyan-100 rounded-lg hover:bg-cyan-400/15 font-semibold transition-colors"
                     >
                       + Add
                     </button>
                   </div>
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                  <div className="px-4 pb-4">
+                    <div className="grid grid-cols-[1fr_96px_96px_40px] gap-2 px-3 py-2 text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold border border-cyan-400/10 border-b-0 rounded-t-lg bg-slate-950/70">
+                      <span>Expense name</span>
+                      <span>Monthly input</span>
+                      <span className="text-right">Yearly</span>
+                      <span />
+                    </div>
+                  <div className={`rounded-b-lg border border-cyan-400/10 bg-slate-950/40 ${(overhead[key] || []).length > 15 ? 'max-h-96 overflow-y-auto' : ''}`}>
+                    {(overhead[key] || []).length === 0 && (
+                      <div className="px-3 py-4 text-sm text-gray-500">No expenses yet.</div>
+                    )}
                     {(overhead[key] || []).map((item: any) => (
-                      <div key={item.id} className="flex justify-between items-center text-sm p-2 rounded" style={{ backgroundColor: 'var(--bg-input)' }}>
-                        <span className="text-gray-300">{item.name}</span>
-                        <div className="flex items-center gap-2">
+                      <div key={item.id} className="grid grid-cols-[1fr_96px_96px_40px] items-center gap-2 text-sm px-3 py-2.5 border-b last:border-b-0 border-cyan-400/10 bg-slate-900/45">
+                        <span className="text-gray-300 truncate">{item.name}</span>
                           <input
                             type="number"
                             step="0.01"
@@ -1475,9 +1568,9 @@ const persist = useCallback((mutatedData?: BackupData) => {
                                 }
                               }
                             }}
-                            className="w-20 px-2 py-1 bg-[var(--bg-primary)] border border-gray-600 rounded text-gray-100 text-xs"
+                            className="w-20 px-2 py-1 bg-slate-950/80 border border-cyan-400/20 rounded-lg text-gray-100 text-xs focus:outline-none focus:border-cyan-300/60"
                           />
-                          <span className="text-gray-400 w-16 text-right">{fmt(num(item.monthly))}</span>
+                          <span className="text-gray-400 w-16 text-right">{fmt(num(item.monthly) * 12)}</span>
                           <button
                             onClick={() => {
                               const data = getBackupData()
@@ -1487,18 +1580,19 @@ const persist = useCallback((mutatedData?: BackupData) => {
                                 persist(data)
                               }
                             }}
-                            className="text-xs text-red-400 hover:text-red-300"
+                            className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
                           >
                             ×
                           </button>
-                        </div>
                       </div>
                     ))}
+                  </div>
                   </div>
                 </div>
               ))}
             </div>
           </SettingCard>
+          )}
 
           {/* 3. PHASE WEIGHTS EDITOR */}
           <SettingCard title="Phase Weights Editor">
