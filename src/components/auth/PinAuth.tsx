@@ -8,7 +8,6 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react'
-import { useAuthStore } from '@/store/authStore'
 import { clsx } from 'clsx'
 
 const PIN_LENGTH = 6
@@ -45,15 +44,8 @@ interface PinAuthProps {
 }
 
 export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
-  const status = useAuthStore(s => s.status)
   const hasPinStored = Boolean(getStoredHash())
   const [mode, setMode] = useState<FlowMode>((hasPinStored || onVerify) ? 'verify' : 'setup-create')
-
-  useEffect(() => {
-    if (status === 'authenticated') {
-      useAuthStore.setState(s => ({ ...s }))
-    }
-  }, [status])
 
   const [digits, setDigits] = useState<string[]>(Array(PIN_LENGTH).fill(''))
   const [firstPin, setFirstPin] = useState('')
@@ -141,20 +133,27 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
       return
     }
 
-    if (onVerify) {
-      setAttempts(0)
-      await onVerify(pin)
-      setIsSubmitting(false)
+        if (onVerify) {
+      try {
+        await onVerify(pin)
+        // Let authStore/LoginFlow handle the status transition.
+        // Do not immediately read status here because Zustand/Supabase transitions
+        // can still be in progress right after onVerify resolves.
+      } catch {
+        setError('Verification failed. Please try again.')
+        triggerShake()
+        setIsSubmitting(false)
+      }
       return
     }
 
-    const stored = getStoredHash()
-    if (!stored) {
-      setMode('setup-create')
-      resetDigits()
-      setIsSubmitting(false)
-      return
-    }
+        const stored = getStoredHash()
+        if (!stored) {
+          setMode('setup-create')
+          resetDigits()
+          setIsSubmitting(false)
+          return
+        }
 
     const hash = await sha256(pin)
     if (hash === stored) {
@@ -699,6 +698,7 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
             if (key === 'back') {
               return (
                 <button
+                  type="button"
                   key={i}
                   onClick={handleBackspace}
                   disabled={isLocked || isSubmitting}
@@ -712,6 +712,7 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
 
             return (
               <button
+                type="button"
                 key={i}
                 onClick={() => handleDigit(key)}
                 disabled={isLocked || isSubmitting}
@@ -725,6 +726,7 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
 
         {onFallbackToMagicLink && (
           <button
+            type="button"
             onClick={onFallbackToMagicLink}
             className="poweron-pin-fallback"
           >
