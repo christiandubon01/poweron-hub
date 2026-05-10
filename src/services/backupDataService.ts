@@ -663,6 +663,24 @@ export function num(v: any): number {
   return isNaN(n) ? 0 : n
 }
 
+export function resolveCanonicalCustomerName(record: any, accounts: any[] = []): string {
+  const accountId = String(record?.accountId || record?.customerId || '').trim()
+  if (accountId) {
+    const acc = (accounts || []).find((a: any) => String(a?.id || '') === accountId)
+    const canonical = String(acc?.company || acc?.contact || '').trim()
+    if (canonical) return canonical
+  }
+  return String(
+    record?.customer ||
+    record?.client ||
+    record?.company ||
+    record?.contact ||
+    record?.name ||
+    record?.title ||
+    'Unknown'
+  ).trim()
+}
+
 /** Days since a date string, 999 if missing */
 export function daysSince(d: string | undefined | null): number {
   if (!d) return 999
