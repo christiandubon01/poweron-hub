@@ -320,6 +320,15 @@ export interface BackupData {
   _schemaVersion: number
   /** Cross-device sync metadata — embedded by syncToSupabase() */
   _syncMeta?: { savedBy: string; savedAt: string }
+
+  /** Deleted relationship/customer accounts that must not be revived from stale local gcContacts */
+  _deletedRelationshipAccounts?: Array<{
+    id?: string
+    company?: string
+    contact?: string
+    deletedAt?: string
+    source?: string
+  }>
 }
 
 const LEGACY_GC_ONLY_FIELDS = [
@@ -335,7 +344,40 @@ function pickNormalized(existingValue: any, incomingValue: any): any {
   return isBlankValue(incomingValue) ? existingValue : incomingValue
 }
 
-export function relationshipAccountsToGcContacts(relationshipAccounts: any[], existingGcContacts: any[] = []): any[] {
+function normalizeRelationshipDeleteValue(v: any): string {
+  return String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function matchesDeletedRelationshipAccount(record: any, deletedRelationshipAccounts: any[] = []): boolean {
+  const id = normalizeRelationshipDeleteValue(record?.id || record?.legacy_gc_id || record?.legacyGcId)
+  const company = normalizeRelationshipDeleteValue(record?.company || record?.name)
+  const contact = normalizeRelationshipDeleteValue(record?.contact)
+
+  const recordUpdatedAt = record?.updated_at ? new Date(record.updated_at).getTime() : 0
+
+  return (deletedRelationshipAccounts || []).some((d: any) => {
+    const deletedId = normalizeRelationshipDeleteValue(d?.id)
+    const deletedCompany = normalizeRelationshipDeleteValue(d?.company)
+    const deletedContact = normalizeRelationshipDeleteValue(d?.contact)
+    const deletedAt = d?.deletedAt ? new Date(d.deletedAt).getTime() : 0
+
+    // If a relationship_account row was recreated/updated after the tombstone,
+    // allow it to return.
+    if (recordUpdatedAt && deletedAt && recordUpdatedAt > deletedAt) return false
+
+    const sameId = !!id && !!deletedId && id === deletedId
+    const sameCompany = !!company && !!deletedCompany && company === deletedCompany
+    const sameContact = !!contact && !!deletedContact && contact === deletedContact
+
+    return sameId || sameCompany || sameContact
+  })
+}
+
+export function relationshipAccountsToGcContacts(
+  relationshipAccounts: any[],
+  existingGcContacts: any[] = [],
+  deletedRelationshipAccounts: any[] = []
+): any[] {
   const existingById = new Map<string, any>()
   const existingByLegacyId = new Map<string, any>()
   ;(existingGcContacts || []).forEach((gc: any) => {
@@ -345,6 +387,8 @@ export function relationshipAccountsToGcContacts(relationshipAccounts: any[], ex
 
   const merged: any[] = []
   ;(relationshipAccounts || []).forEach((row: any) => {
+    if (matchesDeletedRelationshipAccount(row, deletedRelationshipAccounts)) return
+
     const id = String(row?.id || '').trim()
     if (!id) return
     const legacyId = String(row?.legacy_gc_id || row?.legacyGcId || '').trim()
@@ -391,8 +435,11 @@ export function relationshipAccountsToGcContacts(relationshipAccounts: any[], ex
     merged.push(out)
   })
 
-  // Keep local-only contacts not yet represented in relationship_accounts.
+  // Keep local-only contacts not yet represented in relationship_accounts,
+  // unless they were explicitly deleted.
   ;(existingGcContacts || []).forEach((gc: any) => {
+    if (matchesDeletedRelationshipAccount(gc, deletedRelationshipAccounts)) return
+
     const id = String(gc?.id || '').trim()
     if (!id) return
     if (!merged.some((m: any) => String(m?.id || '') === id)) merged.push(gc)
@@ -1266,7 +1313,10 @@ async function hydrateRelationshipAccountsIntoLocalProjection(userId: string): P
     if (!Array.isArray(relationshipAccounts) || relationshipAccounts.length === 0) return
     const local = getBackupData(userId) || createEmptyBackup()
     const existingGc = Array.isArray((local as any).gcContacts) ? (local as any).gcContacts : []
-    const mergedGcContacts = relationshipAccountsToGcContacts(relationshipAccounts, existingGc)
+    const deletedRelationshipAccounts = Array.isArray((local as any)._deletedRelationshipAccounts)
+     ? (local as any)._deletedRelationshipAccounts
+     : []
+    const mergedGcContacts = relationshipAccountsToGcContacts(relationshipAccounts, existingGc, deletedRelationshipAccounts)
     ;(local as any).gcContacts = mergedGcContacts
       saveBackupDataSilent(local as BackupData, userId)
 
@@ -1414,6 +1464,32 @@ export function saveBackupDataAndSync(data: BackupData, changedKey?: string): vo
   syncToSupabase().catch(err => console.warn('[sync] Background sync failed:', err))
   // Create snapshot if interval elapsed
   maybeAutoSnapshot('Data saved')
+}
+
+export async function saveBackupDataAndSyncNow(
+  data: BackupData,
+  changedKey?: string
+): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  data._lastSavedAt = new Date().toISOString()
+  if (changedKey) markChanged(changedKey)
+  _dataChanged = true
+  saveBackupData(data)
+
+  const result = await syncToSupabase()
+
+  if (result.success) {
+    _dataChanged = false
+    _lastSyncedAt = Date.now()
+    _changedKeys.clear()
+  }
+
+  try {
+    maybeAutoSnapshot('Data saved')
+  } catch {
+    /* snapshot is non-critical */
+  }
+
+  return result
 }
 
 // ── ISSUE 2 Fix: Critical change keys that bypass debounce ──────────────────

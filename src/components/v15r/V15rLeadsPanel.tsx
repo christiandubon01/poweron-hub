@@ -17,8 +17,10 @@ import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from '@react-google-m
 import { useAuth } from '@/hooks/useAuth'
 import {
   getBackupData,
+  loadFromSupabase,
   saveBackupData,
   saveBackupDataAndSync,
+  saveBackupDataAndSyncNow,
   fmtK,
   fmt,
   num,
@@ -190,6 +192,56 @@ export default function V15rLeadsPanel() {
       window.removeEventListener('poweron-relationship-accounts-hydrated', handler)
     }
   }, [forceUpdate])
+
+  useEffect(() => {
+  if (hasHydrated && isDemoMode) return
+
+  let cancelled = false
+  let refreshing = false
+
+  const refreshFromLatestSavedState = async (source: string) => {
+    if (refreshing) return
+    refreshing = true
+
+    try {
+      const result = await loadFromSupabase(false)
+
+      if (!cancelled && result.success) {
+        console.log(`[Leads] Refreshed latest saved state on ${source}`)
+        window.dispatchEvent(new Event('storage'))
+        window.dispatchEvent(new Event('poweron-data-saved'))
+        forceUpdate()
+      }
+    } catch (err) {
+      console.warn(`[Leads] latest saved state refresh failed on ${source}`, err)
+    } finally {
+      refreshing = false
+    }
+  }
+
+  void refreshFromLatestSavedState('panel-open')
+
+  const handleFocus = () => {
+    void refreshFromLatestSavedState('window-focus')
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      void refreshFromLatestSavedState('visibility')
+    }
+  }
+
+  window.addEventListener('focus', handleFocus)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+
+  return () => {
+    cancelled = true
+    window.removeEventListener('focus', handleFocus)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }
+}, [forceUpdate, hasHydrated, isDemoMode])
+
+
 
   function persist() {
   const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
@@ -1429,32 +1481,112 @@ export default function V15rLeadsPanel() {
   async function deleteEmptyRelationshipAccount(accountId: string) {
   const acc = accounts.find((a: any) => a.id === accountId)
   if (!acc) return
-  const hasHistory = (acc.projects?.length || 0) > 0 || (acc.serviceCalls?.length || 0) > 0 || (acc.linkedLogs?.length || 0) > 0 || (acc.linkedEstimates?.length || 0) > 0
-  if (hasHistory) return
-  if (!confirm(`Delete empty relationship account "${acc.name}"? This will remove it from Supabase and local backup.`)) return
 
-  const deletedCloud = await deleteRelationshipAccount(accountId, null, {
-  company: acc.name,
-  contact: acc.contact,
-})
+  const hasHistory =
+    (acc.projects?.length || 0) > 0 ||
+    (acc.serviceCalls?.length || 0) > 0 ||
+    (acc.linkedLogs?.length || 0) > 0 ||
+    (acc.linkedEstimates?.length || 0) > 0
+
+  if (hasHistory) return
+
+  if (!confirm(`Delete empty relationship account "${acc.name}"? This will remove it from Supabase, app_state, and local backup.`)) return
+
+  const normalize = (v: any) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  const targetCompany = normalize(acc.name)
+  const targetContact = normalize(acc.contact)
+
+  const shouldRemove = (g: any) => {
+    if (String(g?.id || '') === String(accountId)) return true
+
+    const sameCompany = !!targetCompany && normalize(g?.company || g?.name) === targetCompany
+    const sameContact = !!targetContact && normalize(g?.contact) === targetContact
+
+    return sameCompany || sameContact
+  }
+
+  const deletedCloud = await deleteRelationshipAccount(accountId, authProfile?.org_id || null, {
+    company: acc.name,
+    contact: acc.contact,
+  })
+
   if (!deletedCloud) {
     alert('Could not delete this relationship account from Supabase. Nothing was removed locally.')
     return
   }
 
-  pushState(backup)
-  const normalize = (v: any) => String(v || '').trim().toLowerCase()
-const targetCompany = normalize(acc.name)
-const targetContact = normalize(acc.contact)
-
-backup.gcContacts = gcContacts.filter((g: any) => {
-  if (g.id === accountId) return false
-  const sameCompany = targetCompany && normalize(g.company) === targetCompany
-  const sameContact = targetContact && normalize(g.contact) === targetContact
-  return !(sameCompany || sameContact)
-})
-  persist()
+  const tombstone = {
+    id: String(accountId),
+    company: String(acc.name || ''),
+    contact: String(acc.contact || ''),
+    deletedAt: new Date().toISOString(),
+    source: 'empty_relationship_account_delete',
   }
+
+  pushState(backup)
+
+  const existingDeleted = Array.isArray((backup as any)._deletedRelationshipAccounts)
+    ? (backup as any)._deletedRelationshipAccounts
+    : []
+
+  const alreadyDeleted = existingDeleted.some((d: any) => {
+    const sameId = String(d?.id || '') === String(tombstone.id)
+    const sameCompany = !!targetCompany && normalize(d?.company) === targetCompany
+    const sameContact = !!targetContact && normalize(d?.contact) === targetContact
+    return sameId || sameCompany || sameContact
+  })
+
+  ;(backup as any)._deletedRelationshipAccounts = alreadyDeleted
+    ? existingDeleted
+    : [...existingDeleted, tombstone]
+
+  backup.gcContacts = gcContacts.filter((g: any) => !shouldRemove(g))
+  backup._lastSavedAt = new Date().toISOString()
+
+  try {
+    Object.keys(localStorage)
+      .filter((key) => key === 'poweron_backup_data' || key.startsWith('poweron_backup_data_'))
+      .forEach((key) => {
+        const raw = localStorage.getItem(key)
+        if (!raw) return
+
+        const cached = JSON.parse(raw)
+
+        cached.gcContacts = (cached.gcContacts || []).filter((g: any) => !shouldRemove(g))
+
+        const cachedDeleted = Array.isArray(cached._deletedRelationshipAccounts)
+          ? cached._deletedRelationshipAccounts
+          : []
+
+        const cachedAlreadyDeleted = cachedDeleted.some((d: any) => {
+          const sameId = String(d?.id || '') === String(tombstone.id)
+          const sameCompany = !!targetCompany && normalize(d?.company) === targetCompany
+          const sameContact = !!targetContact && normalize(d?.contact) === targetContact
+          return sameId || sameCompany || sameContact
+        })
+
+        cached._deletedRelationshipAccounts = cachedAlreadyDeleted
+          ? cachedDeleted
+          : [...cachedDeleted, tombstone]
+
+        cached._lastSavedAt = backup._lastSavedAt
+
+        localStorage.setItem(key, JSON.stringify(cached))
+      })
+  } catch (err) {
+    console.warn('[Leads] failed to sanitize local relationship cache', err)
+  }
+
+  const syncResult = await saveBackupDataAndSyncNow(backup, 'gcContacts')
+
+  window.dispatchEvent(new Event('storage'))
+  window.dispatchEvent(new Event('poweron-data-saved'))
+  forceUpdate()
+
+  if (!syncResult.success) {
+    alert(`Deleted locally, but cloud sync failed: ${syncResult.error || 'Unknown sync error'}`)
+  }
+}
 
   function renderAccountsCenter() {
     const totalAccounts = filteredAccounts.length
