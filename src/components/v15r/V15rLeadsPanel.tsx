@@ -27,7 +27,7 @@ import {
 } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
-import { linkEntityToAccount, upsertRelationshipAccount } from '@/services/relationshipAccountService'
+import { getRelationshipLinks, linkEntityToAccount, upsertRelationshipAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
@@ -142,6 +142,8 @@ export default function V15rLeadsPanel() {
   const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
   const [ignoredCleanupKeys, setIgnoredCleanupKeys] = useState<Record<string, boolean>>({})
   const [cleanupLinkSelection, setCleanupLinkSelection] = useState<Record<string, string>>({})
+  const [expandedCleanupGroups, setExpandedCleanupGroups] = useState<Record<string, boolean>>({})
+  const [relationshipLinks, setRelationshipLinks] = useState<any[]>([])
   const [addRelForm, setAddRelForm] = useState<any>({
     company: '',
     contact: '',
@@ -183,6 +185,22 @@ export default function V15rLeadsPanel() {
       window.removeEventListener('poweron-data-saved', handler)
     }
   }, [forceUpdate])
+
+  useEffect(() => {
+    let active = true
+    if (!authProfile?.org_id) {
+      setRelationshipLinks([])
+      return () => { active = false }
+    }
+    void getRelationshipLinks(authProfile.org_id).then((rows) => {
+      if (!active) return
+      setRelationshipLinks(Array.isArray(rows) ? rows : [])
+    }).catch((err) => {
+      console.warn('[V15rLeadsPanel] relationship links load failed', err)
+      if (active) setRelationshipLinks([])
+    })
+    return () => { active = false }
+  }, [authProfile?.org_id, backup._lastSavedAt])
 
   function persist() {
     const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
@@ -1027,30 +1045,80 @@ export default function V15rLeadsPanel() {
   }, [mapMode, selectedAccount, mapScopedAccounts])
 
   const unmatchedLegacyGroups = useMemo(() => {
+    const accountIds = new Set(gcContacts.map((a: any) => String(a?.id || '')).filter(Boolean))
+    const linkedEntityKeys = new Set(
+      (relationshipLinks || []).map((l: any) => `${String(l?.entity_type || '')}|${String(l?.entity_id || '')}`)
+    )
+    const accountNameKeys = new Set<string>()
+    const accountAddressCityKeys = new Set<string>()
+    gcContacts.forEach((a: any) => {
+      const companyKey = norm(a?.company)
+      const contactKey = norm(a?.contact)
+      if (companyKey) accountNameKeys.add(companyKey)
+      if (contactKey) accountNameKeys.add(contactKey)
+      const addrKey = norm(a?.address)
+      const cityKey = norm(a?.city)
+      if (addrKey && cityKey) accountAddressCityKeys.add(`${addrKey}|${cityKey}`)
+    })
+
+    const kindLabel = (kind: string) =>
+      kind === 'project' ? 'Project'
+        : kind === 'service_log' ? 'Service Call'
+        : kind === 'service_estimate' ? 'Estimate'
+        : kind === 'active_service_call' ? 'Service Call'
+        : 'Record'
+    const resolveAmount = (r: any) => {
+      if (r?._kind === 'project') return projectQuoted(r)
+      if (r?._kind === 'service_log') return num(r?.quoted || r?.total || 0)
+      if (r?._kind === 'service_estimate') return num(r?.totalQuote || r?.quoted || 0)
+      if (r?._kind === 'active_service_call') return num(r?.price || r?.totalQuote || r?.quoted || 0)
+      return 0
+    }
+    const resolveDate = (r: any) => String(r?.date || r?.createdAt || r?.created || r?.lastMove || '')
+    const resolveTitle = (r: any) => String(r?.name || r?.jobType || r?.jtype || r?.type || r?._customer || 'Untitled')
+
     const pool: any[] = [
       ...(backup.projects || []).map((r: any) => ({ ...r, _kind: 'project', _customer: r.client || r.customer || r.name })),
       ...(backup.serviceLogs || []).map((r: any) => ({ ...r, _kind: 'service_log', _customer: r.customer || r.client })),
       ...(backup.serviceEstimates || []).map((r: any) => ({ ...r, _kind: 'service_estimate', _customer: r.customer || r.client })),
+      ...(backup.activeServiceCalls || []).map((r: any) => ({ ...r, _kind: 'active_service_call', _customer: r.customer || r.client || r.name })),
     ]
     const groups = new Map<string, any>()
     pool.forEach((r: any) => {
-      const inferred = inferAccountForRecord(r, gcContacts)
-      if (inferred) return
+      const explicitId = String(r?.accountId || r?.customerId || '').trim()
+      if (explicitId && accountIds.has(explicitId)) return
+      const entityKey = `${String(r?._kind || '')}|${String(r?.id || '')}`
+      if (r?.id && linkedEntityKeys.has(entityKey)) return
+      const nameKey = norm(r?._customer || r?.company || r?.contact || r?.name || r?.title || '')
+      if (nameKey && accountNameKeys.has(nameKey)) return
+      const addressKey = norm(r?.address || r?.location || '')
+      const cityKey = norm(r?.city || '')
+      if (addressKey && cityKey && accountAddressCityKeys.has(`${addressKey}|${cityKey}`)) return
       const name = String(r._customer || '').trim()
       if (!name) return
       const addr = String(r.address || r.location || '').trim()
       const city = String(r.city || '').trim()
       const key = `${norm(name)}|${norm(addr)}|${norm(city)}`
       if (!groups.has(key)) {
-        groups.set(key, { key, name, address: addr, city, count: 0, estimatedRevenue: 0, records: [] })
+        groups.set(key, { key, name, address: addr, city, count: 0, estimatedRevenue: 0, records: [], typeSet: new Set<string>() })
       }
       const g = groups.get(key)
       g.count += 1
-      g.estimatedRevenue += num(r.contract || r.contractAmount || r.totalQuote || r.quoted || r.price || 0)
-      g.records.push(r)
+      const amount = resolveAmount(r)
+      g.estimatedRevenue += amount
+      g.typeSet.add(kindLabel(String(r?._kind || '')))
+      g.records.push({
+        ...r,
+        _title: resolveTitle(r),
+        _date: resolveDate(r),
+        _amount: amount,
+      })
     })
-    return Array.from(groups.values()).filter((g: any) => !ignoredCleanupKeys[g.key]).sort((a: any, b: any) => b.count - a.count)
-  }, [backup, gcContacts, ignoredCleanupKeys])
+    return Array.from(groups.values())
+      .map((g: any) => ({ ...g, recordTypes: Array.from(g.typeSet || []) }))
+      .filter((g: any) => !ignoredCleanupKeys[g.key])
+      .sort((a: any, b: any) => b.count - a.count)
+  }, [backup, gcContacts, ignoredCleanupKeys, relationshipLinks])
 
   const emptyRelationshipAccounts = useMemo(() => {
     return accounts.filter((a: any) => (a.projects?.length || 0) === 0 && (a.serviceCalls?.length || 0) === 0 && (a.linkedLogs?.length || 0) === 0 && (a.linkedEstimates?.length || 0) === 0)
@@ -1146,21 +1214,36 @@ export default function V15rLeadsPanel() {
         ? { ...r, accountId: target.id }
         : r
     )
+    backup.activeServiceCalls = (backup.activeServiceCalls || []).map((r: any) =>
+      groupRecords.some((x: any) => x._kind === 'active_service_call' && x.id === r.id)
+        ? { ...r, accountId: target.id }
+        : r
+    )
 
     const prior = String(target.tags || '').trim()
     const nextTag = [prior, `linked:${group.name}`].filter(Boolean).join(', ')
     backup.gcContacts = gcContacts.map((g: any) => g.id === target.id ? { ...g, tags: nextTag } : g)
 
     setIgnoredCleanupKeys((prev) => ({ ...prev, [group.key]: true }))
+    setExpandedCleanupGroups((prev) => ({ ...prev, [group.key]: false }))
     persist()
+    console.info('[RelationshipCleanup] linked', { groupKey: group.key, accountId, count: groupRecords.length })
     groupRecords.forEach((r: any) => {
       const entityType = r?._kind === 'project' ? 'project'
         : r?._kind === 'service_log' ? 'service_log'
         : r?._kind === 'service_estimate' ? 'service_estimate'
+        : r?._kind === 'active_service_call' ? 'active_service_call'
         : String(r?._kind || 'unknown')
       const entityLabel =
         r?.name || r?.customer || r?.client || r?.jobType || r?.jtype || 'Linked Record'
       const legacyText = r?.customer || r?.client || r?.company || ''
+      const quoted = entityType === 'project'
+        ? projectQuoted(r)
+        : num(r?.totalQuote || r?.quoted || r?.price || 0)
+      const collected = entityType === 'project'
+        ? projectCollected(r)
+        : num(r?.collected || 0)
+      const outstanding = Math.max(0, quoted - collected)
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
         accountId: String(accountId),
@@ -1171,6 +1254,19 @@ export default function V15rLeadsPanel() {
         metadata: { legacy_payload: r },
         createdBy: authProfile?.id || null,
       }).catch((err) => console.warn('[V15rLeadsPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String(accountId),
+        entityType,
+        entityId: String(r?.id || ''),
+        title: entityLabel,
+        description: `Linked via Relationship Cleanup (${entityType})`,
+        quotedAmount: quoted,
+        collectedAmount: collected,
+        outstandingAmount: outstanding,
+        metadata: { legacy_payload: r, source: 'relationship_cleanup' },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rLeadsPanel] relationship event upsert failed', err))
     })
   }
 
@@ -1223,20 +1319,21 @@ export default function V15rLeadsPanel() {
         <div className="rounded-xl border border-cyan-900/30 bg-[var(--bg-card)] p-3 space-y-3">
           <div className="flex items-center justify-between">
             <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold">Relationship Cleanup</div>
-            <button onClick={bulkCreateFromUnmatched} className="px-2.5 py-1 rounded bg-emerald-700/50 text-emerald-300 text-[10px] font-semibold hover:bg-emerald-600/50">
+            <button disabled title="Disabled in this phase" onClick={bulkCreateFromUnmatched} className="px-2.5 py-1 rounded bg-gray-800 text-gray-500 text-[10px] font-semibold cursor-not-allowed">
               Create accounts from unmatched customers
             </button>
           </div>
-          <div className="space-y-2 max-h-[180px] overflow-auto pr-1">
+          <div className="space-y-2 max-h-[280px] overflow-auto pr-1">
             {unmatchedLegacyGroups.map((g: any) => (
               <div key={g.key} className="rounded border border-gray-800 bg-[var(--bg-secondary)] p-2">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-xs text-gray-100 font-semibold">{g.name}</div>
-                    <div className="text-[10px] text-gray-500">{[g.address, g.city].filter(Boolean).join(', ') || 'No address'} • {g.count} records • {fmt(g.estimatedRevenue)}</div>
+                    <div className="text-[10px] text-gray-500">
+                      {[g.address, g.city].filter(Boolean).join(', ') || 'No address'} | {g.count} records | {fmt(g.estimatedRevenue)} | {(g.recordTypes || []).join(', ') || 'Unknown'}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => createRelationshipFromGroup(g)} className="px-2 py-1 rounded bg-emerald-700/40 text-emerald-300 text-[10px]">Create</button>
                     <select
                       value={cleanupLinkSelection[g.key] || ''}
                       onChange={(e) => setCleanupLinkSelection((prev) => ({ ...prev, [g.key]: e.target.value }))}
@@ -1247,8 +1344,26 @@ export default function V15rLeadsPanel() {
                     </select>
                     <button onClick={() => linkGroupToExisting(g, cleanupLinkSelection[g.key])} className="px-2 py-1 rounded bg-cyan-700/40 text-cyan-300 text-[10px]">Link</button>
                     <button onClick={() => setIgnoredCleanupKeys((prev) => ({ ...prev, [g.key]: true }))} className="px-2 py-1 rounded bg-gray-700 text-gray-300 text-[10px]">Ignore</button>
+                    <button
+                      onClick={() => setExpandedCleanupGroups((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
+                      className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-gray-300 text-[10px]"
+                    >
+                      {expandedCleanupGroups[g.key] ? 'Hide' : 'Details'}
+                    </button>
                   </div>
                 </div>
+                {expandedCleanupGroups[g.key] && (
+                  <div className="mt-2 border-t border-gray-800 pt-2 space-y-1.5 max-h-[140px] overflow-auto pr-1">
+                    {(g.records || []).map((r: any, idx: number) => (
+                      <div key={`${g.key}-${r._kind}-${r.id || idx}`} className="rounded border border-gray-800 bg-black/20 px-2 py-1">
+                        <div className="text-[10px] text-gray-200 font-medium">{r._title}</div>
+                        <div className="text-[10px] text-gray-500">
+                          {String(r._kind || '').replaceAll('_', ' ')} | {r._date || 'No date'} | {fmt(num(r._amount || 0))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {unmatchedLegacyGroups.length === 0 && <div className="text-xs text-gray-500">No unmatched legacy customer groups found.</div>}
@@ -2203,6 +2318,7 @@ export default function V15rLeadsPanel() {
     </div>
   )
 }
+
 
 
 
