@@ -11,8 +11,9 @@
  * - Contact activity timeline (expandable row showing contactLog entries)
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X, Copy, Phone, Mail, Mic } from 'lucide-react'
+import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from '@react-google-maps/api'
 import { useAuth } from '@/hooks/useAuth'
 import {
   getBackupData,
@@ -52,6 +53,17 @@ const SVC_STATUS_COLORS: Record<string, string> = {
   'Converted': '#10b981',
 }
 const SVC_STATUS_CYCLE = ['Advance', 'Quoted', 'Booked', 'Park', 'Kill']
+const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY as string) ?? ''
+const MAP_CENTER = { lat: 33.7425, lng: -116.3089 }
+const REL_ACCOUNT_TYPES = [
+  'General Contractor',
+  'Subcontractor',
+  'Homeowner',
+  'Property Manager',
+  'Commercial Client',
+  'Service Customer',
+  'Other',
+] as const
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -77,6 +89,29 @@ export default function V15rLeadsPanel() {
   const [aiScriptLoading, setAiScriptLoading] = useState(false)
   const [aiScriptVariants, setAiScriptVariants] = useState<{ cold: string; voicemail: string; email: string } | null>(null)
   const [aiScriptTab, setAiScriptTab] = useState<'cold' | 'voicemail' | 'email'>('cold')
+  const [accountSearch, setAccountSearch] = useState('')
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  const [mapFilter, setMapFilter] = useState<'all' | 'active' | 'unpaid' | 'high' | 'repeat' | 'service' | 'gc'>('all')
+  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | (typeof REL_ACCOUNT_TYPES)[number]>('all')
+  const [mapMode, setMapMode] = useState<'selected' | 'all_jobs'>('selected')
+  const [geoCache, setGeoCache] = useState<Record<string, { lat: number; lng: number }>>({})
+  const [showAddRelationship, setShowAddRelationship] = useState(false)
+  const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
+  const [addRelForm, setAddRelForm] = useState<any>({
+    company: '',
+    contact: '',
+    role: 'General Contractor',
+    phone: '',
+    email: '',
+    address: '',
+    city: '',
+    notes: '',
+    tags: '',
+  })
+  const { isLoaded: mapLoaded, loadError: mapLoadError } = useJsApiLoader({
+    id: 'v15r-leads-map',
+    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+  })
 
   let authProfile: any = null
   try { authProfile = useAuth().profile } catch { /* auth not available */ }
@@ -467,6 +502,540 @@ export default function V15rLeadsPanel() {
     c.nextFollowup = future.toISOString().slice(0, 10)
     c.lastContact = today()
     persist()
+  }
+
+  function saveRelationshipAccount() {
+    const company = String(addRelForm.company || '').trim()
+    if (!company) return
+    pushState(backup)
+    const payload: any = {
+      company,
+      contact: String(addRelForm.contact || '').trim(),
+      role: addRelForm.role || 'General Contractor',
+      phone: String(addRelForm.phone || '').trim(),
+      email: String(addRelForm.email || '').trim(),
+      address: String(addRelForm.address || '').trim(),
+      city: String(addRelForm.city || '').trim(),
+      notes: String(addRelForm.notes || '').trim(),
+      tags: String(addRelForm.tags || '').trim(),
+    }
+    let savedId: string | null = null
+    if (editingRelationshipId) {
+      backup.gcContacts = gcContacts.map((gc: any) => {
+        if (gc.id !== editingRelationshipId) return gc
+        savedId = gc.id
+        return { ...gc, ...payload }
+      })
+    } else {
+      const newGC: any = {
+        id: 'gc' + Date.now(),
+        intro: '',
+        sent: 0,
+        awarded: 0,
+        avg: 0,
+        pay: '',
+        phase: 'First Contact',
+        fit: 0,
+        action: '',
+        due: '',
+        created: today(),
+        contactLog: [],
+        nextFollowup: '',
+        lastContact: '',
+        ...payload,
+      }
+      backup.gcContacts = [...gcContacts, newGC]
+      savedId = newGC.id
+    }
+    setShowAddRelationship(false)
+    setEditingRelationshipId(null)
+    setAddRelForm({
+      company: '', contact: '', role: 'General Contractor', phone: '', email: '',
+      address: '', city: '', notes: '', tags: '',
+    })
+    persist()
+    if (savedId) setSelectedAccountId(savedId)
+  }
+
+  function startEditRelationship(accountId: string) {
+    const gc = gcContacts.find((x: any) => x.id === accountId)
+    if (!gc) return
+    setEditingRelationshipId(gc.id)
+    setAddRelForm({
+      company: String(gc.company || ''),
+      contact: String(gc.contact || ''),
+      role: String(gc.role || 'General Contractor') || 'General Contractor',
+      phone: String(gc.phone || ''),
+      email: String(gc.email || ''),
+      address: String(gc.address || ''),
+      city: String(gc.city || ''),
+      notes: String(gc.notes || ''),
+      tags: String(gc.tags || ''),
+    })
+    setShowAddRelationship(true)
+  }
+
+  function closeRelationshipModal() {
+    setShowAddRelationship(false)
+    setEditingRelationshipId(null)
+    setAddRelForm({
+      company: '', contact: '', role: 'General Contractor', phone: '', email: '',
+      address: '', city: '', notes: '', tags: '',
+    })
+  }
+
+  const accounts = useMemo(() => {
+    const serviceLogs = backup.serviceLogs || []
+    const projects = backup.projects || []
+    const relationshipPool = gcContacts.filter((gc: any) => {
+      const role = String(gc.role || '').trim()
+      return role === '' || REL_ACCOUNT_TYPES.includes(role as any)
+    })
+    return relationshipPool.map((gc: any) => {
+      const company = (gc.company || '').toLowerCase().trim()
+      const linkedSvc = serviceLeads.filter((s: any) => (s.customer || '').toLowerCase().includes(company) || company.includes((s.customer || '').toLowerCase()))
+      const linkedLogs = serviceLogs.filter((s: any) => (s.customer || '').toLowerCase().includes(company) || company.includes((s.customer || '').toLowerCase()))
+      const linkedProjects = projects.filter((p: any) => (p.client || p.name || '').toLowerCase().includes(company) || company.includes((p.client || p.name || '').toLowerCase()))
+      const svcRevenue = linkedLogs.reduce((s: number, l: any) => s + num(l.collected || 0), 0)
+      const projectRevenue = linkedProjects.reduce((s: number, p: any) => s + num(p.paid || 0), 0)
+      const svcOutstanding = linkedLogs.reduce((s: number, l: any) => s + Math.max(0, num(l.quoted || 0) - num(l.collected || 0)), 0)
+      const projectOutstanding = linkedProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract || 0) - num(p.paid || 0)), 0)
+      const lastLog = (gc.contactLog || []).slice().sort((a: any, b: any) => String(b.date || b.timestamp).localeCompare(String(a.date || a.timestamp)))[0]
+      return {
+        id: gc.id,
+        name: gc.company || 'Unnamed Account',
+        type: gc.role || (gc.role?.toLowerCase().includes('gc') ? 'General Contractor' : (linkedSvc.length > 0 ? 'Service Customer' : 'Commercial Client')),
+        contact: gc.contact || '',
+        phone: gc.phone || '',
+        email: gc.email || '',
+        projects: linkedProjects,
+        serviceCalls: linkedSvc,
+        linkedLogs,
+        interactions: gc.contactLog || [],
+        lifetimeRevenue: svcRevenue + projectRevenue,
+        outstanding: svcOutstanding + projectOutstanding,
+        repeatCount: linkedLogs.length + linkedProjects.length,
+        openBids: linkedSvc.filter((s: any) => ['Quoted', 'Advance'].includes(s.status)).length,
+        activeJobs: linkedSvc.filter((s: any) => ['Advance', 'Quoted', 'Booked'].includes(s.status)).length + linkedProjects.filter((p: any) => String(p.status || '').toLowerCase() === 'active').length,
+        lastInteraction: (lastLog?.date || lastLog?.timestamp || gc.lastContact || gc.created || ''),
+        address: gc.address || linkedSvc[0]?.address || linkedProjects[0]?.address || '',
+        city: gc.city || linkedSvc[0]?.city || '',
+        notes: gc.notes || '',
+        tags: gc.tags || '',
+      }
+    })
+  }, [gcContacts, serviceLeads, backup])
+
+  useEffect(() => {
+    if (!mapLoaded) return
+    const g = (window as any).google
+    if (!g?.maps) return
+    const geocoder = new g.maps.Geocoder()
+    accounts.forEach((a: any) => {
+      const queries: string[] = []
+      if (a.address || a.city) queries.push([a.address, a.city, 'CA'].filter(Boolean).join(', '))
+      a.serviceCalls.forEach((s: any) => {
+        const q = [s.address, s.city, 'CA'].filter(Boolean).join(', ')
+        if (q) queries.push(q)
+      })
+      a.projects.forEach((p: any) => {
+        const q = [p.address, p.city, 'CA'].filter(Boolean).join(', ')
+        if (q) queries.push(q)
+      })
+      queries.forEach((q, idx) => {
+        const key = `${a.id}::${idx}::${q}`
+        if (!q || geoCache[key]) return
+        geocoder.geocode({ address: q }, (results: any, status: any) => {
+          if (status !== 'OK' || !results?.[0]) return
+          const loc = results[0].geometry.location
+          setGeoCache(prev => ({ ...prev, [key]: { lat: loc.lat(), lng: loc.lng() } }))
+        })
+      })
+    })
+  }, [accounts, mapLoaded, geoCache])
+
+  const filteredAccounts = useMemo(() => {
+    const q = accountSearch.toLowerCase().trim()
+    return accounts.filter((a: any) => {
+      const searchMatch = !q || a.name.toLowerCase().includes(q) || a.contact.toLowerCase().includes(q) || a.city.toLowerCase().includes(q) || String(a.tags || '').toLowerCase().includes(q)
+      const typeMatch = accountTypeFilter === 'all' ? true : a.type === accountTypeFilter
+      const filterMatch =
+        mapFilter === 'all' ? true :
+        mapFilter === 'active' ? a.activeJobs > 0 :
+        mapFilter === 'unpaid' ? a.outstanding > 0 :
+        mapFilter === 'high' ? a.lifetimeRevenue >= 10000 :
+        mapFilter === 'repeat' ? a.repeatCount > 1 :
+        mapFilter === 'service' ? a.serviceCalls.length > 0 :
+        mapFilter === 'gc' ? a.type === 'General Contractor' : true
+      return searchMatch && typeMatch && filterMatch
+    })
+  }, [accounts, accountSearch, mapFilter, accountTypeFilter])
+
+  const selectedAccount = filteredAccounts.find((a: any) => a.id === selectedAccountId) || null
+
+  const mapScopedAccounts = useMemo(() => {
+    if (mapMode === 'selected') return selectedAccount ? [selectedAccount] : []
+    return filteredAccounts
+  }, [mapMode, selectedAccount, filteredAccounts])
+
+  const mapPoints = useMemo(() => {
+    const pts: Array<any> = []
+    mapScopedAccounts.forEach((a: any) => {
+      const baseKey = `${a.id}::0::${[a.address, a.city, 'CA'].filter(Boolean).join(', ')}`
+      if (geoCache[baseKey]) pts.push({ accountId: a.id, lat: geoCache[baseKey].lat, lng: geoCache[baseKey].lng, label: a.name, gc: a.type === 'General Contractor', kind: 'Account', title: a.name, status: a.activeJobs > 0 ? 'Active' : 'Idle', quoted: 0, collected: 0, notes: a.notes || '' })
+      a.serviceCalls.forEach((s: any, idx: number) => {
+        const key = `${a.id}::${idx + 1}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.type || s.customer || 'Service Call', status: s.status || '—', quoted: num(s.price || s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || '' })
+      })
+      a.projects.forEach((p: any, idx: number) => {
+        const key = `${a.id}::proj::${idx}::${[p.address, p.city, 'CA'].filter(Boolean).join(', ')}`
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: p.name || a.name, gc: a.type === 'General Contractor', kind: 'Project', title: p.name || 'Project', status: p.status || '—', quoted: num(p.contract || 0), collected: num(p.paid || 0), notes: p.notes || '', date: p.created || '' })
+      })
+    })
+    return pts
+  }, [mapScopedAccounts, geoCache])
+
+  const clusteredPoints = useMemo(() => {
+    const clusters = new Map<string, any[]>()
+    mapPoints.forEach((p: any) => {
+      const key = `${p.lat.toFixed(4)}|${p.lng.toFixed(4)}`
+      if (!clusters.has(key)) clusters.set(key, [])
+      clusters.get(key)!.push(p)
+    })
+    return Array.from(clusters.entries()).map(([key, arr]) => {
+      const p = arr[0]
+      return { key, lat: p.lat, lng: p.lng, count: arr.length, points: arr, primaryAccountId: p.accountId, gc: arr.some((x: any) => x.gc) }
+    })
+  }, [mapPoints])
+
+  const timelineEvents = useMemo(() => {
+    const sourceAccounts = (mapMode === 'all_jobs' && !selectedAccount) ? mapScopedAccounts : (selectedAccount ? [selectedAccount] : [])
+    const events: any[] = []
+    sourceAccounts.forEach((a: any) => {
+      a.projects.forEach((p: any) => {
+        events.push({
+          date: p.created || p.lastMove || '',
+          type: 'Project',
+          title: p.name || 'Project',
+          location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+          quoted: num(p.contract || 0),
+          collected: num(p.paid || 0),
+          status: p.status || '—',
+          notes: p.notes || '',
+          accountId: a.id,
+        })
+      })
+      a.serviceCalls.forEach((s: any) => {
+        events.push({
+          date: s.date || s.created || '',
+          type: 'Service Call',
+          title: s.type || s.customer || 'Service Call',
+          location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+          quoted: num(s.price || s.totalQuote || 0),
+          collected: 0,
+          status: s.status || '—',
+          notes: s.notes || '',
+          accountId: a.id,
+        })
+      })
+      ;(a.linkedLogs || []).forEach((l: any) => {
+        events.push({
+          date: l.date || '',
+          type: 'Estimate',
+          title: l.jtype || l.customer || 'Estimate',
+          location: [l.address, l.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+          quoted: num(l.quoted || 0),
+          collected: num(l.collected || 0),
+          status: l.payStatus || '—',
+          notes: l.notes || '',
+          accountId: a.id,
+        })
+      })
+      ;(a.interactions || []).forEach((i: any) => {
+        events.push({
+          date: i.date || i.timestamp || '',
+          type: 'Interaction',
+          title: i.type || i.method || 'Interaction',
+          location: [a.address, a.city].filter(Boolean).join(', '),
+          quoted: 0,
+          collected: 0,
+          status: 'Logged',
+          notes: i.notes || '',
+          accountId: a.id,
+        })
+      })
+    })
+    return events
+      .filter(e => e.date || e.title || e.notes)
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      .slice(0, 80)
+  }, [mapMode, selectedAccount, mapScopedAccounts])
+
+  function renderAccountsCenter() {
+    const totalAccounts = filteredAccounts.length
+    const activeJobs = filteredAccounts.reduce((s: number, a: any) => s + a.activeJobs, 0)
+    const lifetimeRevenue = filteredAccounts.reduce((s: number, a: any) => s + a.lifetimeRevenue, 0)
+    const outstanding = filteredAccounts.reduce((s: number, a: any) => s + a.outstanding, 0)
+    const activeService = filteredAccounts.reduce((s: number, a: any) => s + a.serviceCalls.filter((x: any) => ['Advance', 'Quoted', 'Booked'].includes(x.status)).length, 0)
+    const activeBids = filteredAccounts.reduce((s: number, a: any) => s + a.openBids, 0)
+    const repeatClients = filteredAccounts.filter((a: any) => a.repeatCount > 1).length
+    const gcAccounts = filteredAccounts.filter((a: any) => a.type === 'GC').length
+
+    return (
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-r from-cyan-900/20 via-slate-900 to-indigo-900/20 p-4 shadow-[0_0_30px_rgba(34,211,238,0.08)]">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-300">Customer Accounts Intelligence Center</div>
+          <div className="text-xs text-gray-300 mt-1">Customer relationships, jobs, geography, and financial exposure in one workspace view.</div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+          {[
+            ['Total Accounts', totalAccounts, '#67e8f9'],
+            ['Active Jobs', activeJobs, '#86efac'],
+            ['Lifetime Revenue', fmt(lifetimeRevenue), '#93c5fd'],
+            ['Outstanding', fmt(outstanding), '#fdba74'],
+            ['Active Service Calls', activeService, '#fcd34d'],
+            ['Active Bids', activeBids, '#c4b5fd'],
+            ['Repeat Clients', repeatClients, '#f9a8d4'],
+            ['GC Accounts', gcAccounts, '#22d3ee'],
+          ].map(([label, value, clr]: any) => (
+            <div key={label} className="rounded-xl border border-gray-800 bg-[linear-gradient(180deg,rgba(17,24,39,0.95),rgba(2,6,23,0.95))] p-3">
+              <div className="text-[9px] uppercase tracking-wide text-gray-500 font-bold">{label}</div>
+              <div className="text-sm font-bold mt-1 font-mono" style={{ color: clr }}>{String(value)}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+          <div className="xl:col-span-5 rounded-xl border border-gray-800 bg-[var(--bg-card)] p-3">
+            <div className="flex gap-2 mb-2">
+              <input value={accountSearch} onChange={(e) => setAccountSearch(e.target.value)} placeholder="Search accounts, contact, city..." className="flex-1 px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-gray-200" />
+              <select value={mapFilter} onChange={(e) => setMapFilter(e.target.value as any)} className="px-2 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-cyan-300">
+                <option value="all">All</option>
+                <option value="active">Active Jobs</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="high">High Value</option>
+                <option value="repeat">Repeat</option>
+                <option value="service">Service Calls</option>
+                <option value="gc">GC Only</option>
+              </select>
+            </div>
+            <div className="flex gap-2 mb-2">
+              <select value={accountTypeFilter} onChange={(e) => setAccountTypeFilter(e.target.value as any)} className="flex-1 px-2 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-cyan-300">
+                <option value="all">All Account Types</option>
+                {REL_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <button
+                onClick={() => {
+                  setEditingRelationshipId(null)
+                  setShowAddRelationship(true)
+                }}
+                className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500"
+              >
+                + Add Relationship
+              </button>
+            </div>
+            <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
+              {filteredAccounts.map((a: any) => (
+                <button key={a.id} onClick={() => setSelectedAccountId(a.id)} className={`w-full text-left rounded-lg border p-3 ${selectedAccount?.id === a.id ? 'border-cyan-500/60 bg-cyan-900/20' : 'border-gray-800 bg-[var(--bg-secondary)] hover:border-cyan-700/40'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-gray-100">{a.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] px-2 py-0.5 rounded-full bg-gray-800 text-cyan-300">{a.type}</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          startEditRelationship(a.id)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            startEditRelationship(a.id)
+                          }
+                        }}
+                        className="text-[9px] px-2 py-0.5 rounded border border-cyan-700/50 bg-cyan-900/30 text-cyan-200 hover:bg-cyan-800/40"
+                      >
+                        Edit
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-0.5">{a.contact} {a.city ? `• ${a.city}` : ''}</div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
+                    <div><span className="text-gray-500">Revenue</span><div className="text-emerald-400 font-mono">{fmt(a.lifetimeRevenue)}</div></div>
+                    <div><span className="text-gray-500">Outstanding</span><div className="text-orange-400 font-mono">{fmt(a.outstanding)}</div></div>
+                    <div><span className="text-gray-500">Open Jobs</span><div className="text-cyan-400 font-mono">{a.activeJobs}</div></div>
+                  </div>
+                </button>
+              ))}
+              {filteredAccounts.length === 0 && <div className="text-xs text-gray-500 p-3">No accounts found for current filter.</div>}
+            </div>
+          </div>
+
+          <div className="xl:col-span-7 rounded-xl border border-gray-800 bg-[var(--bg-card)] p-2">
+            <div className="flex items-center justify-between px-2 pb-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold">Live Customer Map</div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setMapMode('selected')}
+                  className={`text-[10px] px-2.5 py-1 rounded ${mapMode === 'selected' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+                >
+                  Selected Account
+                </button>
+                <button
+                  onClick={() => setMapMode('all_jobs')}
+                  className={`text-[10px] px-2.5 py-1 rounded ${mapMode === 'all_jobs' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+                >
+                  All Jobs
+                </button>
+              </div>
+            </div>
+            <div className="h-[560px] rounded-lg overflow-hidden border border-cyan-900/30">
+              {!GOOGLE_MAPS_API_KEY ? (
+                <div className="h-full flex items-center justify-center text-xs text-gray-500 bg-gray-900">VITE_GOOGLE_MAPS_BROWSER_KEY missing.</div>
+              ) : mapLoadError ? (
+                <div className="h-full flex items-center justify-center text-xs text-red-400 bg-gray-900">Map failed to load.</div>
+              ) : !mapLoaded ? (
+                <div className="h-full flex items-center justify-center text-xs text-gray-500 bg-gray-900">Loading map...</div>
+              ) : (
+                <GoogleMap
+                  mapContainerStyle={{ width: '100%', height: '100%' }}
+                  center={selectedAccount ? (clusteredPoints.find((c: any) => c.primaryAccountId === selectedAccount.id) || MAP_CENTER) : (clusteredPoints[0] || MAP_CENTER)}
+                  zoom={10}
+                  options={{
+                    streetViewControl: false,
+                    mapTypeControl: false,
+                    fullscreenControl: false,
+                    styles: [
+                      { elementType: 'geometry', stylers: [{ color: '#111827' }] },
+                      { elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
+                      { elementType: 'labels.text.stroke', stylers: [{ color: '#0b1220' }] },
+                      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
+                      { featureType: 'water', stylers: [{ color: '#0b1020' }] },
+                      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+                    ],
+                  }}
+                >
+                  {clusteredPoints.map((c: any) => (
+                    <MarkerF
+                      key={c.key}
+                      position={{ lat: c.lat, lng: c.lng }}
+                      label={c.count > 1 ? { text: String(c.count), color: '#fff', fontWeight: '700' } : undefined}
+                      onClick={() => setSelectedAccountId(c.primaryAccountId)}
+                      icon={{
+                        path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
+                        fillColor: c.gc ? '#22d3ee' : '#10b981',
+                        fillOpacity: 0.9,
+                        strokeColor: '#ffffff',
+                        strokeWeight: 1.5,
+                        scale: 1.1,
+                        anchor: (window as any).google?.maps ? new (window as any).google.maps.Point(0, 0) : undefined,
+                      }}
+                    />
+                  ))}
+                  {selectedAccount && (() => {
+                    const marker = clusteredPoints.find((c: any) => c.primaryAccountId === selectedAccount.id)
+                    if (!marker) return null
+                    return (
+                      <InfoWindowF position={{ lat: marker.lat, lng: marker.lng }} onCloseClick={() => setSelectedAccountId(null)}>
+                        <div style={{ minWidth: 220 }}>
+                          <div style={{ fontWeight: 700 }}>{selectedAccount.name}</div>
+                          <div style={{ fontSize: 12, color: '#4b5563' }}>{selectedAccount.type} • {selectedAccount.city || 'No city'}</div>
+                          <div style={{ fontSize: 12, marginTop: 4 }}>Jobs: <strong>{selectedAccount.activeJobs}</strong> • Open Bids: <strong>{selectedAccount.openBids}</strong></div>
+                          <div style={{ fontSize: 12 }}>Revenue: <strong>{fmt(selectedAccount.lifetimeRevenue)}</strong> • Outstanding: <strong>{fmt(selectedAccount.outstanding)}</strong></div>
+                        </div>
+                      </InfoWindowF>
+                    )
+                  })()}
+                </GoogleMap>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold mb-2">Relationship Timeline</div>
+            <div className="space-y-2 max-h-[220px] overflow-auto pr-1">
+              {timelineEvents.map((ev: any, i: number) => (
+                <button key={i} onClick={() => setSelectedAccountId(ev.accountId)} className="w-full text-left rounded bg-[var(--bg-secondary)] border border-gray-800 p-2 hover:border-cyan-700/40">
+                  <div className="text-[10px] text-gray-500">{ev.date || '—'} • {ev.type}</div>
+                  <div className="text-xs text-gray-200 mt-0.5">{ev.title || 'Untitled'}</div>
+                  <div className="text-[10px] text-gray-500 mt-0.5">{ev.location || 'No location'}</div>
+                  <div className="text-[10px] mt-1 flex gap-3 flex-wrap">
+                    <span className="text-gray-400">Quoted: <span className="text-blue-300 font-mono">{fmt(ev.quoted || 0)}</span></span>
+                    <span className="text-gray-400">Collected: <span className="text-emerald-300 font-mono">{fmt(ev.collected || 0)}</span></span>
+                    <span className="text-gray-400">Status: <span className="text-cyan-300">{ev.status || '—'}</span></span>
+                  </div>
+                  {ev.notes && <div className="text-[10px] text-gray-400 mt-0.5">{ev.notes}</div>}
+                </button>
+              ))}
+              {timelineEvents.length === 0 && (
+                <div className="text-xs text-gray-500">
+                  {mapMode === 'all_jobs' ? 'No job/activity history found for currently displayed accounts.' : 'No interactions/jobs found for selected account.'}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold mb-2">Account Intelligence</div>
+            {(selectedAccount && mapMode === 'selected') ? (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Projects</div><div className="text-gray-100 font-semibold">{selectedAccount.projects.length}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Service Calls</div><div className="text-gray-100 font-semibold">{selectedAccount.serviceCalls.length}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Quoted</div><div className="text-blue-300 font-semibold font-mono">{fmt((selectedAccount.projects || []).reduce((s: number, p: any) => s + num(p.contract || 0), 0) + (selectedAccount.linkedLogs || []).reduce((s: number, l: any) => s + num(l.quoted || 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Collected</div><div className="text-emerald-400 font-semibold font-mono">{fmt(selectedAccount.lifetimeRevenue)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Outstanding</div><div className="text-orange-400 font-semibold font-mono">{fmt(selectedAccount.outstanding)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Repeat History</div><div className="text-cyan-400 font-semibold">{selectedAccount.repeatCount}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Active/Open Jobs</div><div className="text-violet-300 font-semibold">{selectedAccount.activeJobs}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Last Interaction</div><div className="text-gray-200 font-semibold">{selectedAccount.lastInteraction || '—'}</div></div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Accounts</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.length}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Jobs/Projects</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.reduce((s: number, a: any) => s + (a.projects?.length || 0), 0)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Service Calls</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.reduce((s: number, a: any) => s + (a.serviceCalls?.length || 0), 0)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Quoted</div><div className="text-blue-300 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + (a.projects || []).reduce((p: number, j: any) => p + num(j.contract || 0), 0) + (a.linkedLogs || []).reduce((l: number, x: any) => l + num(x.quoted || 0), 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Collected</div><div className="text-emerald-400 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.lifetimeRevenue || 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Outstanding</div><div className="text-orange-400 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.outstanding || 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Repeat Customers</div><div className="text-cyan-300 font-semibold">{mapScopedAccounts.filter((a: any) => a.repeatCount > 1).length}</div></div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {showAddRelationship && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-xl border border-cyan-500/30 bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98))] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-semibold text-cyan-300">{editingRelationshipId ? 'Edit Relationship Account' : 'Add Relationship Account'}</div>
+                <button onClick={closeRelationshipModal} className="text-gray-400 hover:text-gray-200">✕</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <input value={addRelForm.company} onChange={(e) => setAddRelForm((f: any) => ({ ...f, company: e.target.value }))} placeholder="Account / company name" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <input value={addRelForm.contact} onChange={(e) => setAddRelForm((f: any) => ({ ...f, contact: e.target.value }))} placeholder="Contact name" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <select value={addRelForm.role} onChange={(e) => setAddRelForm((f: any) => ({ ...f, role: e.target.value }))} className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-cyan-300">
+                  {REL_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input value={addRelForm.phone} onChange={(e) => setAddRelForm((f: any) => ({ ...f, phone: e.target.value }))} placeholder="Phone" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <input value={addRelForm.email} onChange={(e) => setAddRelForm((f: any) => ({ ...f, email: e.target.value }))} placeholder="Email" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <input value={addRelForm.address} onChange={(e) => setAddRelForm((f: any) => ({ ...f, address: e.target.value }))} placeholder="Primary address" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <input value={addRelForm.city} onChange={(e) => setAddRelForm((f: any) => ({ ...f, city: e.target.value }))} placeholder="City" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <input value={addRelForm.tags} onChange={(e) => setAddRelForm((f: any) => ({ ...f, tags: e.target.value }))} placeholder="Tags / relationship notes" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                <textarea value={addRelForm.notes} onChange={(e) => setAddRelForm((f: any) => ({ ...f, notes: e.target.value }))} placeholder="Notes" className="md:col-span-2 px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200 h-24" />
+              </div>
+              <div className="flex justify-end gap-2 mt-3">
+                <button onClick={closeRelationshipModal} className="px-3 py-2 rounded bg-gray-800 text-gray-300 text-xs">Cancel</button>
+                <button onClick={saveRelationshipAccount} className="px-3 py-2 rounded bg-emerald-600 text-white text-xs font-semibold">{editingRelationshipId ? 'Save Changes' : 'Save Relationship'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   // ── Render GC Table ────────────────────────────────────────────────────
@@ -1121,7 +1690,7 @@ export default function V15rLeadsPanel() {
         </div>
       </div>
 
-      {activeTab === 'gc' && renderGCTable()}
+      {activeTab === 'gc' && renderAccountsCenter()}
       {activeTab === 'svc' && renderSvcTable()}
       {activeTab === 'weekly' && renderWeeklyTable()}
 
@@ -1147,3 +1716,5 @@ export default function V15rLeadsPanel() {
     </div>
   )
 }
+
+
