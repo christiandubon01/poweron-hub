@@ -302,6 +302,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   // Service log form state
   const [slCust, setSlCust] = useState('')
+  const [slAccountId, setSlAccountId] = useState('')
   const [slAddr, setSlAddr] = useState('')
   const [slDate, setSlDate] = useState(today())
   const [slHrs, setSlHrs] = useState('')
@@ -316,6 +317,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [slEmatInfo, setSlEmatInfo] = useState('')
   const [slDetailLink, setSlDetailLink] = useState('')
   const [slNotes, setSlNotes] = useState('')
+  const [showSvcLinkModal, setShowSvcLinkModal] = useState(false)
+  const [svcLinkNotice, setSvcLinkNotice] = useState('')
   // Service Estimate workflow state (Step 1-3)
   const [showEstimateForm, setShowEstimateForm] = useState(false)
   const [editEstimateId, setEditEstimateId] = useState<string | null>(null)
@@ -386,6 +389,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     id: String(gc.id || ''),
     label: [gc.company || 'Unnamed', gc.contact ? `(${gc.contact})` : ''].filter(Boolean).join(' ').trim(),
   }))
+  const serviceAccountOptions = accountOptions
   const employees = backup.employees || []
   const triggerRules = backup.triggerRules || []
   const settings = backup.settings || {} as any
@@ -751,7 +755,31 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSlCust(''); setSlAddr(''); setSlDate(today()); setSlHrs(''); setSlEstHrs(''); setSlMi('')
     setSlQuoted(''); setSlMat(''); setSlCollected(''); setSlStore(''); setSlJtype(JOB_TYPES[0])
     setSlPayStatus('Y'); setSlEmatInfo(''); setSlDetailLink(''); setSlNotes('')
+    setSlAccountId('')
+    setShowSvcLinkModal(false)
+    setSvcLinkNotice('')
     setEditSvcId(null); setShowSvcForm(false)
+  }
+
+  function linkServiceEntryToExistingCustomer(accountId: string) {
+    if (!editSvcId || !accountId) return
+    const account = gcContacts.find((c: any) => String(c.id) === String(accountId))
+    if (!account) return
+    const display = [account.company || 'Unnamed', account.contact ? `(${account.contact})` : ''].filter(Boolean).join(' ').trim()
+    const idx = serviceLogs.findIndex((l: any) => l.id === editSvcId)
+    if (idx < 0) return
+    pushState(backup)
+    const prior = backup.serviceLogs[idx] as any
+    backup.serviceLogs[idx] = {
+      ...prior,
+      accountId: account.id,
+      customer: display || prior.customer || 'Unknown',
+    }
+    setSlAccountId(String(account.id))
+    setSlCust(display || slCust)
+    setSvcLinkNotice(`Linked to ${display || 'Customer'}`)
+    setShowSvcLinkModal(false)
+    persist()
   }
 
   function saveSvcEntry() {
@@ -777,7 +805,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       id: editSvcId || ('svc' + Date.now()),
       date: slDate || today(),
       customer: slCust || 'Unknown',
-      accountId: (editSvcId ? (serviceLogs.find(l => l.id === editSvcId) as any)?.accountId : undefined),
+      accountId: (slAccountId || (editSvcId ? (serviceLogs.find(l => l.id === editSvcId) as any)?.accountId : undefined)),
       address: slAddr,
       jtype: slJtype,
       hrs, miles: mi, quoted, mat,
@@ -820,6 +848,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     if (!l) return
     setEditSvcId(l.id)
     setSlCust(l.customer); setSlAddr(l.address || ''); setSlDate(l.date); setSlHrs(String(l.hrs))
+    setSlAccountId(String((l as any).accountId || ''))
     setSlEstHrs(String((l as any).estHrs ?? l.hrs ?? ''))
     setSlMi(String(l.miles)); setSlQuoted(String(l.quoted)); setSlMat(String(l.mat))
     setSlCollected(String(l.collected)); setSlStore(l.store || ''); setSlJtype(l.jtype || JOB_TYPES[0])
@@ -2319,7 +2348,21 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Customer</label>
-                <input value={slCust} onChange={e => setSlCust(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <div className="space-y-1.5">
+                  <input value={slCust} onChange={e => setSlCust(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                  {editSvcId && (
+                    <button
+                      type="button"
+                      onClick={() => setShowSvcLinkModal(true)}
+                      className="w-full px-2 py-1 rounded bg-cyan-700/40 border border-cyan-700/50 text-cyan-200 text-[10px] font-semibold hover:bg-cyan-700/60"
+                    >
+                      Link to Existing Customer
+                    </button>
+                  )}
+                  {svcLinkNotice && (
+                    <div className="text-[10px] text-emerald-300">{svcLinkNotice}</div>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Address</label>
@@ -2393,6 +2436,29 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               <button onClick={saveSvcEntry} className="px-3 py-1.5 rounded bg-orange-600 text-white text-xs font-semibold">{editSvcId ? 'Update' : 'Save'}</button>
               <button onClick={resetSvcForm} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-xs">Cancel</button>
             </div>
+
+            {showSvcLinkModal && (
+              <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-lg rounded-xl border border-cyan-500/30 bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98))] p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-sm font-semibold text-cyan-300">Link to Existing Customer</div>
+                    <button onClick={() => setShowSvcLinkModal(false)} className="text-gray-400 hover:text-gray-200">✕</button>
+                  </div>
+                  <div className="space-y-2">
+                    <select
+                      defaultValue=""
+                      onChange={(e) => linkServiceEntryToExistingCustomer(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-700 text-xs text-cyan-200"
+                    >
+                      <option value="">Select relationship account...</option>
+                      {serviceAccountOptions.map((acc: any) => (
+                        <option key={acc.id} value={acc.id}>{acc.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

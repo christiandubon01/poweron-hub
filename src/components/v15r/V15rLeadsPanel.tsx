@@ -69,6 +69,18 @@ function today() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function norm(v: any): string {
+  return String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function normPhone(v: any): string {
+  return String(v || '').replace(/\D/g, '')
+}
+
+function normEmail(v: any): string {
+  return String(v || '').toLowerCase().trim()
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rLeadsPanel() {
@@ -98,6 +110,8 @@ export default function V15rLeadsPanel() {
   const [geoCache, setGeoCache] = useState<Record<string, { lat: number; lng: number }>>({})
   const [showAddRelationship, setShowAddRelationship] = useState(false)
   const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
+  const [ignoredCleanupKeys, setIgnoredCleanupKeys] = useState<Record<string, boolean>>({})
+  const [cleanupLinkSelection, setCleanupLinkSelection] = useState<Record<string, string>>({})
   const [addRelForm, setAddRelForm] = useState<any>({
     company: '',
     contact: '',
@@ -129,6 +143,16 @@ export default function V15rLeadsPanel() {
   const gcContacts = backup.gcContacts || []
   const serviceLeads = backup.serviceLeads || []
   const weeklyReviews = backup.weeklyReviews || []
+
+  useEffect(() => {
+    const handler = () => forceUpdate()
+    window.addEventListener('storage', handler)
+    window.addEventListener('poweron-data-saved', handler)
+    return () => {
+      window.removeEventListener('storage', handler)
+      window.removeEventListener('poweron-data-saved', handler)
+    }
+  }, [forceUpdate])
 
   function persist() {
     const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
@@ -585,42 +609,198 @@ export default function V15rLeadsPanel() {
     })
   }
 
+  function inferAccountForRecord(record: any, accountList: any[] = gcContacts): any | null {
+    if (!record) return null
+    const byId = String(record.accountId || record.customerId || '').trim()
+    if (byId) {
+      const exact = accountList.find((a: any) => String(a.id) === byId)
+      if (exact) return exact
+    }
+    const recName = norm(record.company || record.customer || record.client || record.contact || record.name || record.title)
+    const recPhone = normPhone(record.phone || record.contactPhone || record.contact_phone)
+    const recEmail = normEmail(record.email || record.contactEmail || record.contact_email)
+    const recAddr = norm(record.address || record.location)
+    const recCity = norm(record.city)
+
+    if (recName) {
+      const exactName = accountList.find((a: any) => {
+        const c1 = norm(a.company)
+        const c2 = norm(a.contact)
+        return recName === c1 || recName === c2
+      })
+      if (exactName) return exactName
+    }
+    if (recPhone) {
+      const exactPhone = accountList.find((a: any) => normPhone(a.phone) && normPhone(a.phone) === recPhone)
+      if (exactPhone) return exactPhone
+    }
+    if (recEmail) {
+      const exactEmail = accountList.find((a: any) => normEmail(a.email) && normEmail(a.email) === recEmail)
+      if (exactEmail) return exactEmail
+    }
+    if (recAddr || recCity) {
+      const addrMatch = accountList.find((a: any) => {
+        const aAddr = norm(a.address)
+        const aCity = norm(a.city)
+        if (!aAddr && !aCity) return false
+        return (!!recAddr && recAddr === aAddr) || (!!recAddr && !!recCity && recAddr === aAddr && recCity === aCity)
+      })
+      if (addrMatch) return addrMatch
+    }
+    if (recName) {
+      const fuzzy = accountList.find((a: any) => {
+        const c1 = norm(a.company)
+        const c2 = norm(a.contact)
+        return (c1 && (c1.includes(recName) || recName.includes(c1))) || (c2 && (c2.includes(recName) || recName.includes(c2)))
+      })
+      if (fuzzy) return fuzzy
+    }
+    return null
+  }
+
+  function isRecordForAccount(record: any, account: any, accountList: any[] = gcContacts): boolean {
+    if (!record || !account) return false
+    const explicitId = String(record.accountId || record.customerId || '').trim()
+    if (explicitId && explicitId === String(account.id)) return true
+    const inferred = inferAccountForRecord(record, accountList)
+    return !!inferred && String(inferred.id) === String(account.id)
+  }
+
+  function getRecordsForAccount(account: any, accountList: any[] = gcContacts) {
+    const projects = (backup.projects || []).filter((p: any) => isRecordForAccount(p, account, accountList))
+    const serviceLogs = (backup.serviceLogs || []).filter((s: any) => isRecordForAccount(s, account, accountList))
+    const serviceEstimates = (backup.serviceEstimates || []).filter((s: any) => isRecordForAccount(s, account, accountList))
+    const activeServiceCalls = (backup.activeServiceCalls || []).filter((s: any) => isRecordForAccount(s, account, accountList))
+    const serviceLeadsForAccount = (serviceLeads || []).filter((s: any) => isRecordForAccount(s, account, accountList))
+    const interactions = account.contactLog || []
+
+    const timelineItems: any[] = []
+    projects.forEach((p: any) => {
+      timelineItems.push({
+        date: p.created || p.lastMove || '',
+        type: 'Project',
+        title: p.name || 'Project',
+        location: [p.address, p.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
+        quoted: num(p.contract || 0),
+        collected: num(p.paid || 0),
+        status: p.status || '—',
+        notes: p.notes || '',
+        accountId: account.id,
+      })
+    })
+    activeServiceCalls.forEach((s: any) => {
+      timelineItems.push({
+        date: s.date || s.created || '',
+        type: 'Service Call',
+        title: s.type || s.customer || 'Service Call',
+        location: [s.address, s.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
+        quoted: num(s.price || s.totalQuote || s.quoted || 0),
+        collected: num(s.collected || 0),
+        status: s.status || '—',
+        notes: s.notes || '',
+        accountId: account.id,
+      })
+    })
+    serviceLogs.forEach((l: any) => {
+      timelineItems.push({
+        date: l.date || '',
+        type: 'Service Call',
+        title: l.jtype || l.customer || 'Service Call',
+        location: [l.address, l.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
+        quoted: num(l.quoted || 0),
+        collected: num(l.collected || 0),
+        status: l.payStatus || '—',
+        notes: l.notes || '',
+        accountId: account.id,
+      })
+    })
+    serviceEstimates.forEach((l: any) => {
+      timelineItems.push({
+        date: l.date || l.createdAt || '',
+        type: 'Estimate',
+        title: l.jobType || l.customer || 'Estimate',
+        location: [l.address, l.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
+        quoted: num(l.totalQuote || 0),
+        collected: 0,
+        status: l.status || 'open',
+        notes: l.notes || '',
+        accountId: account.id,
+      })
+    })
+    interactions.forEach((i: any) => {
+      timelineItems.push({
+        date: i.date || i.timestamp || '',
+        type: 'Interaction',
+        title: i.type || i.method || 'Interaction',
+        location: [account.address, account.city].filter(Boolean).join(', '),
+        quoted: 0,
+        collected: 0,
+        status: 'Logged',
+        notes: i.notes || '',
+        accountId: account.id,
+      })
+    })
+
+    const totals = {
+      projectCount: projects.length,
+      serviceLogCount: serviceLogs.length,
+      serviceEstimateCount: serviceEstimates.length,
+      activeServiceCallCount: activeServiceCalls.length,
+      serviceLeadCount: serviceLeadsForAccount.length,
+      totalQuoted:
+        projects.reduce((s: number, p: any) => s + num(p.contract || 0), 0) +
+        serviceLogs.reduce((s: number, l: any) => s + num(l.quoted || 0), 0) +
+        serviceEstimates.reduce((s: number, l: any) => s + num(l.totalQuote || 0), 0),
+      totalCollected:
+        projects.reduce((s: number, p: any) => s + num(p.paid || 0), 0) +
+        serviceLogs.reduce((s: number, l: any) => s + num(l.collected || 0), 0),
+      outstanding:
+        projects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract || 0) - num(p.paid || 0)), 0) +
+        serviceLogs.reduce((s: number, l: any) => s + Math.max(0, num(l.quoted || 0) - num(l.collected || 0)), 0),
+      repeatCount: projects.length + serviceLogs.length + activeServiceCalls.length,
+      openBids:
+        serviceLeadsForAccount.filter((s: any) => ['Quoted', 'Advance'].includes(String(s.status || ''))).length +
+        serviceEstimates.filter((s: any) => String(s.status || '').toLowerCase() === 'open').length,
+      activeJobs:
+        projects.filter((p: any) => String(p.status || '').toLowerCase() === 'active').length +
+        activeServiceCalls.length +
+        serviceLeadsForAccount.filter((s: any) => ['Advance', 'Quoted', 'Booked'].includes(String(s.status || ''))).length,
+    }
+
+    return { projects, serviceLogs, serviceEstimates, activeServiceCalls, serviceLeads: serviceLeadsForAccount, timelineItems, totals }
+  }
+
   const accounts = useMemo(() => {
-    const serviceLogs = backup.serviceLogs || []
-    const projects = backup.projects || []
     const relationshipPool = gcContacts.filter((gc: any) => {
       const role = String(gc.role || '').trim()
       return role === '' || REL_ACCOUNT_TYPES.includes(role as any)
     })
     return relationshipPool.map((gc: any) => {
-      const company = (gc.company || '').toLowerCase().trim()
-      const linkedSvc = serviceLeads.filter((s: any) => (s.customer || '').toLowerCase().includes(company) || company.includes((s.customer || '').toLowerCase()))
-      const linkedLogs = serviceLogs.filter((s: any) => (s.customer || '').toLowerCase().includes(company) || company.includes((s.customer || '').toLowerCase()))
-      const linkedProjects = projects.filter((p: any) => (p.client || p.name || '').toLowerCase().includes(company) || company.includes((p.client || p.name || '').toLowerCase()))
-      const svcRevenue = linkedLogs.reduce((s: number, l: any) => s + num(l.collected || 0), 0)
-      const projectRevenue = linkedProjects.reduce((s: number, p: any) => s + num(p.paid || 0), 0)
-      const svcOutstanding = linkedLogs.reduce((s: number, l: any) => s + Math.max(0, num(l.quoted || 0) - num(l.collected || 0)), 0)
-      const projectOutstanding = linkedProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract || 0) - num(p.paid || 0)), 0)
+      const matched = getRecordsForAccount(gc, relationshipPool)
       const lastLog = (gc.contactLog || []).slice().sort((a: any, b: any) => String(b.date || b.timestamp).localeCompare(String(a.date || a.timestamp)))[0]
       return {
         id: gc.id,
         name: gc.company || 'Unnamed Account',
-        type: gc.role || (gc.role?.toLowerCase().includes('gc') ? 'General Contractor' : (linkedSvc.length > 0 ? 'Service Customer' : 'Commercial Client')),
+        type: gc.role || (gc.role?.toLowerCase().includes('gc') ? 'General Contractor' : (matched.serviceLeads.length > 0 || matched.serviceLogs.length > 0 ? 'Service Customer' : 'Commercial Client')),
         contact: gc.contact || '',
         phone: gc.phone || '',
         email: gc.email || '',
-        projects: linkedProjects,
-        serviceCalls: linkedSvc,
-        linkedLogs,
+        projects: matched.projects,
+        serviceCalls: [...matched.serviceLeads, ...matched.activeServiceCalls],
+        linkedLogs: matched.serviceLogs,
+        linkedEstimates: matched.serviceEstimates,
+        activeServiceCalls: matched.activeServiceCalls,
+        timelineItems: matched.timelineItems,
         interactions: gc.contactLog || [],
-        lifetimeRevenue: svcRevenue + projectRevenue,
-        outstanding: svcOutstanding + projectOutstanding,
-        repeatCount: linkedLogs.length + linkedProjects.length,
-        openBids: linkedSvc.filter((s: any) => ['Quoted', 'Advance'].includes(s.status)).length,
-        activeJobs: linkedSvc.filter((s: any) => ['Advance', 'Quoted', 'Booked'].includes(s.status)).length + linkedProjects.filter((p: any) => String(p.status || '').toLowerCase() === 'active').length,
+        totals: matched.totals,
+        lifetimeRevenue: matched.totals.totalCollected,
+        outstanding: matched.totals.outstanding,
+        repeatCount: matched.totals.repeatCount,
+        openBids: matched.totals.openBids,
+        activeJobs: matched.totals.activeJobs,
         lastInteraction: (lastLog?.date || lastLog?.timestamp || gc.lastContact || gc.created || ''),
-        address: gc.address || linkedSvc[0]?.address || linkedProjects[0]?.address || '',
-        city: gc.city || linkedSvc[0]?.city || '',
+        address: gc.address || matched.serviceLeads[0]?.address || matched.activeServiceCalls[0]?.address || matched.projects[0]?.address || matched.serviceLogs[0]?.address || '',
+        city: gc.city || matched.serviceLeads[0]?.city || matched.activeServiceCalls[0]?.city || matched.projects[0]?.city || matched.serviceLogs[0]?.city || '',
         notes: gc.notes || '',
         tags: gc.tags || '',
       }
@@ -645,6 +825,26 @@ export default function V15rLeadsPanel() {
       a.serviceCalls.forEach((s: any, idx: number) => {
         const q = [s.address, s.city, 'CA'].filter(Boolean).join(', ')
         const key = `${a.id}::${idx + 1}::${q}`
+        if (!q || geoCache[key]) return
+        geocoder.geocode({ address: q }, (results: any, status: any) => {
+          if (status !== 'OK' || !results?.[0]) return
+          const loc = results[0].geometry.location
+          setGeoCache(prev => ({ ...prev, [key]: { lat: loc.lat(), lng: loc.lng() } }))
+        })
+      })
+      ;(a.linkedLogs || []).forEach((s: any, idx: number) => {
+        const q = [s.address, s.city, 'CA'].filter(Boolean).join(', ')
+        const key = `${a.id}::log::${idx}::${q}`
+        if (!q || geoCache[key]) return
+        geocoder.geocode({ address: q }, (results: any, status: any) => {
+          if (status !== 'OK' || !results?.[0]) return
+          const loc = results[0].geometry.location
+          setGeoCache(prev => ({ ...prev, [key]: { lat: loc.lat(), lng: loc.lng() } }))
+        })
+      })
+      ;(a.linkedEstimates || []).forEach((s: any, idx: number) => {
+        const q = [s.address, s.city, 'CA'].filter(Boolean).join(', ')
+        const key = `${a.id}::est::${idx}::${q}`
         if (!q || geoCache[key]) return
         geocoder.geocode({ address: q }, (results: any, status: any) => {
           if (status !== 'OK' || !results?.[0]) return
@@ -698,6 +898,14 @@ export default function V15rLeadsPanel() {
         const key = `${a.id}::${idx + 1}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
         if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.type || s.customer || 'Service Call', status: s.status || '—', quoted: num(s.price || s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
       })
+      ;(a.linkedLogs || []).forEach((s: any, idx: number) => {
+        const key = `${a.id}::log::${idx}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.jtype || s.customer || 'Service Call', status: s.payStatus || '—', quoted: num(s.quoted || 0), collected: num(s.collected || 0), notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+      })
+      ;(a.linkedEstimates || []).forEach((s: any, idx: number) => {
+        const key = `${a.id}::est::${idx}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Estimate', title: s.jobType || s.customer || 'Estimate', status: s.status || 'open', quoted: num(s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || s.createdAt || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+      })
       a.projects.forEach((p: any, idx: number) => {
         const key = `${a.id}::proj::${idx}::${[p.address, p.city, 'CA'].filter(Boolean).join(', ')}`
         if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: p.name || a.name, gc: a.type === 'General Contractor', kind: 'Project', title: p.name || 'Project', status: p.status || '—', quoted: num(p.contract || 0), collected: num(p.paid || 0), notes: p.notes || '', date: p.created || '', location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
@@ -737,17 +945,17 @@ export default function V15rLeadsPanel() {
     return uniqueIds.map((id: string) => {
       const acc = accountsById.get(id)
       if (!acc) return null
-      const totalQuoted = (acc.projects || []).reduce((s: number, p: any) => s + num(p.contract || 0), 0) + (acc.linkedLogs || []).reduce((s: number, l: any) => s + num(l.quoted || 0), 0)
-      const totalCollected = num(acc.lifetimeRevenue || 0)
-      const outstanding = num(acc.outstanding || 0)
+      const totalQuoted = num(acc.totals?.totalQuoted || 0)
+      const totalCollected = num(acc.totals?.totalCollected || acc.lifetimeRevenue || 0)
+      const outstanding = num(acc.totals?.outstanding || acc.outstanding || 0)
       const pointLocation = (activeCluster.points || []).find((p: any) => p.accountId === id && p.location)?.location || ''
       return {
         id: acc.id,
         name: acc.name || 'Unnamed Account',
         type: acc.type || 'Unknown',
         location: [acc.address, acc.city].filter(Boolean).join(', ') || pointLocation || 'No location',
-        projectCount: (acc.projects || []).length,
-        serviceCount: (acc.serviceCalls || []).length,
+        projectCount: num(acc.totals?.projectCount || (acc.projects || []).length),
+        serviceCount: num(acc.totals?.serviceLogCount || 0) + num(acc.totals?.activeServiceCallCount || 0),
         totalQuoted,
         totalCollected,
         outstanding,
@@ -759,58 +967,7 @@ export default function V15rLeadsPanel() {
     const sourceAccounts = (mapMode === 'all_jobs' && !selectedAccount) ? mapScopedAccounts : (selectedAccount ? [selectedAccount] : [])
     const events: any[] = []
     sourceAccounts.forEach((a: any) => {
-      a.projects.forEach((p: any) => {
-        events.push({
-          date: p.created || p.lastMove || '',
-          type: 'Project',
-          title: p.name || 'Project',
-          location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
-          quoted: num(p.contract || 0),
-          collected: num(p.paid || 0),
-          status: p.status || '—',
-          notes: p.notes || '',
-          accountId: a.id,
-        })
-      })
-      a.serviceCalls.forEach((s: any) => {
-        events.push({
-          date: s.date || s.created || '',
-          type: 'Service Call',
-          title: s.type || s.customer || 'Service Call',
-          location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
-          quoted: num(s.price || s.totalQuote || 0),
-          collected: 0,
-          status: s.status || '—',
-          notes: s.notes || '',
-          accountId: a.id,
-        })
-      })
-      ;(a.linkedLogs || []).forEach((l: any) => {
-        events.push({
-          date: l.date || '',
-          type: 'Estimate',
-          title: l.jtype || l.customer || 'Estimate',
-          location: [l.address, l.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
-          quoted: num(l.quoted || 0),
-          collected: num(l.collected || 0),
-          status: l.payStatus || '—',
-          notes: l.notes || '',
-          accountId: a.id,
-        })
-      })
-      ;(a.interactions || []).forEach((i: any) => {
-        events.push({
-          date: i.date || i.timestamp || '',
-          type: 'Interaction',
-          title: i.type || i.method || 'Interaction',
-          location: [a.address, a.city].filter(Boolean).join(', '),
-          quoted: 0,
-          collected: 0,
-          status: 'Logged',
-          notes: i.notes || '',
-          accountId: a.id,
-        })
-      })
+      ;(a.timelineItems || []).forEach((ev: any) => events.push(ev))
     })
     return events
       .filter(e => e.date || e.title || e.notes)
@@ -818,15 +975,133 @@ export default function V15rLeadsPanel() {
       .slice(0, 80)
   }, [mapMode, selectedAccount, mapScopedAccounts])
 
+  const unmatchedLegacyGroups = useMemo(() => {
+    const pool: any[] = [
+      ...(backup.projects || []).map((r: any) => ({ ...r, _kind: 'project', _customer: r.client || r.customer || r.name })),
+      ...(backup.serviceLogs || []).map((r: any) => ({ ...r, _kind: 'service_log', _customer: r.customer || r.client })),
+      ...(backup.serviceEstimates || []).map((r: any) => ({ ...r, _kind: 'service_estimate', _customer: r.customer || r.client })),
+    ]
+    const groups = new Map<string, any>()
+    pool.forEach((r: any) => {
+      const inferred = inferAccountForRecord(r, gcContacts)
+      if (inferred) return
+      const name = String(r._customer || '').trim()
+      if (!name) return
+      const addr = String(r.address || r.location || '').trim()
+      const city = String(r.city || '').trim()
+      const key = `${norm(name)}|${norm(addr)}|${norm(city)}`
+      if (!groups.has(key)) {
+        groups.set(key, { key, name, address: addr, city, count: 0, estimatedRevenue: 0, records: [] })
+      }
+      const g = groups.get(key)
+      g.count += 1
+      g.estimatedRevenue += num(r.contract || r.totalQuote || r.quoted || r.price || 0)
+      g.records.push(r)
+    })
+    return Array.from(groups.values()).filter((g: any) => !ignoredCleanupKeys[g.key]).sort((a: any, b: any) => b.count - a.count)
+  }, [backup, gcContacts, ignoredCleanupKeys])
+
+  const emptyRelationshipAccounts = useMemo(() => {
+    return accounts.filter((a: any) => (a.projects?.length || 0) === 0 && (a.serviceCalls?.length || 0) === 0 && (a.linkedLogs?.length || 0) === 0 && (a.linkedEstimates?.length || 0) === 0)
+  }, [accounts])
+
+  function createRelationshipFromGroup(group: any) {
+    if (!group) return
+    pushState(backup)
+    const newGC: any = {
+      id: 'gc' + Date.now() + Math.random().toString(36).slice(2, 6),
+      company: group.name || 'Unnamed',
+      contact: '',
+      role: 'Service Customer',
+      phone: '',
+      email: '',
+      address: group.address || '',
+      city: group.city || '',
+      notes: `Created from legacy cleanup (${group.count} records)`,
+      tags: 'legacy-cleanup',
+      intro: '',
+      sent: 0,
+      awarded: 0,
+      avg: 0,
+      pay: '',
+      phase: 'First Contact',
+      fit: 0,
+      action: '',
+      due: '',
+      created: today(),
+      contactLog: [],
+      nextFollowup: '',
+      lastContact: '',
+    }
+    backup.gcContacts = [...gcContacts, newGC]
+    persist()
+  }
+
+  function bulkCreateFromUnmatched() {
+    if (!unmatchedLegacyGroups.length) return
+    if (!confirm(`Create ${unmatchedLegacyGroups.length} relationship accounts from unmatched legacy customers?`)) return
+    pushState(backup)
+    const created = unmatchedLegacyGroups.map((g: any, i: number) => ({
+      id: 'gc' + Date.now() + i + Math.random().toString(36).slice(2, 5),
+      company: g.name || 'Unnamed',
+      contact: '',
+      role: 'Service Customer',
+      phone: '',
+      email: '',
+      address: g.address || '',
+      city: g.city || '',
+      notes: `Created from legacy cleanup (${g.count} records)`,
+      tags: 'legacy-cleanup',
+      intro: '',
+      sent: 0,
+      awarded: 0,
+      avg: 0,
+      pay: '',
+      phase: 'First Contact',
+      fit: 0,
+      action: '',
+      due: '',
+      created: today(),
+      contactLog: [],
+      nextFollowup: '',
+      lastContact: '',
+    }))
+    backup.gcContacts = [...gcContacts, ...created]
+    persist()
+  }
+
+  function linkGroupToExisting(group: any, accountId: string) {
+    if (!group || !accountId) return
+    const target = gcContacts.find((g: any) => String(g.id) === String(accountId))
+    if (!target) return
+    pushState(backup)
+    const prior = String(target.tags || '').trim()
+    const nextTag = [prior, `linked:${group.name}`].filter(Boolean).join(', ')
+    backup.gcContacts = gcContacts.map((g: any) => g.id === target.id ? { ...g, tags: nextTag } : g)
+    setIgnoredCleanupKeys((prev) => ({ ...prev, [group.key]: true }))
+    persist()
+  }
+
+  function deleteEmptyRelationshipAccount(accountId: string) {
+    const acc = accounts.find((a: any) => a.id === accountId)
+    if (!acc) return
+    const hasHistory = (acc.projects?.length || 0) > 0 || (acc.serviceCalls?.length || 0) > 0 || (acc.linkedLogs?.length || 0) > 0 || (acc.linkedEstimates?.length || 0) > 0
+    if (hasHistory) return
+    if (!confirm(`Delete empty relationship account "${acc.name}"?`)) return
+    pushState(backup)
+    backup.gcContacts = gcContacts.filter((g: any) => g.id !== accountId)
+    persist()
+  }
+
   function renderAccountsCenter() {
     const totalAccounts = filteredAccounts.length
     const activeJobs = filteredAccounts.reduce((s: number, a: any) => s + a.activeJobs, 0)
     const lifetimeRevenue = filteredAccounts.reduce((s: number, a: any) => s + a.lifetimeRevenue, 0)
     const outstanding = filteredAccounts.reduce((s: number, a: any) => s + a.outstanding, 0)
-    const activeService = filteredAccounts.reduce((s: number, a: any) => s + a.serviceCalls.filter((x: any) => ['Advance', 'Quoted', 'Booked'].includes(x.status)).length, 0)
+    const activeService = filteredAccounts.reduce((s: number, a: any) => s + num(a.totals?.activeServiceCallCount || 0), 0)
     const activeBids = filteredAccounts.reduce((s: number, a: any) => s + a.openBids, 0)
     const repeatClients = filteredAccounts.filter((a: any) => a.repeatCount > 1).length
-    const gcAccounts = filteredAccounts.filter((a: any) => a.type === 'GC').length
+    const gcAccounts = filteredAccounts.filter((a: any) => a.type === 'General Contractor').length
 
     return (
       <div className="space-y-4">
@@ -851,6 +1126,53 @@ export default function V15rLeadsPanel() {
               <div className="text-sm font-bold mt-1 font-mono" style={{ color: clr }}>{String(value)}</div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-xl border border-cyan-900/30 bg-[var(--bg-card)] p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold">Relationship Cleanup</div>
+            <button onClick={bulkCreateFromUnmatched} className="px-2.5 py-1 rounded bg-emerald-700/50 text-emerald-300 text-[10px] font-semibold hover:bg-emerald-600/50">
+              Create accounts from unmatched customers
+            </button>
+          </div>
+          <div className="space-y-2 max-h-[180px] overflow-auto pr-1">
+            {unmatchedLegacyGroups.map((g: any) => (
+              <div key={g.key} className="rounded border border-gray-800 bg-[var(--bg-secondary)] p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs text-gray-100 font-semibold">{g.name}</div>
+                    <div className="text-[10px] text-gray-500">{[g.address, g.city].filter(Boolean).join(', ') || 'No address'} • {g.count} records • {fmt(g.estimatedRevenue)}</div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => createRelationshipFromGroup(g)} className="px-2 py-1 rounded bg-emerald-700/40 text-emerald-300 text-[10px]">Create</button>
+                    <select
+                      value={cleanupLinkSelection[g.key] || ''}
+                      onChange={(e) => setCleanupLinkSelection((prev) => ({ ...prev, [g.key]: e.target.value }))}
+                      className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-[10px] text-cyan-300"
+                    >
+                      <option value="">Link to existing</option>
+                      {gcContacts.map((c: any) => <option key={c.id} value={c.id}>{c.company || c.contact || c.id}</option>)}
+                    </select>
+                    <button onClick={() => linkGroupToExisting(g, cleanupLinkSelection[g.key])} className="px-2 py-1 rounded bg-cyan-700/40 text-cyan-300 text-[10px]">Link</button>
+                    <button onClick={() => setIgnoredCleanupKeys((prev) => ({ ...prev, [g.key]: true }))} className="px-2 py-1 rounded bg-gray-700 text-gray-300 text-[10px]">Ignore</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {unmatchedLegacyGroups.length === 0 && <div className="text-xs text-gray-500">No unmatched legacy customer groups found.</div>}
+          </div>
+          <div className="pt-1 border-t border-gray-800">
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold mb-2">Empty Relationship Accounts</div>
+            <div className="space-y-1.5 max-h-[120px] overflow-auto pr-1">
+              {emptyRelationshipAccounts.map((a: any) => (
+                <div key={a.id} className="rounded border border-gray-800 bg-[var(--bg-secondary)] px-2 py-1.5 flex items-center justify-between">
+                  <div className="text-[11px] text-gray-300">{a.name}</div>
+                  <button onClick={() => deleteEmptyRelationshipAccount(a.id)} className="px-2 py-0.5 rounded bg-red-700/30 text-red-300 text-[10px]">Delete</button>
+                </div>
+              ))}
+              {emptyRelationshipAccounts.length === 0 && <div className="text-xs text-gray-500">No empty relationship accounts.</div>}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
@@ -1057,24 +1379,24 @@ export default function V15rLeadsPanel() {
             <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold mb-2">Account Intelligence</div>
             {(selectedAccount && mapMode === 'selected') ? (
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Projects</div><div className="text-gray-100 font-semibold">{selectedAccount.projects.length}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Service Calls</div><div className="text-gray-100 font-semibold">{selectedAccount.serviceCalls.length}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Quoted</div><div className="text-blue-300 font-semibold font-mono">{fmt((selectedAccount.projects || []).reduce((s: number, p: any) => s + num(p.contract || 0), 0) + (selectedAccount.linkedLogs || []).reduce((s: number, l: any) => s + num(l.quoted || 0), 0))}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Collected</div><div className="text-emerald-400 font-semibold font-mono">{fmt(selectedAccount.lifetimeRevenue)}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Outstanding</div><div className="text-orange-400 font-semibold font-mono">{fmt(selectedAccount.outstanding)}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Repeat History</div><div className="text-cyan-400 font-semibold">{selectedAccount.repeatCount}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Active/Open Jobs</div><div className="text-violet-300 font-semibold">{selectedAccount.activeJobs}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Projects</div><div className="text-gray-100 font-semibold">{selectedAccount.totals?.projectCount ?? selectedAccount.projects.length}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Service Calls</div><div className="text-gray-100 font-semibold">{(selectedAccount.totals?.serviceLogCount || 0) + (selectedAccount.totals?.activeServiceCallCount || 0)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Quoted</div><div className="text-blue-300 font-semibold font-mono">{fmt(selectedAccount.totals?.totalQuoted || 0)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Collected</div><div className="text-emerald-400 font-semibold font-mono">{fmt(selectedAccount.totals?.totalCollected || selectedAccount.lifetimeRevenue)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Outstanding</div><div className="text-orange-400 font-semibold font-mono">{fmt(selectedAccount.totals?.outstanding || selectedAccount.outstanding)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Repeat History</div><div className="text-cyan-400 font-semibold">{selectedAccount.totals?.repeatCount || selectedAccount.repeatCount}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Active/Open Jobs</div><div className="text-violet-300 font-semibold">{selectedAccount.totals?.activeJobs || selectedAccount.activeJobs}</div></div>
                 <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Last Interaction</div><div className="text-gray-200 font-semibold">{selectedAccount.lastInteraction || '—'}</div></div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Accounts</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.length}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Jobs/Projects</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.reduce((s: number, a: any) => s + (a.projects?.length || 0), 0)}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Service Calls</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.reduce((s: number, a: any) => s + (a.serviceCalls?.length || 0), 0)}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Quoted</div><div className="text-blue-300 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + (a.projects || []).reduce((p: number, j: any) => p + num(j.contract || 0), 0) + (a.linkedLogs || []).reduce((l: number, x: any) => l + num(x.quoted || 0), 0), 0))}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Collected</div><div className="text-emerald-400 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.lifetimeRevenue || 0), 0))}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Outstanding</div><div className="text-orange-400 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.outstanding || 0), 0))}</div></div>
-                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Repeat Customers</div><div className="text-cyan-300 font-semibold">{mapScopedAccounts.filter((a: any) => a.repeatCount > 1).length}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Jobs/Projects</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.reduce((s: number, a: any) => s + num(a.totals?.projectCount || 0), 0)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Service Calls</div><div className="text-gray-100 font-semibold">{mapScopedAccounts.reduce((s: number, a: any) => s + num(a.totals?.serviceLogCount || 0) + num(a.totals?.activeServiceCallCount || 0), 0)}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Quoted</div><div className="text-blue-300 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.totals?.totalQuoted || 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Total Collected</div><div className="text-emerald-400 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.totals?.totalCollected || 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Outstanding</div><div className="text-orange-400 font-semibold font-mono">{fmt(mapScopedAccounts.reduce((s: number, a: any) => s + num(a.totals?.outstanding || 0), 0))}</div></div>
+                <div className="rounded bg-[var(--bg-secondary)] border border-gray-800 p-2"><div className="text-gray-500 text-[10px]">Repeat Customers</div><div className="text-cyan-300 font-semibold">{mapScopedAccounts.filter((a: any) => num(a.totals?.repeatCount || 0) > 1).length}</div></div>
               </div>
             )}
           </div>
