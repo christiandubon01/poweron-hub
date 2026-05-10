@@ -349,36 +349,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return
       }
 
-      // 4. If user just authenticated via password AND has a passcode, skip PIN verification
-      if (sessionStorage.getItem('poweron_password_authed') === '1' && !!profile.passcode_hash) {
-        sessionStorage.removeItem('poweron_password_authed')
+      // 4. If user just authenticated via password, skip PIN verification.
+      // PIN is only required for lock/resume flows, not full password login.
+      if (sessionStorage.getItem('poweron_password_authed') === '1') {
         const { role, ownerId } = await resolveUserRole(user.id)
-        let session = null
+        let appSession = null
         try {
-          session = await withTimeout(
+          await withTimeout(
             createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
-            5000, null
+            5000, 'timeout'
           )
+          appSession = await withTimeout(validateAppSession(), 3000, null)
         } catch {}
-        set({
-        status: 'authenticated',
-        tenantDataReady: false,
-        tenantUserId: user.id,
-        user,
-        profile,
-        appSession: session,
-        role: userRole,
-        ownerId,
-      })
 
-      // Bootstrap in background instead of blocking unlock
-      bootstrapAuthenticatedUser(user.id)
-        .then(() => {
-          set({ tenantDataReady: true })
+        set({
+          status: 'authenticated',
+          tenantDataReady: false,
+          tenantUserId: user.id,
+          user,
+          profile,
+          appSession,
+          role,
+          ownerId,
+          error: null,
         })
-        .catch((err) => {
-          console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
-        })
+
+        sessionStorage.removeItem('poweron_password_authed')
+
+        bootstrapAuthenticatedUser(user.id)
+          .then(() => {
+            set({ tenantDataReady: true })
+          })
+          .catch((err) => {
+            console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
+          })
+
         return
       }
 
@@ -424,7 +429,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     } catch (err) {
       console.error('[Auth] initialize error:', err)
-      set({ status: 'unauthenticated', error: 'Failed to initialize. Please try again.' })
+      set({
+        status: 'unauthenticated',
+        user: null,
+        profile: null,
+        appSession: null,
+        tenantDataReady: false,
+        tenantUserId: null,
+        error: 'Failed to initialize. Please try again.',
+      })
     }
   },
 
