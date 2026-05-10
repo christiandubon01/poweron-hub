@@ -22,12 +22,13 @@ import {
   fmtK,
   fmt,
   num,
+  resolveCanonicalCustomerName,
   daysSince,
   type BackupGCContact,
 } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
-import { getRelationshipLinks, linkEntityToAccount, upsertRelationshipAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
+import { linkEntityToAccount, upsertRelationshipAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
@@ -142,9 +143,8 @@ export default function V15rLeadsPanel() {
   const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
   const [ignoredCleanupKeys, setIgnoredCleanupKeys] = useState<Record<string, boolean>>({})
   const [cleanupLinkSelection, setCleanupLinkSelection] = useState<Record<string, string>>({})
-  const [expandedCleanupGroups, setExpandedCleanupGroups] = useState<Record<string, boolean>>({})
-  const [relationshipLinks, setRelationshipLinks] = useState<any[]>([])
   const [pendingCleanupCreateGroupKey, setPendingCleanupCreateGroupKey] = useState<string | null>(null)
+  const [cleanupBusyKey, setCleanupBusyKey] = useState<string | null>(null)
   const [addRelForm, setAddRelForm] = useState<any>({
     company: '',
     contact: '',
@@ -186,22 +186,6 @@ export default function V15rLeadsPanel() {
       window.removeEventListener('poweron-data-saved', handler)
     }
   }, [forceUpdate])
-
-  useEffect(() => {
-    let active = true
-    if (!authProfile?.org_id) {
-      setRelationshipLinks([])
-      return () => { active = false }
-    }
-    void getRelationshipLinks(authProfile.org_id).then((rows) => {
-      if (!active) return
-      setRelationshipLinks(Array.isArray(rows) ? rows : [])
-    }).catch((err) => {
-      console.warn('[V15rLeadsPanel] relationship links load failed', err)
-      if (active) setRelationshipLinks([])
-    })
-    return () => { active = false }
-  }, [authProfile?.org_id, backup._lastSavedAt])
 
   function persist() {
     const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
@@ -631,8 +615,8 @@ export default function V15rLeadsPanel() {
     })
     persist()
     if (savedId) setSelectedAccountId(savedId)
-    const linkedGroup = pendingCleanupCreateGroupKey
-      ? unmatchedLegacyGroups.find((g: any) => g.key === pendingCleanupCreateGroupKey)
+    const cleanupRowToLink = pendingCleanupCreateGroupKey
+      ? cleanupRows.find((g: any) => g.key === pendingCleanupCreateGroupKey)
       : null
     if (savedId) {
       const saved = (backup.gcContacts || []).find((x: any) => String(x.id) === String(savedId))
@@ -654,8 +638,8 @@ export default function V15rLeadsPanel() {
           legacy_payload: saved || payload,
         },
       }).catch((err) => console.warn('[V15rLeadsPanel] relationship account upsert failed', err))
-      if (linkedGroup) {
-        linkGroupToExisting(linkedGroup, String(savedId))
+      if (cleanupRowToLink) {
+        void linkCleanupRowToExisting(cleanupRowToLink, String(savedId))
       }
     }
   }
@@ -726,14 +710,6 @@ export default function V15rLeadsPanel() {
       })
       if (addrMatch) return addrMatch
     }
-    if (recName) {
-      const fuzzy = accountList.find((a: any) => {
-        const c1 = norm(a.company)
-        const c2 = norm(a.contact)
-        return (c1 && (c1.includes(recName) || recName.includes(c1))) || (c2 && (c2.includes(recName) || recName.includes(c2)))
-      })
-      if (fuzzy) return fuzzy
-    }
     return null
   }
 
@@ -743,6 +719,18 @@ export default function V15rLeadsPanel() {
     if (explicitId && explicitId === String(account.id)) return true
     const inferred = inferAccountForRecord(record, accountList)
     return !!inferred && String(inferred.id) === String(account.id)
+  }
+
+  function getCanonicalAccountNameById(accountId: any, accountList: any[] = gcContacts): string {
+    const id = String(accountId || '').trim()
+    if (!id) return ''
+    const acc = accountList.find((a: any) => String(a?.id || '') === id)
+    if (!acc) return ''
+    return String(acc.company || acc.contact || '').trim()
+  }
+
+  function resolveRecordCustomerName(record: any, accountList: any[] = gcContacts): string {
+    return resolveCanonicalCustomerName(record, accountList)
   }
 
   function getRecordsForAccount(account: any, accountList: any[] = gcContacts) {
@@ -768,10 +756,11 @@ export default function V15rLeadsPanel() {
       })
     })
     activeServiceCalls.forEach((s: any) => {
+      const canonicalCustomer = resolveRecordCustomerName(s, accountList)
       timelineItems.push({
         date: s.date || s.created || '',
         type: 'Service Call',
-        title: s.type || s.customer || 'Service Call',
+        title: `${canonicalCustomer || 'Service Call'}${s.type ? ` — ${s.type}` : ''}`,
         location: [s.address, s.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
         quoted: num(s.price || s.totalQuote || s.quoted || 0),
         collected: num(s.collected || 0),
@@ -781,10 +770,11 @@ export default function V15rLeadsPanel() {
       })
     })
     serviceLogs.forEach((l: any) => {
+      const canonicalCustomer = resolveRecordCustomerName(l, accountList)
       timelineItems.push({
         date: l.date || '',
         type: 'Service Call',
-        title: l.jtype || l.customer || 'Service Call',
+        title: `${canonicalCustomer || 'Service Call'}${l.jtype ? ` — ${l.jtype}` : ''}`,
         location: [l.address, l.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
         quoted: num(l.quoted || 0),
         collected: num(l.collected || 0),
@@ -794,10 +784,11 @@ export default function V15rLeadsPanel() {
       })
     })
     serviceEstimates.forEach((l: any) => {
+      const canonicalCustomer = resolveRecordCustomerName(l, accountList)
       timelineItems.push({
         date: l.date || l.createdAt || '',
         type: 'Estimate',
-        title: l.jobType || l.customer || 'Estimate',
+        title: `${canonicalCustomer || 'Estimate'}${l.jobType ? ` — ${l.jobType}` : ''}`,
         location: [l.address, l.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
         quoted: num(l.totalQuote || 0),
         collected: 0,
@@ -982,15 +973,18 @@ export default function V15rLeadsPanel() {
       if (geoCache[baseKey]) pts.push({ accountId: a.id, lat: geoCache[baseKey].lat, lng: geoCache[baseKey].lng, label: a.name, gc: a.type === 'General Contractor', kind: 'Account', title: a.name, status: a.activeJobs > 0 ? 'Active' : 'Idle', quoted: 0, collected: 0, notes: a.notes || '', location: [a.address, a.city].filter(Boolean).join(', ') })
       a.serviceCalls.forEach((s: any, idx: number) => {
         const key = `${a.id}::${idx + 1}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.type || s.customer || 'Service Call', status: s.status || '—', quoted: num(s.price || s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        const canonicalCustomer = resolveRecordCustomerName(s, gcContacts) || a.name
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: canonicalCustomer, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.type || canonicalCustomer || 'Service Call', status: s.status || '—', quoted: num(s.price || s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
       })
       ;(a.linkedLogs || []).forEach((s: any, idx: number) => {
         const key = `${a.id}::log::${idx}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.jtype || s.customer || 'Service Call', status: s.payStatus || '—', quoted: num(s.quoted || 0), collected: num(s.collected || 0), notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        const canonicalCustomer = resolveRecordCustomerName(s, gcContacts) || a.name
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: canonicalCustomer, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.jtype || canonicalCustomer || 'Service Call', status: s.payStatus || '—', quoted: num(s.quoted || 0), collected: num(s.collected || 0), notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
       })
       ;(a.linkedEstimates || []).forEach((s: any, idx: number) => {
         const key = `${a.id}::est::${idx}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: s.customer || a.name, gc: a.type === 'General Contractor', kind: 'Estimate', title: s.jobType || s.customer || 'Estimate', status: s.status || 'open', quoted: num(s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || s.createdAt || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        const canonicalCustomer = resolveRecordCustomerName(s, gcContacts) || a.name
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: canonicalCustomer, gc: a.type === 'General Contractor', kind: 'Estimate', title: s.jobType || canonicalCustomer || 'Estimate', status: s.status || 'open', quoted: num(s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || s.createdAt || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
       })
       a.projects.forEach((p: any, idx: number) => {
         const key = `${a.id}::proj::${idx}::${[p.address, p.city, 'CA'].filter(Boolean).join(', ')}`
@@ -1061,138 +1055,151 @@ export default function V15rLeadsPanel() {
       .slice(0, 80)
   }, [mapMode, selectedAccount, mapScopedAccounts])
 
-  const unmatchedLegacyGroups = useMemo(() => {
-    const accountIds = new Set(gcContacts.map((a: any) => String(a?.id || '')).filter(Boolean))
-    const linkedEntityKeys = new Set(
-      (relationshipLinks || []).map((l: any) => `${String(l?.entity_type || '')}|${String(l?.entity_id || '')}`)
-    )
-    const accountNameKeys = new Set<string>()
-    const accountAddressCityKeys = new Set<string>()
+  const cleanupRows = useMemo(() => {
+    const accountById = new Map<string, any>()
     gcContacts.forEach((a: any) => {
-      const companyKey = norm(a?.company)
-      const contactKey = norm(a?.contact)
-      if (companyKey) accountNameKeys.add(companyKey)
-      if (contactKey) accountNameKeys.add(contactKey)
-      const addrKey = norm(a?.address)
-      const cityKey = norm(a?.city)
-      if (addrKey && cityKey) accountAddressCityKeys.add(`${addrKey}|${cityKey}`)
+      const id = String(a?.id || '').trim()
+      if (id) accountById.set(id, a)
     })
-
-    const kindLabel = (kind: string) =>
-      kind === 'project' ? 'Project'
-        : kind === 'service_log' ? 'Service Call'
-        : kind === 'service_estimate' ? 'Estimate'
-        : kind === 'active_service_call' ? 'Service Call'
-        : 'Record'
-    const resolveAmount = (r: any) => {
-      if (r?._kind === 'project') return projectQuoted(r)
-      if (r?._kind === 'service_log') return num(r?.quoted || r?.total || 0)
-      if (r?._kind === 'service_estimate') return num(r?.totalQuote || r?.quoted || 0)
-      if (r?._kind === 'active_service_call') return num(r?.price || r?.totalQuote || r?.quoted || 0)
-      return 0
-    }
-    const resolveCollected = (r: any) => {
-      if (r?._kind === 'project') return projectCollected(r)
-      if (r?._kind === 'service_log') return num(r?.collected || 0)
-      if (r?._kind === 'service_estimate') return 0
-      if (r?._kind === 'active_service_call') return num(r?.collected || 0)
-      return 0
-    }
-    const resolveDate = (r: any) => String(r?.date || r?.createdAt || r?.created || r?.lastMove || '')
-    const resolveTitle = (r: any) => String(r?.name || r?.jobType || r?.jtype || r?.type || r?._customer || 'Untitled')
-
-    const pool: any[] = [
-      ...(backup.projects || []).map((r: any) => ({ ...r, _kind: 'project', _customer: r.client || r.customer || r.name })),
-      ...(backup.serviceLogs || []).map((r: any) => ({ ...r, _kind: 'service_log', _customer: r.customer || r.client })),
-      ...(backup.serviceEstimates || []).map((r: any) => ({ ...r, _kind: 'service_estimate', _customer: r.customer || r.client })),
-      ...(backup.activeServiceCalls || []).map((r: any) => ({ ...r, _kind: 'active_service_call', _customer: r.customer || r.client || r.name })),
+    const toRows = (list: any[], kind: string) => list.map((r: any) => ({ ...r, _kind: kind }))
+    const records = [
+      ...toRows(backup.projects || [], 'project'),
+      ...toRows(backup.serviceLogs || [], 'service_log'),
+      ...toRows(backup.serviceEstimates || [], 'service_estimate'),
+      ...toRows(backup.activeServiceCalls || [], 'active_service_call'),
     ]
-    const groups = new Map<string, any>()
-    pool.forEach((r: any) => {
-      const explicitId = String(r?.accountId || r?.customerId || '').trim()
-      if (explicitId && accountIds.has(explicitId)) return
-      const entityKey = `${String(r?._kind || '')}|${String(r?.id || '')}`
-      if (r?.id && linkedEntityKeys.has(entityKey)) return
-      const nameKey = norm(r?._customer || r?.company || r?.contact || r?.name || r?.title || '')
-      if (nameKey && accountNameKeys.has(nameKey)) return
-      const addressKey = norm(r?.address || r?.location || '')
-      const cityKey = norm(r?.city || '')
-      if (addressKey && cityKey && accountAddressCityKeys.has(`${addressKey}|${cityKey}`)) return
-      const name = String(r._customer || '').trim()
-      if (!name) return
-      const addr = String(r.address || r.location || '').trim()
-      const city = String(r.city || '').trim()
-      const key = `${norm(name)}|${norm(addr)}|${norm(city)}`
-      if (!groups.has(key)) {
-        groups.set(key, { key, name, address: addr, city, count: 0, estimatedRevenue: 0, collectedTotal: 0, records: [], typeSet: new Set<string>() })
+    return records.map((r: any, idx: number) => {
+      const id = String(r?.id || '').trim()
+      const linkedId = String(r?.accountId || r?.customerId || '').trim()
+      const canonical = linkedId ? getCanonicalAccountNameById(linkedId, gcContacts) : ''
+      const stored = String(r?.customer || r?.client || r?.name || '').trim()
+      const missingId = !id
+      const missingLink = !missingId && !linkedId
+      const nameMismatch = !missingId && !!linkedId && !!canonical && !!stored && norm(canonical) !== norm(stored)
+      const type = r?._kind === 'project' ? 'Project' : 'Service Call'
+      const sourcePanel = r?._kind === 'project' ? 'Projects' : 'Field Log'
+      return {
+        key: `${String(r?._kind || 'unknown')}|${id || `missing-${idx}`}`,
+        kind: String(r?._kind || ''),
+        id,
+        type,
+        sourcePanel,
+        storedName: stored || 'Unknown',
+        linkedCustomerId: linkedId || '',
+        linkedCustomerName: canonical || '',
+        address: [r?.address, r?.city].filter(Boolean).join(', '),
+        date: String(r?.date || r?.createdAt || r?.created || r?.lastMove || ''),
+        quoted: r?._kind === 'project' ? projectQuoted(r) : num(r?.totalQuote || r?.quoted || r?.price || 0),
+        collected: r?._kind === 'project' ? projectCollected(r) : num(r?.collected || 0),
+        title: String(r?.name || r?.jobType || r?.jtype || r?.type || ''),
+        raw: r,
+        missingId,
+        missingLink,
+        nameMismatch,
+        needsCleanup: missingId || missingLink || nameMismatch,
       }
-      const g = groups.get(key)
-      g.count += 1
-      const amount = resolveAmount(r)
-      const collected = resolveCollected(r)
-      g.estimatedRevenue += amount
-      g.collectedTotal += collected
-      g.typeSet.add(kindLabel(String(r?._kind || '')))
-      g.records.push({
-        ...r,
-        _title: resolveTitle(r),
-        _date: resolveDate(r),
-        _amount: amount,
-        _collected: collected,
-      })
     })
-    return Array.from(groups.values())
-      .map((g: any) => {
-        const gName = norm(g.name || '')
-        const possibleMatches = (gcContacts || [])
-          .map((c: any) => ({
-            id: String(c.id || ''),
-            label: c.company || c.contact || c.id,
-            score: (() => {
-              const company = norm(c.company)
-              const contact = norm(c.contact)
-              if (!gName) return 0
-              if (company && (company.includes(gName) || gName.includes(company))) return 2
-              if (contact && (contact.includes(gName) || gName.includes(contact))) return 1
-              return 0
-            })(),
-          }))
-          .filter((x: any) => x.score > 0)
-          .sort((a: any, b: any) => b.score - a.score)
-          .slice(0, 3)
-        return { ...g, recordTypes: Array.from(g.typeSet || []), possibleMatches }
-      })
-      .filter((g: any) => !ignoredCleanupKeys[g.key])
-      .sort((a: any, b: any) => b.count - a.count)
-  }, [backup, gcContacts, ignoredCleanupKeys, relationshipLinks])
+      .filter((r: any) => r.needsCleanup)
+      .filter((r: any) => !ignoredCleanupKeys[r.key])
+      .sort((a: any, b: any) => Number(b.nameMismatch) - Number(a.nameMismatch))
+  }, [backup, gcContacts, ignoredCleanupKeys])
 
   const emptyRelationshipAccounts = useMemo(() => {
     return accounts.filter((a: any) => (a.projects?.length || 0) === 0 && (a.serviceCalls?.length || 0) === 0 && (a.linkedLogs?.length || 0) === 0 && (a.linkedEstimates?.length || 0) === 0)
   }, [accounts])
 
-  function createRelationshipFromGroup(group: any) {
-    if (!group) return
-    setPendingCleanupCreateGroupKey(String(group.key || ''))
+  function createRelationshipFromCleanupRow(row: any) {
+    if (!row) return
+    setPendingCleanupCreateGroupKey(String(row.key || ''))
     setEditingRelationshipId(null)
     setAddRelForm({
-      company: String(group.name || ''),
+      company: String(row.storedName || ''),
       contact: '',
       role: 'Service Customer',
       phone: '',
       email: '',
-      address: String(group.address || ''),
-      city: String(group.city || ''),
-      notes: `Created from relationship cleanup (${num(group.count)} records)`,
+      address: String((row.address || '').split(',')[0] || ''),
+      city: String((row.address || '').split(',').slice(1).join(',').trim() || ''),
+      notes: `Created from relationship cleanup (${row.type} ${row.id || 'missing-id'})`,
       tags: 'relationship-cleanup',
     })
     setShowAddRelationship(true)
   }
 
-  function openCleanupSource(group: any) {
-    if (!group?.records?.length) return
-    const first = group.records[0]
-    const entityType = String(first?._kind || '')
-    const entityId = String(first?.id || '')
+  async function linkCleanupRowToExisting(row: any, accountId: string) {
+    if (!row || !accountId) return
+    if (!row.id) {
+      alert('Missing ID — cannot sync')
+      return
+    }
+    const target = gcContacts.find((g: any) => String(g.id) === String(accountId))
+    if (!target) return
+    const canonicalName = String(target.company || target.contact || '').trim()
+    const entityType = String(row.kind || '')
+    setCleanupBusyKey(row.key)
+    const linkRes = await linkEntityToAccount({
+      orgId: authProfile?.org_id || null,
+      accountId: String(accountId),
+      entityType,
+      entityId: String(row.id),
+      entityLabel: canonicalName || row.title || row.storedName || 'Linked Record',
+      legacyCustomerText: row.storedName || '',
+      metadata: { source: 'relationship_cleanup_manual', legacy_payload: row.raw },
+      createdBy: authProfile?.id || null,
+    }).catch((err) => {
+      console.warn('[V15rLeadsPanel] relationship link upsert failed', err)
+      return null
+    })
+    if (!linkRes) {
+      alert('Supabase link failed. Cleanup item was not completed.')
+      setCleanupBusyKey(null)
+      return
+    }
+    const eventRes = await upsertRelationshipEvent({
+      orgId: authProfile?.org_id || null,
+      accountId: String(accountId),
+      entityType,
+      entityId: String(row.id),
+      title: canonicalName || row.title || 'Linked Record',
+      description: 'Linked via Relationship Cleanup',
+      quotedAmount: num(row.quoted || 0),
+      collectedAmount: num(row.collected || 0),
+      outstandingAmount: Math.max(0, num(row.quoted || 0) - num(row.collected || 0)),
+      metadata: { source: 'relationship_cleanup_manual' },
+      createdBy: authProfile?.id || null,
+    }).catch((err) => {
+      console.warn('[V15rLeadsPanel] relationship event upsert failed', err)
+      return null
+    })
+    if (!eventRes) {
+      alert('Supabase event write failed. Cleanup item was not completed.')
+      setCleanupBusyKey(null)
+      return
+    }
+    pushState(backup)
+    if (row.kind === 'project') {
+      backup.projects = (backup.projects || []).map((r: any) => r.id === row.id ? { ...r, accountId: target.id, client: canonicalName || r.client } : r)
+    } else if (row.kind === 'service_log') {
+      backup.serviceLogs = (backup.serviceLogs || []).map((r: any) => r.id === row.id ? { ...r, accountId: target.id, customer: canonicalName || r.customer } : r)
+    } else if (row.kind === 'service_estimate') {
+      backup.serviceEstimates = (backup.serviceEstimates || []).map((r: any) => r.id === row.id ? { ...r, accountId: target.id, customer: canonicalName || r.customer } : r)
+    } else if (row.kind === 'active_service_call') {
+      backup.activeServiceCalls = (backup.activeServiceCalls || []).map((r: any) => r.id === row.id ? { ...r, accountId: target.id, customer: canonicalName || r.customer } : r)
+    }
+    persist()
+    setIgnoredCleanupKeys((prev) => ({ ...prev, [row.key]: true }))
+    setCleanupBusyKey(null)
+  }
+
+  async function syncCleanupRowName(row: any) {
+    if (!row?.id || !row?.linkedCustomerId || !row?.linkedCustomerName) return
+    await linkCleanupRowToExisting(row, row.linkedCustomerId)
+  }
+
+  function openCleanupSourceRecord(record: any) {
+    if (!record) return
+    const entityType = String(record?._kind || '')
+    const entityId = String(record?.id || '')
     if (!entityId) return
     const view = entityType === 'project' ? 'projects' : 'field-log'
     window.dispatchEvent(new CustomEvent('poweron:nav', { detail: { view } }))
@@ -1203,120 +1210,6 @@ export default function V15rLeadsPanel() {
         entityId,
       },
     }))
-  }
-
-  function bulkCreateFromUnmatched() {
-    if (!unmatchedLegacyGroups.length) return
-    if (!confirm(`Create ${unmatchedLegacyGroups.length} relationship accounts from unmatched legacy customers?`)) return
-    pushState(backup)
-    const created = unmatchedLegacyGroups.map((g: any, i: number) => ({
-      id: 'gc' + Date.now() + i + Math.random().toString(36).slice(2, 5),
-      company: g.name || 'Unnamed',
-      contact: '',
-      role: 'Service Customer',
-      phone: '',
-      email: '',
-      address: g.address || '',
-      city: g.city || '',
-      notes: `Created from legacy cleanup (${g.count} records)`,
-      tags: 'legacy-cleanup',
-      intro: '',
-      sent: 0,
-      awarded: 0,
-      avg: 0,
-      pay: '',
-      phase: 'First Contact',
-      fit: 0,
-      action: '',
-      due: '',
-      created: today(),
-      contactLog: [],
-      nextFollowup: '',
-      lastContact: '',
-    }))
-    backup.gcContacts = [...gcContacts, ...created]
-    persist()
-  }
-
-  function linkGroupToExisting(group: any, accountId: string) {
-    if (!group || !accountId) return
-    const target = gcContacts.find((g: any) => String(g.id) === String(accountId))
-    if (!target) return
-    pushState(backup)
-
-    const groupRecords = Array.isArray(group.records) ? group.records : []
-
-    backup.projects = (backup.projects || []).map((r: any) =>
-      groupRecords.some((x: any) => x._kind === 'project' && x.id === r.id)
-        ? { ...r, accountId: target.id }
-        : r
-    )
-
-    backup.serviceLogs = (backup.serviceLogs || []).map((r: any) =>
-      groupRecords.some((x: any) => x._kind === 'service_log' && x.id === r.id)
-        ? { ...r, accountId: target.id }
-        : r
-    )
-
-    backup.serviceEstimates = (backup.serviceEstimates || []).map((r: any) =>
-      groupRecords.some((x: any) => x._kind === 'service_estimate' && x.id === r.id)
-        ? { ...r, accountId: target.id }
-        : r
-    )
-    backup.activeServiceCalls = (backup.activeServiceCalls || []).map((r: any) =>
-      groupRecords.some((x: any) => x._kind === 'active_service_call' && x.id === r.id)
-        ? { ...r, accountId: target.id }
-        : r
-    )
-
-    const prior = String(target.tags || '').trim()
-    const nextTag = [prior, `linked:${group.name}`].filter(Boolean).join(', ')
-    backup.gcContacts = gcContacts.map((g: any) => g.id === target.id ? { ...g, tags: nextTag } : g)
-
-    setIgnoredCleanupKeys((prev) => ({ ...prev, [group.key]: true }))
-    setExpandedCleanupGroups((prev) => ({ ...prev, [group.key]: false }))
-    persist()
-    console.info('[RelationshipCleanup] linked', { groupKey: group.key, accountId, count: groupRecords.length })
-    groupRecords.forEach((r: any) => {
-      const entityType = r?._kind === 'project' ? 'project'
-        : r?._kind === 'service_log' ? 'service_log'
-        : r?._kind === 'service_estimate' ? 'service_estimate'
-        : r?._kind === 'active_service_call' ? 'active_service_call'
-        : String(r?._kind || 'unknown')
-      const entityLabel =
-        r?.name || r?.customer || r?.client || r?.jobType || r?.jtype || 'Linked Record'
-      const legacyText = r?.customer || r?.client || r?.company || ''
-      const quoted = entityType === 'project'
-        ? projectQuoted(r)
-        : num(r?.totalQuote || r?.quoted || r?.price || 0)
-      const collected = entityType === 'project'
-        ? projectCollected(r)
-        : num(r?.collected || 0)
-      const outstanding = Math.max(0, quoted - collected)
-      void linkEntityToAccount({
-        orgId: authProfile?.org_id || null,
-        accountId: String(accountId),
-        entityType,
-        entityId: String(r?.id || ''),
-        entityLabel,
-        legacyCustomerText: legacyText,
-        metadata: { legacy_payload: r },
-        createdBy: authProfile?.id || null,
-      }).catch((err) => console.warn('[V15rLeadsPanel] relationship link upsert failed', err))
-      void upsertRelationshipEvent({
-        orgId: authProfile?.org_id || null,
-        accountId: String(accountId),
-        entityType,
-        entityId: String(r?.id || ''),
-        title: entityLabel,
-        description: `Linked via Relationship Cleanup (${entityType})`,
-        quotedAmount: quoted,
-        collectedAmount: collected,
-        outstandingAmount: outstanding,
-        metadata: { legacy_payload: r, source: 'relationship_cleanup' },
-        createdBy: authProfile?.id || null,
-      }).catch((err) => console.warn('[V15rLeadsPanel] relationship event upsert failed', err))
-    })
   }
 
   function deleteEmptyRelationshipAccount(accountId: string) {
@@ -1368,61 +1261,32 @@ export default function V15rLeadsPanel() {
         <div className="rounded-xl border border-cyan-900/30 bg-[var(--bg-card)] p-3 space-y-3">
           <div className="flex items-center justify-between">
             <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold">Relationship Cleanup</div>
-            <button disabled title="Disabled in this phase" onClick={bulkCreateFromUnmatched} className="px-2.5 py-1 rounded bg-gray-800 text-gray-500 text-[10px] font-semibold cursor-not-allowed">
-              Create accounts from unmatched customers
-            </button>
+            <div className="text-[10px] text-gray-500">{cleanupRows.length} records need cleanup</div>
           </div>
           <div className="space-y-2 max-h-[280px] overflow-auto pr-1">
-            {unmatchedLegacyGroups.map((g: any) => (
-              <div key={g.key} className="rounded border border-gray-800 bg-[var(--bg-secondary)] p-2">
+            {cleanupRows.map((r: any) => (
+              <div key={r.key} className={`rounded border p-2 ${r.missingId ? 'border-amber-900/40 bg-black/20' : r.nameMismatch ? 'border-rose-900/40 bg-black/20' : 'border-gray-800 bg-[var(--bg-secondary)]'}`}>
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-xs text-gray-100 font-semibold">{g.name}</div>
-                    <div className="text-[10px] text-gray-500">
-                      {[g.address, g.city].filter(Boolean).join(', ') || 'No address'} | {g.count} records | Quoted {fmt(g.estimatedRevenue)} | Collected {fmt(g.collectedTotal || 0)} | {(g.recordTypes || []).join(', ') || 'Unknown'}
-                    </div>
-                    {(g.possibleMatches || []).length > 0 && (
-                      <div className="text-[10px] text-cyan-400 mt-0.5">
-                        Possible match: {(g.possibleMatches || []).map((m: any) => m.label).join(', ')}
-                      </div>
-                    )}
+                    <div className="text-xs text-gray-100 font-semibold">{r.type} · ID: {r.id || 'Missing ID — cannot sync'}</div>
+                    <div className="text-[10px] text-gray-500">Stored: {r.storedName || 'Unknown'} | Linked saved customer: {r.linkedCustomerName || 'None'}</div>
+                    <div className="text-[10px] text-gray-500">{r.address || 'No address'} | {r.date || 'No date'} | Quoted {fmt(num(r.quoted || 0))} | Collected {fmt(num(r.collected || 0))} | {r.sourcePanel}</div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <select
-                      value={cleanupLinkSelection[g.key] || ''}
-                      onChange={(e) => setCleanupLinkSelection((prev) => ({ ...prev, [g.key]: e.target.value }))}
-                      className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-[10px] text-cyan-300"
-                    >
-                      <option value="">Link to existing</option>
+                  <div className="flex items-center gap-1 flex-wrap justify-end">
+                    <select value={cleanupLinkSelection[r.key] || ''} onChange={(e) => setCleanupLinkSelection((prev) => ({ ...prev, [r.key]: e.target.value }))} className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-[10px] text-cyan-300" disabled={r.missingId || cleanupBusyKey === r.key}>
+                      <option value="">Link to existing customer</option>
                       {gcContacts.map((c: any) => <option key={c.id} value={c.id}>{c.company || c.contact || c.id}</option>)}
                     </select>
-                    <button onClick={() => linkGroupToExisting(g, cleanupLinkSelection[g.key])} className="px-2 py-1 rounded bg-cyan-700/40 text-cyan-300 text-[10px]">Link</button>
-                    <button onClick={() => createRelationshipFromGroup(g)} className="px-2 py-1 rounded bg-emerald-700/40 text-emerald-300 text-[10px]">Create New Customer</button>
-                    <button onClick={() => setIgnoredCleanupKeys((prev) => ({ ...prev, [g.key]: true }))} className="px-2 py-1 rounded bg-gray-700 text-gray-300 text-[10px]">Ignore</button>
-                    <button onClick={() => openCleanupSource(g)} className="px-2 py-1 rounded bg-indigo-700/40 text-indigo-300 text-[10px]">Open Source</button>
-                    <button
-                      onClick={() => setExpandedCleanupGroups((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
-                      className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-gray-300 text-[10px]"
-                    >
-                      {expandedCleanupGroups[g.key] ? 'Hide' : 'Details'}
-                    </button>
+                    <button onClick={() => void linkCleanupRowToExisting(r, cleanupLinkSelection[r.key])} className="px-2 py-1 rounded bg-cyan-700/40 text-cyan-300 text-[10px]" disabled={r.missingId || !cleanupLinkSelection[r.key] || cleanupBusyKey === r.key}>Link</button>
+                    <button onClick={() => createRelationshipFromCleanupRow(r)} className="px-2 py-1 rounded bg-emerald-700/40 text-emerald-300 text-[10px]" disabled={r.missingId || cleanupBusyKey === r.key}>Create New Customer</button>
+                    <button onClick={() => void syncCleanupRowName(r)} className="px-2 py-1 rounded bg-rose-700/40 text-rose-300 text-[10px]" disabled={r.missingId || !r.linkedCustomerId || !r.nameMismatch || cleanupBusyKey === r.key}>Sync Name</button>
+                    <button onClick={() => openCleanupSourceRecord({ _kind: r.kind, id: r.id })} className="px-2 py-1 rounded bg-indigo-700/40 text-indigo-300 text-[10px]" disabled={!r.id}>Open Source</button>
+                    <button onClick={() => setIgnoredCleanupKeys((prev) => ({ ...prev, [r.key]: true }))} className="px-2 py-1 rounded bg-gray-700 text-gray-300 text-[10px]">Ignore / Report Only</button>
                   </div>
                 </div>
-                {expandedCleanupGroups[g.key] && (
-                  <div className="mt-2 border-t border-gray-800 pt-2 space-y-1.5 max-h-[140px] overflow-auto pr-1">
-                    {(g.records || []).map((r: any, idx: number) => (
-                      <div key={`${g.key}-${r._kind}-${r.id || idx}`} className="rounded border border-gray-800 bg-black/20 px-2 py-1">
-                        <div className="text-[10px] text-gray-200 font-medium">{r._title}</div>
-                        <div className="text-[10px] text-gray-500">
-                          {String(r._kind || '').replaceAll('_', ' ')} | {r._date || 'No date'} | {fmt(num(r._amount || 0))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             ))}
-            {unmatchedLegacyGroups.length === 0 && <div className="text-xs text-gray-500">No unmatched legacy customer groups found.</div>}
+            {cleanupRows.length === 0 && <div className="text-xs text-gray-500">No records currently need relationship cleanup.</div>}
           </div>
           <div className="pt-1 border-t border-gray-800">
             <div className="text-[10px] uppercase tracking-wide text-gray-500 font-bold mb-2">Empty Relationship Accounts</div>
@@ -2024,7 +1888,7 @@ export default function V15rLeadsPanel() {
                                         <div key={log.id} className="bg-[var(--bg-card)] rounded p-2 border border-gray-800 text-[9px] space-y-1">
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">{log.date}</span>
-                                            <span className="text-gray-500">{log.customer}</span>
+                                            <span className="text-gray-500">{resolveRecordCustomerName(log, gcContacts) || log.customer}</span>
                                           </div>
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">{log.jtype || '—'}</span>
@@ -2151,7 +2015,7 @@ export default function V15rLeadsPanel() {
                   return (
                     <tr key={l.id} className={`border-b border-gray-800/50 hover:bg-gray-700/20 ${isOverdue ? 'bg-red-900/10' : ''}`}>
                       <td className="py-2 px-2 text-gray-500 font-mono">{l.date}</td>
-                      <td className="py-2 px-2 text-gray-200 font-medium">{l.customer}</td>
+                      <td className="py-2 px-2 text-gray-200 font-medium">{resolveRecordCustomerName(l, gcContacts) || l.customer}</td>
                       <td className="py-2 px-2 text-gray-400">{l.type}</td>
                       <td className="py-2 px-2 text-gray-500">{l.source}</td>
                       <td className="py-2 px-2 text-right font-mono text-gray-300">{l.miles}mi</td>
