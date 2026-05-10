@@ -939,7 +939,12 @@ export default function V15rLeadsPanel() {
       if (t) dynamic.add(t)
     })
     REL_ACCOUNT_TYPES.forEach((t) => dynamic.add(t))
-    return Array.from(dynamic).sort((a, b) => a.localeCompare(b))
+    return Array.from(dynamic)
+      .filter((t) => {
+        const normalized = String(t || '').trim().toLowerCase()
+        return normalized !== 'gc' && normalized !== 'owner'
+      })
+      .sort((a, b) => a.localeCompare(b))
   }, [accounts])
 
   const filteredAccounts = useMemo(() => {
@@ -1056,18 +1061,32 @@ export default function V15rLeadsPanel() {
   }, [mapMode, selectedAccount, mapScopedAccounts])
 
   const cleanupRows = useMemo(() => {
+    const isRelevantEstimateStatus = (status: any): boolean => {
+      const s = String(status || '').trim().toLowerCase()
+      if (!s) return true
+      const allowed = new Set(['open', 'active', 'pending', 'quoted', 'approved', 'paid', 'completed'])
+      const excluded = new Set(['cancelled', 'canceled', 'deleted', 'archived', 'ignored', 'test', 'draft'])
+      if (excluded.has(s)) return false
+      return allowed.has(s)
+    }
     const accountById = new Map<string, any>()
     gcContacts.forEach((a: any) => {
       const id = String(a?.id || '').trim()
       if (id) accountById.set(id, a)
     })
     const toRows = (list: any[], kind: string) => list.map((r: any) => ({ ...r, _kind: kind }))
+    const estimateRecords = (backup.serviceEstimates || []).filter((r: any) => isRelevantEstimateStatus(r?.status))
     const records = [
       ...toRows(backup.projects || [], 'project'),
       ...toRows(backup.serviceLogs || [], 'service_log'),
-      ...toRows(backup.serviceEstimates || [], 'service_estimate'),
-      ...toRows(backup.activeServiceCalls || [], 'active_service_call'),
+      ...toRows(estimateRecords, 'service_estimate'),
     ]
+    console.info('[RelationshipCleanup] scan counts', {
+      projects: (backup.projects || []).length,
+      serviceLogs: (backup.serviceLogs || []).length,
+      serviceEstimates: estimateRecords.length,
+      activeServiceCallsSkipped: (backup.activeServiceCalls || []).length,
+    })
     return records.map((r: any, idx: number) => {
       const id = String(r?.id || '').trim()
       const linkedId = String(r?.accountId || r?.customerId || '').trim()
@@ -1081,6 +1100,7 @@ export default function V15rLeadsPanel() {
       return {
         key: `${String(r?._kind || 'unknown')}|${id || `missing-${idx}`}`,
         kind: String(r?._kind || ''),
+        sourceBucket: String(r?._kind || ''),
         id,
         type,
         sourcePanel,
@@ -1270,7 +1290,7 @@ export default function V15rLeadsPanel() {
                   <div>
                     <div className="text-xs text-gray-100 font-semibold">{r.type} · ID: {r.id || 'Missing ID — cannot sync'}</div>
                     <div className="text-[10px] text-gray-500">Stored: {r.storedName || 'Unknown'} | Linked saved customer: {r.linkedCustomerName || 'None'}</div>
-                    <div className="text-[10px] text-gray-500">{r.address || 'No address'} | {r.date || 'No date'} | Quoted {fmt(num(r.quoted || 0))} | Collected {fmt(num(r.collected || 0))} | {r.sourcePanel}</div>
+                    <div className="text-[10px] text-gray-500">{r.address || 'No address'} | {r.date || 'No date'} | Quoted {fmt(num(r.quoted || 0))} | Collected {fmt(num(r.collected || 0))} | {r.sourcePanel} | Source bucket: {r.sourceBucket}</div>
                   </div>
                   <div className="flex items-center gap-1 flex-wrap justify-end">
                     <select value={cleanupLinkSelection[r.key] || ''} onChange={(e) => setCleanupLinkSelection((prev) => ({ ...prev, [r.key]: e.target.value }))} className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-[10px] text-cyan-300" disabled={r.missingId || cleanupBusyKey === r.key}>
