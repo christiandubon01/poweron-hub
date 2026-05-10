@@ -17,6 +17,23 @@ type RelationshipAccountInput = {
   legacy_payload?: any
 }
 
+export type NormalizedRelationshipAccount = {
+  id: string
+  company: string
+  contact: string
+  role: string
+  phone: string
+  email: string
+  address: string
+  city: string
+  notes: string
+  tags: string
+  legacy_payload?: any
+  legacy_gc_id?: string
+  updated_at?: string
+  raw?: any
+}
+
 type LinkInput = {
   orgId?: string | null
   accountId: string
@@ -76,6 +93,26 @@ export async function getRelationshipAccounts(orgId?: string | null) {
   return data || []
 }
 
+export async function getRelationshipAccountsNormalized(orgId?: string | null): Promise<NormalizedRelationshipAccount[]> {
+  const rows = await getRelationshipAccounts(orgId)
+  return (rows || []).map((row: any) => ({
+    id: String(row?.id || ''),
+    company: String(row?.company || ''),
+    contact: String(row?.contact || ''),
+    role: String(row?.account_type || row?.role || ''),
+    phone: String(row?.phone || ''),
+    email: String(row?.email || ''),
+    address: String(row?.address || ''),
+    city: String(row?.city || ''),
+    notes: String(row?.notes || ''),
+    tags: String(row?.tags || ''),
+    legacy_payload: row?.legacy_payload ?? null,
+    legacy_gc_id: row?.legacy_gc_id ? String(row.legacy_gc_id) : '',
+    updated_at: row?.updated_at ? String(row.updated_at) : '',
+    raw: row,
+  })).filter((row: NormalizedRelationshipAccount) => !!row.id)
+}
+
 export async function upsertRelationshipAccount({
   orgId,
   ownerUserId,
@@ -114,6 +151,66 @@ export async function upsertRelationshipAccount({
     return null
   }
   return data
+}
+
+export async function deleteRelationshipAccount(
+  accountId: string,
+  orgId?: string | null,
+  duplicateMatch?: { company?: string; contact?: string }
+): Promise<boolean> {
+  const ctx = await resolveContext(orgId, null)
+  if (!ctx.orgId || !accountId) return false
+
+  const company = String(duplicateMatch?.company || '').trim().toLowerCase()
+  const contact = String(duplicateMatch?.contact || '').trim().toLowerCase()
+
+  let idsToDelete = [accountId]
+
+  if (company || contact) {
+    const { data: rows, error: readError } = await (supabase as any)
+      .from('relationship_accounts')
+      .select('id, company, contact')
+      .eq('org_id', ctx.orgId)
+
+    if (readError) {
+      console.warn('[relationshipAccountService] duplicate lookup failed', readError)
+      return false
+    }
+
+    idsToDelete = (rows || [])
+  .filter((row: any) => {
+    const rowCompany = String(row?.company || '').trim().toLowerCase()
+    const rowContact = String(row?.contact || '').trim().toLowerCase()
+
+    const sameId = row?.id === accountId
+    const sameCompany = !!company && rowCompany === company
+    const sameContact = !!contact && rowContact === contact
+
+    return sameId || sameCompany || sameContact
+  })
+  .map((row: any) => row.id)
+  .filter(Boolean)
+  }
+
+  console.log('[REL DELETE]', {
+  accountId,
+  idsToDelete,
+  company,
+  contact
+  })
+
+  const { error } = await (supabase as any)
+    .from('relationship_accounts')
+    .delete()
+    .eq('org_id', ctx.orgId)
+    .in('id', idsToDelete)
+
+  if (error) {
+    console.warn('[relationshipAccountService] deleteRelationshipAccount failed', error)
+    return false
+  }
+
+  return true
 }
 
 export async function linkEntityToAccount(input: LinkInput) {
@@ -216,4 +313,3 @@ export async function getRelationshipEvents(orgId?: string | null) {
   }
   return data || []
 }
-

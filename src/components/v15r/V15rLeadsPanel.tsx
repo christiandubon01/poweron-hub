@@ -28,7 +28,7 @@ import {
 } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
-import { linkEntityToAccount, upsertRelationshipAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
+import { linkEntityToAccount, upsertRelationshipAccount, upsertRelationshipEvent, deleteRelationshipAccount } from '@/services/relationshipAccountService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
@@ -1426,15 +1426,34 @@ export default function V15rLeadsPanel() {
     }))
   }
 
-  function deleteEmptyRelationshipAccount(accountId: string) {
-    const acc = accounts.find((a: any) => a.id === accountId)
-    if (!acc) return
-    const hasHistory = (acc.projects?.length || 0) > 0 || (acc.serviceCalls?.length || 0) > 0 || (acc.linkedLogs?.length || 0) > 0 || (acc.linkedEstimates?.length || 0) > 0
-    if (hasHistory) return
-    if (!confirm(`Delete empty relationship account "${acc.name}"?`)) return
-    pushState(backup)
-    backup.gcContacts = gcContacts.filter((g: any) => g.id !== accountId)
-    persist()
+  async function deleteEmptyRelationshipAccount(accountId: string) {
+  const acc = accounts.find((a: any) => a.id === accountId)
+  if (!acc) return
+  const hasHistory = (acc.projects?.length || 0) > 0 || (acc.serviceCalls?.length || 0) > 0 || (acc.linkedLogs?.length || 0) > 0 || (acc.linkedEstimates?.length || 0) > 0
+  if (hasHistory) return
+  if (!confirm(`Delete empty relationship account "${acc.name}"? This will remove it from Supabase and local backup.`)) return
+
+  const deletedCloud = await deleteRelationshipAccount(accountId, null, {
+  company: acc.name,
+  contact: acc.contact,
+})
+  if (!deletedCloud) {
+    alert('Could not delete this relationship account from Supabase. Nothing was removed locally.')
+    return
+  }
+
+  pushState(backup)
+  const normalize = (v: any) => String(v || '').trim().toLowerCase()
+const targetCompany = normalize(acc.name)
+const targetContact = normalize(acc.contact)
+
+backup.gcContacts = gcContacts.filter((g: any) => {
+  if (g.id === accountId) return false
+  const sameCompany = targetCompany && normalize(g.company) === targetCompany
+  const sameContact = targetContact && normalize(g.contact) === targetContact
+  return !(sameCompany || sameContact)
+})
+  persist()
   }
 
   function renderAccountsCenter() {
