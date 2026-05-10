@@ -131,6 +131,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // Edit Project modal state
   const [showEditProject, setShowEditProject] = useState(false)
   const [editProjectId, setEditProjectId] = useState<string | null>(null)
+  const [sourceProjectHighlightId, setSourceProjectHighlightId] = useState<string | null>(null)
   const [epName, setEpName] = useState('')
   const [epClient, setEpClient] = useState('')
   const [epAccountId, setEpAccountId] = useState('')
@@ -141,6 +142,23 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [epNotes, setEpNotes] = useState('')
   // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — epPlannedStart retired; "Start Date" now writes to plannedStart.
   const [epPlannedEnd, setEpPlannedEnd] = useState('')
+
+  useEffect(() => {
+    function handleOpenSourceRecord(e: Event) {
+      const ev = e as CustomEvent<{ entityType?: string; entityId?: string }>
+      const detail = ev.detail || {}
+      if (String(detail.entityType || '') !== 'project' || !detail.entityId) return
+      const targetId = String(detail.entityId)
+      setSourceProjectHighlightId(targetId)
+      setTimeout(() => {
+        const el = document.querySelector(`[data-project-id="${targetId}"]`) as HTMLElement | null
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 160)
+      setTimeout(() => setSourceProjectHighlightId((prev) => (prev === targetId ? null : prev)), 3000)
+    }
+    window.addEventListener('poweron-open-source-record', handleOpenSourceRecord)
+    return () => window.removeEventListener('poweron-open-source-record', handleOpenSourceRecord)
+  }, [])
 
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
 
@@ -621,7 +639,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     return (
       <div
         key={p.id}
-        className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4 hover:border-gray-600 transition-colors"
+        data-project-id={p.id}
+        className={`rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4 hover:border-gray-600 transition-colors ${sourceProjectHighlightId === String(p.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
       >
         {/* Header: name/type + health score */}
         <div className="flex items-start justify-between mb-2">

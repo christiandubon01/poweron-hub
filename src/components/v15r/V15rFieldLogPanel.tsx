@@ -342,6 +342,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [estMatNotes, setEstMatNotes] = useState('')
   const [estReceiptUrl, setEstReceiptUrl] = useState('')
   const [showEstimateNewCustomerModal, setShowEstimateNewCustomerModal] = useState(false)
+  const [sourceHighlightId, setSourceHighlightId] = useState<string | null>(null)
   const [newCustomerForm, setNewCustomerForm] = useState({
     company: '',
     contact: '',
@@ -367,6 +368,29 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       onPrefillUsed?.()
     }
   }, [serviceCallPrefill])
+
+  useEffect(() => {
+    function handleOpenSourceRecord(e: Event) {
+      const ev = e as CustomEvent<{ tab?: string; entityType?: string; entityId?: string }>
+      const detail = ev.detail || {}
+      if (!detail.entityId) return
+      const entityType = String(detail.entityType || '')
+      if (entityType === 'project') return
+      setActiveTab('svc')
+      const targetId = String(detail.entityId)
+      setSourceHighlightId(targetId)
+      setTimeout(() => {
+        const selector = entityType === 'service_log'
+          ? `[data-service-log-id="${targetId}"]`
+          : `[data-service-estimate-id="${targetId}"]`
+        const el = document.querySelector(selector) as HTMLElement | null
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 160)
+      setTimeout(() => setSourceHighlightId((prev) => (prev === targetId ? null : prev)), 3000)
+    }
+    window.addEventListener('poweron-open-source-record', handleOpenSourceRecord)
+    return () => window.removeEventListener('poweron-open-source-record', handleOpenSourceRecord)
+  }, [])
 
   const [completingEstimateId, setCompletingEstimateId] = useState<string | null>(null)
   const [actualHours, setActualHours] = useState('')
@@ -406,6 +430,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     saveBackupData(backup)
     // Dispatch event to trigger KPI refresh in Layout
     window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
   }
 
@@ -630,11 +655,37 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     if (!est) return
     pushState(backup)
     est.status = 'active'
+    const activeEntry: any = { ...est, status: 'active', accountId: (est as any).accountId || undefined }
     if (!Array.isArray(backup.activeServiceCalls)) backup.activeServiceCalls = []
-    backup.activeServiceCalls = [...activeServiceCalls, { ...est, status: 'active' }]
+    backup.activeServiceCalls = [...activeServiceCalls, activeEntry]
     // Note: per spec, Confirm Job does NOT mark as invoiced — that happens when work is performed
     // and service log is created. This is just a lead-confirmation milestone.
     persist()
+    if (activeEntry.accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String(activeEntry.accountId),
+        entityType: 'active_service_call',
+        entityId: String(activeEntry.id),
+        entityLabel: activeEntry.jobType || activeEntry.customer || 'Active Service Call',
+        legacyCustomerText: activeEntry.customer || '',
+        metadata: { legacy_payload: activeEntry },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] active service link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String(activeEntry.accountId),
+        entityType: 'active_service_call',
+        entityId: String(activeEntry.id),
+        title: activeEntry.jobType || activeEntry.customer || 'Active Service Call',
+        description: activeEntry.notes || '',
+        quotedAmount: num(activeEntry.totalQuote || activeEntry.quoted || 0),
+        collectedAmount: num(activeEntry.collected || 0),
+        outstandingAmount: Math.max(0, num(activeEntry.totalQuote || activeEntry.quoted || 0) - num(activeEntry.collected || 0)),
+        metadata: { status: activeEntry.status || 'active', legacy_payload: activeEntry },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] active service event upsert failed', err))
+    }
   }
 
   function startCompleteEstimate(estimateId: string) {
@@ -834,6 +885,32 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSvcLinkNotice(`Linked to ${display || 'Customer'}`)
     setShowSvcLinkModal(false)
     persist()
+    const linked = backup.serviceLogs[idx] as any
+    if (linked?.accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String(linked.accountId),
+        entityType: 'service_log',
+        entityId: String(linked.id),
+        entityLabel: linked.jtype || linked.customer || 'Service Call',
+        legacyCustomerText: linked.customer || '',
+        metadata: { legacy_payload: linked },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String(linked.accountId),
+        entityType: 'service_log',
+        entityId: String(linked.id),
+        title: linked.jtype || linked.customer || 'Service Call',
+        description: linked.notes || '',
+        quotedAmount: num(linked.quoted || 0),
+        collectedAmount: num(linked.collected || 0),
+        outstandingAmount: Math.max(0, num(linked.quoted || 0) - num(linked.collected || 0)),
+        metadata: { status: linked.payStatus || '', legacy_payload: linked },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship event upsert failed', err))
+    }
   }
 
   function saveSvcEntry() {
@@ -2173,7 +2250,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               {serviceEstimates
                 .filter(e => e.status === 'open')
                 .map(est => (
-                  <div key={est.id} className="bg-[var(--bg-input)] rounded p-3 flex items-center justify-between">
+                  <div
+                    key={est.id}
+                    data-service-estimate-id={est.id}
+                    className={`bg-[var(--bg-input)] rounded p-3 flex items-center justify-between ${sourceHighlightId === String(est.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
+                  >
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-semibold text-gray-200">{est.customer}</span>
@@ -2228,7 +2309,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               {serviceEstimates
                 .filter(e => e.status === 'active')
                 .map(est => (
-                  <div key={est.id} className="bg-[var(--bg-input)] rounded p-3 space-y-2">
+                  <div
+                    key={est.id}
+                    data-service-estimate-id={est.id}
+                    className={`bg-[var(--bg-input)] rounded p-3 space-y-2 ${sourceHighlightId === String(est.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -2597,7 +2682,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 const roll = getServiceRollup(l)
 
               return (
-                <div key={l.id} className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3 space-y-2">
+                <div
+                  key={l.id}
+                  data-service-log-id={l.id}
+                  className={`rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3 space-y-2 ${sourceHighlightId === String(l.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">

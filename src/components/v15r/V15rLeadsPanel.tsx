@@ -134,7 +134,7 @@ export default function V15rLeadsPanel() {
   const [accountSearch, setAccountSearch] = useState('')
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [mapFilter, setMapFilter] = useState<'all' | 'active' | 'unpaid' | 'high' | 'repeat' | 'service' | 'gc'>('all')
-  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | (typeof REL_ACCOUNT_TYPES)[number]>('all')
+  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | string>('all')
   const [mapMode, setMapMode] = useState<'selected' | 'all_jobs'>('selected')
   const [activeClusterKey, setActiveClusterKey] = useState<string | null>(null)
   const [geoCache, setGeoCache] = useState<Record<string, { lat: number; lng: number }>>({})
@@ -144,6 +144,7 @@ export default function V15rLeadsPanel() {
   const [cleanupLinkSelection, setCleanupLinkSelection] = useState<Record<string, string>>({})
   const [expandedCleanupGroups, setExpandedCleanupGroups] = useState<Record<string, boolean>>({})
   const [relationshipLinks, setRelationshipLinks] = useState<any[]>([])
+  const [pendingCleanupCreateGroupKey, setPendingCleanupCreateGroupKey] = useState<string | null>(null)
   const [addRelForm, setAddRelForm] = useState<any>({
     company: '',
     contact: '',
@@ -206,6 +207,8 @@ export default function V15rLeadsPanel() {
     const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
     backup._lastSavedAt = new Date().toISOString()
     saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
     requestAnimationFrame(() => {
       if (panelRef.current) panelRef.current.scrollTop = scrollTop
@@ -628,6 +631,9 @@ export default function V15rLeadsPanel() {
     })
     persist()
     if (savedId) setSelectedAccountId(savedId)
+    const linkedGroup = pendingCleanupCreateGroupKey
+      ? unmatchedLegacyGroups.find((g: any) => g.key === pendingCleanupCreateGroupKey)
+      : null
     if (savedId) {
       const saved = (backup.gcContacts || []).find((x: any) => String(x.id) === String(savedId))
       void upsertRelationshipAccount({
@@ -648,6 +654,9 @@ export default function V15rLeadsPanel() {
           legacy_payload: saved || payload,
         },
       }).catch((err) => console.warn('[V15rLeadsPanel] relationship account upsert failed', err))
+      if (linkedGroup) {
+        linkGroupToExisting(linkedGroup, String(savedId))
+      }
     }
   }
 
@@ -672,6 +681,7 @@ export default function V15rLeadsPanel() {
   function closeRelationshipModal() {
     setShowAddRelationship(false)
     setEditingRelationshipId(null)
+    setPendingCleanupCreateGroupKey(null)
     setAddRelForm({
       company: '', contact: '', role: 'General Contractor', phone: '', email: '',
       address: '', city: '', notes: '', tags: '',
@@ -840,10 +850,7 @@ export default function V15rLeadsPanel() {
   }
 
   const accounts = useMemo(() => {
-    const relationshipPool = gcContacts.filter((gc: any) => {
-      const role = String(gc.role || '').trim()
-      return role === '' || REL_ACCOUNT_TYPES.includes(role as any)
-    })
+    const relationshipPool = gcContacts
     return relationshipPool.map((gc: any) => {
       const matched = getRecordsForAccount(gc, relationshipPool)
       const lastLog = (gc.contactLog || []).slice().sort((a: any, b: any) => String(b.date || b.timestamp).localeCompare(String(a.date || a.timestamp)))[0]
@@ -933,6 +940,16 @@ export default function V15rLeadsPanel() {
       })
     })
   }, [accounts, mapLoaded, geoCache])
+
+  const accountTypeOptions = useMemo(() => {
+    const dynamic = new Set<string>()
+    accounts.forEach((a: any) => {
+      const t = String(a?.type || '').trim()
+      if (t) dynamic.add(t)
+    })
+    REL_ACCOUNT_TYPES.forEach((t) => dynamic.add(t))
+    return Array.from(dynamic).sort((a, b) => a.localeCompare(b))
+  }, [accounts])
 
   const filteredAccounts = useMemo(() => {
     const q = accountSearch.toLowerCase().trim()
@@ -1074,6 +1091,13 @@ export default function V15rLeadsPanel() {
       if (r?._kind === 'active_service_call') return num(r?.price || r?.totalQuote || r?.quoted || 0)
       return 0
     }
+    const resolveCollected = (r: any) => {
+      if (r?._kind === 'project') return projectCollected(r)
+      if (r?._kind === 'service_log') return num(r?.collected || 0)
+      if (r?._kind === 'service_estimate') return 0
+      if (r?._kind === 'active_service_call') return num(r?.collected || 0)
+      return 0
+    }
     const resolveDate = (r: any) => String(r?.date || r?.createdAt || r?.created || r?.lastMove || '')
     const resolveTitle = (r: any) => String(r?.name || r?.jobType || r?.jtype || r?.type || r?._customer || 'Untitled')
 
@@ -1100,22 +1124,44 @@ export default function V15rLeadsPanel() {
       const city = String(r.city || '').trim()
       const key = `${norm(name)}|${norm(addr)}|${norm(city)}`
       if (!groups.has(key)) {
-        groups.set(key, { key, name, address: addr, city, count: 0, estimatedRevenue: 0, records: [], typeSet: new Set<string>() })
+        groups.set(key, { key, name, address: addr, city, count: 0, estimatedRevenue: 0, collectedTotal: 0, records: [], typeSet: new Set<string>() })
       }
       const g = groups.get(key)
       g.count += 1
       const amount = resolveAmount(r)
+      const collected = resolveCollected(r)
       g.estimatedRevenue += amount
+      g.collectedTotal += collected
       g.typeSet.add(kindLabel(String(r?._kind || '')))
       g.records.push({
         ...r,
         _title: resolveTitle(r),
         _date: resolveDate(r),
         _amount: amount,
+        _collected: collected,
       })
     })
     return Array.from(groups.values())
-      .map((g: any) => ({ ...g, recordTypes: Array.from(g.typeSet || []) }))
+      .map((g: any) => {
+        const gName = norm(g.name || '')
+        const possibleMatches = (gcContacts || [])
+          .map((c: any) => ({
+            id: String(c.id || ''),
+            label: c.company || c.contact || c.id,
+            score: (() => {
+              const company = norm(c.company)
+              const contact = norm(c.contact)
+              if (!gName) return 0
+              if (company && (company.includes(gName) || gName.includes(company))) return 2
+              if (contact && (contact.includes(gName) || gName.includes(contact))) return 1
+              return 0
+            })(),
+          }))
+          .filter((x: any) => x.score > 0)
+          .sort((a: any, b: any) => b.score - a.score)
+          .slice(0, 3)
+        return { ...g, recordTypes: Array.from(g.typeSet || []), possibleMatches }
+      })
       .filter((g: any) => !ignoredCleanupKeys[g.key])
       .sort((a: any, b: any) => b.count - a.count)
   }, [backup, gcContacts, ignoredCleanupKeys, relationshipLinks])
@@ -1126,34 +1172,37 @@ export default function V15rLeadsPanel() {
 
   function createRelationshipFromGroup(group: any) {
     if (!group) return
-    pushState(backup)
-    const newGC: any = {
-      id: 'gc' + Date.now() + Math.random().toString(36).slice(2, 6),
-      company: group.name || 'Unnamed',
+    setPendingCleanupCreateGroupKey(String(group.key || ''))
+    setEditingRelationshipId(null)
+    setAddRelForm({
+      company: String(group.name || ''),
       contact: '',
       role: 'Service Customer',
       phone: '',
       email: '',
-      address: group.address || '',
-      city: group.city || '',
-      notes: `Created from legacy cleanup (${group.count} records)`,
-      tags: 'legacy-cleanup',
-      intro: '',
-      sent: 0,
-      awarded: 0,
-      avg: 0,
-      pay: '',
-      phase: 'First Contact',
-      fit: 0,
-      action: '',
-      due: '',
-      created: today(),
-      contactLog: [],
-      nextFollowup: '',
-      lastContact: '',
-    }
-    backup.gcContacts = [...gcContacts, newGC]
-    persist()
+      address: String(group.address || ''),
+      city: String(group.city || ''),
+      notes: `Created from relationship cleanup (${num(group.count)} records)`,
+      tags: 'relationship-cleanup',
+    })
+    setShowAddRelationship(true)
+  }
+
+  function openCleanupSource(group: any) {
+    if (!group?.records?.length) return
+    const first = group.records[0]
+    const entityType = String(first?._kind || '')
+    const entityId = String(first?.id || '')
+    if (!entityId) return
+    const view = entityType === 'project' ? 'projects' : 'field-log'
+    window.dispatchEvent(new CustomEvent('poweron:nav', { detail: { view } }))
+    window.dispatchEvent(new CustomEvent('poweron-open-source-record', {
+      detail: {
+        tab: view === 'projects' ? 'projects' : 'fieldLog',
+        entityType,
+        entityId,
+      },
+    }))
   }
 
   function bulkCreateFromUnmatched() {
@@ -1330,8 +1379,13 @@ export default function V15rLeadsPanel() {
                   <div>
                     <div className="text-xs text-gray-100 font-semibold">{g.name}</div>
                     <div className="text-[10px] text-gray-500">
-                      {[g.address, g.city].filter(Boolean).join(', ') || 'No address'} | {g.count} records | {fmt(g.estimatedRevenue)} | {(g.recordTypes || []).join(', ') || 'Unknown'}
+                      {[g.address, g.city].filter(Boolean).join(', ') || 'No address'} | {g.count} records | Quoted {fmt(g.estimatedRevenue)} | Collected {fmt(g.collectedTotal || 0)} | {(g.recordTypes || []).join(', ') || 'Unknown'}
                     </div>
+                    {(g.possibleMatches || []).length > 0 && (
+                      <div className="text-[10px] text-cyan-400 mt-0.5">
+                        Possible match: {(g.possibleMatches || []).map((m: any) => m.label).join(', ')}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <select
@@ -1343,7 +1397,9 @@ export default function V15rLeadsPanel() {
                       {gcContacts.map((c: any) => <option key={c.id} value={c.id}>{c.company || c.contact || c.id}</option>)}
                     </select>
                     <button onClick={() => linkGroupToExisting(g, cleanupLinkSelection[g.key])} className="px-2 py-1 rounded bg-cyan-700/40 text-cyan-300 text-[10px]">Link</button>
+                    <button onClick={() => createRelationshipFromGroup(g)} className="px-2 py-1 rounded bg-emerald-700/40 text-emerald-300 text-[10px]">Create New Customer</button>
                     <button onClick={() => setIgnoredCleanupKeys((prev) => ({ ...prev, [g.key]: true }))} className="px-2 py-1 rounded bg-gray-700 text-gray-300 text-[10px]">Ignore</button>
+                    <button onClick={() => openCleanupSource(g)} className="px-2 py-1 rounded bg-indigo-700/40 text-indigo-300 text-[10px]">Open Source</button>
                     <button
                       onClick={() => setExpandedCleanupGroups((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
                       className="px-2 py-1 rounded bg-gray-900 border border-gray-700 text-gray-300 text-[10px]"
@@ -1399,7 +1455,7 @@ export default function V15rLeadsPanel() {
             <div className="flex gap-2 mb-2">
               <select value={accountTypeFilter} onChange={(e) => setAccountTypeFilter(e.target.value as any)} className="flex-1 px-2 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-cyan-300">
                 <option value="all">All Account Types</option>
-                {REL_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                {accountTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               <button
                 onClick={() => {
@@ -1440,10 +1496,12 @@ export default function V15rLeadsPanel() {
                     </div>
                   </div>
                   <div className="text-[10px] text-gray-500 mt-0.5">{a.contact} {a.city ? `• ${a.city}` : ''}</div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
+                  <div className="mt-2 grid grid-cols-5 gap-2 text-[10px]">
                     <div><span className="text-gray-500">Revenue</span><div className="text-emerald-400 font-mono">{fmt(a.lifetimeRevenue)}</div></div>
                     <div><span className="text-gray-500">Outstanding</span><div className="text-orange-400 font-mono">{fmt(a.outstanding)}</div></div>
                     <div><span className="text-gray-500">Open Jobs</span><div className="text-cyan-400 font-mono">{a.activeJobs}</div></div>
+                    <div><span className="text-gray-500">Total Jobs</span><div className="text-blue-300 font-mono">{num(a.totals?.projectCount || 0) + num(a.totals?.serviceLogCount || 0) + num(a.totals?.serviceEstimateCount || 0) + num(a.totals?.activeServiceCallCount || 0)}</div></div>
+                    <div><span className="text-gray-500">Total Projects</span><div className="text-violet-300 font-mono">{num(a.totals?.projectCount || 0)}</div></div>
                   </div>
                 </button>
               ))}
