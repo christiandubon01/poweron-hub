@@ -50,15 +50,45 @@ export function validateBlueprintPdf(file: File): { ok: boolean; error?: string 
 export async function uploadBlueprintPdfToStorage(params: {
   file: File
   projectId: string
-  orgId: string
+  orgId?: string | null
 }): Promise<{ storagePath: string }> {
-  const { file, projectId, orgId } = params
+  const { file, projectId } = params
+
+  const { data: userData, error: userError } = await supabase.auth.getUser()
+  const userId = userData?.user?.id || null
+
+  if (userError || !userId) {
+    throw new Error('Could not verify user for blueprint upload.')
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (profileError || !profile?.org_id) {
+    throw new Error('Could not resolve organization for blueprint upload.')
+  }
+
+  const orgId = String(profile.org_id)
+  const cleanProjectId = String(projectId || '').trim()
+
+  if (!cleanProjectId) {
+    throw new Error('Missing project id for blueprint upload.')
+  }
+
   const id = `bp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-  const storagePath = `${orgId}/${projectId}/blueprints/${id}_${toSafeFileName(file.name)}`
+  const storagePath = `${orgId}/${cleanProjectId}/blueprints/${id}_${toSafeFileName(file.name)}`
+
+  console.log('[BlueprintAI] Uploading blueprint to storage path:', storagePath)
 
   const { error } = await supabase.storage
     .from('blueprints')
-    .upload(storagePath, file, { contentType: 'application/pdf', upsert: false })
+    .upload(storagePath, file, {
+      contentType: 'application/pdf',
+      upsert: false,
+    })
 
   if (error) {
     throw new Error(error.message || 'Supabase Storage upload failed.')
@@ -118,4 +148,22 @@ export async function saveOperationsBlueprintLibrary(backup: any, items: Bluepri
   backup._lastSavedAt = new Date().toISOString()
   const { saveBackupData } = await import('@/services/backupDataService')
   saveBackupData(backup)
+}
+
+export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900): Promise<string> {
+  const cleanPath = String(storagePath || '').trim()
+  if (!cleanPath) {
+    throw new Error('Missing blueprint storage path.')
+  }
+
+  const ttl = Number.isFinite(expiresIn) ? Math.max(60, Math.min(3600, Math.floor(expiresIn))) : 900
+  const { data, error } = await supabase.storage
+    .from('blueprints')
+    .createSignedUrl(cleanPath, ttl)
+
+  if (error || !data?.signedUrl) {
+    throw new Error(error?.message || 'Could not create a signed URL for this blueprint.')
+  }
+
+  return data.signedUrl
 }

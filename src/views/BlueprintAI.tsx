@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Archive, CheckCircle2, FileText, Loader2, RotateCcw, Upload } from 'lucide-react'
 import { getBackupData } from '@/services/backupDataService'
+import OperationsBlueprintPdfViewer from '@/components/blueprint/OperationsBlueprintPdfViewer'
 import {
   createBlueprintLibraryItem,
   getOperationsBlueprintLibrary,
@@ -294,6 +295,11 @@ export default function BlueprintAI() {
             ))}
           </div>
         )}
+      </div>
+
+      <div>
+        <div className="mb-2 text-sm font-semibold text-gray-200">Blueprint Viewer</div>
+        <OperationsBlueprintPdfViewer blueprint={selectedItem} />
       </div>
     </div>
   )
