@@ -1,45 +1,28 @@
 /**
- * PinAuth — Local PIN authentication (6 digit).
- *
- * B24 | Auth Flow Overhaul
+ * PinAuth - Local PIN authentication (6 digit).
  *
  * Flows:
- *   1. verify      — User has a PIN stored; enter to authenticate.
- *   2. setup-create  — No PIN stored; enter new PIN.
- *   3. setup-confirm — Confirm the new PIN; save on match.
- *
- * On verify success:
- *   - If `onVerify` prop provided → calls onVerify(pin) (used when status='needs_passcode'
- *     so submitPasscode is called and the auth state machine advances).
- *   - Otherwise → dispatches CustomEvent 'poweron:pin-auth-success' on window
- *     (used in 'unauthenticated' state as a local gate).
- *
- * On failure: shakes + clears after 500 ms; 5 failed attempts → 1-hour lockout.
+ *   1. verify - User has a PIN stored; enter to authenticate.
+ *   2. setup-create - No PIN stored; enter new PIN.
+ *   3. setup-confirm - Confirm the new PIN; save on match.
  */
 
 import React, { useState, useEffect, useRef } from 'react'
-import { Zap } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { clsx } from 'clsx'
 
-// ── Config ────────────────────────────────────────────────────────────────────
-
-const PIN_LENGTH    = 6
-const STORAGE_KEY   = 'poweron_pin_hash'
-const MAX_ATTEMPTS  = 5
-const LOCKOUT_MS    = 3_600_000  // 1 hour (B24: 5 attempts per hour)
-
-// ── Crypto ────────────────────────────────────────────────────────────────────
+const PIN_LENGTH = 6
+const STORAGE_KEY = 'poweron_pin_hash'
+const MAX_ATTEMPTS = 5
+const LOCKOUT_MS = 3_600_000
 
 async function sha256(message: string): Promise<string> {
-  const buf  = new TextEncoder().encode(message)
+  const buf = new TextEncoder().encode(message)
   const hash = await crypto.subtle.digest('SHA-256', buf)
   return Array.from(new Uint8Array(hash))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 }
-
-// ── localStorage helpers ──────────────────────────────────────────────────────
 
 function getStoredHash(): string | null {
   try { return localStorage.getItem(STORAGE_KEY) } catch { return null }
@@ -49,48 +32,40 @@ function saveHash(hash: string): void {
   try { localStorage.setItem(STORAGE_KEY, hash) } catch {}
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 type FlowMode = 'verify' | 'setup-create' | 'setup-confirm'
 
 interface PinAuthProps {
   /** Called when the user taps "Use magic link instead" or "Use password instead" */
   onFallbackToMagicLink?: () => void
   /**
-   * B24: When provided, called with the raw PIN on successful local verification
+   * When provided, called with the raw PIN on successful local verification
    * instead of dispatching the window event.
-   * Use this when status='needs_passcode' to wire submitPasscode from authStore.
    */
   onVerify?: (pin: string) => void | Promise<void>
 }
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
   const status = useAuthStore(s => s.status)
   const hasPinStored = Boolean(getStoredHash())
   const [mode, setMode] = useState<FlowMode>((hasPinStored || onVerify) ? 'verify' : 'setup-create')
 
-  // When status becomes authenticated, LoginFlow will unmount this component.
-  // Force a re-render trigger by subscribing directly.
   useEffect(() => {
     if (status === 'authenticated') {
       useAuthStore.setState(s => ({ ...s }))
     }
   }, [status])
-  const [digits, setDigits]     = useState<string[]>(Array(PIN_LENGTH).fill(''))
+
+  const [digits, setDigits] = useState<string[]>(Array(PIN_LENGTH).fill(''))
   const [firstPin, setFirstPin] = useState('')
 
-  const [shake, setShake]       = useState(false)
-  const [error, setError]       = useState('')
+  const [shake, setShake] = useState(false)
+  const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Lockout state
-  const [attempts, setAttempts]     = useState(0)
+  const [attempts, setAttempts] = useState(0)
   const [lockoutEnd, setLockoutEnd] = useState<number | null>(null)
-  const [timeLeft, setTimeLeft]     = useState(0)
+  const [timeLeft, setTimeLeft] = useState(0)
 
-  // Lockout countdown
   useEffect(() => {
     if (!lockoutEnd) return
     const tick = () => {
@@ -107,39 +82,28 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     return () => clearInterval(id)
   }, [lockoutEnd])
 
-  // ── Keyboard (numpad) support ────────────────────────────────────────────
-
-  // Keep a stable ref to handleDigit / handleBackspace so the listener
-  // always closes over the current state without needing re-registration.
-  const handleDigitRef    = useRef<(d: string) => void>(() => {})
+  const handleDigitRef = useRef<(d: string) => void>(() => {})
   const handleBackspaceRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
-      // Digit keys: Digit0-Digit9 or Numpad0-Numpad9
       if (/^(Digit|Numpad)[0-9]$/.test(e.code)) {
         e.preventDefault()
         handleDigitRef.current(e.code.slice(-1))
         return
       }
-      // Backspace or NumpadDecimal → delete last digit
       if (e.code === 'Backspace' || e.code === 'NumpadDecimal') {
         e.preventDefault()
         handleBackspaceRef.current()
         return
       }
-      // Enter → submit if PIN is complete (auto-submit already fires on last digit,
-      // but provide Enter as an explicit trigger for partial completion safety)
       if (e.code === 'Enter' || e.code === 'NumpadEnter') {
-        // auto-submit is handled inside handleDigit when filledCount === PIN_LENGTH - 1
-        // Nothing extra needed here; guard is a no-op.
+        // Auto-submit is handled inside handleDigit when the PIN completes.
       }
     }
     window.addEventListener('keydown', listener)
     return () => window.removeEventListener('keydown', listener)
-  }, []) // mount/unmount only — refs keep the handler current
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  }, [])
 
   const resetDigits = () => setDigits(Array(PIN_LENGTH).fill(''))
 
@@ -151,16 +115,9 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     }, 500)
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────────
-
-  /**
-   * Called when all PIN_LENGTH digits have been entered.
-   * NOTE: this reads from state at call time — do not memoize (no useCallback).
-   */
   const handleSubmit = async (pin: string) => {
     setError('')
 
-    // ── Setup: create step ────────────────────────────────────────────────
     if (mode === 'setup-create') {
       setFirstPin(pin)
       setMode('setup-confirm')
@@ -169,7 +126,6 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
       return
     }
 
-    // ── Setup: confirm step ───────────────────────────────────────────────
     if (mode === 'setup-confirm') {
       if (pin === firstPin) {
         const hash = await sha256(pin)
@@ -185,9 +141,6 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
       return
     }
 
-    // ── Verify: check stored hash ──────────────────────────────────────────
-    // If onVerify is provided (lock screen mode), delegate directly to authStore
-    // without checking localStorage — authStore verifies against Supabase PBKDF2
     if (onVerify) {
       setAttempts(0)
       await onVerify(pin)
@@ -197,7 +150,6 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
 
     const stored = getStoredHash()
     if (!stored) {
-      // PIN was cleared externally — drop back to setup
       setMode('setup-create')
       resetDigits()
       setIsSubmitting(false)
@@ -208,7 +160,6 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     if (hash === stored) {
       setAttempts(0)
       window.dispatchEvent(new CustomEvent('poweron:pin-auth-success'))
-      // Leave isSubmitting=true while auth state propagates
     } else {
       const next = attempts + 1
       setAttempts(next)
@@ -228,29 +179,23 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     }
   }
 
-  // ── Digit press ───────────────────────────────────────────────────────────
-
   const handleDigit = (d: string) => {
     if (lockoutEnd || isSubmitting) return
 
-    // Count currently filled slots
     const filledCount = digits.filter(x => x !== '').length
     if (filledCount >= PIN_LENGTH) return
 
     const next = [...digits]
-    const idx  = next.findIndex(x => x === '')
+    const idx = next.findIndex(x => x === '')
     next[idx] = d
     setDigits(next)
 
-    // Auto-submit when last digit entered
     if (filledCount === PIN_LENGTH - 1) {
       const pin = digits.filter(x => x !== '').concat(d).join('')
       setIsSubmitting(true)
       handleSubmit(pin)
     }
   }
-
-  // ── Backspace ─────────────────────────────────────────────────────────────
 
   const handleBackspace = () => {
     if (lockoutEnd || isSubmitting) return
@@ -265,13 +210,10 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     setError('')
   }
 
-  // Keep keyboard listener refs current after every render
-  handleDigitRef.current    = handleDigit
+  handleDigitRef.current = handleDigit
   handleBackspaceRef.current = handleBackspace
 
-  // ── Derived display ───────────────────────────────────────────────────────
-
-  const isLocked  = Boolean(lockoutEnd && timeLeft > 0)
+  const isLocked = Boolean(lockoutEnd && timeLeft > 0)
   const filledCount = digits.filter(x => x !== '').length
 
   const title = mode === 'verify'
@@ -281,134 +223,515 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
     : 'Confirm your PIN'
 
   const subtitle = mode === 'verify'
-    ? 'Enter your 6-digit PIN to continue'
+    ? 'Enter your 6-digit PIN to unlock PowerOn Hub.'
     : mode === 'setup-create'
     ? 'Choose a 6-digit PIN to secure your account'
     : 'Enter the same PIN again to confirm'
 
-  // ── Keypad layout: 1-9, [gap], 0, backspace ───────────────────────────────
-  const KEYS = ['1','2','3','4','5','6','7','8','9','','0','back']
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'back']
 
   return (
-    <div
-      className="flex flex-col items-center justify-center min-h-screen px-6"
-      style={{ backgroundColor: '#0a0b0f' }}
-    >
+    <div className="poweron-pin-page">
+      <style>{`
+        .poweron-pin-page {
+          position: relative;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 36px 20px;
+          overflow: hidden;
+          color: #eef7ff;
+          background:
+            radial-gradient(circle at 50% 22%, rgba(30, 139, 255, 0.16), transparent 34%),
+            radial-gradient(circle at 18% 72%, rgba(0, 96, 210, 0.12), transparent 30%),
+            linear-gradient(135deg, #01040b 0%, #061329 48%, #020712 100%);
+        }
 
-      {/* ── Logo ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 mb-10">
-        <div className="w-10 h-10 rounded-xl bg-green-subtle border border-green-border flex items-center justify-center">
-          <Zap className="w-5 h-5 text-green" fill="currentColor" />
-        </div>
-        <div>
-          <div className="text-sm font-bold text-text-1 leading-tight">PowerOn Hub</div>
-          <div className="text-xs text-text-3 font-mono uppercase tracking-wider">v3.0</div>
-        </div>
-      </div>
+        .poweron-pin-page::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background-image:
+            linear-gradient(rgba(76, 159, 255, 0.07) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(76, 159, 255, 0.07) 1px, transparent 1px);
+          background-size: 42px 42px;
+          mask-image: radial-gradient(circle at 50% 42%, black 0%, rgba(0,0,0,0.72) 45%, transparent 82%);
+          opacity: 0.6;
+          pointer-events: none;
+        }
 
-      {/* ── Title ────────────────────────────────────────────────────────── */}
-      <div className="text-center mb-8">
-        <h1 className="text-2xl font-extrabold text-text-1 mb-1 tracking-tight">{title}</h1>
-        <p className="text-sm text-text-2">{subtitle}</p>
-      </div>
+        .poweron-pin-page::after {
+          content: '';
+          position: absolute;
+          inset: -35% -20%;
+          background:
+            linear-gradient(90deg, transparent 0%, rgba(59, 153, 255, 0.08) 48%, rgba(155, 213, 255, 0.18) 50%, rgba(59, 153, 255, 0.08) 52%, transparent 100%),
+            linear-gradient(180deg, transparent 0%, rgba(44, 147, 255, 0.08) 48%, rgba(124, 196, 255, 0.18) 50%, rgba(44, 147, 255, 0.08) 52%, transparent 100%);
+          transform: rotate(18deg);
+          animation: pinScan 9s ease-in-out infinite;
+          opacity: 0.52;
+          pointer-events: none;
+        }
 
-      {/* ── Dot fill indicators ───────────────────────────────────────────── */}
-      <div className={clsx('flex gap-4 mb-2', shake && 'animate-shake')}>
-        {Array.from({ length: PIN_LENGTH }).map((_, i) => (
-          <div
-            key={i}
-            className={clsx(
-              'w-4 h-4 rounded-full transition-all duration-150',
-              i < filledCount
-                ? 'scale-110'
-                : 'border-2 border-bg-5 bg-transparent'
-            )}
-            style={i < filledCount ? { backgroundColor: '#22c55e' } : undefined}
-          />
-        ))}
-      </div>
+        .poweron-pin-card {
+          position: relative;
+          z-index: 2;
+          width: min(100%, 430px);
+          padding: 34px 32px 28px;
+          border: 1px solid rgba(106, 184, 255, 0.24);
+          border-radius: 26px;
+          background:
+            linear-gradient(150deg, rgba(8, 22, 43, 0.9), rgba(4, 11, 24, 0.84)),
+            radial-gradient(circle at top right, rgba(66, 160, 255, 0.18), transparent 42%);
+          box-shadow:
+            0 30px 90px rgba(0, 0, 0, 0.56),
+            0 0 55px rgba(36, 139, 255, 0.16),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          backdrop-filter: blur(24px);
+          overflow: hidden;
+        }
 
-      {/* ── Lockout display ──────────────────────────────────────────────── */}
-      {isLocked ? (
-        <div className="mt-4 mb-6 text-center">
-          <div className="text-sm font-semibold mb-1" style={{ color: '#f87171' }}>
-            Too many attempts
-          </div>
-          <div className="text-4xl font-mono font-bold text-text-1">{timeLeft}s</div>
-          <div className="text-xs text-text-3 mt-1">Try again when the timer ends</div>
-        </div>
-      ) : (
-        /* ── Error message ─────────────────────────────────────────────── */
-        <div className="mt-3 mb-4 min-h-[20px] text-center">
-          {error && (
-            <p className="text-xs font-medium" style={{ color: '#f87171' }}>{error}</p>
-          )}
-        </div>
-      )}
+        .poweron-pin-card::before {
+          content: '';
+          position: absolute;
+          inset: 1px;
+          border-radius: 25px;
+          background:
+            linear-gradient(120deg, rgba(255,255,255,0.08), transparent 20%, transparent 76%, rgba(92, 176, 255, 0.09)),
+            linear-gradient(rgba(52, 151, 255, 0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(52, 151, 255, 0.035) 1px, transparent 1px);
+          background-size: auto, 28px 28px, 28px 28px;
+          pointer-events: none;
+        }
 
-      {/* ── Keypad ───────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-3 mt-2">
-        {KEYS.map((key, i) => {
-          if (key === '') {
-            // Empty spacer (bottom-left cell)
-            return <div key={i} style={{ minWidth: 72, minHeight: 72 }} />
+        .poweron-pin-logo-stage {
+          position: relative;
+          width: 150px;
+          height: 112px;
+          margin: 0 auto 22px;
+          display: grid;
+          place-items: center;
+          perspective: 700px;
+        }
+
+        .poweron-pin-orbit,
+        .poweron-pin-orbit::after {
+          position: absolute;
+          content: '';
+          width: 136px;
+          height: 58px;
+          border: 1px solid rgba(117, 196, 255, 0.34);
+          border-radius: 999px;
+          box-shadow: 0 0 20px rgba(60, 158, 255, 0.18);
+          transform: rotateX(67deg) rotateZ(0deg);
+          animation: pinOrbit 11s linear infinite;
+          pointer-events: none;
+        }
+
+        .poweron-pin-orbit::after {
+          width: 112px;
+          height: 48px;
+          inset: 4px 11px;
+          border-color: rgba(62, 160, 255, 0.22);
+          animation-duration: 15s;
+          animation-direction: reverse;
+        }
+
+        .poweron-pin-logo-plate {
+          position: relative;
+          width: 132px;
+          height: 72px;
+          display: grid;
+          place-items: center;
+          border: 1px solid rgba(126, 200, 255, 0.28);
+          border-radius: 18px;
+          background:
+            linear-gradient(145deg, rgba(255,255,255,0.09), rgba(11, 29, 58, 0.3)),
+            radial-gradient(circle at 76% 18%, rgba(90, 178, 255, 0.24), transparent 45%);
+          box-shadow:
+            0 18px 38px rgba(0, 0, 0, 0.36),
+            0 0 34px rgba(46, 154, 255, 0.28),
+            inset 0 1px 0 rgba(255,255,255,0.18);
+          transform-style: preserve-3d;
+          animation: pinLogoFloat 8s ease-in-out infinite;
+        }
+
+        .poweron-pin-logo-plate::before {
+          content: '';
+          position: absolute;
+          inset: -8px;
+          border-radius: 24px;
+          background: radial-gradient(circle, rgba(72, 169, 255, 0.18), transparent 68%);
+          transform: translateZ(-18px);
+          filter: blur(8px);
+        }
+
+        .poweron-pin-logo-plate::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: 18px;
+          background: linear-gradient(105deg, transparent 10%, rgba(255,255,255,0.2) 44%, transparent 58%);
+          transform: translateX(-60%);
+          animation: pinLogoSweep 7s ease-in-out infinite;
+          opacity: 0.48;
+          pointer-events: none;
+        }
+
+        .poweron-pin-logo {
+          position: relative;
+          z-index: 2;
+          width: 104px;
+          max-height: 50px;
+          object-fit: contain;
+          filter: drop-shadow(0 0 14px rgba(75, 171, 255, 0.24));
+        }
+
+        .poweron-pin-title {
+          position: relative;
+          z-index: 1;
+          margin: 0;
+          color: #f3f9ff;
+          font-size: 30px;
+          line-height: 1;
+          font-weight: 900;
+          letter-spacing: 0.04em;
+          text-align: center;
+          text-transform: uppercase;
+        }
+
+        .poweron-pin-subtitle {
+          position: relative;
+          z-index: 1;
+          max-width: 290px;
+          margin: 12px auto 26px;
+          color: rgba(209, 229, 249, 0.74);
+          font-size: 14px;
+          line-height: 1.55;
+          text-align: center;
+        }
+
+        .poweron-pin-dots {
+          position: relative;
+          z-index: 1;
+          display: flex;
+          justify-content: center;
+          gap: 13px;
+          min-height: 22px;
+          margin-bottom: 12px;
+        }
+
+        .poweron-pin-dot {
+          width: 16px;
+          height: 16px;
+          border-radius: 999px;
+          border: 1px solid rgba(127, 189, 255, 0.36);
+          background: rgba(7, 18, 34, 0.72);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+          transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+        }
+
+        .poweron-pin-dot.is-filled {
+          transform: scale(1.16);
+          border-color: rgba(105, 200, 255, 0.9);
+          background: linear-gradient(180deg, #77d4ff, #1f8fff);
+          box-shadow: 0 0 18px rgba(43, 151, 255, 0.58), inset 0 1px 0 rgba(255,255,255,0.36);
+        }
+
+        .poweron-pin-dot.has-error {
+          border-color: rgba(248, 113, 113, 0.78);
+          box-shadow: 0 0 16px rgba(248, 113, 113, 0.24);
+        }
+
+        .poweron-pin-message {
+          position: relative;
+          z-index: 1;
+          min-height: 54px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+        }
+
+        .poweron-pin-error {
+          margin: 0;
+          padding: 10px 13px;
+          border: 1px solid rgba(248, 113, 113, 0.24);
+          border-radius: 13px;
+          color: #fecaca;
+          background: rgba(127, 29, 29, 0.18);
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .poweron-pin-lockout-title {
+          color: #fecaca;
+          font-size: 13px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+        }
+
+        .poweron-pin-lockout-time {
+          margin-top: 4px;
+          color: #f8fbff;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 38px;
+          font-weight: 900;
+        }
+
+        .poweron-pin-lockout-copy {
+          margin-top: 3px;
+          color: rgba(209, 229, 249, 0.55);
+          font-size: 12px;
+        }
+
+        .poweron-pin-keypad {
+          position: relative;
+          z-index: 1;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          margin: 6px auto 0;
+          width: 100%;
+          max-width: 282px;
+        }
+
+        .poweron-pin-key,
+        .poweron-pin-spacer {
+          min-width: 0;
+          width: 100%;
+          aspect-ratio: 1;
+          min-height: 76px;
+          border-radius: 20px;
+        }
+
+        .poweron-pin-key {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(105, 178, 255, 0.23);
+          color: #f3f9ff;
+          background:
+            linear-gradient(150deg, rgba(20, 49, 86, 0.74), rgba(7, 18, 35, 0.82)),
+            radial-gradient(circle at 50% 0%, rgba(82, 172, 255, 0.14), transparent 52%);
+          box-shadow:
+            0 10px 24px rgba(0, 0, 0, 0.26),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          font-size: 26px;
+          font-weight: 900;
+          transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+        }
+
+        .poweron-pin-key:hover:not(:disabled),
+        .poweron-pin-key:focus-visible:not(:disabled) {
+          border-color: rgba(123, 202, 255, 0.5);
+          background:
+            linear-gradient(150deg, rgba(26, 65, 112, 0.88), rgba(9, 25, 49, 0.9)),
+            radial-gradient(circle at 50% 0%, rgba(92, 185, 255, 0.22), transparent 54%);
+          box-shadow:
+            0 13px 30px rgba(0, 0, 0, 0.3),
+            0 0 24px rgba(42, 148, 255, 0.16),
+            inset 0 1px 0 rgba(255, 255, 255, 0.12);
+          outline: none;
+        }
+
+        .poweron-pin-key:active:not(:disabled) {
+          transform: scale(0.96);
+        }
+
+        .poweron-pin-key:disabled {
+          opacity: 0.35;
+          cursor: not-allowed;
+        }
+
+        .poweron-pin-backspace {
+          font-size: 22px;
+          font-weight: 800;
+        }
+
+        .poweron-pin-fallback {
+          position: relative;
+          z-index: 1;
+          display: block;
+          margin: 24px auto 0;
+          color: rgba(202, 224, 247, 0.66);
+          font-size: 13px;
+          font-weight: 700;
+          transition: color 160ms ease, text-shadow 160ms ease;
+        }
+
+        .poweron-pin-fallback:hover,
+        .poweron-pin-fallback:focus-visible {
+          color: #bfe5ff;
+          text-shadow: 0 0 18px rgba(67, 165, 255, 0.32);
+          outline: none;
+        }
+
+        @keyframes pinScan {
+          0%, 100% { transform: translateX(-18%) rotate(18deg); opacity: 0.28; }
+          50% { transform: translateX(18%) rotate(18deg); opacity: 0.58; }
+        }
+
+        @keyframes pinLogoFloat {
+          0%, 100% { transform: rotateX(8deg) rotateY(-10deg) translateY(0); }
+          50% { transform: rotateX(-5deg) rotateY(10deg) translateY(-5px); }
+        }
+
+        @keyframes pinOrbit {
+          to { transform: rotateX(67deg) rotateZ(360deg); }
+        }
+
+        @keyframes pinLogoSweep {
+          0%, 32% { transform: translateX(-72%); opacity: 0; }
+          48% { opacity: 0.42; }
+          68%, 100% { transform: translateX(72%); opacity: 0; }
+        }
+
+        @media (max-width: 640px) {
+          .poweron-pin-page {
+            padding: 18px 14px;
           }
 
-          if (key === 'back') {
+          .poweron-pin-card {
+            width: min(100%, 380px);
+            padding: 26px 18px 22px;
+            border-radius: 22px;
+          }
+
+          .poweron-pin-logo-stage {
+            width: 132px;
+            height: 96px;
+            margin-bottom: 16px;
+          }
+
+          .poweron-pin-logo-plate {
+            width: 116px;
+            height: 64px;
+          }
+
+          .poweron-pin-logo {
+            width: 92px;
+            max-height: 44px;
+          }
+
+          .poweron-pin-title {
+            font-size: 25px;
+          }
+
+          .poweron-pin-keypad {
+            max-width: 264px;
+            gap: 10px;
+          }
+
+          .poweron-pin-key,
+          .poweron-pin-spacer {
+            min-height: 68px;
+            border-radius: 18px;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .poweron-pin-page::after,
+          .poweron-pin-logo-plate,
+          .poweron-pin-logo-plate::after,
+          .poweron-pin-orbit,
+          .poweron-pin-orbit::after {
+            animation: none;
+          }
+        }
+      `}</style>
+
+      <div className="poweron-pin-card">
+        <div className="poweron-pin-logo-stage" aria-hidden="true">
+          <span className="poweron-pin-orbit" />
+          <div className="poweron-pin-logo-plate">
+            <img
+              src="/assets/poweron-logo.png"
+              alt=""
+              className="poweron-pin-logo"
+              draggable={false}
+            />
+          </div>
+        </div>
+
+        <div className="text-center">
+          <h1 className="poweron-pin-title">{title}</h1>
+          <p className="poweron-pin-subtitle">{subtitle}</p>
+        </div>
+
+        <div className={clsx('poweron-pin-dots', shake && 'animate-shake')} aria-label={`${filledCount} of ${PIN_LENGTH} PIN digits entered`}>
+          {Array.from({ length: PIN_LENGTH }).map((_, i) => (
+            <div
+              key={i}
+              className={clsx(
+                'poweron-pin-dot',
+                i < filledCount && 'is-filled',
+                error && 'has-error',
+              )}
+            />
+          ))}
+        </div>
+
+        {isLocked ? (
+          <div className="poweron-pin-message">
+            <div>
+              <div className="poweron-pin-lockout-title">Too many attempts</div>
+              <div className="poweron-pin-lockout-time">{timeLeft}s</div>
+              <div className="poweron-pin-lockout-copy">Try again when the timer ends</div>
+            </div>
+          </div>
+        ) : (
+          <div className="poweron-pin-message">
+            {error && (
+              <p className="poweron-pin-error">{error}</p>
+            )}
+          </div>
+        )}
+
+        <div className="poweron-pin-keypad">
+          {KEYS.map((key, i) => {
+            if (key === '') {
+              return <div key={i} className="poweron-pin-spacer" />
+            }
+
+            if (key === 'back') {
+              return (
+                <button
+                  key={i}
+                  onClick={handleBackspace}
+                  disabled={isLocked || isSubmitting}
+                  aria-label="Backspace"
+                  className="poweron-pin-key poweron-pin-backspace"
+                >
+                  &#9003;
+                </button>
+              )
+            }
+
             return (
               <button
                 key={i}
-                onClick={handleBackspace}
+                onClick={() => handleDigit(key)}
                 disabled={isLocked || isSubmitting}
-                aria-label="Backspace"
-                className={clsx(
-                  'flex items-center justify-center rounded-2xl',
-                  'border border-bg-5 bg-bg-3',
-                  'text-text-1 text-xl font-semibold',
-                  'transition-all duration-100 active:scale-95',
-                  'hover:bg-bg-4 active:bg-bg-5',
-                  'disabled:opacity-30 disabled:cursor-not-allowed',
-                )}
-                style={{ minWidth: 72, minHeight: 72 }}
+                className="poweron-pin-key"
               >
-                ⌫
+                {key}
               </button>
             )
-          }
+          })}
+        </div>
 
-          return (
-            <button
-              key={i}
-              onClick={() => handleDigit(key)}
-              disabled={isLocked || isSubmitting}
-              className={clsx(
-                'flex items-center justify-center rounded-2xl',
-                'border border-bg-5 bg-bg-3',
-                'text-text-1 text-2xl font-bold',
-                'transition-all duration-100 active:scale-95',
-                'hover:bg-bg-4',
-                'disabled:opacity-30 disabled:cursor-not-allowed',
-              )}
-              style={{ minWidth: 72, minHeight: 72 }}
-            >
-              {key}
-            </button>
-          )
-        })}
+        {onFallbackToMagicLink && (
+          <button
+            onClick={onFallbackToMagicLink}
+            className="poweron-pin-fallback"
+          >
+            {onVerify ? 'Sign out and use password instead' : 'Use email instead'}
+          </button>
+        )}
       </div>
-
-      {/* ── Fallback link ─────────────────────────────────────────────────── */}
-      {onFallbackToMagicLink && (
-        <button
-          onClick={onFallbackToMagicLink}
-          className="mt-8 text-sm text-text-3 hover:text-text-2 transition-colors"
-        >
-          {onVerify ? 'Sign out and use password instead' : 'Use email instead'}
-        </button>
-      )}
-
     </div>
   )
 }
