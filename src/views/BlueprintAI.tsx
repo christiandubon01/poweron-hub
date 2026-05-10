@@ -5,6 +5,7 @@ import { getBackupData } from '@/services/backupDataService'
 import OperationsBlueprintPdfViewer from '@/components/blueprint/OperationsBlueprintPdfViewer'
 import {
   createBlueprintLibraryItem,
+  getOperationsBlueprintAnnotationSummary,
   getOperationsBlueprintLibrary,
   MAX_BLUEPRINT_FILE_SIZE_BYTES,
   saveOperationsBlueprintLibrary,
@@ -42,6 +43,7 @@ export default function BlueprintAI() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [annotationRefreshToken, setAnnotationRefreshToken] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const selectedItem = library.find(x => x.id === selectedId) || null
@@ -51,6 +53,12 @@ export default function BlueprintAI() {
     const archived = library.filter(x => x.status === 'archived').length
     return { uploaded, active, archived }
   }, [library])
+
+  const selectedAnnotationSummary = useMemo(() => {
+    if (!selectedItem?.id) return { total: 0, pagesWithAnnotations: 0, byPage: {} as Record<number, number> }
+    const freshBackup = getBackupData() || backup
+    return getOperationsBlueprintAnnotationSummary(freshBackup, selectedItem.id)
+  }, [selectedItem?.id, annotationRefreshToken, backup])
 
   async function persist(next: BlueprintLibraryItem[]) {
     setLibrary(next)
@@ -154,7 +162,7 @@ export default function BlueprintAI() {
               <div><p className="text-gray-500">Blueprint Title</p><p className="text-gray-100 font-semibold">{selectedItem.title}</p></div>
               <div><p className="text-gray-500">Linked Project Name</p><p className="text-gray-200">{selectedItem.projectName}</p></div>
               <div className="flex justify-between"><span className="text-gray-400">Pages Total</span><span className="text-gray-100">{selectedItem.pageCount || 0}</span></div>
-              <div className="flex justify-between"><span className="text-gray-400">Pages With Notes or Highlights</span><span className="text-gray-100">{selectedItem.pagesWithNotes || 0}</span></div>
+              <div className="flex justify-between"><span className="text-gray-400">Pages With Notes or Highlights</span><span className="text-gray-100">{selectedAnnotationSummary.pagesWithAnnotations}</span></div>
               <div className="pt-1">
                 <span className={`text-xs px-2 py-1 rounded-md border ${statusPill(selectedItem.status)}`}>
                   Status: {selectedItem.status === 'active' ? 'Active' : 'Archived'}
@@ -176,12 +184,28 @@ export default function BlueprintAI() {
                   {selectedItem.sheetIndex.map((s, i) => (
                     <div key={i} className="text-xs px-2 py-2 border-b border-gray-800 last:border-b-0 text-gray-300">
                       Pg {s.pageNumber} {s.sheetLabel ? `• ${s.sheetLabel}` : ''} {s.sheetTitle ? `• ${s.sheetTitle}` : ''}
+                      {(selectedAnnotationSummary.byPage[s.pageNumber] || 0) > 0 && (
+                        <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-blue-900/30 border border-blue-800/40 text-blue-300">
+                          {selectedAnnotationSummary.byPage[s.pageNumber]} annotation{selectedAnnotationSummary.byPage[s.pageNumber] !== 1 ? 's' : ''}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-gray-500 border border-dashed border-gray-700 rounded-md p-3">
-                  No sheet/page metadata yet. Upload is complete; index extraction can be added in a future phase.
+                <div className="text-xs text-gray-500 border border-dashed border-gray-700 rounded-md p-3 space-y-2">
+                  <div>No sheet/page metadata yet. Upload is complete; index extraction can be added in a future phase.</div>
+                  {Object.keys(selectedAnnotationSummary.byPage).length > 0 && (
+                    <div className="space-y-1">
+                      {Object.entries(selectedAnnotationSummary.byPage)
+                        .sort((a, b) => Number(a[0]) - Number(b[0]))
+                        .map(([page, count]) => (
+                          <div key={page} className="text-gray-300">
+                            Page {page} — {count} annotation{count !== 1 ? 's' : ''}
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -299,7 +323,10 @@ export default function BlueprintAI() {
 
       <div>
         <div className="mb-2 text-sm font-semibold text-gray-200">Blueprint Viewer</div>
-        <OperationsBlueprintPdfViewer blueprint={selectedItem} />
+        <OperationsBlueprintPdfViewer
+          blueprint={selectedItem}
+          onAnnotationsChanged={() => setAnnotationRefreshToken((v) => v + 1)}
+        />
       </div>
     </div>
   )

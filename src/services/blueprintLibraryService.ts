@@ -31,6 +31,32 @@ export interface BlueprintLibraryItem {
   archivedAt: string | null
 }
 
+export interface BlueprintAnnotationPoint {
+  x: number
+  y: number
+}
+
+export interface BlueprintAnnotationRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export interface BlueprintAnnotation {
+  id: string
+  blueprintSetId: string
+  projectId: string
+  pageNumber: number
+  type: 'note' | 'highlight' | 'freehand' | 'arrow' | 'cloud'
+  rect?: BlueprintAnnotationRect
+  path?: BlueprintAnnotationPoint[]
+  text?: string
+  color: string
+  createdAt: string
+  updatedAt: string
+}
+
 export const MAX_BLUEPRINT_FILE_SIZE_BYTES = 512 * 1024 * 1024
 
 function toSafeFileName(name: string): string {
@@ -166,4 +192,133 @@ export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900
   }
 
   return data.signedUrl
+}
+
+function normalizeRect(rect?: BlueprintAnnotationRect): BlueprintAnnotationRect | undefined {
+  if (!rect || typeof rect !== 'object') return undefined
+  const x = Number(rect.x)
+  const y = Number(rect.y)
+  const w = Number(rect.w)
+  const h = Number(rect.h)
+  if (![x, y, w, h].every(Number.isFinite)) return undefined
+  return {
+    x: Math.max(0, Math.min(1, x)),
+    y: Math.max(0, Math.min(1, y)),
+    w: Math.max(0, Math.min(1, w)),
+    h: Math.max(0, Math.min(1, h)),
+  }
+}
+
+function sanitizeAnnotation(raw: any): BlueprintAnnotation | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = String(raw.id || '').trim()
+  const blueprintSetId = String(raw.blueprintSetId || '').trim()
+  const projectId = String(raw.projectId || '').trim()
+  const pageNumber = Number(raw.pageNumber)
+  const type = String(raw.type || '') as BlueprintAnnotation['type']
+  const color = String(raw.color || '#facc15')
+  if (!id || !blueprintSetId || !projectId || !Number.isFinite(pageNumber) || pageNumber < 1) return null
+  if (!['note', 'highlight', 'freehand', 'arrow', 'cloud'].includes(type)) return null
+
+  const rect = normalizeRect(raw.rect)
+  const path = Array.isArray(raw.path)
+    ? raw.path
+      .map((p: any) => ({ x: Number(p?.x), y: Number(p?.y) }))
+      .filter((p: any) => Number.isFinite(p.x) && Number.isFinite(p.y))
+      .map((p: any) => ({
+        x: Math.max(0, Math.min(1, p.x)),
+        y: Math.max(0, Math.min(1, p.y)),
+      }))
+    : undefined
+  const createdAt = String(raw.createdAt || new Date().toISOString())
+  const updatedAt = String(raw.updatedAt || new Date().toISOString())
+
+  return {
+    id,
+    blueprintSetId,
+    projectId,
+    pageNumber: Math.floor(pageNumber),
+    type,
+    rect,
+    path,
+    text: raw.text == null ? undefined : String(raw.text),
+    color,
+    createdAt,
+    updatedAt,
+  }
+}
+
+function getAnnotationsContainer(backup: any): Record<string, BlueprintAnnotation[]> {
+  if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
+    backup.blueprintSummaries = {}
+  }
+  const raw = backup.blueprintSummaries.operationsBlueprintAnnotations
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    backup.blueprintSummaries.operationsBlueprintAnnotations = {}
+  }
+  return backup.blueprintSummaries.operationsBlueprintAnnotations
+}
+
+export function getOperationsBlueprintAnnotations(backup: any, blueprintSetId: string): BlueprintAnnotation[] {
+  const container = getAnnotationsContainer(backup || {})
+  const rawList = container?.[blueprintSetId]
+  if (!Array.isArray(rawList)) return []
+  return rawList.map(sanitizeAnnotation).filter(Boolean) as BlueprintAnnotation[]
+}
+
+export async function saveOperationsBlueprintAnnotations(
+  backup: any,
+  blueprintSetId: string,
+  annotations: BlueprintAnnotation[]
+): Promise<void> {
+  const container = getAnnotationsContainer(backup)
+  container[blueprintSetId] = (Array.isArray(annotations) ? annotations : [])
+    .map(sanitizeAnnotation)
+    .filter(Boolean) as BlueprintAnnotation[]
+  backup._lastSavedAt = new Date().toISOString()
+  const { saveBackupDataAndSyncNow } = await import('@/services/backupDataService')
+  const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
+  if (!result.success) {
+    throw new Error(result.error || 'Failed to sync blueprint annotations.')
+  }
+  try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+  try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+}
+
+export async function upsertOperationsBlueprintAnnotation(backup: any, annotation: BlueprintAnnotation): Promise<void> {
+  const clean = sanitizeAnnotation(annotation)
+  if (!clean) return
+  const list = getOperationsBlueprintAnnotations(backup, clean.blueprintSetId)
+  const idx = list.findIndex(a => a.id === clean.id)
+  if (idx >= 0) list[idx] = clean
+  else list.push(clean)
+  await saveOperationsBlueprintAnnotations(backup, clean.blueprintSetId, list)
+}
+
+export async function deleteOperationsBlueprintAnnotation(
+  backup: any,
+  blueprintSetId: string,
+  annotationId: string
+): Promise<void> {
+  const list = getOperationsBlueprintAnnotations(backup, blueprintSetId)
+  const next = list.filter(a => a.id !== annotationId)
+  await saveOperationsBlueprintAnnotations(backup, blueprintSetId, next)
+}
+
+export function getOperationsBlueprintAnnotationSummary(backup: any, blueprintSetId: string): {
+  total: number
+  pagesWithAnnotations: number
+  byPage: Record<number, number>
+} {
+  const list = getOperationsBlueprintAnnotations(backup, blueprintSetId)
+  const byPage: Record<number, number> = {}
+  for (const a of list) {
+    const p = Math.max(1, Math.floor(Number(a.pageNumber) || 1))
+    byPage[p] = (byPage[p] || 0) + 1
+  }
+  return {
+    total: list.length,
+    pagesWithAnnotations: Object.keys(byPage).length,
+    byPage,
+  }
 }
