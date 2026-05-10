@@ -1063,11 +1063,7 @@ export default function V15rLeadsPanel() {
   const cleanupRows = useMemo(() => {
     const isRelevantEstimateStatus = (status: any): boolean => {
       const s = String(status || '').trim().toLowerCase()
-      if (!s) return true
-      const allowed = new Set(['open', 'active', 'pending', 'quoted', 'approved', 'paid', 'completed'])
-      const excluded = new Set(['cancelled', 'canceled', 'deleted', 'archived', 'ignored', 'test', 'draft'])
-      if (excluded.has(s)) return false
-      return allowed.has(s)
+      return s === 'open' || s === 'active'
     }
     const accountById = new Map<string, any>()
     gcContacts.forEach((a: any) => {
