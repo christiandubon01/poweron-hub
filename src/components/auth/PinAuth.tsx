@@ -135,7 +135,9 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
 
         if (onVerify) {
       try {
+        console.log('[PinAuth] onVerify start', { pinLength: pin.length })
         await onVerify(pin)
+        console.log('[PinAuth] onVerify resolved')
         // Let authStore/LoginFlow handle the status transition.
         // Do not immediately read status here because Zustand/Supabase transitions
         // can still be in progress right after onVerify resolves.

@@ -360,9 +360,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId })
-        await bootstrapAuthenticatedUser(user.id)
-        set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        set({
+        status: 'authenticated',
+        tenantDataReady: false,
+        tenantUserId: user.id,
+        user,
+        profile,
+        appSession: session,
+        role: userRole,
+        ownerId,
+      })
+
+      // Bootstrap in background instead of blocking unlock
+      bootstrapAuthenticatedUser(user.id)
+        .then(() => {
+          set({ tenantDataReady: true })
+        })
+        .catch((err) => {
+          console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
+        })
         return
       }
 
