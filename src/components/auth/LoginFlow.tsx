@@ -564,18 +564,140 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
     }
   }
 
+  const registerInputStyle = {
+    ...inputStyle,
+    minHeight: '56px',
+    borderRadius: '12px',
+    fontSize: '15px',
+    padding: '15px 18px 15px 48px',
+    background: 'rgba(2,6,13,0.46)',
+    border: '1px solid rgba(61,158,245,0.22)',
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+  }
+
   if (sent) {
     return (
       <PCBPage>
-        <div style={{ maxWidth: '420px', margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '14px', background: 'rgba(30,128,223,0.1)', border: '1px solid rgba(30,128,223,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
-            <CheckCircle size={30} color={BLUE_B} />
+        <style>{`
+          @keyframes registerLogoFloat {
+            0%, 100% { transform: translateY(0) rotateX(10deg) rotateY(-8deg); }
+            50% { transform: translateY(-7px) rotateX(14deg) rotateY(4deg); }
+          }
+          @keyframes registerLogoOrbit {
+            0% { transform: rotateZ(0deg) rotateX(66deg); opacity: 0.2; }
+            50% { opacity: 0.38; }
+            100% { transform: rotateZ(360deg) rotateX(66deg); opacity: 0.2; }
+          }
+          @keyframes registerLogoPulse {
+            0%, 100% { opacity: 0.28; transform: scale(0.98); }
+            50% { opacity: 0.46; transform: scale(1.02); }
+          }
+          .poweron-register-success-logo {
+            position: relative;
+            width: min(100%, 300px);
+            min-height: 170px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            perspective: 900px;
+            margin: 0 auto 24px;
+            isolation: isolate;
+          }
+          .poweron-register-logo-halo,
+          .poweron-register-logo-orbit,
+          .poweron-register-logo-reflection {
+            position: absolute;
+            pointer-events: none;
+          }
+          .poweron-register-logo-halo {
+            inset: 6px 18px 24px;
+            border-radius: 34px;
+            background: radial-gradient(circle at center, rgba(61,158,245,0.18), transparent 64%);
+            box-shadow: 0 0 42px rgba(61,158,245,0.14);
+            animation: registerLogoPulse 8s ease-in-out infinite;
+          }
+          .poweron-register-logo-orbit {
+            inset: 10px 28px 34px;
+            border-radius: 50%;
+            border: 1px solid rgba(61,158,245,0.16);
+            border-top-color: rgba(120,190,255,0.38);
+            border-right-color: rgba(61,158,245,0.26);
+            animation: registerLogoOrbit 18s ease-in-out infinite;
+            z-index: 3;
+          }
+          .poweron-register-logo-plate {
+            position: relative;
+            z-index: 2;
+            width: min(88%, 240px);
+            min-height: 110px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 22px 26px;
+            border-radius: 24px;
+            border: 1px solid rgba(120,190,255,0.24);
+            background: linear-gradient(145deg, rgba(61,158,245,0.14), rgba(2,6,13,0.48) 44%, rgba(3,12,26,0.82));
+            box-shadow: 0 24px 54px rgba(0,0,0,0.38), 12px -10px 34px rgba(61,158,245,0.14), inset 0 1px 0 rgba(255,255,255,0.12);
+            transform-style: preserve-3d;
+            animation: registerLogoFloat 10s ease-in-out infinite;
+            overflow: hidden;
+          }
+          .poweron-register-logo-plate::before {
+            content: '';
+            position: absolute;
+            inset: 9px;
+            border-radius: 18px;
+            border: 1px solid rgba(61,158,245,0.08);
+            background: linear-gradient(135deg, rgba(255,255,255,0.07), transparent 42%);
+            transform: translateZ(16px);
+          }
+          .poweron-register-logo-img {
+            position: relative;
+            z-index: 2;
+            width: 100%;
+            max-width: 190px;
+            height: auto;
+            object-fit: contain;
+            filter: drop-shadow(0 14px 24px rgba(0,0,0,0.34)) drop-shadow(0 0 14px rgba(61,158,245,0.2));
+            transform: translateZ(34px);
+          }
+          .poweron-register-logo-reflection {
+            left: 18%;
+            right: 18%;
+            bottom: 8px;
+            height: 18px;
+            border-radius: 50%;
+            background: radial-gradient(ellipse at center, rgba(61,158,245,0.22), transparent 72%);
+            filter: blur(8px);
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .poweron-register-logo-halo,
+            .poweron-register-logo-orbit,
+            .poweron-register-logo-plate {
+              animation: none !important;
+            }
+          }
+        `}</style>
+        <div style={{ maxWidth: '520px', margin: '0 auto', textAlign: 'center', position: 'relative' }}>
+          <div style={{ borderRadius: '24px', border: '1px solid rgba(61,158,245,0.22)', background: 'linear-gradient(180deg, rgba(8,24,43,0.78), rgba(3,8,17,0.9))', boxShadow: '0 32px 94px rgba(0,0,0,0.46), 0 0 0 1px rgba(30,128,223,0.08), inset 0 1px 0 rgba(255,255,255,0.06)', padding: '42px 34px', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', overflow: 'hidden', position: 'relative' }}>
+            <div style={{ position: 'absolute', inset: '0 0 auto 0', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(61,158,245,0.78), transparent)' }} />
+            <div className="poweron-register-success-logo" aria-label="Power On Solutions">
+              <span className="poweron-register-logo-halo" />
+              <span className="poweron-register-logo-orbit" />
+              <div className="poweron-register-logo-plate">
+                <img className="poweron-register-logo-img" src="/assets/poweron-logo.png" alt="Power On Solutions" />
+              </div>
+              <span className="poweron-register-logo-reflection" />
+            </div>
+            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'rgba(31,201,122,0.08)', border: '1px solid rgba(31,201,122,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px', boxShadow: '0 0 26px rgba(31,201,122,0.14)' }}>
+              <CheckCircle size={24} color="#6ee7b7" />
+            </div>
+            <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '42px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, margin: '0 0 12px', letterSpacing: '-0.6px' }}>CHECK YOUR EMAIL</h2>
+            <p style={{ fontSize: '14px', color: T2, marginBottom: '10px', lineHeight: 1.7 }}>We sent a verification link to:</p>
+            <div style={{ background: 'rgba(2,6,13,0.46)', border: '1px solid rgba(61,158,245,0.22)', borderRadius: '12px', padding: '12px 18px', fontSize: '13px', color: TEXT, fontFamily: 'monospace', marginBottom: '18px', display: 'inline-block', maxWidth: '100%', overflowWrap: 'anywhere' }}>{email}</div>
+            <p style={{ fontSize: '12px', color: T3, marginBottom: '28px', lineHeight: 1.7 }}>Click the link to verify. Then log in with your email and password.</p>
+            <button onClick={onBack} style={{ ...btnSecondary, width: 'auto', minHeight: '44px', padding: '12px 24px', borderRadius: '12px', background: 'rgba(2,6,13,0.48)', border: '1px solid rgba(61,158,245,0.22)' }}>Back to home</button>
           </div>
-          <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '32px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, marginBottom: '12px', letterSpacing: '-1px' }}>Check your email</h2>
-          <p style={{ fontSize: '14px', color: T2, marginBottom: '8px' }}>We sent a verification link to:</p>
-          <div style={{ background: 'rgba(30,128,223,0.06)', border: '1px solid rgba(30,128,223,0.2)', borderRadius: '4px', padding: '10px 20px', fontSize: '13px', color: TEXT, fontFamily: 'monospace', marginBottom: '20px', display: 'inline-block' }}>{email}</div>
-          <p style={{ fontSize: '12px', color: T3, marginBottom: '28px' }}>Click the link to verify. Then log in with your email and password.</p>
-          <button onClick={onBack} style={{ ...btnSecondary, width: 'auto', padding: '10px 24px' }}>Back to home</button>
         </div>
       </PCBPage>
     )
@@ -583,67 +705,270 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
 
   return (
     <PCBPage>
-      <div style={{ maxWidth: '420px', margin: '0 auto' }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T3, fontSize: '13px', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: "'Barlow', sans-serif" }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-          Back
-        </button>
+      <style>{`
+        @keyframes registerLogoFloat {
+          0%, 100% { transform: translateY(0) rotateX(10deg) rotateY(-8deg); }
+          50% { transform: translateY(-7px) rotateX(14deg) rotateY(4deg); }
+        }
+        @keyframes registerLogoOrbit {
+          0% { transform: rotateZ(0deg) rotateX(66deg); opacity: 0.2; }
+          50% { opacity: 0.38; }
+          100% { transform: rotateZ(360deg) rotateX(66deg); opacity: 0.2; }
+        }
+        @keyframes registerLogoPulse {
+          0%, 100% { opacity: 0.28; transform: scale(0.98); }
+          50% { opacity: 0.46; transform: scale(1.02); }
+        }
+        @keyframes registerSweep {
+          0%, 22% { transform: translateX(-130%) skewX(-18deg); opacity: 0; }
+          42%, 56% { opacity: 0.24; }
+          82%, 100% { transform: translateX(130%) skewX(-18deg); opacity: 0; }
+        }
+        .poweron-register-shell {
+          width: 100%;
+          max-width: 1040px;
+          margin: 0 auto;
+          position: relative;
+          display: grid;
+          grid-template-columns: 1.02fr 0.98fr;
+          gap: 32px;
+          align-items: stretch;
+          padding: 10px;
+        }
+        .poweron-register-backglow {
+          position: absolute;
+          inset: -44px;
+          z-index: 0;
+          pointer-events: none;
+          background:
+            radial-gradient(circle at 28% 42%, rgba(30,128,223,0.12), transparent 30%),
+            radial-gradient(circle at 74% 52%, rgba(61,158,245,0.1), transparent 26%);
+          filter: blur(8px);
+        }
+        .poweron-register-logo-stage {
+          position: relative;
+          width: min(100%, 360px);
+          min-height: 210px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          perspective: 1000px;
+          margin: 0 0 38px;
+          isolation: isolate;
+        }
+        .poweron-register-logo-halo,
+        .poweron-register-logo-orbit,
+        .poweron-register-logo-orbit-alt,
+        .poweron-register-logo-reflection {
+          position: absolute;
+          pointer-events: none;
+        }
+        .poweron-register-logo-halo {
+          inset: 2px 18px 28px;
+          border-radius: 34px;
+          background: radial-gradient(circle at center, rgba(61,158,245,0.18), transparent 64%);
+          box-shadow: 0 0 42px rgba(61,158,245,0.14);
+          animation: registerLogoPulse 8s ease-in-out infinite;
+        }
+        .poweron-register-logo-orbit {
+          inset: 8px 30px 40px;
+          border-radius: 50%;
+          border: 1px solid rgba(61,158,245,0.16);
+          border-top-color: rgba(120,190,255,0.38);
+          border-right-color: rgba(61,158,245,0.26);
+          animation: registerLogoOrbit 18s ease-in-out infinite;
+          z-index: 3;
+        }
+        .poweron-register-logo-orbit-alt {
+          inset: 24px 56px 56px;
+          border-radius: 50%;
+          border: 1px solid rgba(61,158,245,0.1);
+          border-left-color: rgba(120,190,255,0.26);
+          border-bottom-color: rgba(61,158,245,0.2);
+          animation: registerLogoOrbit 24s ease-in-out infinite reverse;
+          z-index: 3;
+        }
+        .poweron-register-logo-plate {
+          position: relative;
+          z-index: 2;
+          width: min(88%, 286px);
+          min-height: 132px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 26px 30px;
+          border-radius: 26px;
+          border: 1px solid rgba(120,190,255,0.24);
+          background: linear-gradient(145deg, rgba(61,158,245,0.14), rgba(2,6,13,0.48) 44%, rgba(3,12,26,0.82));
+          box-shadow: 0 26px 58px rgba(0,0,0,0.4), 14px -12px 36px rgba(61,158,245,0.14), inset 0 1px 0 rgba(255,255,255,0.12);
+          transform-style: preserve-3d;
+          animation: registerLogoFloat 10s ease-in-out infinite;
+          overflow: hidden;
+        }
+        .poweron-register-logo-plate::before {
+          content: '';
+          position: absolute;
+          inset: 10px;
+          border-radius: 20px;
+          border: 1px solid rgba(61,158,245,0.08);
+          background: linear-gradient(135deg, rgba(255,255,255,0.07), transparent 42%);
+          transform: translateZ(16px);
+        }
+        .poweron-register-logo-plate::after {
+          content: '';
+          position: absolute;
+          top: -28%;
+          bottom: -28%;
+          left: -40%;
+          width: 32%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.13), rgba(120,190,255,0.1), transparent);
+          animation: registerSweep 9s ease-in-out infinite;
+        }
+        .poweron-register-logo-img {
+          position: relative;
+          z-index: 2;
+          width: 100%;
+          max-width: 226px;
+          height: auto;
+          object-fit: contain;
+          filter: drop-shadow(0 14px 24px rgba(0,0,0,0.34)) drop-shadow(0 0 14px rgba(61,158,245,0.2));
+          transform: translateZ(36px);
+        }
+        .poweron-register-logo-reflection {
+          left: 16%;
+          right: 16%;
+          bottom: 8px;
+          height: 20px;
+          border-radius: 50%;
+          background: radial-gradient(ellipse at center, rgba(61,158,245,0.22), transparent 72%);
+          filter: blur(8px);
+        }
+        @media (max-width: 767px) {
+          .poweron-register-shell { grid-template-columns: 1fr !important; gap: 22px !important; padding: 0 !important; max-width: 420px !important; }
+          .poweron-register-side { min-height: auto !important; padding: 24px !important; }
+          .poweron-register-title { font-size: 36px !important; }
+          .poweron-register-card { padding: 24px !important; }
+          .poweron-register-benefits { grid-template-columns: 1fr !important; }
+          .poweron-register-logo-stage { width: 100%; min-height: 170px; margin-bottom: 26px; }
+          .poweron-register-logo-plate { width: min(88%, 300px); min-height: 118px; padding: 22px 24px; border-radius: 22px; animation-duration: 14s; }
+          .poweron-register-logo-img { max-width: 230px; }
+          .poweron-register-logo-orbit { inset: 10px 28px 32px; animation-duration: 24s; }
+          .poweron-register-logo-orbit-alt { inset: 24px 48px 48px; animation-duration: 30s; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .poweron-register-logo-halo,
+          .poweron-register-logo-orbit,
+          .poweron-register-logo-orbit-alt,
+          .poweron-register-logo-plate,
+          .poweron-register-logo-plate::after {
+            animation: none !important;
+          }
+        }
+      `}</style>
+      <div className="poweron-register-shell">
+        <div className="poweron-register-backglow" />
+        <section className="poweron-register-side" style={{ minHeight: '650px', position: 'relative', zIndex: 1, overflow: 'hidden', borderRadius: '20px', border: '1px solid rgba(61,158,245,0.2)', background: 'linear-gradient(145deg, rgba(5,18,34,0.74), rgba(2,6,13,0.88))', boxShadow: '0 32px 100px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)', padding: '44px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(61,158,245,0.055) 1px, transparent 1px), linear-gradient(90deg, rgba(61,158,245,0.055) 1px, transparent 1px)', backgroundSize: '34px 34px', maskImage: 'linear-gradient(140deg, black, transparent 76%)', pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', right: '-120px', top: '-110px', width: '320px', height: '320px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(30,128,223,0.12), transparent 66%)', pointerEvents: 'none' }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '28px' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'rgba(30,128,223,0.12)', border: '1px solid rgba(30,128,223,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Zap size={18} color={BLUE_B} fill={BLUE_B} />
-          </div>
-          <div>
-            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '18px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, letterSpacing: '-0.5px' }}>Create Account</div>
-            <div style={{ fontSize: '10px', color: T3, letterSpacing: '1.5px', textTransform: 'uppercase' }}>Join PowerOn Hub</div>
-          </div>
-        </div>
-
-        <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {/* Full Name */}
-          <div style={{ position: 'relative' }}>
-            <User size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-            <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Full Name" required style={inputStyle} />
-          </div>
-
-          {/* Username */}
-          <div style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: T3, fontSize: '14px', pointerEvents: 'none' }}>@</span>
-            <input type="text" value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-zA-Z0-9_]/g, ''))} placeholder="username" required style={{ ...inputStyle, paddingLeft: '30px' }} />
-          </div>
-
-          {/* Email */}
-          <div style={{ position: 'relative' }}>
-            <Mail size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email address" required style={inputStyle} />
-          </div>
-
-          {/* Password */}
-          <div style={{ position: 'relative' }}>
-            <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-            <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min 8 chars)" required style={{ ...inputStyle, paddingRight: '44px' }} />
-            <button type="button" onClick={() => setShowPassword(v => !v)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T3 }}>
-              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <button onClick={onBack} style={{ background: 'rgba(30,128,223,0.06)', border: '1px solid rgba(30,128,223,0.16)', cursor: 'pointer', color: T2, fontSize: '12px', marginBottom: '38px', display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: "'Barlow', sans-serif", borderRadius: '999px', padding: '10px 15px', minHeight: '40px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+              Back
             </button>
-          </div>
 
-          {/* Confirm Password */}
-          <div style={{ position: 'relative' }}>
-            <Lock size={16} color={T3} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-            <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password" required style={inputStyle} />
-          </div>
-
-          {error && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px' }}>
-              <AlertCircle size={14} color="#f87171" />
-              <span style={{ fontSize: '12px', color: '#f87171' }}>{error}</span>
+            <div className="poweron-register-logo-stage" aria-label="Power On Solutions">
+              <span className="poweron-register-logo-halo" />
+              <span className="poweron-register-logo-orbit" />
+              <span className="poweron-register-logo-orbit-alt" />
+              <div className="poweron-register-logo-plate">
+                <img className="poweron-register-logo-img" src="/assets/poweron-logo.png" alt="Power On Solutions" />
+              </div>
+              <span className="poweron-register-logo-reflection" />
             </div>
-          )}
 
-          <button type="submit" disabled={loading} style={{ ...btnPrimary, marginTop: '4px', opacity: loading ? 0.6 : 1 }}>
-            {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Create Account</>}
-          </button>
-        </form>
+            <h1 className="poweron-register-title" style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '62px', fontWeight: 700, lineHeight: 0.9, letterSpacing: '-1px', textTransform: 'uppercase', color: TEXT, margin: '0 0 22px' }}>
+              Create your<br />
+              <span style={{ color: BLUE_B, textShadow: '0 0 42px rgba(61,158,245,0.38)' }}>operations hub</span>
+            </h1>
+            <p style={{ color: T2, fontSize: '15px', lineHeight: 1.8, maxWidth: '460px', margin: 0 }}>
+              Set up your secure workspace for field ops, leads, billing signals, and AI-powered business management.
+            </p>
+          </div>
+
+          <div className="poweron-register-benefits" style={{ position: 'relative', zIndex: 1, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginTop: '42px' }}>
+            {[
+              ['AUTH', 'Email verified'],
+              ['PROFILE', 'Contractor-ready'],
+              ['ACCESS', 'Workspace setup'],
+            ].map(([label, value]) => (
+              <div key={label} style={{ borderRadius: '14px', border: '1px solid rgba(61,158,245,0.18)', background: 'linear-gradient(180deg, rgba(8,24,43,0.52), rgba(2,6,13,0.48))', padding: '16px 14px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), 0 14px 30px rgba(0,0,0,0.18)' }}>
+                <div style={{ color: T3, fontSize: '9px', letterSpacing: '1.8px', textTransform: 'uppercase', marginBottom: '6px' }}>{label}</div>
+                <div style={{ color: TEXT, fontSize: '12px', fontWeight: 700 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="poweron-register-card" style={{ position: 'relative', zIndex: 1, overflow: 'hidden', borderRadius: '20px', padding: '44px', border: '1px solid rgba(61,158,245,0.22)', background: 'linear-gradient(180deg, rgba(8,24,43,0.78), rgba(3,8,17,0.88))', boxShadow: '0 32px 94px rgba(0,0,0,0.46), 0 0 0 1px rgba(30,128,223,0.08), inset 0 1px 0 rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', alignSelf: 'center' }}>
+          <div style={{ position: 'absolute', inset: '0 0 auto 0', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(61,158,245,0.85), transparent)' }} />
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ marginBottom: '30px' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(61,158,245,0.22)', background: 'rgba(61,158,245,0.07)', borderRadius: '999px', padding: '6px 10px', marginBottom: '14px' }}>
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#1fc97a', boxShadow: '0 0 10px #1fc97a' }} />
+                <span style={{ fontSize: '10px', color: BLUE_B, letterSpacing: '1.8px', textTransform: 'uppercase', fontWeight: 700 }}>Secure account setup</span>
+              </div>
+              <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '38px', fontWeight: 700, textTransform: 'uppercase', color: TEXT, margin: '0 0 8px', letterSpacing: '-0.6px' }}>CREATE ACCOUNT</h2>
+              <p style={{ color: T2, margin: 0, fontSize: '14px', lineHeight: 1.65 }}>Use your work email and choose a strong password to start your PowerOn Hub workspace.</p>
+            </div>
+
+            <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Full Name */}
+              <div style={{ position: 'relative' }}>
+                <User size={16} color={T3} style={{ position: 'absolute', left: '15px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Full Name" required style={registerInputStyle} />
+              </div>
+
+              {/* Username */}
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: '17px', top: '50%', transform: 'translateY(-50%)', color: T3, fontSize: '14px', pointerEvents: 'none' }}>@</span>
+                <input type="text" value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-zA-Z0-9_]/g, ''))} placeholder="username" required style={{ ...registerInputStyle, paddingLeft: '42px' }} />
+              </div>
+
+              {/* Email */}
+              <div style={{ position: 'relative' }}>
+                <Mail size={16} color={T3} style={{ position: 'absolute', left: '15px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email address" required style={registerInputStyle} />
+              </div>
+
+              {/* Password */}
+              <div style={{ position: 'relative' }}>
+                <Lock size={16} color={T3} style={{ position: 'absolute', left: '15px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min 8 chars)" required style={{ ...registerInputStyle, paddingRight: '46px' }} />
+                <button type="button" onClick={() => setShowPassword(v => !v)} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(30,128,223,0.06)', border: '1px solid rgba(30,128,223,0.12)', borderRadius: '8px', cursor: 'pointer', color: T2, width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+
+              {/* Confirm Password */}
+              <div style={{ position: 'relative' }}>
+                <Lock size={16} color={T3} style={{ position: 'absolute', left: '15px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password" required style={registerInputStyle} />
+              </div>
+
+              {error && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '11px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.22)', borderRadius: '10px' }}>
+                  <AlertCircle size={15} color="#f87171" />
+                  <span style={{ fontSize: '12px', color: '#f87171' }}>{error}</span>
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} style={{ ...btnPrimary, minHeight: '56px', borderRadius: '12px', marginTop: '4px', opacity: loading ? 0.6 : 1, boxShadow: `0 0 0 1px rgba(61,158,245,0.42), 0 16px 42px rgba(30,128,223,0.32)` }}>
+                {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Create Account</>}
+              </button>
+            </form>
+          </div>
+        </section>
       </div>
     </PCBPage>
   )
