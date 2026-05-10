@@ -138,6 +138,8 @@ export default function V15rLeadsPanel() {
   const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | string>('all')
   const [mapMode, setMapMode] = useState<'selected' | 'all_jobs'>('selected')
   const [activeClusterKey, setActiveClusterKey] = useState<string | null>(null)
+  const [selectedClusterPointKey, setSelectedClusterPointKey] = useState<string | null>(null)
+  const [selectedMapPointKey, setSelectedMapPointKey] = useState<string | null>(null)
   const [geoCache, setGeoCache] = useState<Record<string, { lat: number; lng: number }>>({})
   const [showAddRelationship, setShowAddRelationship] = useState(false)
   const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
@@ -971,33 +973,208 @@ export default function V15rLeadsPanel() {
     return filteredAccounts
   }, [mapMode, selectedAccount, filteredAccounts])
 
+  const pointPalette = ['#22d3ee', '#f59e0b', '#10b981', '#e879f9', '#60a5fa', '#f43f5e', '#f97316', '#84cc16']
+  const dateMs = (v: any): number => {
+    const s = String(v || '').trim()
+    if (!s) return Number.POSITIVE_INFINITY
+    const t = new Date(s).getTime()
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY
+  }
+
   const mapPoints = useMemo(() => {
     const pts: Array<any> = []
     mapScopedAccounts.forEach((a: any) => {
       const baseKey = `${a.id}::0::${[a.address, a.city, 'CA'].filter(Boolean).join(', ')}`
-      if (geoCache[baseKey]) pts.push({ accountId: a.id, lat: geoCache[baseKey].lat, lng: geoCache[baseKey].lng, label: a.name, gc: a.type === 'General Contractor', kind: 'Account', title: a.name, status: a.activeJobs > 0 ? 'Active' : 'Idle', quoted: 0, collected: 0, notes: a.notes || '', location: [a.address, a.city].filter(Boolean).join(', ') })
+      if (geoCache[baseKey]) {
+        pts.push({
+          pointKey: `${a.id}|account|anchor`,
+          accountId: a.id,
+          accountName: a.name,
+          lat: geoCache[baseKey].lat,
+          lng: geoCache[baseKey].lng,
+          label: a.name,
+          gc: a.type === 'General Contractor',
+          kind: 'Account',
+          entityType: 'account',
+          entityId: String(a.id || 'account-anchor'),
+          displayTitle: a.name,
+          title: a.name,
+          jobType: '',
+          sourceBucket: 'account',
+          sequenceNumber: null,
+          status: a.activeJobs > 0 ? 'Active' : 'Idle',
+          quoted: 0,
+          collected: 0,
+          outstanding: 0,
+          notes: a.notes || '',
+          date: '',
+          location: [a.address, a.city].filter(Boolean).join(', '),
+          pinColor: '#10b981',
+        })
+      }
       a.serviceCalls.forEach((s: any, idx: number) => {
         const key = `${a.id}::${idx + 1}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
         const canonicalCustomer = resolveRecordCustomerName(s, gcContacts) || a.name
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: canonicalCustomer, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.type || canonicalCustomer || 'Service Call', status: s.status || '—', quoted: num(s.price || s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        if (geoCache[key]) {
+          const quoted = num(s.price || s.totalQuote || 0)
+          const collected = num(s.collected || 0)
+          pts.push({
+            pointKey: `${a.id}|service_call|${String(s.id || idx)}`,
+            accountId: a.id,
+            accountName: a.name,
+            lat: geoCache[key].lat,
+            lng: geoCache[key].lng,
+            label: canonicalCustomer,
+            gc: a.type === 'General Contractor',
+            kind: 'Service Call',
+            entityType: 'service_call',
+            entityId: String(s.id || `service_call_${idx}`),
+            displayTitle: s.name || s.type || canonicalCustomer || 'Service Call',
+            title: s.type || canonicalCustomer || 'Service Call',
+            jobType: s.type || '',
+            sourceBucket: 'service_call',
+            sequenceNumber: null,
+            status: s.status || '—',
+            quoted,
+            collected,
+            outstanding: Math.max(0, quoted - collected),
+            notes: s.notes || '',
+            date: s.date || '',
+            location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+            pinColor: '#10b981',
+          })
+        }
       })
       ;(a.linkedLogs || []).forEach((s: any, idx: number) => {
         const key = `${a.id}::log::${idx}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
         const canonicalCustomer = resolveRecordCustomerName(s, gcContacts) || a.name
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: canonicalCustomer, gc: a.type === 'General Contractor', kind: 'Service Call', title: s.jtype || canonicalCustomer || 'Service Call', status: s.payStatus || '—', quoted: num(s.quoted || 0), collected: num(s.collected || 0), notes: s.notes || '', date: s.date || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        if (geoCache[key]) {
+          const quoted = num(s.quoted || 0)
+          const collected = num(s.collected || 0)
+          pts.push({
+            pointKey: `${a.id}|service_log|${String(s.id || idx)}`,
+            accountId: a.id,
+            accountName: a.name,
+            lat: geoCache[key].lat,
+            lng: geoCache[key].lng,
+            label: canonicalCustomer,
+            gc: a.type === 'General Contractor',
+            kind: 'Service Call',
+            entityType: 'service_log',
+            entityId: String(s.id || `service_log_${idx}`),
+            displayTitle: s.jtype || canonicalCustomer || 'Service Call',
+            title: s.jtype || canonicalCustomer || 'Service Call',
+            jobType: s.jtype || '',
+            sourceBucket: 'service_log',
+            sequenceNumber: null,
+            status: s.payStatus || '—',
+            quoted,
+            collected,
+            outstanding: Math.max(0, quoted - collected),
+            notes: s.notes || '',
+            date: s.date || '',
+            location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+            pinColor: '#10b981',
+          })
+        }
       })
       ;(a.linkedEstimates || []).forEach((s: any, idx: number) => {
         const key = `${a.id}::est::${idx}::${[s.address, s.city, 'CA'].filter(Boolean).join(', ')}`
         const canonicalCustomer = resolveRecordCustomerName(s, gcContacts) || a.name
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: canonicalCustomer, gc: a.type === 'General Contractor', kind: 'Estimate', title: s.jobType || canonicalCustomer || 'Estimate', status: s.status || 'open', quoted: num(s.totalQuote || 0), collected: 0, notes: s.notes || '', date: s.date || s.createdAt || '', location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        if (geoCache[key]) {
+          const quoted = num(s.totalQuote || 0)
+          const collected = num(s.collected || 0)
+          pts.push({
+            pointKey: `${a.id}|service_estimate|${String(s.id || idx)}`,
+            accountId: a.id,
+            accountName: a.name,
+            lat: geoCache[key].lat,
+            lng: geoCache[key].lng,
+            label: canonicalCustomer,
+            gc: a.type === 'General Contractor',
+            kind: 'Estimate',
+            entityType: 'service_estimate',
+            entityId: String(s.id || `service_estimate_${idx}`),
+            displayTitle: s.jobType || canonicalCustomer || 'Estimate',
+            title: s.jobType || canonicalCustomer || 'Estimate',
+            jobType: s.jobType || '',
+            sourceBucket: 'service_estimate',
+            sequenceNumber: null,
+            status: s.status || 'open',
+            quoted,
+            collected,
+            outstanding: Math.max(0, quoted - collected),
+            notes: s.notes || '',
+            date: s.date || s.createdAt || '',
+            location: [s.address, s.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+            pinColor: '#10b981',
+          })
+        }
       })
       a.projects.forEach((p: any, idx: number) => {
         const key = `${a.id}::proj::${idx}::${[p.address, p.city, 'CA'].filter(Boolean).join(', ')}`
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: p.name || a.name, gc: a.type === 'General Contractor', kind: 'Project', title: p.name || 'Project', status: p.status || '—', quoted: projectQuoted(p), collected: projectCollected(p), notes: p.notes || '', date: p.created || '', location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        if (geoCache[key]) {
+          const quoted = projectQuoted(p)
+          const collected = projectCollected(p)
+          pts.push({
+            pointKey: `${a.id}|project|${String(p.id || idx)}`,
+            accountId: a.id,
+            accountName: a.name,
+            lat: geoCache[key].lat,
+            lng: geoCache[key].lng,
+            label: p.name || a.name,
+            gc: a.type === 'General Contractor',
+            kind: 'Project',
+            entityType: 'project',
+            entityId: String(p.id || `project_${idx}`),
+            displayTitle: p.name || 'Project',
+            title: p.name || 'Project',
+            jobType: p.type || '',
+            sourceBucket: 'project',
+            sequenceNumber: null,
+            status: p.status || '—',
+            quoted,
+            collected,
+            outstanding: Math.max(0, quoted - collected),
+            notes: p.notes || '',
+            date: p.created || '',
+            location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', '),
+            pinColor: '#22d3ee',
+          })
+        }
       })
     })
+    const selectedId = selectedAccount?.id ? String(selectedAccount.id) : ''
+    const multiSelected = mapMode === 'selected' && !!selectedId
+    if (multiSelected) {
+      const selectedPts = pts.filter((p: any) => String(p.accountId) === selectedId && p.kind !== 'Account')
+      const shouldStyle = selectedPts.length > 1
+      const ordered = [...selectedPts].sort((a: any, b: any) => {
+        const da = dateMs(a.date)
+        const db = dateMs(b.date)
+        if (da !== db) return da - db
+        return String(a.pointKey || '').localeCompare(String(b.pointKey || ''))
+      })
+      const total = ordered.length
+      const seqMap = new Map<string, number>()
+      ordered.forEach((p: any, i: number) => seqMap.set(String(p.pointKey), i + 1))
+      return pts.map((p: any) => {
+        if (String(p.accountId) !== selectedId || p.kind === 'Account') return p
+        const seq = seqMap.get(String(p.pointKey)) || null
+        const pinColor = shouldStyle && seq ? pointPalette[(seq - 1) % pointPalette.length] : p.pinColor
+        const seqPrefix = seq ? `${seq} of ${total}` : ''
+        return {
+          ...p,
+          sequenceNumber: seq,
+          sequenceTotal: total,
+          pinColor,
+          label: seqPrefix ? `${seqPrefix} • ${p.accountName}` : p.label,
+          title: seqPrefix ? `${seqPrefix} • ${p.displayTitle || p.title || p.kind}` : (p.displayTitle || p.title || p.kind),
+        }
+      })
+    }
     return pts
-  }, [mapScopedAccounts, geoCache])
+  }, [mapScopedAccounts, geoCache, mapMode, selectedAccount?.id])
 
   const clusteredPoints = useMemo(() => {
     const clusters = new Map<string, any[]>()
@@ -1012,41 +1189,36 @@ export default function V15rLeadsPanel() {
     })
   }, [mapPoints])
 
-  const accountsById = useMemo(() => {
-    const m = new Map<string, any>()
-    accounts.forEach((a: any) => m.set(a.id, a))
-    return m
-  }, [accounts])
-
   const activeCluster = useMemo(() => {
-    if (activeClusterKey) return clusteredPoints.find((c: any) => c.key === activeClusterKey) || null
-    if (!selectedAccount) return null
-    return clusteredPoints.find((c: any) => (c.points || []).some((p: any) => p.accountId === selectedAccount.id)) || null
-  }, [activeClusterKey, clusteredPoints, selectedAccount])
+    if (!activeClusterKey) return null
+    return clusteredPoints.find((c: any) => c.key === activeClusterKey) || null
+  }, [activeClusterKey, clusteredPoints])
 
-  const activeClusterAccounts = useMemo(() => {
+  const activeClusterPoints = useMemo(() => {
     if (!activeCluster) return []
-    const uniqueIds = Array.from(new Set((activeCluster.points || []).map((p: any) => p.accountId).filter(Boolean)))
-    return uniqueIds.map((id: string) => {
-      const acc = accountsById.get(id)
-      if (!acc) return null
-      const totalQuoted = num(acc.totals?.totalQuoted || 0)
-      const totalCollected = num(acc.totals?.totalCollected || acc.lifetimeRevenue || 0)
-      const outstanding = num(acc.totals?.outstanding || acc.outstanding || 0)
-      const pointLocation = (activeCluster.points || []).find((p: any) => p.accountId === id && p.location)?.location || ''
-      return {
-        id: acc.id,
-        name: acc.name || 'Unnamed Account',
-        type: acc.type || 'Unknown',
-        location: [acc.address, acc.city].filter(Boolean).join(', ') || pointLocation || 'No location',
-        projectCount: num(acc.totals?.projectCount || (acc.projects || []).length),
-        serviceCount: num(acc.totals?.serviceLogCount || 0) + num(acc.totals?.activeServiceCallCount || 0),
-        totalQuoted,
-        totalCollected,
-        outstanding,
-      }
-    }).filter(Boolean)
-  }, [activeCluster, accountsById])
+    return [...(activeCluster.points || [])]
+      .sort((a: any, b: any) => {
+        const as = num(a.sequenceNumber || 0)
+        const bs = num(b.sequenceNumber || 0)
+        if (as > 0 && bs > 0 && as !== bs) return as - bs
+        const da = dateMs(a.date)
+        const db = dateMs(b.date)
+        if (da !== db) return da - db
+        return String(a.pointKey || '').localeCompare(String(b.pointKey || ''))
+      })
+  }, [activeCluster])
+
+  const selectedActivePoint = useMemo(() => {
+    if (!activeClusterPoints.length) return null
+    if (selectedMapPointKey) {
+      return activeClusterPoints.find((p: any) => String(p.pointKey) === String(selectedMapPointKey)) || null
+    }
+    if (activeClusterPoints.length === 1) return activeClusterPoints[0]
+    if (selectedClusterPointKey) {
+      return activeClusterPoints.find((p: any) => String(p.pointKey) === String(selectedClusterPointKey)) || activeClusterPoints[0]
+    }
+    return activeClusterPoints.find((p: any) => p.kind !== 'Account') || activeClusterPoints[0]
+  }, [activeClusterPoints, selectedClusterPointKey, selectedMapPointKey])
 
   const timelineEvents = useMemo(() => {
     const sourceAccounts = (mapMode === 'all_jobs' && !selectedAccount) ? mapScopedAccounts : (selectedAccount ? [selectedAccount] : [])
@@ -1440,11 +1612,20 @@ export default function V15rLeadsPanel() {
                       label={c.count > 1 ? { text: String(c.count), color: '#fff', fontWeight: '700' } : undefined}
                       onClick={() => {
                         setActiveClusterKey(c.key)
-                        if (c.count === 1 && c.primaryAccountId) setSelectedAccountId(c.primaryAccountId)
+                        const singlePoint = c.count === 1 ? (c.points?.[0] || null) : null
+                        if (singlePoint) {
+                          setSelectedClusterPointKey(String(singlePoint.pointKey || ''))
+                          setSelectedMapPointKey(String(singlePoint.pointKey || ''))
+                          if (singlePoint.accountId) setSelectedAccountId(String(singlePoint.accountId))
+                        } else {
+                          setSelectedClusterPointKey(null)
+                          setSelectedMapPointKey(null)
+                        }
                       }}
+                      title={c.count === 1 ? String(c.points?.[0]?.title || c.points?.[0]?.displayTitle || c.points?.[0]?.kind || 'Record') : `${c.count} records at location`}
                       icon={{
                         path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
-                        fillColor: c.gc ? '#22d3ee' : '#10b981',
+                        fillColor: c.count === 1 ? (c.points?.[0]?.pinColor || (c.gc ? '#22d3ee' : '#10b981')) : (c.gc ? '#22d3ee' : '#10b981'),
                         fillOpacity: 0.9,
                         strokeColor: '#ffffff',
                         strokeWeight: 1.5,
@@ -1453,39 +1634,34 @@ export default function V15rLeadsPanel() {
                       }}
                     />
                   ))}
-                  {activeCluster && (
+                  {activeCluster && selectedActivePoint && (
                     <InfoWindowF
-                      position={{ lat: activeCluster.lat, lng: activeCluster.lng }}
-                      onCloseClick={() => setActiveClusterKey(null)}
+                      position={{ lat: selectedActivePoint.lat, lng: selectedActivePoint.lng }}
+                      onCloseClick={() => {
+                        setActiveClusterKey(null)
+                        setSelectedClusterPointKey(null)
+                        setSelectedMapPointKey(null)
+                      }}
                     >
                       <div style={{ minWidth: 300, maxWidth: 360 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                          {activeClusterAccounts.length > 1 ? String(activeClusterAccounts.length) + ' Accounts at Location' : (activeClusterAccounts[0]?.name || 'Account')}
-                        </div>
-                        <div style={{ display: 'grid', gap: 6 }}>
-                          {activeClusterAccounts.map((acc: any) => (
-                            <button
-                              key={acc.id}
-                              onClick={() => setSelectedAccountId(acc.id)}
-                              style={{
-                                textAlign: 'left',
-                                border: '1px solid #1f2937',
-                                borderRadius: 8,
-                                padding: '8px 10px',
-                                background: 'rgba(2,6,23,0.8)',
-                              }}
-                            >
-                              <div style={{ fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>{acc.name}</div>
-                              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{acc.type}</div>
-                              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{acc.location}</div>
-                              <div style={{ fontSize: 11, color: '#93c5fd', marginTop: 4 }}>
-                                Projects: <strong>{acc.projectCount}</strong> | Service Calls: <strong>{acc.serviceCount}</strong>
-                              </div>
-                              <div style={{ fontSize: 11, color: '#93c5fd' }}>Quoted: <strong>{fmt(acc.totalQuoted)}</strong></div>
-                              <div style={{ fontSize: 11, color: '#86efac' }}>Collected: <strong>{fmt(acc.totalCollected)}</strong></div>
-                              <div style={{ fontSize: 11, color: '#fdba74' }}>Outstanding: <strong>{fmt(acc.outstanding)}</strong></div>
-                            </button>
-                          ))}
+                        <div style={{ border: '1px solid #1f2937', borderRadius: 8, padding: '8px 10px', background: 'rgba(2,6,23,0.85)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>{selectedActivePoint.accountName || 'Account'}</div>
+                            <div style={{ fontSize: 11, color: '#22d3ee', fontWeight: 700 }}>
+                              {selectedActivePoint.sequenceNumber ? `${selectedActivePoint.sequenceNumber} of ${selectedActivePoint.sequenceTotal || activeClusterPoints.length}` : '—'}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#e2e8f0', marginTop: 4 }}>{selectedActivePoint.displayTitle || selectedActivePoint.title || 'Untitled'}</div>
+                          <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{selectedActivePoint.entityType || selectedActivePoint.kind}</div>
+                          <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>Type: {selectedActivePoint.jobType || '—'}</div>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{selectedActivePoint.location || 'No address'}</div>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>Date: {selectedActivePoint.date || '—'}</div>
+                          <div style={{ fontSize: 10, color: '#93c5fd', marginTop: 4 }}>Quoted: <strong>{fmt(num(selectedActivePoint.quoted || 0))}</strong></div>
+                          <div style={{ fontSize: 10, color: '#86efac' }}>Collected: <strong>{fmt(num(selectedActivePoint.collected || 0))}</strong></div>
+                          <div style={{ fontSize: 10, color: '#fdba74' }}>Outstanding: <strong>{fmt(num(selectedActivePoint.outstanding || 0))}</strong></div>
+                          <div style={{ fontSize: 10, color: '#cbd5e1' }}>Status: <strong>{selectedActivePoint.status || '—'}</strong></div>
+                          {selectedActivePoint.notes && <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>{selectedActivePoint.notes}</div>}
+                          <div style={{ fontSize: 10, color: '#475569', marginTop: 3 }}>Source: {selectedActivePoint.sourceBucket || '—'}</div>
                         </div>
                       </div>
                     </InfoWindowF>
