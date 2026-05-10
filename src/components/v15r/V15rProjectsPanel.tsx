@@ -129,6 +129,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [editProjectId, setEditProjectId] = useState<string | null>(null)
   const [epName, setEpName] = useState('')
   const [epClient, setEpClient] = useState('')
+  const [epAccountId, setEpAccountId] = useState('')
   const [epContract, setEpContract] = useState('')
   const [epType, setEpType] = useState('Residential')
   const [epStartDate, setEpStartDate] = useState('')
@@ -193,6 +194,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setEditProjectId(p.id)
     setEpName(p.name || '')
     setEpClient((p as any).client || '')
+    setEpAccountId((p as any).accountId || '')
     setEpContract(String(p.contract || 0))
     setEpType(p.type || 'Residential')
     // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" reads from plannedStart,
@@ -308,7 +310,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const p = (backup.projects || []).find((x: any) => x.id === editProjectId)
     if (!p) return
     p.name = epName.trim()
-    ;(p as any).client = epClient.trim()
+    ;(p as any).accountId = epAccountId || undefined
     p.contract = num(epContract)
     p.type = epType
     p.status = epStatus
@@ -959,10 +961,47 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                 <input value={epName} onChange={e => setEpName(e.target.value)} className={inputCls} placeholder="e.g. Smith Residence Panel Upgrade" />
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Client / Customer</label>
-                  <input value={epClient} onChange={e => setEpClient(e.target.value)} className={inputCls} />
-                </div>
+                <div className="space-y-2">
+  <div>
+    <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">
+      Client / Customer
+    </label>
+    <input
+      value={epClient}
+      onChange={e => setEpClient(e.target.value)}
+      className={inputCls}
+    />
+  </div>
+
+  <div>
+    <label className="text-[10px] text-cyan-500 uppercase font-bold block mb-1">
+      Link To Existing Customer
+    </label>
+
+    <select
+      value={epAccountId}
+      onChange={e => {
+        setEpAccountId(e.target.value)
+
+        const selected = accountOptions.find((a: any) => a.id === e.target.value)
+
+        if (selected) {
+          const cleanName = selected.label.split('(')[0].trim()
+          setEpClient(cleanName)
+        }
+      }}
+      className={inputCls}
+    >
+      <option value="">No linked customer</option>
+
+      {accountOptions.map((a: any) => (
+        <option key={a.id} value={a.id}>
+          {a.label}
+        </option>
+      ))}
+    </select>
+  </div>
+</div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
                   <input type="number" value={epContract} onChange={e => setEpContract(e.target.value)} className={inputCls} placeholder="0" />

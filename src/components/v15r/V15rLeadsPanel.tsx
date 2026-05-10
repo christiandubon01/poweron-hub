@@ -1075,9 +1075,31 @@ export default function V15rLeadsPanel() {
     const target = gcContacts.find((g: any) => String(g.id) === String(accountId))
     if (!target) return
     pushState(backup)
+
+    const groupRecords = Array.isArray(group.records) ? group.records : []
+
+    backup.projects = (backup.projects || []).map((r: any) =>
+      groupRecords.some((x: any) => x._kind === 'project' && x.id === r.id)
+        ? { ...r, accountId: target.id }
+        : r
+    )
+
+    backup.serviceLogs = (backup.serviceLogs || []).map((r: any) =>
+      groupRecords.some((x: any) => x._kind === 'service_log' && x.id === r.id)
+        ? { ...r, accountId: target.id }
+        : r
+    )
+
+    backup.serviceEstimates = (backup.serviceEstimates || []).map((r: any) =>
+      groupRecords.some((x: any) => x._kind === 'service_estimate' && x.id === r.id)
+        ? { ...r, accountId: target.id }
+        : r
+    )
+
     const prior = String(target.tags || '').trim()
     const nextTag = [prior, `linked:${group.name}`].filter(Boolean).join(', ')
     backup.gcContacts = gcContacts.map((g: any) => g.id === target.id ? { ...g, tags: nextTag } : g)
+
     setIgnoredCleanupKeys((prev) => ({ ...prev, [group.key]: true }))
     persist()
   }

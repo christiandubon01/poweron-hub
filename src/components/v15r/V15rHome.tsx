@@ -112,6 +112,53 @@ function getServiceBalanceDue(log: any): number {
   return Math.max(0, totalBillable - collected)
 }
 
+function getServiceRollup(log: any): any {
+  const adjustments = Array.isArray(log.adjustments) ? log.adjustments : []
+  const addIncome = adjustments.filter((a: any) => a?.type === 'income').reduce((s: number, a: any) => s + num(a.amount), 0)
+  const addExpense = adjustments
+    .filter((a: any) => a?.type === 'expense' && (a.category || 'expense') !== 'mileage')
+    .reduce((s: number, a: any) => s + num(a.amount), 0)
+  const addMileage = adjustments
+    .filter((a: any) => a && ((a.type === 'mileage') || (a.type === 'expense' && (a.category || '') === 'mileage')))
+    .reduce((s: number, a: any) => s + num(a.amount), 0)
+  const totalAddedCost = addExpense + addMileage
+  const baseQuoted = num(log?.quoted)
+  const totalBillable = baseQuoted + addIncome
+
+  let settings: any = {}
+  try {
+    const bd = JSON.parse(localStorage.getItem('poweron_backup_data') || '{}')
+    settings = bd.settings || {}
+  } catch {}
+  const opCost = num(settings.opCost) || 43
+  const mileRate = num(settings.mileRate) || 0.66
+
+  const hrs = num(log?.hrs)
+  const miles = num(log?.miles)
+  const matCost = num(log?.mat)
+  const laborCost = hrs * opCost
+  const mileCost = miles * mileRate
+  const totalActual = matCost + mileCost + laborCost + totalAddedCost
+  const collected = num(log?.collected)
+  const remaining = Math.max(0, totalBillable - collected)
+
+  return {
+    baseQuoted,
+    totalBillable,
+    totalActual,
+    collected,
+    remaining,
+    projectedProfit: totalBillable - totalActual,
+    hrs,
+    miles,
+    matCost,
+    laborCost,
+    mileCost,
+    opCost,
+    mileRate,
+  }
+}
+
 // ── Helper to group logs by date ─────────────────────────────────────────────
 function groupLogsByDate(logs: any[]): Map<string, any[]> {
   const grouped = new Map<string, any[]>()
@@ -897,42 +944,48 @@ export default function V15rHome() {
                     const balanceColor = getBalanceColor(runningBalance, projRoll.quote)
                     const entryMiCost = rr.entryMileageCost
                     const entryTotal = rr.entryTotalCost
+                    const hasPay = num(l.collected) > 0
                     return (
-                      <div key={l.id || i} className={`px-4 py-3 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`} style={{ borderLeft: '3px solid #10b981' }}>
-                        {/* Header */}
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                              <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
-                              <span className="text-xs font-bold text-gray-100">{l.projName}</span>
-                              <span className="text-[10px] text-emerald-400 font-semibold">{l.phase}</span>
-                              <span className="text-[9px] text-gray-500">— {l.emp || 'Me'}</span>
+                      <div key={l.id || i} className={`px-4 py-2.5 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                        <div
+                          className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3"
+                          style={hasPay ? { background: 'linear-gradient(180deg, rgba(48,209,88,.10), rgba(48,209,88,.04))', borderLeft: '3px solid #10b981' } : { borderLeft: '3px solid #10b981' }}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] text-gray-150 font-mono">{l.date}</span>
+                                <span className="text-xs font-semibold text-gray-150">{l.projName}</span>
+                                <span className="text-[10px] text-gray-200">{l.phase}</span>
+                                <span className="text-[10px] text-gray-200">{l.emp || 'Me'}</span>
+                                {hasPay && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold">Collected</span>}
+                              </div>
+                              {l.notes && <div className="text-[10px] text-gray-300 mt-1">{l.notes}</div>}
+                              <div className="text-[10px] text-gray-200 mt-1 font-mono">
+                                Hrs: <span style={{ color: '#e5e7eb' }}>{num(l.hrs).toFixed(1)}</span> &nbsp;
+                                Miles: <span style={{ color: '#60a5fa' }}>{num(l.miles)}</span> &nbsp;
+                                Mat: <span style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</span> &nbsp;
+                                Coll: <span style={{ color: '#6ee7b7' }}>{fmt(num(l.collected))}</span> &nbsp;
+                                Remaining Bal: <span style={{ color: balanceColor }}>{fmt(runningBalance)}</span>
+                              </div>
                             </div>
-                            {/* Notes */}
-                            {l.notes && <div className="text-[10px] text-gray-300 mb-1">{l.notes}</div>}
-                            {/* Stats row */}
-                            <div className="text-[10px] font-mono text-gray-500 flex gap-3 flex-wrap mt-0.5">
-                              <span>Hrs: <span className="text-gray-200">{num(l.hrs).toFixed(1)}</span></span>
-                              <span>Miles: <span className="text-gray-200">{num(l.miles)}</span></span>
-                              <span>Mat: <span className="text-yellow-400">{fmt(num(l.mat))}</span></span>
-                              <span>Coll: <span style={{ color: '#10b981' }}>{fmt(num(l.collected))}</span></span>
-                              <span>Remaining Bal: <span style={{ color: balanceColor, fontWeight: 700 }}>{fmt(runningBalance)}</span></span>
-                            </div>
-                            {/* Cumulative row */}
-                            <div className="text-[9px] font-mono text-gray-600 flex gap-3 flex-wrap mt-1">
-                              <span>Cum Hours: <span className="text-gray-500">{num(rr.cumHours).toFixed(1)}h</span></span>
-                              <span>Cum Mat: <span className="text-gray-500">{fmt(rr.cumMaterialCost)}</span></span>
-                              <span>Cum Collected: <span style={{ color: '#10b981', opacity: 0.8 }}>{fmt(rr.cumCollected)}</span></span>
-                              <span>Cum Cost: <span className="text-gray-500">{fmt(rr.cumTotalCost)}</span></span>
+                            <div className="text-right text-[11px] space-y-0.5 min-w-[110px]">
+                              <div style={{ color: '#e5e7eb', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(entryRevenue))} lab</div>
+                              <div style={{ color: '#fcd34d', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(l.mat))} mat</div>
+                              <div style={{ color: '#60a5fa', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(entryMiCost))} mi</div>
+                              <div style={{ color: '#ef4444', fontFamily: 'monospace', fontSize: '12px', fontWeight: 700 }}>{fmt(num(entryTotal))} total</div>
                             </div>
                           </div>
-                          {/* Right column */}
-                          <div className="text-right flex-shrink-0 font-mono space-y-0" style={{ minWidth: 90 }}>
-                            <div className="text-[11px] text-gray-100">{fmt(entryRevenue)} <span className="text-gray-500 text-[9px]">lab</span></div>
-                            <div className="text-[11px] text-yellow-400">{fmt(num(l.mat))} <span className="text-gray-500 text-[9px]">mat</span></div>
-                            <div className="text-[11px]" style={{ color: '#22d3ee' }}>{fmt(entryMiCost)} <span className="text-gray-500 text-[9px]">mi</span></div>
-                            <div className="text-[11px] font-bold" style={{ color: '#f97316' }}>{fmt(Math.abs(entryTotal))} <span className="text-gray-500 text-[9px]">total</span></div>
-                            <div className="text-[10px] font-bold border-t border-gray-800 mt-1 pt-1" style={{ color: balanceColor }}>Net: {fmt(runningBalance)}</div>
+                        </div>
+                        <div className="bg-[var(--bg-input)] border border-gray-800 rounded px-3 py-2 text-[10px] flex justify-between gap-3 mt-1">
+                          <div className="flex gap-4 flex-wrap">
+                            <span><span className="text-gray-300">Cum Hours:</span> <span className="font-mono text-gray-300">{num(rr.cumHours).toFixed(1)}h</span></span>
+                            <span><span className="text-gray-300">Cum Mat:</span> <span className="font-mono" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span></span>
+                            <span><span className="text-gray-300">Cum Collected:</span> <span className="font-mono text-emerald-400">{fmt(num(rr.cumCollected))}</span></span>
+                            <span><span className="text-gray-300">Cum Cost:</span> <span className="font-mono text-red-400">{fmt(num(rr.cumTotalCost))}</span></span>
+                          </div>
+                          <div className="flex gap-3 items-center">
+                            <span style={{ color: balanceColor, fontFamily: 'monospace', fontWeight: 700 }}>Net: {fmt(runningBalance)}</span>
                           </div>
                         </div>
                       </div>
@@ -963,57 +1016,75 @@ export default function V15rHome() {
           return (
             <>
             <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
-              {recentSvcLogs.map((l: any, i: number) => {
-                const quoted = num(l.quoted)
-                const collected = num(l.collected)
-                const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
-                const addIncome = adjustments.filter((a: any) => a?.type === 'income').reduce((s: number, a: any) => s + num(a.amount), 0)
-                const totalBillable = quoted + addIncome
-                const balance = Math.max(0, totalBillable - collected)
-                const fullyPaid = balance <= 0.5 && totalBillable > 0
-                const partial = !fullyPaid && collected > 0
-                const statusColor = fullyPaid ? '#10b981' : partial ? '#f59e0b' : '#ef4444'
-                const statusLabel = fullyPaid ? 'PAID' : partial ? 'PARTIAL' : 'UNPAID'
+                            {recentSvcLogs.map((l: any, i: number) => {
+                const roll = getServiceRollup(l)
+                const balance = getServiceBalanceDue(l)
+                const fullyPaid = balance <= 0.009 && roll.totalBillable > 0
+                const partial = !fullyPaid && roll.collected > 0.009
+                const status = fullyPaid ? 'Y' : (partial ? 'P' : 'N')
                 return (
-                  <div key={l.id || i} className={`px-4 py-3 flex items-start justify-between ${i < recentSvcLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`} style={{ borderLeft: '3px solid #f97316' }}>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[10px] text-gray-400 font-mono">{l.date}</span>
-                        <span className="text-xs font-semibold text-gray-200">{l.customer}</span>
-                        {l.jtype && <span className="text-[9px] text-gray-400">— {l.jtype}</span>}
+                  <div key={l.id || i} className={`px-4 py-2.5 ${i < recentSvcLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                    <div className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3 space-y-2" style={{ borderLeft: '3px solid #f97316' }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-gray-200">{l.customer}</span>
+                            <span className="text-[10px] text-gray-500">{l.jtype}</span>
+                            <span className="text-[10px] text-gray-500">{l.date}</span>
+                            <span
+                              className={`text-[9px] px-2 py-0.5 rounded font-bold ${
+                                status === 'Y' ? 'bg-emerald-500/20 text-emerald-400' :
+                                status === 'P' ? 'bg-orange-500/20 text-orange-400' :
+                                'bg-red-500/20 text-red-400'
+                              }`}
+                            >
+                              {status === 'Y' ? 'Paid' : status === 'P' ? 'Partial' : 'Unpaid'}
+                            </span>
+                          </div>
+                          {l.address && <div className="text-[10px] text-gray-500 mt-1">{l.address}</div>}
+                          {l.notes && <div className="text-[10px] text-gray-500 mt-1">{l.notes}</div>}
+                        </div>
+                        <div className="text-right text-[10px]" style={{ minWidth: '160px' }}>
+                          <div className="font-mono font-bold" style={{ color: '#f7f8ef', fontSize: '12px', marginBottom: '4px' }}>
+                            {fmt(roll.totalBillable)} quote
+                          </div>
+                          <div className="font-mono" style={{ color: '#e5e7eb' }}>
+                            {num(roll.hrs).toFixed(1)}h x ${num(roll.opCost).toFixed(2)} = <span style={{ fontWeight: 700, color: '#f87171' }}>{fmt(roll.laborCost)} lab</span>
+                          </div>
+                          <div className="font-mono" style={{ color: '#fcd34d' }}>
+                            <span style={{ fontWeight: 700 }}>{fmt(roll.matCost)}</span> mat
+                          </div>
+                          <div className="font-mono" style={{ color: '#e5e7eb' }}>
+                            {num(roll.miles)}mi x ${num(roll.mileRate).toFixed(2)} = <span style={{ fontWeight: 700, color: '#60a5fa' }}>{fmt(roll.mileCost)} mi</span>
+                          </div>
+                        </div>
                       </div>
-                      {l.address && <div className="text-[10px] text-gray-500 mb-0.5">{l.address}</div>}
-                      {l.notes && <div className="text-[10px] text-gray-200 mt-0.5">{l.notes}</div>}
-                      <div className="text-[10px] font-mono mt-1 flex gap-3 flex-wrap">
-                        <span><span className="text-gray-500">Quoted: </span><span className="text-gray-200">{fmt(totalBillable)}</span></span>
-                        <span><span className="text-gray-500">Collected: </span><span style={{ color: '#10b981' }}>{fmt(collected)}</span></span>
-                        {balance > 0.5 && <span><span className="text-gray-500">Due: </span><span style={{ color: '#ef4444', fontWeight: 700 }}>{fmt(balance)}</span></span>}
+                      <div className="bg-[var(--bg-input)] rounded px-2 py-2 text-[10px] space-y-1.5" style={{ border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Base Quote:</span>
+                          <span className="font-mono text-gray-300 font-semibold">{fmt(roll.baseQuoted)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold border-t border-gray-700 pt-1.5" style={{ color: '#f7f8ef', fontSize: '11px' }}>
+                          <span>Total Billable:</span>
+                          <span className="font-mono">{fmt(roll.totalBillable)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
+                          <span className="text-gray-400">Total Cost:</span>
+                          <span className="font-mono" style={{ color: '#f87171' }}>{fmt(roll.totalActual)}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
+                          <span className="text-gray-400">Cash Real Margin:</span>
+                          <span className="font-mono font-bold" style={{ color: roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{fmt(roll.projectedProfit)}</span>
+                        </div>
+                        <div className="flex justify-between" style={{ fontSize: '11px' }}>
+                          <span className="text-gray-400">Collected:</span>
+                          <span className="font-mono font-bold text-emerald-400">{fmt(roll.collected)}</span>
+                        </div>
+                        <div className="flex justify-between" style={{ fontSize: '11px' }}>
+                          <span className="text-gray-400">Balance Due:</span>
+                          <span className="font-mono font-bold" style={{ color: balance > 0.009 ? '#ef4444' : '#10b981' }}>{fmt(balance)}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right flex-shrink-0 ml-3 font-mono" style={{ minWidth: 160 }}>
-                      <div className="text-[12px] font-bold text-gray-100 mb-1">{fmt(totalBillable)} <span className="text-gray-500 text-[9px] font-normal">quote</span></div>
-                      {(() => {
-                        let settings: any = {}
-                        try { const bd = JSON.parse(localStorage.getItem('poweron_backup_data') || '{}'); settings = bd.settings || {} } catch {}
-                        const opCost = num(settings.opCost) || 43
-                        const mileRate = num(settings.mileRate) || 0.66
-                        const hrs = num(l.hrs)
-                        const miles = num(l.miles)
-                        const mat = num(l.mat)
-                        const laborCost = hrs * opCost
-                        const mileCost = miles * mileRate
-                        return (
-                          <>
-                            <div className="text-[10px]" style={{ color: '#e5e7eb' }}>{hrs.toFixed(1)}h × ${opCost.toFixed(2)} = <span style={{ color: '#f87171', fontWeight: 700 }}>{fmt(laborCost)} lab</span></div>
-                            <div className="text-[10px]" style={{ color: '#fcd34d' }}><span style={{ fontWeight: 700 }}>{fmt(mat)}</span> mat</div>
-                            <div className="text-[10px]" style={{ color: '#e5e7eb' }}>{miles}mi × ${mileRate.toFixed(2)} = <span style={{ color: '#60a5fa', fontWeight: 700 }}>{fmt(mileCost)} mi</span></div>
-                          </>
-                        )
-                      })()}
-                      <div className="mt-1 pt-1 border-t border-gray-800">
-                        <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: `${statusColor}22`, color: statusColor, border: `1px solid ${statusColor}44`, display: 'inline-block' }}>{statusLabel}</span>
-                      </div>
-                      {balance > 0.5 && <div className="text-[11px] font-bold mt-0.5" style={{ color: '#ef4444' }}>{fmt(balance)} <span className="text-gray-600 text-[9px]">due</span></div>}
                     </div>
                   </div>
                 )
@@ -1058,3 +1129,6 @@ export default function V15rHome() {
       </div>
   )
 }
+
+
+
