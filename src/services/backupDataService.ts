@@ -322,6 +322,85 @@ export interface BackupData {
   _syncMeta?: { savedBy: string; savedAt: string }
 }
 
+const LEGACY_GC_ONLY_FIELDS = [
+  'phase', 'fit', 'action', 'due', 'awarded', 'sent', 'avg', 'pay',
+  'intro', 'contactLog', 'nextFollowup', 'lastContact', 'created',
+] as const
+
+function isBlankValue(v: any): boolean {
+  return v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
+}
+
+function pickNormalized(existingValue: any, incomingValue: any): any {
+  return isBlankValue(incomingValue) ? existingValue : incomingValue
+}
+
+export function relationshipAccountsToGcContacts(relationshipAccounts: any[], existingGcContacts: any[] = []): any[] {
+  const existingById = new Map<string, any>()
+  const existingByLegacyId = new Map<string, any>()
+  ;(existingGcContacts || []).forEach((gc: any) => {
+    const id = String(gc?.id || '').trim()
+    if (id) existingById.set(id, gc)
+  })
+
+  const merged: any[] = []
+  ;(relationshipAccounts || []).forEach((row: any) => {
+    const id = String(row?.id || '').trim()
+    if (!id) return
+    const legacyId = String(row?.legacy_gc_id || row?.legacyGcId || '').trim()
+    const existing = existingById.get(id) || (legacyId ? existingById.get(legacyId) : null) || null
+    if (legacyId && existing) existingByLegacyId.set(legacyId, existing)
+
+    const payload = (row?.legacy_payload && typeof row.legacy_payload === 'object') ? row.legacy_payload : {}
+    const base = { ...(existing || {}) }
+    const safePayload = { ...payload }
+    const out: any = { ...base, ...safePayload }
+
+    // Canonical identity from relationship_accounts, but do not wipe with blank/null.
+    out.id = id
+    out.company = pickNormalized(out.company, row?.company)
+    out.contact = pickNormalized(out.contact, row?.contact)
+    out.role = pickNormalized(out.role, row?.role || row?.account_type)
+    out.phone = pickNormalized(out.phone, row?.phone)
+    out.email = pickNormalized(out.email, row?.email)
+    out.address = pickNormalized(out.address, row?.address)
+    out.city = pickNormalized(out.city, row?.city)
+    out.notes = pickNormalized(out.notes, row?.notes)
+    out.tags = pickNormalized(out.tags, row?.tags)
+
+    // Preserve gcContacts-only lifecycle/activity fields.
+    LEGACY_GC_ONLY_FIELDS.forEach((field: string) => {
+      if (out[field] === undefined && existing && existing[field] !== undefined) out[field] = existing[field]
+    })
+
+    // Safe defaults for compatibility.
+    if (out.phase === undefined) out.phase = 'First Contact'
+    if (out.fit === undefined) out.fit = 0
+    if (out.action === undefined) out.action = ''
+    if (out.due === undefined) out.due = ''
+    if (out.awarded === undefined) out.awarded = 0
+    if (out.sent === undefined) out.sent = 0
+    if (out.avg === undefined) out.avg = 0
+    if (out.pay === undefined) out.pay = ''
+    if (out.intro === undefined) out.intro = ''
+    if (!Array.isArray(out.contactLog)) out.contactLog = []
+    if (out.nextFollowup === undefined) out.nextFollowup = ''
+    if (out.lastContact === undefined) out.lastContact = ''
+    if (out.created === undefined) out.created = new Date().toISOString().slice(0, 10)
+
+    merged.push(out)
+  })
+
+  // Keep local-only contacts not yet represented in relationship_accounts.
+  ;(existingGcContacts || []).forEach((gc: any) => {
+    const id = String(gc?.id || '').trim()
+    if (!id) return
+    if (!merged.some((m: any) => String(m?.id || '') === id)) merged.push(gc)
+  })
+
+  return merged
+}
+
 // ── Supabase check ───────────────────────────────────────────────────────────
 
 export function isSupabaseConfigured(): boolean {
@@ -1121,9 +1200,16 @@ export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ su
   if (!isSupabaseConfigured()) return { success: false, skipped: true, error: 'Supabase not configured' }
   if (!userId) return { success: false, skipped: true, error: 'No active tenant user' }
   if (!_tenantDataReady || _activeTenantUserId !== userId) {
+  const localTenantData = getBackupData(userId)
+  if (localTenantData && tenantOwnerMatches(localTenantData as any, userId)) {
+    _activeTenantUserId = userId
+    _tenantDataReady = true
+    console.warn('[Sync] Recovered tenant readiness from local tenant cache', { userId })
+  } else {
     console.warn('[Sync] BLOCKED: tenant data not ready', { active: _activeTenantUserId, userId, ready: _tenantDataReady })
     return { success: false, skipped: true, error: 'Tenant data not ready' }
   }
+}
   if (_isHydrating) {
     console.warn('[Sync] BLOCKED by hydration flag — this should clear after login')
     return { success: false, skipped: true, error: 'Hydration in progress' }
@@ -1170,6 +1256,35 @@ export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ su
   } catch (err: any) {
     console.error('[Sync] Supabase sync error:', err)
     return { success: false, error: err?.message || 'Unknown error' }
+  }
+}
+
+async function hydrateRelationshipAccountsIntoLocalProjection(userId: string): Promise<void> {
+  try {
+    const { getRelationshipAccountsNormalized } = await import('@/services/relationshipAccountService')
+    const relationshipAccounts = await getRelationshipAccountsNormalized()
+    if (!Array.isArray(relationshipAccounts) || relationshipAccounts.length === 0) return
+    const local = getBackupData(userId) || createEmptyBackup()
+    const existingGc = Array.isArray((local as any).gcContacts) ? (local as any).gcContacts : []
+    const mergedGcContacts = relationshipAccountsToGcContacts(relationshipAccounts, existingGc)
+    ;(local as any).gcContacts = mergedGcContacts
+      saveBackupDataSilent(local as BackupData, userId)
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('storage'))
+        window.dispatchEvent(new Event('poweron-data-saved'))
+        window.dispatchEvent(new CustomEvent('poweron-relationship-accounts-hydrated', {
+        detail: {
+        userId,
+        count: mergedGcContacts.length,
+        source: 'relationship_accounts',
+    },
+  }))
+}
+
+console.log(`[Sync] Hydrated relationship_accounts into gcContacts projection (${mergedGcContacts.length} accounts)`)
+  } catch (err) {
+    console.warn('[Sync] relationship_accounts projection hydration failed', err)
   }
 }
 
@@ -1223,6 +1338,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       const empty = attachTenantOwner(createEmptyBackup(), userId)
       saveBackupDataSilent(empty, userId)
       markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
       return { success: true, merged: false, status: 'seeded_empty' }
     }
 
@@ -1236,6 +1352,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     if (explicitUserId) {
       saveBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
       return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
     }
@@ -1251,6 +1368,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     if (!local) {
       saveBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log('[Sync] No local tenant data – Loading: remote')
       return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
     }
@@ -1262,6 +1380,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       }
       saveBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Loading remote tenant data (saved by ${remoteDevice})`)
       return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
     }
@@ -1271,10 +1390,12 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     if (localTime > remoteTime) {
       console.log('[Sync] Local tenant cache is newer — keeping local, not pushing during load')
       markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
       return { success: true, merged: false }
     }
 
     markTenantDataReady(userId)
+    await hydrateRelationshipAccountsIntoLocalProjection(userId)
     console.log('[Sync] Timestamps match — no sync needed')
     return { success: true, merged: false }
   } catch (err: any) {

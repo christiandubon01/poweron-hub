@@ -183,24 +183,26 @@ export default function V15rLeadsPanel() {
     const handler = () => forceUpdate()
     window.addEventListener('storage', handler)
     window.addEventListener('poweron-data-saved', handler)
+    window.addEventListener('poweron-relationship-accounts-hydrated', handler)
     return () => {
       window.removeEventListener('storage', handler)
       window.removeEventListener('poweron-data-saved', handler)
+      window.removeEventListener('poweron-relationship-accounts-hydrated', handler)
     }
   }, [forceUpdate])
 
   function persist() {
-    const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
-    backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
-    window.dispatchEvent(new Event('storage'))
-    window.dispatchEvent(new Event('poweron-data-saved'))
-    forceUpdate()
-    requestAnimationFrame(() => {
-      if (panelRef.current) panelRef.current.scrollTop = scrollTop
-      else window.scrollTo(0, scrollTop)
-    })
-  }
+  const scrollTop = panelRef.current?.scrollTop ?? window.scrollY
+  backup._lastSavedAt = new Date().toISOString()
+  saveBackupDataAndSync(backup)
+  window.dispatchEvent(new Event('storage'))
+  window.dispatchEvent(new Event('poweron-data-saved'))
+  forceUpdate()
+  requestAnimationFrame(() => {
+    if (panelRef.current) panelRef.current.scrollTop = scrollTop
+    else window.scrollTo(0, scrollTop)
+  })
+}
 
   // ── GC Contacts CRUD ───────────────────────────────────────────────────
 
@@ -566,10 +568,9 @@ export default function V15rLeadsPanel() {
     persist()
   }
 
-  function saveRelationshipAccount() {
+  async function saveRelationshipAccount() {
     const company = String(addRelForm.company || '').trim()
     if (!company) return
-    pushState(backup)
     const payload: any = {
       company,
       contact: String(addRelForm.contact || '').trim(),
@@ -581,16 +582,64 @@ export default function V15rLeadsPanel() {
       notes: String(addRelForm.notes || '').trim(),
       tags: String(addRelForm.tags || '').trim(),
     }
-    let savedId: string | null = null
+    const editingExisting = editingRelationshipId
+      ? gcContacts.find((gc: any) => String(gc.id) === String(editingRelationshipId))
+      : null
+    const savedId = editingRelationshipId || ('gc' + Date.now())
+    const legacyBase = editingExisting || {
+      id: savedId,
+      intro: '',
+      sent: 0,
+      awarded: 0,
+      avg: 0,
+      pay: '',
+      phase: 'First Contact',
+      fit: 0,
+      action: '',
+      due: '',
+      created: today(),
+      contactLog: [],
+      nextFollowup: '',
+      lastContact: '',
+    }
+    const cleanupRowToLink = pendingCleanupCreateGroupKey
+      ? cleanupRows.find((g: any) => g.key === pendingCleanupCreateGroupKey)
+      : null
+    const supabaseSaved = await upsertRelationshipAccount({
+      orgId: authProfile?.org_id || null,
+      ownerUserId: authProfile?.id || null,
+      account: {
+        id: String(savedId),
+        role: payload.role,
+        company: payload.company,
+        contact: payload.contact,
+        phone: payload.phone,
+        email: payload.email,
+        address: payload.address,
+        city: payload.city,
+        notes: payload.notes,
+        tags: payload.tags,
+        legacy_gc_id: String(savedId),
+        legacy_payload: { ...legacyBase, ...payload },
+      },
+    }).catch((err) => {
+      console.warn('[V15rLeadsPanel] relationship account upsert failed', err)
+      return null
+    })
+    if (!supabaseSaved) {
+      alert('Cloud save failed. Relationship account was not saved to Supabase.')
+      return
+    }
+
+    pushState(backup)
     if (editingRelationshipId) {
       backup.gcContacts = gcContacts.map((gc: any) => {
         if (gc.id !== editingRelationshipId) return gc
-        savedId = gc.id
-        return { ...gc, ...payload }
+        return { ...gc, ...payload, id: String(savedId) }
       })
     } else {
       const newGC: any = {
-        id: 'gc' + Date.now(),
+        id: String(savedId),
         intro: '',
         sent: 0,
         awarded: 0,
@@ -607,42 +656,19 @@ export default function V15rLeadsPanel() {
         ...payload,
       }
       backup.gcContacts = [...gcContacts, newGC]
-      savedId = newGC.id
     }
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupDataAndSync(backup, 'gcContacts')
     setShowAddRelationship(false)
     setEditingRelationshipId(null)
     setAddRelForm({
       company: '', contact: '', role: 'General Contractor', phone: '', email: '',
       address: '', city: '', notes: '', tags: '',
     })
-    persist()
-    if (savedId) setSelectedAccountId(savedId)
-    const cleanupRowToLink = pendingCleanupCreateGroupKey
-      ? cleanupRows.find((g: any) => g.key === pendingCleanupCreateGroupKey)
-      : null
-    if (savedId) {
-      const saved = (backup.gcContacts || []).find((x: any) => String(x.id) === String(savedId))
-      void upsertRelationshipAccount({
-        orgId: authProfile?.org_id || null,
-        ownerUserId: authProfile?.id || null,
-        account: {
-          id: String(savedId),
-          role: saved?.role || payload.role,
-          company: saved?.company || payload.company,
-          contact: saved?.contact || payload.contact,
-          phone: saved?.phone || payload.phone,
-          email: saved?.email || payload.email,
-          address: saved?.address || payload.address,
-          city: saved?.city || payload.city,
-          notes: saved?.notes || payload.notes,
-          tags: saved?.tags || payload.tags,
-          legacy_gc_id: String(savedId),
-          legacy_payload: saved || payload,
-        },
-      }).catch((err) => console.warn('[V15rLeadsPanel] relationship account upsert failed', err))
-      if (cleanupRowToLink) {
-        void linkCleanupRowToExisting(cleanupRowToLink, String(savedId))
-      }
+    setSelectedAccountId(String(savedId))
+    window.dispatchEvent(new Event('storage'))
+    if (cleanupRowToLink) {
+      void linkCleanupRowToExisting(cleanupRowToLink, String(savedId))
     }
   }
 
