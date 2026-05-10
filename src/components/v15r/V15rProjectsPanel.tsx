@@ -64,6 +64,7 @@ interface Props {
 
 const JOB_TYPES = ['Residential', 'Commercial', 'Service', 'Solar', 'New Construction', 'Commercial TI']
 const STATUS_OPTIONS = ['active', 'coming']
+const REL_ACCOUNT_TYPES = ['General Contractor', 'Subcontractor', 'Homeowner', 'Property Manager', 'Commercial Client', 'Service Customer', 'Other']
 const DEFAULT_PHASES = { Planning: 0, Estimating: 0, 'Site Prep': 0, 'Rough-in': 0, Trim: 0, Finish: 0 }
 
 function fmtDate(dateStr?: string): string {
@@ -94,6 +95,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // New Project form state
   const [npName, setNpName] = useState('')
   const [npClient, setNpClient] = useState('')
+  const [npAccountId, setNpAccountId] = useState('')
+  const [npClientEdited, setNpClientEdited] = useState(false)
   const [npContract, setNpContract] = useState('')
   const [npType, setNpType] = useState('Residential')
   const [npStartDate, setNpStartDate] = useState(new Date().toISOString().slice(0, 10))
@@ -103,6 +106,18 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // source of truth for project start and now writes to p.plannedStart. The old
   // npPlannedStart state is retired; Planned Start is no longer a separate user field.
   const [npPlannedEnd, setNpPlannedEnd] = useState('')
+  const [showNewCustomerModal, setShowNewCustomerModal] = useState(false)
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    company: '',
+    contact: '',
+    role: 'General Contractor',
+    phone: '',
+    email: '',
+    address: '',
+    city: '',
+    notes: '',
+    tags: '',
+  })
 
   // Collect modal state
   const [collectProject, setCollectProject] = useState<BackupProject | null>(null)
@@ -128,6 +143,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   if (prefillFromLead && !showNewProject) {
     setNpName(prefillFromLead.name || prefillFromLead.customer || '')
     setNpClient(prefillFromLead.customer || '')
+    setNpAccountId('')
+    setNpClientEdited(false)
     setNpContract(prefillFromLead.contract ? String(prefillFromLead.contract) : '')
     setNpType(prefillFromLead.type || 'Residential')
     setNpNotes(prefillFromLead.notes || '')
@@ -149,7 +166,27 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setNpName(''); setNpClient(''); setNpContract(''); setNpType('Residential')
     setNpStartDate(new Date().toISOString().slice(0, 10)); setNpStatus('active'); setNpNotes('')
     setNpPlannedEnd('')
+    setNpAccountId('')
+    setNpClientEdited(false)
+    setShowNewCustomerModal(false)
     setShowNewProject(true)
+  }
+
+  function closeNewProjectModal() {
+    setShowNewProject(false)
+    setHunterBannerCtx(null)
+    setShowNewCustomerModal(false)
+    setNewCustomerForm({
+      company: '',
+      contact: '',
+      role: 'General Contractor',
+      phone: '',
+      email: '',
+      address: '',
+      city: '',
+      notes: '',
+      tags: '',
+    })
   }
 
   function openEditProjectModal(p: BackupProject) {
@@ -177,6 +214,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       id,
       name: npName.trim(),
       client: npClient.trim(),
+      accountId: npAccountId || undefined,
       type: npType,
       status: npStatus,
       contract: num(npContract),
@@ -294,12 +332,81 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   }
 
   const projects = backup.projects || []
+  const gcContacts = backup.gcContacts || []
+  const accountOptions = gcContacts.map((gc: any) => ({
+    id: String(gc.id || ''),
+    label: [gc.company || 'Unnamed', gc.contact ? `(${gc.contact})` : ''].filter(Boolean).join(' ').trim(),
+  }))
   syncAllProjectFinanceBuckets(backup)
 
   function persist(changedKey: string = 'projects') {
     backup._lastSavedAt = new Date().toISOString()
     saveBackupDataAndSync(backup, changedKey)
     forceUpdate()
+  }
+
+  function handleSelectProjectAccount(accountId: string, forceFill: boolean = false) {
+    setNpAccountId(accountId)
+    const selected = accountOptions.find((a: any) => a.id === accountId)
+    if (!selected) return
+    if (forceFill || !npClientEdited || !npClient.trim()) {
+      setNpClient(selected.label)
+      setNpClientEdited(false)
+    }
+  }
+
+  function saveNewCustomerForProject() {
+    const company = String(newCustomerForm.company || '').trim()
+    if (!company) {
+      alert('Account / company name is required.')
+      return
+    }
+    pushState(backup)
+    const newGC: any = {
+      id: 'gc' + Date.now(),
+      company,
+      contact: String(newCustomerForm.contact || '').trim(),
+      role: newCustomerForm.role || 'General Contractor',
+      phone: String(newCustomerForm.phone || '').trim(),
+      email: String(newCustomerForm.email || '').trim(),
+      address: String(newCustomerForm.address || '').trim(),
+      city: String(newCustomerForm.city || '').trim(),
+      intro: '',
+      sent: 0,
+      awarded: 0,
+      avg: 0,
+      pay: '',
+      phase: 'First Contact',
+      fit: 0,
+      action: '',
+      due: '',
+      notes: String(newCustomerForm.notes || '').trim(),
+      tags: String(newCustomerForm.tags || '').trim(),
+      created: new Date().toISOString().slice(0, 10),
+      contactLog: [],
+      nextFollowup: '',
+      lastContact: '',
+    }
+    backup.gcContacts = [...gcContacts, newGC]
+    saveBackupDataAndSync(backup, 'gcContacts')
+    forceUpdate()
+
+    setShowNewCustomerModal(false)
+    setNewCustomerForm({
+      company: '',
+      contact: '',
+      role: 'General Contractor',
+      phone: '',
+      email: '',
+      address: '',
+      city: '',
+      notes: '',
+      tags: '',
+    })
+    const label = [newGC.company || 'Unnamed', newGC.contact ? `(${newGC.contact})` : ''].filter(Boolean).join(' ').trim()
+    setNpAccountId(newGC.id)
+    setNpClient(label)
+    setNpClientEdited(false)
   }
 
   async function deleteProject(id: string) {
@@ -650,7 +757,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           <div className="bg-[var(--bg-card)] border border-gray-700 rounded-xl w-full max-w-lg mx-4 p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">New Project</h3>
-              <button onClick={() => { setShowNewProject(false); setHunterBannerCtx(null); }} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
+              <button onClick={closeNewProjectModal} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
             </div>
             {/* HUNTER-sourced provenance banner — renders only when prefillFromLead
                 contains a leadId (i.e., this modal was opened via Pipeline Open
@@ -738,10 +845,34 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                 <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Project Name *</label>
                 <input value={npName} onChange={e => setNpName(e.target.value)} className={inputCls} placeholder="e.g. Smith Residence Panel Upgrade" />
               </div>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Relationship Account (Optional)</label>
+                  <select
+                    value={npAccountId}
+                    onChange={e => handleSelectProjectAccount(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">No linked account</option>
+                    {accountOptions.map((acc: any) => (
+                      <option key={acc.id} value={acc.id}>{acc.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="self-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewCustomerModal(true)}
+                    className="w-full md:w-auto px-3 py-2 rounded bg-cyan-700/40 border border-cyan-700/50 text-cyan-200 text-xs font-semibold hover:bg-cyan-700/60"
+                  >
+                    + New Customer
+                  </button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Client / Customer</label>
-                  <input value={npClient} onChange={e => setNpClient(e.target.value)} className={inputCls} />
+                  <input value={npClient} onChange={e => { setNpClient(e.target.value); setNpClientEdited(true) }} className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
@@ -779,9 +910,37 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
               </div>
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={() => { setShowNewProject(false); setHunterBannerCtx(null); }} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm font-semibold hover:bg-gray-600">Cancel</button>
+              <button onClick={closeNewProjectModal} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm font-semibold hover:bg-gray-600">Cancel</button>
               <button onClick={saveNewProject} className="flex-1 px-4 py-2 rounded bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500">Create Project</button>
             </div>
+
+            {showNewCustomerModal && (
+              <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-2xl rounded-xl border border-cyan-500/30 bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98))] p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-sm font-semibold text-cyan-300">Add Relationship Account</div>
+                    <button onClick={() => setShowNewCustomerModal(false)} className="text-gray-400 hover:text-gray-200">✕</button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                    <input value={newCustomerForm.company} onChange={(e) => setNewCustomerForm((f) => ({ ...f, company: e.target.value }))} placeholder="Account / company name" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <input value={newCustomerForm.contact} onChange={(e) => setNewCustomerForm((f) => ({ ...f, contact: e.target.value }))} placeholder="Contact name" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <select value={newCustomerForm.role} onChange={(e) => setNewCustomerForm((f) => ({ ...f, role: e.target.value }))} className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-cyan-300">
+                      {REL_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <input value={newCustomerForm.phone} onChange={(e) => setNewCustomerForm((f) => ({ ...f, phone: e.target.value }))} placeholder="Phone" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <input value={newCustomerForm.email} onChange={(e) => setNewCustomerForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <input value={newCustomerForm.address} onChange={(e) => setNewCustomerForm((f) => ({ ...f, address: e.target.value }))} placeholder="Primary address" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <input value={newCustomerForm.city} onChange={(e) => setNewCustomerForm((f) => ({ ...f, city: e.target.value }))} placeholder="City" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <input value={newCustomerForm.tags} onChange={(e) => setNewCustomerForm((f) => ({ ...f, tags: e.target.value }))} placeholder="Tags / relationship notes" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                    <textarea value={newCustomerForm.notes} onChange={(e) => setNewCustomerForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Notes" className="md:col-span-2 px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200 h-24" />
+                  </div>
+                  <div className="flex justify-end gap-2 mt-3">
+                    <button onClick={() => setShowNewCustomerModal(false)} className="px-3 py-2 rounded bg-gray-800 text-gray-300 text-xs">Cancel</button>
+                    <button onClick={saveNewCustomerForProject} className="px-3 py-2 rounded bg-emerald-600 text-white text-xs font-semibold">Save Customer</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
