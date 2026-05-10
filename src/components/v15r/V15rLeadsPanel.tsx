@@ -27,6 +27,7 @@ import {
 } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
+import { linkEntityToAccount, upsertRelationshipAccount } from '@/services/relationshipAccountService'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
@@ -79,6 +80,35 @@ function normPhone(v: any): string {
 
 function normEmail(v: any): string {
   return String(v || '').toLowerCase().trim()
+}
+function firstMoneyValue(...values: any[]): number {
+  const positive = values.find(v => num(v) > 0)
+  return positive !== undefined ? num(positive) : 0
+}
+
+function projectQuoted(p: any): number {
+  return firstMoneyValue(
+    p?.contract,
+    p?.contractAmount,
+    p?.quoted,
+    p?.quote,
+    p?.totalQuote,
+    p?.price
+  )
+}
+
+function projectCollected(p: any): number {
+  return firstMoneyValue(
+    p?.paid,
+    p?.collected,
+    p?.amountPaid,
+    p?.totalCollected,
+    p?.received
+  )
+}
+
+function projectOutstanding(p: any): number {
+  return Math.max(0, projectQuoted(p) - projectCollected(p))
 }
 
 // ── Main Component ───────────────────────────────────────────────────────────
@@ -580,6 +610,27 @@ export default function V15rLeadsPanel() {
     })
     persist()
     if (savedId) setSelectedAccountId(savedId)
+    if (savedId) {
+      const saved = (backup.gcContacts || []).find((x: any) => String(x.id) === String(savedId))
+      void upsertRelationshipAccount({
+        orgId: authProfile?.org_id || null,
+        ownerUserId: authProfile?.id || null,
+        account: {
+          id: String(savedId),
+          role: saved?.role || payload.role,
+          company: saved?.company || payload.company,
+          contact: saved?.contact || payload.contact,
+          phone: saved?.phone || payload.phone,
+          email: saved?.email || payload.email,
+          address: saved?.address || payload.address,
+          city: saved?.city || payload.city,
+          notes: saved?.notes || payload.notes,
+          tags: saved?.tags || payload.tags,
+          legacy_gc_id: String(savedId),
+          legacy_payload: saved || payload,
+        },
+      }).catch((err) => console.warn('[V15rLeadsPanel] relationship account upsert failed', err))
+    }
   }
 
   function startEditRelationship(accountId: string) {
@@ -681,8 +732,8 @@ export default function V15rLeadsPanel() {
         type: 'Project',
         title: p.name || 'Project',
         location: [p.address, p.city].filter(Boolean).join(', ') || [account.address, account.city].filter(Boolean).join(', '),
-        quoted: num(p.contract || 0),
-        collected: num(p.paid || 0),
+        quoted: projectQuoted(p),
+        collected: projectCollected(p),
         status: p.status || '—',
         notes: p.notes || '',
         accountId: account.id,
@@ -748,14 +799,14 @@ export default function V15rLeadsPanel() {
       activeServiceCallCount: activeServiceCalls.length,
       serviceLeadCount: serviceLeadsForAccount.length,
       totalQuoted:
-        projects.reduce((s: number, p: any) => s + num(p.contract || 0), 0) +
+        projects.reduce((s: number, p: any) => s + projectQuoted(p), 0) +
         serviceLogs.reduce((s: number, l: any) => s + num(l.quoted || 0), 0) +
         serviceEstimates.reduce((s: number, l: any) => s + num(l.totalQuote || 0), 0),
       totalCollected:
-        projects.reduce((s: number, p: any) => s + num(p.paid || 0), 0) +
+        projects.reduce((s: number, p: any) => s + projectCollected(p), 0) +
         serviceLogs.reduce((s: number, l: any) => s + num(l.collected || 0), 0),
       outstanding:
-        projects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract || 0) - num(p.paid || 0)), 0) +
+        projects.reduce((s: number, p: any) => s + projectOutstanding(p), 0) +
         serviceLogs.reduce((s: number, l: any) => s + Math.max(0, num(l.quoted || 0) - num(l.collected || 0)), 0),
       repeatCount: projects.length + serviceLogs.length + activeServiceCalls.length,
       openBids:
@@ -908,7 +959,7 @@ export default function V15rLeadsPanel() {
       })
       a.projects.forEach((p: any, idx: number) => {
         const key = `${a.id}::proj::${idx}::${[p.address, p.city, 'CA'].filter(Boolean).join(', ')}`
-        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: p.name || a.name, gc: a.type === 'General Contractor', kind: 'Project', title: p.name || 'Project', status: p.status || '—', quoted: num(p.contract || 0), collected: num(p.paid || 0), notes: p.notes || '', date: p.created || '', location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
+        if (geoCache[key]) pts.push({ accountId: a.id, lat: geoCache[key].lat, lng: geoCache[key].lng, label: p.name || a.name, gc: a.type === 'General Contractor', kind: 'Project', title: p.name || 'Project', status: p.status || '—', quoted: projectQuoted(p), collected: projectCollected(p), notes: p.notes || '', date: p.created || '', location: [p.address, p.city].filter(Boolean).join(', ') || [a.address, a.city].filter(Boolean).join(', ') })
       })
     })
     return pts
@@ -995,7 +1046,7 @@ export default function V15rLeadsPanel() {
       }
       const g = groups.get(key)
       g.count += 1
-      g.estimatedRevenue += num(r.contract || r.totalQuote || r.quoted || r.price || 0)
+      g.estimatedRevenue += num(r.contract || r.contractAmount || r.totalQuote || r.quoted || r.price || 0)
       g.records.push(r)
     })
     return Array.from(groups.values()).filter((g: any) => !ignoredCleanupKeys[g.key]).sort((a: any, b: any) => b.count - a.count)
@@ -1102,6 +1153,25 @@ export default function V15rLeadsPanel() {
 
     setIgnoredCleanupKeys((prev) => ({ ...prev, [group.key]: true }))
     persist()
+    groupRecords.forEach((r: any) => {
+      const entityType = r?._kind === 'project' ? 'project'
+        : r?._kind === 'service_log' ? 'service_log'
+        : r?._kind === 'service_estimate' ? 'service_estimate'
+        : String(r?._kind || 'unknown')
+      const entityLabel =
+        r?.name || r?.customer || r?.client || r?.jobType || r?.jtype || 'Linked Record'
+      const legacyText = r?.customer || r?.client || r?.company || ''
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String(accountId),
+        entityType,
+        entityId: String(r?.id || ''),
+        entityLabel,
+        legacyCustomerText: legacyText,
+        metadata: { legacy_payload: r },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rLeadsPanel] relationship link upsert failed', err))
+    })
   }
 
   function deleteEmptyRelationshipAccount(accountId: string) {

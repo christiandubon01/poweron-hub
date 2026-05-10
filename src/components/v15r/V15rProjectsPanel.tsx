@@ -30,6 +30,8 @@ import QuickBooksImportModal from './QuickBooksImportModal'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { useHunterStore } from '@/store/hunterStore'
+import { useAuth } from '@/hooks/useAuth'
+import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
@@ -79,6 +81,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // status='estimated' ONLY when the operator actually saves a new Project
   // (not when the modal opens). Cancel does nothing — lead stays in Pipeline.
   const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
+  let authProfile: any = null
+  try { authProfile = useAuth().profile } catch { /* auth not available */ }
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   useEffect(() => {
@@ -248,6 +252,31 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     }
     backup.projects = [...(backup.projects || []), newProj]
     saveBackupDataAndSync(backup)
+    if (newProj.accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String(newProj.accountId),
+        entityType: 'project',
+        entityId: String(newProj.id),
+        entityLabel: newProj.name || newProj.client || 'Project',
+        legacyCustomerText: newProj.client || '',
+        metadata: { legacy_payload: newProj },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rProjectsPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String(newProj.accountId),
+        entityType: 'project',
+        entityId: String(newProj.id),
+        title: newProj.name || 'Project',
+        description: newProj.notes || '',
+        quotedAmount: num(newProj.contract || 0),
+        collectedAmount: num(newProj.paid || 0),
+        outstandingAmount: Math.max(0, num(newProj.contract || 0) - num(newProj.paid || 0)),
+        metadata: { status: newProj.status || '', type: newProj.type || '', legacy_payload: newProj },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rProjectsPanel] relationship event upsert failed', err))
+    }
     // If this Project was created from a HUNTER lead, transition the lead to
     // 'estimated' so it leaves Pipeline's default view. Lineage is already
     // captured via newProj.convertedFromLeadId above.
@@ -310,6 +339,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const p = (backup.projects || []).find((x: any) => x.id === editProjectId)
     if (!p) return
     p.name = epName.trim()
+    ;(p as any).client = epClient.trim()
     ;(p as any).accountId = epAccountId || undefined
     p.contract = num(epContract)
     p.type = epType
@@ -320,6 +350,31 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.plannedStart = epStartDate || undefined
     p.plannedEnd = epPlannedEnd || undefined
     saveBackupDataAndSync(backup)
+    if ((p as any).accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String((p as any).accountId),
+        entityType: 'project',
+        entityId: String(p.id),
+        entityLabel: p.name || (p as any).client || 'Project',
+        legacyCustomerText: (p as any).client || '',
+        metadata: { legacy_payload: p },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rProjectsPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String((p as any).accountId),
+        entityType: 'project',
+        entityId: String(p.id),
+        title: p.name || 'Project',
+        description: (p as any).notes || '',
+        quotedAmount: num(p.contract || 0),
+        collectedAmount: num((p as any).paid || 0),
+        outstandingAmount: Math.max(0, num(p.contract || 0) - num((p as any).paid || 0)),
+        metadata: { status: p.status || '', type: p.type || '', legacy_payload: p },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rProjectsPanel] relationship event upsert failed', err))
+    }
     setShowEditProject(false)
     setEditProjectId(null)
     forceUpdate()

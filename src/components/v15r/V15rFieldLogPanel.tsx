@@ -40,6 +40,8 @@ import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import VoiceMaterialCapture from './VoiceMaterialCapture'
+import { useAuth } from '@/hooks/useAuth'
+import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 // BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
 import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABOR_RATE, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
 
@@ -260,6 +262,8 @@ function interleaveWithGaps(entries: any[], dateField: string = 'date'): Array<{
 
 export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }: { serviceCallPrefill?: { customer: string; address: string; notes: string; leadId?: string } | null; onPrefillUsed?: () => void } = {}) {
   const { isDemoMode, hasHydrated } = useDemoMode()
+  let authProfile: any = null
+  try { authProfile = useAuth().profile } catch { /* auth not available */ }
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [activeTab, setActiveTab] = useState<'proj' | 'svc' | 'triggers'>(() => {
@@ -549,6 +553,31 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       backup.serviceEstimates = [...serviceEstimates, estimate]
     }
     persist()
+    if (estimate.accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String(estimate.accountId),
+        entityType: 'service_estimate',
+        entityId: String(estimate.id),
+        entityLabel: estimate.jobType || estimate.customer || 'Service Estimate',
+        legacyCustomerText: estimate.customer || '',
+        metadata: { legacy_payload: estimate },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String(estimate.accountId),
+        entityType: 'service_estimate',
+        entityId: String(estimate.id),
+        title: estimate.jobType || estimate.customer || 'Service Estimate',
+        description: estimate.notes || '',
+        quotedAmount: num(estimate.totalQuote || 0),
+        collectedAmount: 0,
+        outstandingAmount: Math.max(0, num(estimate.totalQuote || 0)),
+        metadata: { status: estimate.status || 'open', legacy_payload: estimate },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship event upsert failed', err))
+    }
     // If this estimate came from a portal lead, update confirmed milestone with estimate date
     if (portalLeadId && !editEstimateId) {
       import('@/lib/supabase').then(({ supabase: sb }) => {
@@ -684,6 +713,31 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     })
 
     persist()
+    if ((logEntry as any).accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String((logEntry as any).accountId),
+        entityType: 'service_log',
+        entityId: String(logEntry.id),
+        entityLabel: logEntry.jtype || logEntry.customer || 'Service Call',
+        legacyCustomerText: logEntry.customer || '',
+        metadata: { legacy_payload: logEntry },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String((logEntry as any).accountId),
+        entityType: 'service_log',
+        entityId: String(logEntry.id),
+        title: logEntry.jtype || logEntry.customer || 'Service Call',
+        description: logEntry.notes || '',
+        quotedAmount: num(logEntry.quoted || 0),
+        collectedAmount: num(logEntry.collected || 0),
+        outstandingAmount: Math.max(0, num(logEntry.quoted || 0) - num(logEntry.collected || 0)),
+        metadata: { status: logEntry.payStatus || '', legacy_payload: logEntry },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship event upsert failed', err))
+    }
     setCompletingEstimateId(null)
   }
 
@@ -835,6 +889,31 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       backup.serviceLogs = [...serviceLogs, entry]
     }
     persist()
+    if ((entry as any).accountId) {
+      void linkEntityToAccount({
+        orgId: authProfile?.org_id || null,
+        accountId: String((entry as any).accountId),
+        entityType: 'service_log',
+        entityId: String(entry.id),
+        entityLabel: entry.jtype || entry.customer || 'Service Call',
+        legacyCustomerText: entry.customer || '',
+        metadata: { legacy_payload: entry },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship link upsert failed', err))
+      void upsertRelationshipEvent({
+        orgId: authProfile?.org_id || null,
+        accountId: String((entry as any).accountId),
+        entityType: 'service_log',
+        entityId: String(entry.id),
+        title: entry.jtype || entry.customer || 'Service Call',
+        description: entry.notes || '',
+        quotedAmount: num(entry.quoted || 0),
+        collectedAmount: num(entry.collected || 0),
+        outstandingAmount: Math.max(0, num(entry.quoted || 0) - num(entry.collected || 0)),
+        metadata: { status: entry.payStatus || '', legacy_payload: entry },
+        createdBy: authProfile?.id || null,
+      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship event upsert failed', err))
+    }
     // Session 10: Passive skill signal extraction (fire-and-forget)
     if (slNotes && slNotes.trim().length > 10) {
       const signalText = `Job type: ${slJtype}. Notes: ${slNotes}`
