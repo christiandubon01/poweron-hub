@@ -47,6 +47,7 @@ import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABO
 
 const PHASES = ['Rough-in', 'Trim', 'Demo', 'Underground', 'Finish', 'Material Run', 'Planning', 'Inspection']
 const JOB_TYPES = ['GFCI / Receptacles', 'Panel / Service', 'Troubleshoot', 'Lighting', 'EV Charger', 'Low Voltage', 'Circuit Add/Replace', 'Switches / Dimmers', 'Warranty', 'Other']
+const REL_ACCOUNT_TYPES = ['General Contractor', 'Subcontractor', 'Homeowner', 'Property Manager', 'Commercial Client', 'Service Customer', 'Other']
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -320,6 +321,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [editEstimateId, setEditEstimateId] = useState<string | null>(null)
   const [portalLeadId, setPortalLeadId] = useState<string | null>(null)
   const [estCust, setEstCust] = useState('')
+  const [estAccountId, setEstAccountId] = useState('')
+  const [estCustEdited, setEstCustEdited] = useState(false)
   const [estAddr, setEstAddr] = useState('')
   const [estDate, setEstDate] = useState(today())
   const [estJobType, setEstJobType] = useState(JOB_TYPES[0])
@@ -331,11 +334,25 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [estTech, setEstTech] = useState('')
   const [estMatNotes, setEstMatNotes] = useState('')
   const [estReceiptUrl, setEstReceiptUrl] = useState('')
+  const [showEstimateNewCustomerModal, setShowEstimateNewCustomerModal] = useState(false)
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    company: '',
+    contact: '',
+    role: 'General Contractor',
+    phone: '',
+    email: '',
+    address: '',
+    city: '',
+    notes: '',
+    tags: '',
+  })
 
   useEffect(() => {
     if (serviceCallPrefill) {
       setActiveTab('svc')
       setEstCust(serviceCallPrefill.customer || '')
+      setEstAccountId('')
+      setEstCustEdited(false)
       setEstAddr(serviceCallPrefill.address || '')
       setEstNotes(serviceCallPrefill.notes || '')
       setPortalLeadId(serviceCallPrefill.leadId || null)
@@ -364,6 +381,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const projects = backup.projects || []
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
+  const gcContacts = backup.gcContacts || []
+  const accountOptions = gcContacts.map((gc: any) => ({
+    id: String(gc.id || ''),
+    label: [gc.company || 'Unnamed', gc.contact ? `(${gc.contact})` : ''].filter(Boolean).join(' ').trim(),
+  }))
   const employees = backup.employees || []
   const triggerRules = backup.triggerRules || []
   const settings = backup.settings || {} as any
@@ -388,6 +410,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   function resetEstimateForm() {
     setEstCust('')
+    setEstAccountId('')
+    setEstCustEdited(false)
     setEstAddr('')
     setEstDate(today())
     setEstJobType(JOB_TYPES[0])
@@ -400,7 +424,81 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstTech('')
     setEstMatNotes('')
     setEstReceiptUrl('')
+    setShowEstimateNewCustomerModal(false)
+    setNewCustomerForm({
+      company: '',
+      contact: '',
+      role: 'General Contractor',
+      phone: '',
+      email: '',
+      address: '',
+      city: '',
+      notes: '',
+      tags: '',
+    })
     setShowEstimateForm(false)
+  }
+
+  function handleSelectEstimateAccount(accountId: string, forceFill: boolean = false) {
+    setEstAccountId(accountId)
+    const selected = accountOptions.find((a: any) => a.id === accountId)
+    if (!selected) return
+    if (forceFill || !estCustEdited || !String(estCust || '').trim()) {
+      setEstCust(selected.label)
+      setEstCustEdited(false)
+    }
+  }
+
+  function saveNewCustomerForEstimate() {
+    const company = String(newCustomerForm.company || '').trim()
+    if (!company) {
+      alert('Account / company name is required.')
+      return
+    }
+    pushState(backup)
+    const newGC: any = {
+      id: 'gc' + Date.now(),
+      company,
+      contact: String(newCustomerForm.contact || '').trim(),
+      role: newCustomerForm.role || 'General Contractor',
+      phone: String(newCustomerForm.phone || '').trim(),
+      email: String(newCustomerForm.email || '').trim(),
+      address: String(newCustomerForm.address || '').trim(),
+      city: String(newCustomerForm.city || '').trim(),
+      intro: '',
+      sent: 0,
+      awarded: 0,
+      avg: 0,
+      pay: '',
+      phase: 'First Contact',
+      fit: 0,
+      action: '',
+      due: '',
+      notes: String(newCustomerForm.notes || '').trim(),
+      tags: String(newCustomerForm.tags || '').trim(),
+      created: new Date().toISOString().slice(0, 10),
+      contactLog: [],
+      nextFollowup: '',
+      lastContact: '',
+    }
+    backup.gcContacts = [...gcContacts, newGC]
+    persist()
+    setShowEstimateNewCustomerModal(false)
+    setNewCustomerForm({
+      company: '',
+      contact: '',
+      role: 'General Contractor',
+      phone: '',
+      email: '',
+      address: '',
+      city: '',
+      notes: '',
+      tags: '',
+    })
+    const label = [newGC.company || 'Unnamed', newGC.contact ? `(${newGC.contact})` : ''].filter(Boolean).join(' ').trim()
+    setEstAccountId(newGC.id)
+    setEstCust(label)
+    setEstCustEdited(false)
   }
 
   function saveServiceEstimate() {
@@ -421,6 +519,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const estimate = {
       id: editEstimateId || ('est' + Date.now()),
       customer: estCust || 'Unknown',
+      accountId: estAccountId || undefined,
       address: estAddr,
       date: estDate || today(),
       jobType: estJobType,
@@ -470,6 +569,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     if (!est) return
     setEditEstimateId(est.id)
     setEstCust(est.customer || '')
+    setEstAccountId((est as any).accountId || '')
+    setEstCustEdited(false)
     setEstAddr(est.address || '')
     setEstDate(est.date || today())
     setEstJobType(est.jobType || JOB_TYPES[0])
@@ -534,6 +635,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       id: 'svc' + Date.now(),
       date: today(),
       customer: est.customer,
+      accountId: (est as any).accountId || undefined,
       address: est.address,
       jtype: est.jobType,
       hrs: actHrs,
@@ -675,6 +777,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       id: editSvcId || ('svc' + Date.now()),
       date: slDate || today(),
       customer: slCust || 'Unknown',
+      accountId: (editSvcId ? (serviceLogs.find(l => l.id === editSvcId) as any)?.accountId : undefined),
       address: slAddr,
       jtype: slJtype,
       hrs, miles: mi, quoted, mat,
@@ -1610,13 +1713,40 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               {/* Modal Body — scrollable */}
               <div className="flex-1 overflow-y-auto px-4 py-7 space-y-3">
 
-                {/* Row 1 — Customer / Address / Date */}
+                {/* Row 1A — Relationship account selector */}
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Relationship Account (Optional)</label>
+                    <select
+                      value={estAccountId}
+                      onChange={e => handleSelectEstimateAccount(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    >
+                      <option value="">No linked account</option>
+                      {accountOptions.map((acc: any) => (
+                        <option key={acc.id} value={acc.id}>{acc.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="self-end">
+                    <button
+                      type="button"
+                      onClick={() => setShowEstimateNewCustomerModal(true)}
+                      className="w-full md:w-auto px-3 py-2 rounded bg-cyan-700/40 border border-cyan-700/50 text-cyan-200 text-xs font-semibold hover:bg-cyan-700/60"
+                    >
+                      + New Customer
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 1B — Customer / Address / Date */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="md:col-span-1">
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Customer / Job Name</label>
                     <input
                       value={estCust}
-                      onChange={e => setEstCust(e.target.value)}
+                      onChange={e => { setEstCust(e.target.value); setEstCustEdited(true) }}
                       placeholder="e.g. Smith Residence"
                       className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
                       style={{ backgroundColor: 'var(--bg-input)' }}
@@ -1889,6 +2019,34 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   {editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
                 </button>
               </div>
+
+              {showEstimateNewCustomerModal && (
+                <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="w-full max-w-2xl rounded-xl border border-cyan-500/30 bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98))] p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-sm font-semibold text-cyan-300">Add Relationship Account</div>
+                      <button onClick={() => setShowEstimateNewCustomerModal(false)} className="text-gray-400 hover:text-gray-200">✕</button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                      <input value={newCustomerForm.company} onChange={(e) => setNewCustomerForm((f) => ({ ...f, company: e.target.value }))} placeholder="Account / company name" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <input value={newCustomerForm.contact} onChange={(e) => setNewCustomerForm((f) => ({ ...f, contact: e.target.value }))} placeholder="Contact name" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <select value={newCustomerForm.role} onChange={(e) => setNewCustomerForm((f) => ({ ...f, role: e.target.value }))} className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-cyan-300">
+                        {REL_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <input value={newCustomerForm.phone} onChange={(e) => setNewCustomerForm((f) => ({ ...f, phone: e.target.value }))} placeholder="Phone" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <input value={newCustomerForm.email} onChange={(e) => setNewCustomerForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <input value={newCustomerForm.address} onChange={(e) => setNewCustomerForm((f) => ({ ...f, address: e.target.value }))} placeholder="Primary address" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <input value={newCustomerForm.city} onChange={(e) => setNewCustomerForm((f) => ({ ...f, city: e.target.value }))} placeholder="City" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <input value={newCustomerForm.tags} onChange={(e) => setNewCustomerForm((f) => ({ ...f, tags: e.target.value }))} placeholder="Tags / relationship notes" className="px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200" />
+                      <textarea value={newCustomerForm.notes} onChange={(e) => setNewCustomerForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Notes" className="md:col-span-2 px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200 h-24" />
+                    </div>
+                    <div className="flex justify-end gap-2 mt-3">
+                      <button onClick={() => setShowEstimateNewCustomerModal(false)} className="px-3 py-2 rounded bg-gray-800 text-gray-300 text-xs">Cancel</button>
+                      <button onClick={saveNewCustomerForEstimate} className="px-3 py-2 rounded bg-emerald-600 text-white text-xs font-semibold">Save Customer</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2388,6 +2546,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       onClick={() => {
                         // Pre-populate the service estimate form above from this service call
                         setEstCust(l.customer || '')
+                        setEstAccountId((l as any).accountId || '')
+                        setEstCustEdited(false)
                         setEstAddr(l.address || l.addr || '')
                         setEstJobType(l.jtype || JOB_TYPES[0])
                         setEstNotes(l.notes || '')
