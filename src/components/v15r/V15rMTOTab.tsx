@@ -49,14 +49,19 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
 
 
   // ── Data ────────────────────────────────────────────────────────────
-  const backup = initialBackup || getBackupData()
+  const backup = getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
 
-  const phases = backup.settings?.mtoPhases || ['Underground', 'Rough In', 'Trim', 'Finish']
-  const allRows: any[] = p.mtoRows || []
+  const DEFAULT_MTO_PHASES = ['Underground', 'Rough In', 'Trim', 'Finish']
+  const phases = Array.isArray(backup.settings?.mtoPhases) && backup.settings.mtoPhases.length > 0
+    ? backup.settings.mtoPhases
+    : DEFAULT_MTO_PHASES
+  const allRows: any[] = Array.isArray(p.mtoRows) ? p.mtoRows : []
+  // Force recapture of allRows in closures on every render
+React.useEffect(() => { forceUpdate() }, [projectId])
 
   // ── Row mutations ───────────────────────────────────────────────────
   const editMTORow = (rowId: string, field: string, value: any) => {
@@ -1054,8 +1059,8 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
           </div>
         )}
 
-        {/* MAIN CONTENT — phase view or placement view */}
-        {hasAnyRows && (hasAnyPlacement ? renderPlacementGroups() : renderPhaseGroups())}
+                {/* MAIN CONTENT — phase view or placement view */}
+        {hasAnyPlacement ? renderPlacementGroups() : renderPhaseGroups()}
 
         {/* EXPORT BUTTONS ROW */}
         <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
