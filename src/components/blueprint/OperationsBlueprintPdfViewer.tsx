@@ -132,6 +132,13 @@ export default function OperationsBlueprintPdfViewer({
     centerX: number
     centerY: number
   } | null>(null)
+  const touchPanRef = useRef<{
+    active: boolean
+    pointerId: number | null
+    lastX: number
+    lastY: number
+    moved: boolean
+  }>({ active: false, pointerId: null, lastX: 0, lastY: 0, moved: false })
 
   const [signedUrl, setSignedUrl] = useState('')
   const [pdfDoc, setPdfDoc] = useState<any>(null)
@@ -230,6 +237,7 @@ export default function OperationsBlueprintPdfViewer({
       displaySizeRef.current = { w: 0, h: 0 }
       suppressAnnotationUntilRef.current = 0
       activeTouchPointersRef.current.clear()
+      touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
       pinchStateRef.current = {
         active: false,
         startDistance: 0,
@@ -599,13 +607,7 @@ export default function OperationsBlueprintPdfViewer({
 
     if (!state.lastCenter) state.lastCenter = center
 
-    // Two-finger pan: if both fingers move together, move the scroll area.
-    if (scroll) {
-      const panDx = center.x - state.lastCenter.x
-      const panDy = center.y - state.lastCenter.y
-      scroll.scrollLeft -= panDx
-      scroll.scrollTop -= panDy
-    }
+    // Two-finger gesture is zoom-only for mobile MVP.
 
     const distDelta = distance - state.lastDistance
     const totalDistDelta = distance - state.startDistance
@@ -704,10 +706,23 @@ export default function OperationsBlueprintPdfViewer({
       }
       if (activeTouchPointersRef.current.size >= 2) {
         suppressAnnotationUntilRef.current = Date.now() + 280
+        touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
         setDragStart(null)
         setDraftRect(null)
         handleTwoFingerGesture(e)
         e.preventDefault()
+        return
+      }
+
+      // One-finger pan only in Select/Pan mode.
+      if (activeTouchPointersRef.current.size === 1 && effectiveTool === 'select' && !isEditorOpen && !lockView) {
+        touchPanRef.current = {
+          active: true,
+          pointerId: e.pointerId,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          moved: false,
+        }
         return
       }
     }
@@ -737,6 +752,31 @@ export default function OperationsBlueprintPdfViewer({
         e.preventDefault()
         return
       }
+
+      const pan = touchPanRef.current
+      if (
+        pan.active &&
+        pan.pointerId === e.pointerId &&
+        activeTouchPointersRef.current.size === 1 &&
+        effectiveTool === 'select' &&
+        !isEditorOpen &&
+        !lockView
+      ) {
+        const scroll = scrollAreaRef.current
+        if (scroll) {
+          const dx = e.clientX - pan.lastX
+          const dy = e.clientY - pan.lastY
+          scroll.scrollLeft -= dx
+          scroll.scrollTop -= dy
+          if (!pan.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+            pan.moved = true
+          }
+          pan.lastX = e.clientX
+          pan.lastY = e.clientY
+          e.preventDefault()
+          return
+        }
+      }
     }
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (effectiveTool !== 'highlight' || !dragStart || !overlayRef.current || isEditorOpen) return
@@ -748,10 +788,20 @@ export default function OperationsBlueprintPdfViewer({
     const w = Math.abs(x - dragStart.x)
     const h = Math.abs(y - dragStart.y)
     setDraftRect({ x: left, y: top, w, h })
-  }, [effectiveTool, dragStart, isEditorOpen, handleTwoFingerGesture])
+  }, [effectiveTool, dragStart, isEditorOpen, handleTwoFingerGesture, lockView])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'touch') {
+      const pan = touchPanRef.current
+      if (pan.active && pan.pointerId === e.pointerId) {
+        const moved = pan.moved
+        touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+        endTouchPointer(e.pointerId)
+        if (moved) {
+          suppressAnnotationUntilRef.current = Date.now() + 300
+        }
+        return
+      }
       endTouchPointer(e.pointerId)
       if (pinchStateRef.current.active || Date.now() < suppressAnnotationUntilRef.current) {
         return
@@ -785,6 +835,14 @@ export default function OperationsBlueprintPdfViewer({
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'touch') {
+      const pan = touchPanRef.current
+      if (pan.active && pan.pointerId === e.pointerId) {
+        const moved = pan.moved
+        touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+        if (moved) {
+          suppressAnnotationUntilRef.current = Date.now() + 300
+        }
+      }
       endTouchPointer(e.pointerId)
       setDragStart(null)
       setDraftRect(null)
