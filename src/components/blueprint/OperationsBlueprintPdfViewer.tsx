@@ -102,6 +102,21 @@ export default function OperationsBlueprintPdfViewer({
   const noteEditorRef = useRef<HTMLTextAreaElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const pendingScrollResetRef = useRef(false)
+  const relativeZoomRef = useRef(1)
+  const displaySizeRef = useRef({ w: 0, h: 0 })
+  const suppressAnnotationUntilRef = useRef(0)
+  const activeTouchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinchStateRef = useRef<{
+    active: boolean
+    lastDistance: number
+    lastCenter: { x: number; y: number } | null
+  }>({ active: false, lastDistance: 0, lastCenter: null })
+  const pendingPinchAnchorRef = useRef<{
+    ratioX: number
+    ratioY: number
+    centerX: number
+    centerY: number
+  } | null>(null)
 
   const [signedUrl, setSignedUrl] = useState('')
   const [pdfDoc, setPdfDoc] = useState<any>(null)
@@ -137,6 +152,14 @@ export default function OperationsBlueprintPdfViewer({
   const canRender = !!pdfDoc && numPages > 0
   const isEditorOpen = !!noteEditor
   const effectiveTool = isEditorOpen ? 'select' : toolMode
+
+  useEffect(() => {
+    relativeZoomRef.current = relativeZoom
+  }, [relativeZoom])
+
+  useEffect(() => {
+    displaySizeRef.current = displaySize
+  }, [displaySize])
 
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
@@ -175,6 +198,12 @@ export default function OperationsBlueprintPdfViewer({
       setNoteEditor(null)
       setFocusedAnnotationId(null)
       setRelativeZoom(1)
+      relativeZoomRef.current = 1
+      displaySizeRef.current = { w: 0, h: 0 }
+      suppressAnnotationUntilRef.current = 0
+      activeTouchPointersRef.current.clear()
+      pinchStateRef.current = { active: false, lastDistance: 0, lastCenter: null }
+      pendingPinchAnchorRef.current = null
       pendingScrollResetRef.current = true
     }
   }, [])
@@ -280,6 +309,15 @@ export default function OperationsBlueprintPdfViewer({
         context.drawImage(tempCanvas, 0, 0)
         setDisplaySize({ w: tempCanvas.width, h: tempCanvas.height })
 
+        const pendingAnchor = pendingPinchAnchorRef.current
+        if (pendingAnchor && scrollAreaRef.current && !lockView) {
+          const targetLeft = (pendingAnchor.ratioX * tempCanvas.width) - pendingAnchor.centerX
+          const targetTop = (pendingAnchor.ratioY * tempCanvas.height) - pendingAnchor.centerY
+          scrollAreaRef.current.scrollLeft = Math.max(0, targetLeft)
+          scrollAreaRef.current.scrollTop = Math.max(0, targetTop)
+          pendingPinchAnchorRef.current = null
+        }
+
         if (pendingScrollResetRef.current && scrollAreaRef.current) {
           scrollAreaRef.current.scrollTop = 0
           scrollAreaRef.current.scrollLeft = 0
@@ -301,7 +339,7 @@ export default function OperationsBlueprintPdfViewer({
         try { renderTaskRef.current.cancel() } catch {}
       }
     }
-  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom])
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView])
 
   useEffect(() => {
     if (!isEditorOpen) return
@@ -482,6 +520,7 @@ export default function OperationsBlueprintPdfViewer({
   }, [blueprint, noteEditor, activeColor, currentPage, persistAnnotation, allAnnotations])
 
   const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!blueprint || effectiveTool !== 'note' || isEditorOpen) return
     if (!overlayRef.current || !displaySize.w || !displaySize.h) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -491,7 +530,96 @@ export default function OperationsBlueprintPdfViewer({
     openCreateNoteEditorAt(n.x, n.y)
   }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt])
 
+  const getTouchPoints = useCallback(() => {
+    const points = Array.from(activeTouchPointersRef.current.values())
+    if (points.length < 2) return null
+    return [points[0], points[1]] as const
+  }, [])
+
+  const handleTwoFingerGesture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (lockView) return
+    if (e.pointerType !== 'touch') return
+    const pts = getTouchPoints()
+    if (!pts) return
+    const [p1, p2] = pts
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const distance = Math.hypot(dx, dy)
+    const center = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+    const state = pinchStateRef.current
+    if (!state.active) {
+      state.active = true
+      state.lastDistance = distance
+      state.lastCenter = center
+      return
+    }
+
+    if (!state.lastCenter) state.lastCenter = center
+    const scroll = scrollAreaRef.current
+    if (scroll) {
+      // Two-finger pan: move content opposite to finger movement.
+      const panDx = center.x - state.lastCenter.x
+      const panDy = center.y - state.lastCenter.y
+      scroll.scrollLeft -= panDx
+      scroll.scrollTop -= panDy
+    }
+
+    const distDelta = distance - state.lastDistance
+    if (Math.abs(distDelta) >= 2) {
+      const currentZoom = relativeZoomRef.current
+      const scaleDelta = distance / Math.max(1, state.lastDistance)
+      const nextZoom = clampRelativeZoom(currentZoom * scaleDelta)
+      if (Math.abs(nextZoom - currentZoom) >= 0.01) {
+        if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
+          const contentX = scroll.scrollLeft + center.x
+          const contentY = scroll.scrollTop + center.y
+          pendingPinchAnchorRef.current = {
+            ratioX: Math.max(0, Math.min(1, contentX / Math.max(1, displaySizeRef.current.w))),
+            ratioY: Math.max(0, Math.min(1, contentY / Math.max(1, displaySizeRef.current.h))),
+            centerX: center.x,
+            centerY: center.y,
+          }
+        }
+        setRelativeZoom(nextZoom)
+      }
+      state.lastDistance = distance
+    }
+    state.lastCenter = center
+    e.preventDefault()
+  }, [getTouchPoints, lockView])
+
+  const endTouchPointer = useCallback((pointerId: number) => {
+    activeTouchPointersRef.current.delete(pointerId)
+    if (activeTouchPointersRef.current.size < 2 && pinchStateRef.current.active) {
+      pinchStateRef.current = { active: false, lastDistance: 0, lastCenter: null }
+      suppressAnnotationUntilRef.current = Date.now() + 280
+      pendingPinchAnchorRef.current = null
+    }
+  }, [])
+
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') {
+      if (lockView) {
+        e.preventDefault()
+        return
+      }
+      const rect = overlayRef.current?.getBoundingClientRect()
+      if (rect) {
+        activeTouchPointersRef.current.set(e.pointerId, {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        })
+      }
+      if (activeTouchPointersRef.current.size >= 2) {
+        suppressAnnotationUntilRef.current = Date.now() + 280
+        setDragStart(null)
+        setDraftRect(null)
+        handleTwoFingerGesture(e)
+        e.preventDefault()
+        return
+      }
+    }
+    if (Date.now() < suppressAnnotationUntilRef.current) return
     if (effectiveTool !== 'highlight' || isEditorOpen) return
     if (!overlayRef.current) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -499,9 +627,26 @@ export default function OperationsBlueprintPdfViewer({
     const y = e.clientY - rect.top
     setDragStart({ x, y })
     setDraftRect({ x, y, w: 0, h: 0 })
-  }, [effectiveTool, isEditorOpen])
+  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') {
+      const rect = overlayRef.current?.getBoundingClientRect()
+      if (rect) {
+        activeTouchPointersRef.current.set(e.pointerId, {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        })
+      }
+      if (activeTouchPointersRef.current.size >= 2 || pinchStateRef.current.active) {
+        setDragStart(null)
+        setDraftRect(null)
+        handleTwoFingerGesture(e)
+        e.preventDefault()
+        return
+      }
+    }
+    if (Date.now() < suppressAnnotationUntilRef.current) return
     if (effectiveTool !== 'highlight' || !dragStart || !overlayRef.current || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
@@ -511,9 +656,16 @@ export default function OperationsBlueprintPdfViewer({
     const w = Math.abs(x - dragStart.x)
     const h = Math.abs(y - dragStart.y)
     setDraftRect({ x: left, y: top, w, h })
-  }, [effectiveTool, dragStart, isEditorOpen])
+  }, [effectiveTool, dragStart, isEditorOpen, handleTwoFingerGesture])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') {
+      endTouchPointer(e.pointerId)
+      if (pinchStateRef.current.active || Date.now() < suppressAnnotationUntilRef.current) {
+        return
+      }
+    }
+    if (Date.now() < suppressAnnotationUntilRef.current) return
     if (effectiveTool !== 'highlight' || !dragStart || !overlayRef.current || !blueprint || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
@@ -537,7 +689,15 @@ export default function OperationsBlueprintPdfViewer({
     }
     await persistAnnotation(ann)
     setFocusedAnnotationId(ann.id)
-  }, [effectiveTool, dragStart, blueprint, currentPage, persistAnnotation, activeColor, isEditorOpen])
+  }, [effectiveTool, dragStart, blueprint, currentPage, persistAnnotation, activeColor, isEditorOpen, endTouchPointer])
+
+  const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') {
+      endTouchPointer(e.pointerId)
+      setDragStart(null)
+      setDraftRect(null)
+    }
+  }, [endTouchPointer])
 
   if (!blueprint) {
     return (
@@ -560,6 +720,8 @@ export default function OperationsBlueprintPdfViewer({
         .operations-pdf-scroll {
           scrollbar-width: thin;
           scrollbar-color: rgba(148,163,184,0.45) rgba(15,23,42,0.35);
+          touch-action: none;
+          overscroll-behavior: contain;
         }
         .operations-pdf-scroll::-webkit-scrollbar {
           width: 10px;
@@ -756,6 +918,7 @@ export default function OperationsBlueprintPdfViewer({
                       onPointerDown={handlePointerDown}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
+                      onPointerCancel={handlePointerCancel}
                     >
                       {pageAnnotations.map((a) => {
                         if (!a?.rect) return null
