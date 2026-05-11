@@ -4,6 +4,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  Maximize2,
+  Minimize2,
   MousePointer2,
   RefreshCw,
   Search,
@@ -162,6 +164,8 @@ export default function OperationsBlueprintPdfViewer({
   const [error, setError] = useState<string | null>(null)
   const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 })
   const [viewportWidth, setViewportWidth] = useState(0)
+
+  const [isFullScreenView, setIsFullScreenView] = useState(false)
 
   const [toolMode, setToolMode] = useState<ToolMode>('select')
   const [activeColor, setActiveColor] = useState('#facc15')
@@ -447,14 +451,19 @@ export default function OperationsBlueprintPdfViewer({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
-      setDraftRect(null)
-      setDragStart(null)
-      setNoteEditor(null)
-      setFocusedAnnotationId(null)
+      const hasOpenState = !!(noteEditor || draftRect || dragStart || focusedAnnotationId)
+      if (hasOpenState) {
+        setDraftRect(null)
+        setDragStart(null)
+        setNoteEditor(null)
+        setFocusedAnnotationId(null)
+      } else if (isFullScreenView) {
+        setIsFullScreenView(false)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [isFullScreenView, noteEditor, draftRect, dragStart, focusedAnnotationId])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -1040,7 +1049,13 @@ export default function OperationsBlueprintPdfViewer({
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
 
   return (
-    <div className="rounded-xl border overflow-hidden w-full" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+    <div
+      className={isFullScreenView
+        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
+        : 'rounded-xl border overflow-hidden w-full'
+      }
+      style={isFullScreenView ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+    >
       <style>{`
         .operations-pdf-scroll {
           scrollbar-width: thin;
@@ -1071,19 +1086,21 @@ export default function OperationsBlueprintPdfViewer({
         }
       `}</style>
 
-      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-          <p className="text-xs text-gray-500 truncate">{blueprint.projectName} • {blueprint.fileName}</p>
+      {!isFullScreenView && (
+        <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
+            <p className="text-xs text-gray-500 truncate">{blueprint.projectName} • {blueprint.fileName}</p>
+          </div>
+          <button
+            onClick={() => void loadPdf()}
+            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+          >
+            <RefreshCw size={12} />
+            Refresh Link
+          </button>
         </div>
-        <button
-          onClick={() => void loadPdf()}
-          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
-        >
-          <RefreshCw size={12} />
-          Refresh Link
-        </button>
-      </div>
+      )}
 
       {!hasStoragePath ? (
         <div className="p-6 text-sm text-amber-300 bg-amber-900/10 border-t border-amber-800/30">
@@ -1091,6 +1108,31 @@ export default function OperationsBlueprintPdfViewer({
         </div>
       ) : (
         <>
+          {isFullScreenView && (
+            <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
+              <div className="min-w-0 flex items-center gap-3">
+                <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
+                <p className="text-xs text-gray-500 truncate hidden xl:block">{blueprint.projectName} • {blueprint.fileName}</p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => void loadPdf()}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                >
+                  <RefreshCw size={12} />
+                  Refresh Link
+                </button>
+                <button
+                  onClick={() => setIsFullScreenView(false)}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-600 text-gray-200 hover:text-white bg-gray-800/40"
+                >
+                  <Minimize2 size={12} />
+                  Exit Full Screen
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2">
             <button
               onClick={() => setToolMode('select')}
@@ -1196,6 +1238,13 @@ export default function OperationsBlueprintPdfViewer({
                 Fit Width
               </button>
               <button
+                onClick={() => setIsFullScreenView((v) => !v)}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+              >
+                {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
+              </button>
+              <button
                 disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
                 onClick={() => applyRelativeZoomDelta(-0.1)}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
@@ -1226,11 +1275,11 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          <div className="p-4">
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4">
+          <div className={isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
+            <div className={isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
               <div
                 ref={scrollAreaRef}
-                className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-auto'} max-h-[72vh] rounded border border-gray-800`}
+                className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-auto'} ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'max-h-[72vh]'} rounded border border-gray-800`}
                 onWheel={handleWheel}
               >
                 <div
@@ -1376,7 +1425,7 @@ export default function OperationsBlueprintPdfViewer({
                 </div>
               </div>
 
-              <div className="border border-gray-800 rounded-md bg-[#10131c] max-h-[72vh] overflow-auto">
+              <div className={`border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'max-h-[72vh]'}`}>
                 <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-300">
                   Current Page Annotations ({pageAnnotations.length})
                 </div>
