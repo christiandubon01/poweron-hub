@@ -284,6 +284,75 @@ export async function deleteBlueprintSheetIndexItem(
   await saveOperationsBlueprintLibrary(backup, nextLibrary as BlueprintLibraryItem[])
 }
 
+export async function mergeDetectedSheetIndexRows(
+  backup: any,
+  blueprintSetId: string,
+  detectedRows: BlueprintSheetIndexItem[],
+  mode: 'fill-empty' | 'replace-auto' | 'replace-manual',
+  options?: { confirmReplaceManual?: boolean }
+): Promise<void> {
+  const list = getOperationsBlueprintLibrary(backup)
+  const target = list.find((x) => x.id === blueprintSetId)
+  if (!target) throw new Error('Blueprint set not found for sheet index merge.')
+  if (mode === 'replace-manual' && !options?.confirmReplaceManual) {
+    throw new Error('Manual row replacement requires explicit confirmation.')
+  }
+
+  const existing = getBlueprintSheetIndex(target)
+  const existingByPage = new Map<number, BlueprintSheetIndexItem>()
+  for (const row of existing) existingByPage.set(row.pageNumber, row)
+
+  const normalizedDetected = (Array.isArray(detectedRows) ? detectedRows : [])
+    .map((r) => ({
+      pageNumber: Math.max(1, Math.floor(Number(r?.pageNumber) || 1)),
+      sheetNumber: r?.sheetNumber ? String(r.sheetNumber).trim() : undefined,
+      sheetLabel: r?.sheetNumber ? String(r.sheetNumber).trim() : (r?.sheetLabel ? String(r.sheetLabel).trim() : undefined),
+      sheetTitle: r?.sheetTitle ? String(r.sheetTitle).trim() : undefined,
+      discipline: r?.discipline ? String(r.discipline).trim() : undefined,
+      confidence: Number.isFinite(Number(r?.confidence)) ? Number(r.confidence) : undefined,
+      source: 'auto' as const,
+      updatedAt: r?.updatedAt || new Date().toISOString(),
+    }))
+    .filter((r) => r.sheetNumber || r.sheetTitle || r.discipline)
+
+  for (const incoming of normalizedDetected) {
+    const current = existingByPage.get(incoming.pageNumber)
+    if (!current) {
+      existingByPage.set(incoming.pageNumber, incoming)
+      continue
+    }
+
+    const currentIsManual = current.source === 'manual'
+    const currentHasData = !!(String(current.sheetNumber || current.sheetLabel || '').trim() || String(current.sheetTitle || '').trim())
+
+    if (mode === 'fill-empty') {
+      if (currentIsManual) continue
+      if (!currentHasData) {
+        existingByPage.set(incoming.pageNumber, { ...current, ...incoming, source: 'auto', updatedAt: new Date().toISOString() })
+      }
+      continue
+    }
+
+    if (mode === 'replace-auto') {
+      if (currentIsManual) continue
+      existingByPage.set(incoming.pageNumber, { ...current, ...incoming, source: 'auto', updatedAt: new Date().toISOString() })
+      continue
+    }
+
+    if (mode === 'replace-manual') {
+      existingByPage.set(incoming.pageNumber, { ...current, ...incoming, source: 'auto', updatedAt: new Date().toISOString() })
+    }
+  }
+
+  const merged = Array.from(existingByPage.values()).sort((a, b) => a.pageNumber - b.pageNumber)
+  const nextLibrary = list.map((entry) =>
+    entry.id === blueprintSetId
+      ? { ...entry, sheetIndex: merged, updatedAt: new Date().toISOString() }
+      : entry
+  )
+  await saveOperationsBlueprintLibrary(backup, nextLibrary as BlueprintLibraryItem[])
+}
+
 export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900): Promise<string> {
   const cleanPath = String(storagePath || '').trim()
   if (!cleanPath) {

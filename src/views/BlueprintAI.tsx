@@ -8,6 +8,7 @@ import {
   deleteBlueprintSheetIndexItem,
   getBlueprintSheetIndex,
   getBlueprintSheetIndexSummary,
+  mergeDetectedSheetIndexRows,
   getOperationsBlueprintAnnotationSummary,
   getOperationsBlueprintLibrary,
   MAX_BLUEPRINT_FILE_SIZE_BYTES,
@@ -19,10 +20,12 @@ import {
   type BlueprintLibraryItem,
   type BlueprintLibraryType,
 } from '@/services/blueprintLibraryService'
+import { extractSheetIndexCandidatesFromStorage, type DetectedSheetIndexRow } from '@/services/blueprintExtractor'
 import {
   createDerivedBlueprintSet,
   MAX_DERIVED_SELECTION_PAGES,
 } from '@/services/blueprintDerivedSetService'
+import { exportAnnotatedBlueprintPdf } from '@/services/blueprintAnnotationExportService'
 
 const BLUEPRINT_TYPES: BlueprintLibraryType[] = ['Full Set', 'Electrical Only', 'Plumbing Only', 'Mechanical Only', 'Reference Sheet', 'Other']
 const DISCIPLINES = ['General', 'Architectural', 'Electrical', 'Plumbing', 'Mechanical', 'Fire Alarm', 'Structural', 'Civil', 'Other'] as const
@@ -68,6 +71,17 @@ export default function BlueprintAI() {
     discipline: string
   }>({ pageNumber: 1, sheetNumber: '', sheetTitle: '', discipline: 'General' })
   const [savingSheet, setSavingSheet] = useState(false)
+  const [detectingSheets, setDetectingSheets] = useState(false)
+  const [detectionProgress, setDetectionProgress] = useState<{ processed: number; total: number; pageNumber: number } | null>(null)
+  const [detectionRangeMode, setDetectionRangeMode] = useState<'first30' | 'current' | 'custom' | 'all'>('first30')
+  const [customRangeStart, setCustomRangeStart] = useState(1)
+  const [customRangeEnd, setCustomRangeEnd] = useState(30)
+  const [detectedPreviewRows, setDetectedPreviewRows] = useState<DetectedSheetIndexRow[] | null>(null)
+  const [sheetMergeMode, setSheetMergeMode] = useState<'fill-empty' | 'replace-auto' | 'replace-manual'>('fill-empty')
+  const [confirmReplaceManual, setConfirmReplaceManual] = useState(false)
+  const [applyingDetectedRows, setApplyingDetectedRows] = useState(false)
+  const [exportMode, setExportMode] = useState<'annotated-pages' | 'all-pages'>('annotated-pages')
+  const [exportingPdf, setExportingPdf] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const selectedItem = library.find(x => x.id === selectedId) || null
@@ -98,6 +112,9 @@ export default function BlueprintAI() {
 
   useEffect(() => {
     setSelectedPages([])
+    setDetectedPreviewRows(null)
+    setDetectionProgress(null)
+    setSheetSearch('')
   }, [selectedId])
 
   async function persist(next: BlueprintLibraryItem[]) {
@@ -253,6 +270,145 @@ export default function BlueprintAI() {
     }
   }
 
+  function resolveDetectionRange(): { startPage: number; endPage: number } | null {
+    if (!selectedItem) return null
+    const maxPage = Math.max(1, Number(selectedItem.pageCount || 1))
+    if (detectionRangeMode === 'current') {
+      const p = Math.max(1, Math.min(maxPage, currentViewerPage || 1))
+      return { startPage: p, endPage: p }
+    }
+    if (detectionRangeMode === 'custom') {
+      const start = Math.max(1, Math.min(maxPage, Math.floor(Number(customRangeStart) || 1)))
+      const end = Math.max(1, Math.min(maxPage, Math.floor(Number(customRangeEnd) || maxPage)))
+      if (start > end) return null
+      return { startPage: start, endPage: end }
+    }
+    if (detectionRangeMode === 'all') {
+      return { startPage: 1, endPage: maxPage }
+    }
+    return { startPage: 1, endPage: Math.min(30, maxPage) }
+  }
+
+  async function handleAutoDetectSheetIndex() {
+    setError(null)
+    setSuccess(null)
+    setDetectedPreviewRows(null)
+    if (!selectedItem?.storagePath) {
+      setError('Select a blueprint with a valid storagePath first.')
+      return
+    }
+    const range = resolveDetectionRange()
+    if (!range) {
+      setError('Invalid page range for detection.')
+      return
+    }
+    if (detectingSheets) return
+    setDetectingSheets(true)
+    setDetectionProgress(null)
+    try {
+      const result = await extractSheetIndexCandidatesFromStorage({
+        storagePath: selectedItem.storagePath,
+        startPage: range.startPage,
+        endPage: range.endPage,
+        maxPages: detectionRangeMode === 'first30' ? 30 : undefined,
+        onProgress: (p) => setDetectionProgress(p),
+      })
+      setDetectedPreviewRows(result.rows || [])
+      if (!result.rows?.length) {
+        setSuccess('Auto-detect completed, no candidates found in selected range.')
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Auto-detect failed.')
+    } finally {
+      setDetectingSheets(false)
+    }
+  }
+
+  function cancelDetectedPreview() {
+    setDetectedPreviewRows(null)
+    setDetectionProgress(null)
+  }
+
+  async function applyDetectedSheetRows() {
+    setError(null)
+    if (!selectedItem?.id) {
+      setError('Select a blueprint set first.')
+      return
+    }
+    if (!detectedPreviewRows?.length) {
+      setError('No detected rows to apply.')
+      return
+    }
+    if (sheetMergeMode === 'replace-manual' && !confirmReplaceManual) {
+      setError('Confirm manual row replacement before applying this mode.')
+      return
+    }
+    if (applyingDetectedRows) return
+    setApplyingDetectedRows(true)
+    try {
+      const freshBackup = getBackupData() || backup
+      await mergeDetectedSheetIndexRows(
+        freshBackup,
+        selectedItem.id,
+        detectedPreviewRows,
+        sheetMergeMode,
+        { confirmReplaceManual }
+      )
+      const freshLibrary = getOperationsBlueprintLibrary(getBackupData() || freshBackup)
+      setLibrary(freshLibrary)
+      setDetectedPreviewRows(null)
+      setDetectionProgress(null)
+      setConfirmReplaceManual(false)
+      setSheetMergeMode('fill-empty')
+      setSuccess('Detected sheet labels applied.')
+    } catch (e: any) {
+      setError(e?.message || 'Failed to apply detected labels.')
+    } finally {
+      setApplyingDetectedRows(false)
+    }
+  }
+
+  async function handleExportAnnotatedPdf() {
+    setError(null)
+    setSuccess(null)
+    if (!selectedItem) {
+      setError('Select a blueprint set first.')
+      return
+    }
+    if (!selectedItem.storagePath) {
+      setError('Selected blueprint is missing storagePath.')
+      return
+    }
+    if (exportingPdf) return
+
+    const backupNow = getBackupData() || backup
+    const allAnns = Array.isArray(backupNow?.blueprintSummaries?.operationsBlueprintAnnotations?.[selectedItem.id])
+      ? backupNow.blueprintSummaries.operationsBlueprintAnnotations[selectedItem.id]
+      : []
+    if (!allAnns.length) {
+      setError('No annotations available to export for this blueprint set.')
+      return
+    }
+    if (exportMode === 'all-pages' && Number(selectedItem.fileSize || 0) > 100 * 1024 * 1024) {
+      setSuccess('Large file warning: all-pages export may take longer for large blueprint sets.')
+    }
+
+    setExportingPdf(true)
+    try {
+      const result = await exportAnnotatedBlueprintPdf({
+        blueprint: selectedItem,
+        annotations: allAnns,
+        mode: exportMode,
+      })
+      if (result.warning) setSuccess(`Exported ${result.fileName}. ${result.warning}`)
+      else setSuccess(`Exported ${result.fileName}.`)
+    } catch (e: any) {
+      setError(e?.message || 'Failed to export annotated PDF.')
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
   async function handleCreateDerivedSet() {
     setError(null)
     setSuccess(null)
@@ -357,6 +513,60 @@ export default function BlueprintAI() {
                 className="w-full rounded border border-gray-700 bg-gray-900/50 text-gray-100 text-xs px-2 py-1"
                 placeholder="Search page, sheet #, title, discipline..."
               />
+              <div className="rounded border border-gray-800 p-2 space-y-2">
+                <div className="text-xs text-gray-400">Auto Detect Sheet Index</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={detectionRangeMode}
+                    onChange={(e) => setDetectionRangeMode(e.target.value as any)}
+                    className="rounded border border-gray-700 bg-gray-900/50 text-gray-100 text-xs px-2 py-1"
+                  >
+                    <option value="first30">First 30 Pages</option>
+                    <option value="current">Current Page</option>
+                    <option value="custom">Custom Range</option>
+                    <option value="all">All Pages</option>
+                  </select>
+                  <button
+                    disabled={detectingSheets || !selectedItem?.storagePath}
+                    onClick={() => void handleAutoDetectSheetIndex()}
+                    className="text-xs px-2 py-1 rounded border border-gray-700 text-gray-200 disabled:opacity-50"
+                  >
+                    {detectingSheets ? 'Detecting...' : 'Auto Detect'}
+                  </button>
+                </div>
+                {detectionRangeMode === 'custom' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={Math.max(1, Number(selectedItem?.pageCount || 1))}
+                      value={customRangeStart}
+                      onChange={(e) => setCustomRangeStart(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                      className="rounded border border-gray-700 bg-gray-900/50 text-gray-100 text-xs px-2 py-1"
+                      placeholder="Start"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={Math.max(1, Number(selectedItem?.pageCount || 1))}
+                      value={customRangeEnd}
+                      onChange={(e) => setCustomRangeEnd(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                      className="rounded border border-gray-700 bg-gray-900/50 text-gray-100 text-xs px-2 py-1"
+                      placeholder="End"
+                    />
+                  </div>
+                )}
+                {detectionRangeMode === 'all' && (
+                  <div className="text-[11px] text-amber-300">
+                    All-pages detection may be slower for large plan sets.
+                  </div>
+                )}
+                {detectionProgress && detectingSheets && (
+                  <div className="text-[11px] text-blue-300">
+                    Processing page {detectionProgress.pageNumber} ({detectionProgress.processed}/{detectionProgress.total})
+                  </div>
+                )}
+              </div>
               {filteredSheetRows.length > 0 ? (
                 <div className="max-h-44 overflow-auto border rounded-md border-gray-800 divide-y divide-gray-800">
                   {filteredSheetRows.map((s) => (
@@ -402,11 +612,99 @@ export default function BlueprintAI() {
                   No sheet labels yet. Add manual labels to organize pages.
                 </div>
               )}
+              {detectedPreviewRows && (
+                <div className="border border-blue-900/40 rounded-md p-2 space-y-2">
+                  <div className="text-xs text-blue-300">Auto-detect preview ({detectedPreviewRows.length} rows)</div>
+                  {detectedPreviewRows.length > 0 ? (
+                    <div className="max-h-40 overflow-auto border border-gray-800 rounded divide-y divide-gray-800">
+                      {detectedPreviewRows.map((r) => (
+                        <div key={`${r.pageNumber}-${r.sheetNumber || ''}`} className="text-xs px-2 py-1 text-gray-300">
+                          Pg {r.pageNumber} - {r.sheetNumber || '(no #)'} - {r.sheetTitle || '(no title)'} - {r.discipline || 'General'} - {r.confidence}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">No candidates detected in selected range.</div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <select
+                      value={sheetMergeMode}
+                      onChange={(e) => setSheetMergeMode(e.target.value as any)}
+                      className="rounded border border-gray-700 bg-gray-900/50 text-gray-100 text-xs px-2 py-1"
+                    >
+                      <option value="fill-empty">Fill Empty Only</option>
+                      <option value="replace-auto">Replace Auto Rows</option>
+                      <option value="replace-manual">Replace Manual Rows</option>
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        disabled={applyingDetectedRows || detectedPreviewRows.length === 0}
+                        onClick={() => void applyDetectedSheetRows()}
+                        className="text-xs px-2 py-1 rounded bg-blue-600 text-white disabled:opacity-50"
+                      >
+                        {applyingDetectedRows ? 'Applying...' : 'Apply Detected Labels'}
+                      </button>
+                      <button
+                        onClick={cancelDetectedPreview}
+                        className="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                  {sheetMergeMode === 'replace-manual' && (
+                    <label className="flex items-center gap-2 text-[11px] text-amber-300">
+                      <input
+                        type="checkbox"
+                        checked={confirmReplaceManual}
+                        onChange={(e) => setConfirmReplaceManual(e.target.checked)}
+                      />
+                      I confirm replacing manual rows.
+                    </label>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-gray-500">Select a blueprint set to view its study index.</p>
           )}
         </div>
+      </div>
+
+      <div className="rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-gray-200">Export Annotated PDF</p>
+          <span className="text-xs text-gray-500">Local download only</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Export Mode</label>
+            <select
+              value={exportMode}
+              onChange={(e) => setExportMode(e.target.value as 'annotated-pages' | 'all-pages')}
+              className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              disabled={exportingPdf}
+            >
+              <option value="annotated-pages">Annotated Pages Only</option>
+              <option value="all-pages">All Pages</option>
+            </select>
+          </div>
+          <div className="md:col-span-2 flex items-end">
+            <button
+              onClick={() => void handleExportAnnotatedPdf()}
+              disabled={exportingPdf || !selectedItem}
+              className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-60"
+            >
+              {exportingPdf ? <Loader2 size={14} className="animate-spin" /> : null}
+              {exportingPdf ? 'Exporting...' : 'Export Annotated PDF'}
+            </button>
+          </div>
+        </div>
+        {selectedItem && selectedAnnotationSummary.total === 0 && (
+          <p className="text-xs text-amber-300">
+            This blueprint has no notes/highlights yet. Add annotations before exporting.
+          </p>
+        )}
       </div>
 
       <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
