@@ -552,6 +552,41 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const profit = totalQuote - estMat - mileageCost - (estHrs * (parseFloat(String(backup?.settings?.opCost)) || 35))
     const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
 
+    // ─────────────────────────────────────────────────────────────────────
+    // BRANCH: Editing an existing service-log entry via the modal UI.
+    // The Edit button on service-log rows opens this same modal (via
+    // beginSvcEditInModal) but the user is updating a serviceLog row, not
+    // creating an estimate. Update the row in place and exit early.
+    // ─────────────────────────────────────────────────────────────────────
+    if (editSvcId) {
+      const idx = serviceLogs.findIndex(l => l.id === editSvcId)
+      if (idx >= 0) {
+        pushState(backup)
+        const existing: any = serviceLogs[idx]
+        const updatedLog: any = {
+          ...existing,
+          customer: estCust || existing.customer || 'Unknown',
+          accountId: estAccountId || existing.accountId,
+          address: estAddr || existing.address || '',
+          date: estDate || existing.date || today(),
+          jtype: estJobType || existing.jtype,
+          estHrs: estHrs,
+          hrs: estHrs,
+          mat: estMat,
+          miles: estMi,
+          quoted: totalQuote,
+          notes: estNotes || existing.notes || '',
+          detailLink: estReceiptUrl || existing.detailLink || '',
+          updatedAt: new Date().toISOString(),
+        }
+        backup.serviceLogs[idx] = updatedLog
+        persist()
+      }
+      resetEstimateForm()
+      setEditSvcId(null)
+      return
+    }
+
     pushState(backup)
     const estimate = {
       id: editEstimateId || ('est' + Date.now()),
@@ -1015,6 +1050,38 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSlPayStatus(l.payStatus || 'N'); setSlEmatInfo(l.emergencyMatInfo || '')
     setSlDetailLink(l.detailLink || ''); setSlNotes(l.notes || '')
     setShowSvcForm(true)
+  }
+
+  /**
+   * Open the New Service Estimate MODAL prefilled with data from a logged service entry.
+   * Used by the Edit button on service-log rows so the user gets the same rich modal
+   * UI as "+ New Service Estimate" instead of the inline orange form.
+   *
+   * NOTE: This reuses editSvcId (not editEstimateId) so saveSvcEntry (the existing
+   * save path for service logs) still handles the update. The modal is just the UI.
+   */
+  function beginSvcEditInModal(logId: string) {
+    const l = serviceLogs.find(x => x.id === logId)
+    if (!l) return
+    // Set service-log edit state (so save path stays correct)
+    setEditSvcId(l.id)
+    // Prefill the ESTIMATE modal form fields from the service log
+    setEstCust(canonicalCustomerName(l))
+    setEstAccountId(String((l as any).accountId || ''))
+    setEstCustEdited(false)
+    setEstAddr(l.address || '')
+    setEstDate(l.date || today())
+    setEstJobType(l.jtype || JOB_TYPES[0])
+    setEstHours(String((l as any).estHrs ?? l.hrs ?? 0))
+    setEstBillRate(String(billRate))
+    setEstMaterials(String(l.mat || 0))
+    setEstMiles(String(l.miles || 0))
+    setEstNotes(l.notes || '')
+    setEstTech('')
+    setEstMatNotes('')
+    setEstReceiptUrl(l.detailLink || '')
+    // Open the modal
+    setShowEstimateForm(true)
   }
 
   function deleteSvcEntry(logId: string) {
@@ -1889,7 +1956,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/60 flex-shrink-0">
                 <div>
                   <h2 className="text-xl font-bold text-white">
-                    {editEstimateId ? '✏️ Edit Service Estimate' : '⚡ New Service Estimate'}
+                    {editSvcId ? '✏️ Edit Service Entry' : editEstimateId ? '✏️ Edit Service Estimate' : '⚡ New Service Estimate'}
                   </h2>
                   <p className="text-sm text-gray-400 mt-1">Fill in the details — live profit signal updates as you go</p>
                 </div>
@@ -2205,7 +2272,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   onClick={() => { saveServiceEstimate(); }}
                   className="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors shadow-lg"
                 >
-                  {editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
+                  {editSvcId ? '✓ Update Entry' : editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
                 </button>
               </div>
 
@@ -2777,7 +2844,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <button onClick={() => addServiceAdjustment(l.id, 'expense')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Expense</button>
                     <button onClick={() => addServiceAdjustment(l.id, 'mileage')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Mileage</button>
                     <button onClick={() => addServiceAdjustment(l.id, 'income')} className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50">+ Income</button>
-                    <button onClick={() => beginSvcEdit(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
+                    <button onClick={() => beginSvcEditInModal(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
                     <button onClick={() => deleteSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400">Delete</button>
                     {/* G8: Convert to Estimate — pre-fills the service estimate form */}
                     <button
