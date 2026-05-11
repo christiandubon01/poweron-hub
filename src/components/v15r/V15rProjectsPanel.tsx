@@ -213,9 +213,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   }
 
   function openEditProjectModal(p: BackupProject) {
+    const linkedAccountId = String((p as any).accountId || '')
+    const linkedAccount = linkedAccountId ? gcContacts.find((g: any) => String(g?.id || '') === linkedAccountId) : null
+    const canonicalClient = linkedAccount ? [linkedAccount.company || 'Unnamed', linkedAccount.contact ? `(${linkedAccount.contact})` : ''].filter(Boolean).join(' ').trim() : ''
     setEditProjectId(p.id)
     setEpName(p.name || '')
-    setEpClient((p as any).client || '')
+    setEpClient(canonicalClient || (p as any).client || '')
     setEpAccountId((p as any).accountId || '')
     setEpContract(String(p.contract || 0))
     setEpType(p.type || 'Residential')

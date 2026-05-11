@@ -19,6 +19,7 @@ import {
   num,
   fmt,
   fmtK,
+  resolveCanonicalCustomerName,
   pct,
   daysSince,
   buildProjectLogRollup,
@@ -417,6 +418,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     id: String(gc.id || ''),
     label: [gc.company || 'Unnamed', gc.contact ? `(${gc.contact})` : ''].filter(Boolean).join(' ').trim(),
   }))
+  const canonicalCustomerName = (record: any): string => {
+    return resolveCanonicalCustomerName(record, gcContacts)
+  }
   const serviceAccountOptions = accountOptions
   const employees = backup.employees || []
   const triggerRules = backup.triggerRules || []
@@ -626,7 +630,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const est = serviceEstimates.find(e => e.id === estimateId)
     if (!est) return
     setEditEstimateId(est.id)
-    setEstCust(est.customer || '')
+    setEstCust(canonicalCustomerName(est))
     setEstAccountId((est as any).accountId || '')
     setEstCustEdited(false)
     setEstAddr(est.address || '')
@@ -1003,7 +1007,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const l = serviceLogs.find(x => x.id === logId)
     if (!l) return
     setEditSvcId(l.id)
-    setSlCust(l.customer); setSlAddr(l.address || ''); setSlDate(l.date); setSlHrs(String(l.hrs))
+    setSlCust(canonicalCustomerName(l)); setSlAddr(l.address || ''); setSlDate(l.date); setSlHrs(String(l.hrs))
     setSlAccountId(String((l as any).accountId || ''))
     setSlEstHrs(String((l as any).estHrs ?? l.hrs ?? ''))
     setSlMi(String(l.miles)); setSlQuoted(String(l.quoted)); setSlMat(String(l.mat))
@@ -2257,7 +2261,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   >
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-semibold text-gray-200">{est.customer}</span>
+                        <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(est)}</span>
                         <span className="text-[10px] text-gray-500">{est.jobType}</span>
                         <span className="text-[10px] text-gray-500">{est.date}</span>
                         <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-blue-500/20 text-blue-400">
@@ -2317,7 +2321,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-semibold text-gray-200">{est.customer}</span>
+                          <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(est)}</span>
                           <span className="text-[10px] text-gray-500">{est.jobType}</span>
                           <span className="text-[10px] text-gray-500">{est.date}</span>
                           <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-emerald-500/20 text-emerald-400">
@@ -2636,7 +2640,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 return (
                   <div key={l.id} className="bg-[var(--bg-input)] rounded p-2 flex items-center justify-between text-[10px]">
                     <div className="flex-1">
-                      <div className="font-semibold text-gray-200">{l.customer}</div>
+                      <div className="font-semibold text-gray-200">{canonicalCustomerName(l)}</div>
                       <div className="text-gray-500">{l.address} · {l.date}</div>
                       <div className="font-mono text-orange-400 text-xs mt-0.5">{fmt(meta.remaining)} balance due</div>
                     </div>
@@ -2690,7 +2694,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-semibold text-gray-200">{l.customer}</span>
+                        <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(l)}</span>
                         <span className="text-[10px] text-gray-500">{l.jtype}</span>
                         <span className="text-[10px] text-gray-500">{l.date}</span>
                         <span
@@ -2779,7 +2783,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <button
                       onClick={() => {
                         // Pre-populate the service estimate form above from this service call
-                        setEstCust(l.customer || '')
+                        setEstCust(canonicalCustomerName(l))
                         setEstAccountId((l as any).accountId || '')
                         setEstCustEdited(false)
                         setEstAddr(l.address || l.addr || '')
@@ -2872,7 +2876,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const jobOptions = triggerBucket === 'projects'
       ? allProjects.filter(p => p.status === 'active').map(p => ({ id: p.id, name: p.name || 'Unknown' }))
       : triggerBucket === 'service'
-        ? allSvcLogs.slice(-20).map(l => ({ id: l.id, name: `${l.customer || 'Unknown'} — ${l.date || ''}` }))
+        ? allSvcLogs.slice(-20).map(l => ({ id: l.id, name: `${canonicalCustomerName(l)} — ${l.date || ''}` }))
         : []
 
     const handleAskAI = () => {
@@ -3186,7 +3190,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             date: l.date, projectId: l.projectId, hrs: l.hrs, miles: l.miles, mat: l.mat, notes: l.notes,
           })),
           recentServiceLogs: serviceLogs.slice(-10).map(s => ({
-            date: s.date, customer: s.customer, jtype: s.jtype, quoted: s.quoted,
+            date: s.date, customer: canonicalCustomerName(s), jtype: s.jtype, quoted: s.quoted,
             collected: s.collected, payStatus: s.payStatus, balanceDue: s.balanceDue,
           })),
           triggerRuleCount: triggerRules.length,

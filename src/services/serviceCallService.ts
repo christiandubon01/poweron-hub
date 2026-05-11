@@ -42,6 +42,8 @@ export interface ServiceDayEntry {
 export interface ServiceCallRecord {
   service_call_id: string
   customer: string
+  accountId?: string
+  customerId?: string
   address: string
   jtype: string
   /** Legacy flat fields kept for backward compat with BackupServiceLog */
@@ -348,6 +350,8 @@ export function migrateServiceLog(legacy: any, laborRate = 43): ServiceCallRecor
     service_call_id: id,
     legacy_id: id,
     customer: legacy.customer || 'Unknown',
+    accountId: legacy.accountId || legacy.customerId || undefined,
+    customerId: legacy.customerId || legacy.accountId || undefined,
     address: legacy.address || legacy.addr || '',
     jtype: legacy.jtype || 'Service',
     days: [day1],

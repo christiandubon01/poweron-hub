@@ -14,7 +14,7 @@
 
 import { useState, useMemo } from 'react'
 import { Filter, AlertTriangle, CheckCircle, Clock, Zap, FileText } from 'lucide-react'
-import { getBackupData, type BackupServiceLog } from '@/services/backupDataService'
+import { getBackupData, resolveCanonicalCustomerName, type BackupServiceLog } from '@/services/backupDataService'
 import ImportBackupButton from '@/components/ImportBackupButton'
 
 // G8: key used to pass pre-fill data to the Estimate tab
@@ -39,6 +39,7 @@ export default function V15rServiceCalls() {
   if (!backup) return <NoData />
 
   const serviceLogs: BackupServiceLog[] = (backup.serviceLogs || [])
+  const gcContacts = backup.gcContacts || []
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [filterType, setFilterType] = useState<string>('all')
 
@@ -129,8 +130,8 @@ export default function V15rServiceCalls() {
               </div>
 
               {/* Customer */}
-              {l.customer && (
-                <div className="text-xs text-gray-300 mb-2">{l.customer}</div>
+              {(l.customer || l.client || l.name) && (
+                <div className="text-xs text-gray-300 mb-2">{resolveCanonicalCustomerName(l, gcContacts)}</div>
               )}
 
               {/* Financial grid */}
@@ -183,7 +184,7 @@ export default function V15rServiceCalls() {
                   onClick={() => {
                     // Store pre-fill data in localStorage for Estimate tab to pick up
                     const prefill = {
-                      customer: l.customer || '',
+                      customer: resolveCanonicalCustomerName(l, gcContacts),
                       address: l.address || l.addr || '',
                       jtype: l.jtype || 'General Service',
                       notes: l.notes || l.description || '',

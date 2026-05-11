@@ -27,6 +27,7 @@ import {
   getBackupData,
   saveBackupData,
   num,
+  resolveCanonicalCustomerName,
   type BackupServiceLog,
 } from '@/services/backupDataService'
 import {
@@ -85,6 +86,7 @@ export default function V15rServiceCallsV2() {
 
   // Legacy service logs for the legacy tab
   const legacyLogs: BackupServiceLog[] = backup?.serviceLogs || []
+  const gcContacts = backup?.gcContacts || []
 
   // Settings for rate defaults
   const laborRate = num(backup?.settings?.opCost || backup?.settings?.billRate || 43)
@@ -254,6 +256,7 @@ export default function V15rServiceCallsV2() {
               <ServiceCallCard
                 key={call.service_call_id}
                 call={call}
+                accounts={gcContacts}
                 expanded={expandedIds.has(call.service_call_id)}
                 onToggle={() => toggleExpand(call.service_call_id)}
                 onAddDay={() => openAddDay(call)}
@@ -268,6 +271,7 @@ export default function V15rServiceCallsV2() {
       {activeTab === 'Legacy Log' && (
         <LegacyServiceLogList
           logs={legacyLogs}
+          accounts={gcContacts}
           laborRate={laborRate}
           onMigrate={(log) => {
             const migrated = migrateServiceLog(log, laborRate)
@@ -299,13 +303,14 @@ export default function V15rServiceCallsV2() {
 
 interface CardProps {
   call: ServiceCallRecord
+  accounts: any[]
   expanded: boolean
   onToggle: () => void
   onAddDay: () => void
   laborRate: number
 }
 
-function ServiceCallCard({ call, expanded, onToggle, onAddDay, laborRate }: CardProps) {
+function ServiceCallCard({ call, accounts, expanded, onToggle, onAddDay, laborRate }: CardProps) {
   const totals = useMemo(() => getServiceCallTotals(call), [call])
   const scopeFlag = call.scope_creep_flag
 
@@ -322,7 +327,7 @@ function ServiceCallCard({ call, expanded, onToggle, onAddDay, laborRate }: Card
           <div className="flex-1 min-w-0">
             {/* Customer + type */}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-bold text-gray-200">{call.customer}</span>
+              <span className="text-xs font-bold text-gray-200">{resolveCanonicalCustomerName(call, accounts)}</span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
                 {call.jtype}
               </span>
@@ -611,10 +616,12 @@ function DayEntryRow({
 
 function LegacyServiceLogList({
   logs,
+  accounts,
   laborRate,
   onMigrate,
 }: {
   logs: BackupServiceLog[]
+  accounts: any[]
   laborRate: number
   onMigrate: (log: BackupServiceLog) => void
 }) {
@@ -639,7 +646,7 @@ function LegacyServiceLogList({
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-mono text-gray-500">SVC-{String(idx + 1).padStart(3, '0')}</span>
-                <span className="text-xs font-semibold text-gray-300">{l.customer}</span>
+                <span className="text-xs font-semibold text-gray-300">{resolveCanonicalCustomerName(l, accounts)}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">{l.jtype}</span>
               </div>
               <div className="flex items-center gap-2">
