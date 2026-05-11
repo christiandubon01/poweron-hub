@@ -40,8 +40,8 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
 const MIN_RELATIVE_ZOOM = 1
 const MAX_RELATIVE_ZOOM = 4
 const MAX_RENDER_SCALE = 2.5
-const PINCH_SENSITIVITY = 0.28
-const PINCH_DEADZONE_PX = 3
+const PINCH_SENSITIVITY = 0.55
+const PINCH_DEADZONE_PX = 2
 const MIN_HIGHLIGHT_NORM = 0.005
 const NOTE_MARKER_SIZE_NORM = 0.018
 const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444']
@@ -105,20 +105,25 @@ export default function OperationsBlueprintPdfViewer({
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
+  const pinchPreviewZoomRef = useRef<number | null>(null)
   const displaySizeRef = useRef({ w: 0, h: 0 })
   const suppressAnnotationUntilRef = useRef(0)
   const activeTouchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
   const pinchStateRef = useRef<{
     active: boolean
+    startDistance: number
+    startZoom: number
     lastDistance: number
     lastCenter: { x: number; y: number } | null
-  }>({ active: false, lastDistance: 0, lastCenter: null })
-  const pendingPinchAnchorRef = useRef<{
-    ratioX: number
-    ratioY: number
-    centerX: number
-    centerY: number
-  } | null>(null)
+    finalZoom: number
+  }>({
+    active: false,
+    startDistance: 0,
+    startZoom: 1,
+    lastDistance: 0,
+    lastCenter: null,
+    finalZoom: 1,
+  })
   const pinchZoomRafRef = useRef<number | null>(null)
   const pinchQueuedZoomRef = useRef<number | null>(null)
   const pinchQueuedAnchorRef = useRef<{
@@ -134,6 +139,7 @@ export default function OperationsBlueprintPdfViewer({
   const [currentPage, setCurrentPage] = useState(1)
   const [pageInput, setPageInput] = useState('1')
   const [relativeZoom, setRelativeZoom] = useState(1)
+  const [pinchPreviewZoom, setPinchPreviewZoom] = useState<number | null>(null)
   const [lockView, setLockView] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isRendering, setIsRendering] = useState(false)
@@ -164,8 +170,12 @@ export default function OperationsBlueprintPdfViewer({
   const effectiveTool = isEditorOpen ? 'select' : toolMode
 
   useEffect(() => {
-    relativeZoomRef.current = relativeZoom
+  relativeZoomRef.current = relativeZoom
   }, [relativeZoom])
+
+  useEffect(() => {
+    pinchPreviewZoomRef.current = pinchPreviewZoom
+  }, [pinchPreviewZoom])
 
   useEffect(() => {
     displaySizeRef.current = displaySize
@@ -214,11 +224,20 @@ export default function OperationsBlueprintPdfViewer({
       setNoteEditor(null)
       setFocusedAnnotationId(null)
       setRelativeZoom(1)
+      setPinchPreviewZoom(null)
       relativeZoomRef.current = 1
+      pinchPreviewZoomRef.current = null
       displaySizeRef.current = { w: 0, h: 0 }
       suppressAnnotationUntilRef.current = 0
       activeTouchPointersRef.current.clear()
-      pinchStateRef.current = { active: false, lastDistance: 0, lastCenter: null }
+      pinchStateRef.current = {
+        active: false,
+        startDistance: 0,
+        startZoom: 1,
+        lastDistance: 0,
+        lastCenter: null,
+        finalZoom: 1,
+      }
       pendingPinchAnchorRef.current = null
       pendingScrollResetRef.current = true
     }
@@ -555,25 +574,33 @@ export default function OperationsBlueprintPdfViewer({
   const handleTwoFingerGesture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (lockView) return
     if (e.pointerType !== 'touch') return
+
     const pts = getTouchPoints()
     if (!pts) return
+
     const [p1, p2] = pts
     const dx = p2.x - p1.x
     const dy = p2.y - p1.y
     const distance = Math.hypot(dx, dy)
     const center = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
     const state = pinchStateRef.current
+    const scroll = scrollAreaRef.current
+
     if (!state.active) {
+      const startZoom = pinchPreviewZoomRef.current ?? relativeZoomRef.current
       state.active = true
+      state.startDistance = distance
+      state.startZoom = startZoom
       state.lastDistance = distance
       state.lastCenter = center
+      state.finalZoom = startZoom
       return
     }
 
     if (!state.lastCenter) state.lastCenter = center
-    const scroll = scrollAreaRef.current
+
+    // Two-finger pan: if both fingers move together, move the scroll area.
     if (scroll) {
-      // Two-finger pan: move content opposite to finger movement.
       const panDx = center.x - state.lastCenter.x
       const panDy = center.y - state.lastCenter.y
       scroll.scrollLeft -= panDx
@@ -581,57 +608,84 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     const distDelta = distance - state.lastDistance
-    if (Math.abs(distDelta) >= PINCH_DEADZONE_PX) {
-      const currentZoom = relativeZoomRef.current
-      const rawRatio = distance / Math.max(1, state.lastDistance)
-      const dampedRatio = 1 + ((rawRatio - 1) * PINCH_SENSITIVITY)
-      const nextZoom = clampRelativeZoom(currentZoom * dampedRatio)
-      if (Math.abs(nextZoom - currentZoom) >= 0.01) {
-        let nextAnchor: {
-          ratioX: number
-          ratioY: number
-          centerX: number
-          centerY: number
-        } | null = null
+    const totalDistDelta = distance - state.startDistance
+
+    if (Math.abs(distDelta) >= PINCH_DEADZONE_PX || Math.abs(totalDistDelta) >= PINCH_DEADZONE_PX) {
+      const rawRatio = distance / Math.max(1, state.startDistance)
+      const nextZoom = clampRelativeZoom(state.startZoom * Math.pow(rawRatio, PINCH_SENSITIVITY))
+      const currentPreviewZoom = pinchPreviewZoomRef.current ?? state.finalZoom ?? state.startZoom
+
+      if (Math.abs(nextZoom - currentPreviewZoom) >= 0.005) {
+        // Keep the pinch center as stable as possible while visually scaling.
         if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
-          const contentX = scroll.scrollLeft + center.x
-          const contentY = scroll.scrollTop + center.y
-          nextAnchor = {
-            ratioX: Math.max(0, Math.min(1, contentX / Math.max(1, displaySizeRef.current.w))),
-            ratioY: Math.max(0, Math.min(1, contentY / Math.max(1, displaySizeRef.current.h))),
-            centerX: center.x,
-            centerY: center.y,
-          }
+          const ratio = nextZoom / Math.max(0.001, currentPreviewZoom)
+          scroll.scrollLeft = Math.max(0, ((scroll.scrollLeft + center.x) * ratio) - center.x)
+          scroll.scrollTop = Math.max(0, ((scroll.scrollTop + center.y) * ratio) - center.y)
         }
+
+        state.finalZoom = nextZoom
         pinchQueuedZoomRef.current = nextZoom
-        pinchQueuedAnchorRef.current = nextAnchor
+
         if (pinchZoomRafRef.current == null) {
           pinchZoomRafRef.current = requestAnimationFrame(() => {
             pinchZoomRafRef.current = null
             const queuedZoom = pinchQueuedZoomRef.current
-            const queuedAnchor = pinchQueuedAnchorRef.current
             pinchQueuedZoomRef.current = null
-            pinchQueuedAnchorRef.current = null
             if (!Number.isFinite(Number(queuedZoom))) return
-            if (queuedAnchor) {
-              pendingPinchAnchorRef.current = queuedAnchor
-            }
-            setRelativeZoom(clampRelativeZoom(Number(queuedZoom)))
+
+            const safeZoom = clampRelativeZoom(Number(queuedZoom))
+            pinchPreviewZoomRef.current = safeZoom
+            setPinchPreviewZoom(safeZoom)
           })
         }
       }
     }
+
     state.lastDistance = distance
     state.lastCenter = center
+    suppressAnnotationUntilRef.current = Date.now() + 320
     e.preventDefault()
   }, [getTouchPoints, lockView])
 
   const endTouchPointer = useCallback((pointerId: number) => {
     activeTouchPointersRef.current.delete(pointerId)
+
     if (activeTouchPointersRef.current.size < 2 && pinchStateRef.current.active) {
-      pinchStateRef.current = { active: false, lastDistance: 0, lastCenter: null }
-      suppressAnnotationUntilRef.current = Date.now() + 280
-      pendingPinchAnchorRef.current = null
+      const state = pinchStateRef.current
+      const finalZoom = clampRelativeZoom(
+        Number(pinchPreviewZoomRef.current ?? state.finalZoom ?? relativeZoomRef.current)
+      )
+
+      const scroll = scrollAreaRef.current
+      const center = state.lastCenter
+      const currentZoom = Math.max(0.001, relativeZoomRef.current)
+      const previewScale = finalZoom / currentZoom
+
+      if (scroll && center && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
+        const previewWidth = displaySizeRef.current.w * previewScale
+        const previewHeight = displaySizeRef.current.h * previewScale
+
+        pendingPinchAnchorRef.current = {
+          ratioX: (scroll.scrollLeft + center.x) / Math.max(1, previewWidth),
+          ratioY: (scroll.scrollTop + center.y) / Math.max(1, previewHeight),
+          centerX: center.x,
+          centerY: center.y,
+        }
+      }
+
+      pinchStateRef.current = {
+        active: false,
+        startDistance: 0,
+        startZoom: finalZoom,
+        lastDistance: 0,
+        lastCenter: null,
+        finalZoom,
+      }
+
+      suppressAnnotationUntilRef.current = Date.now() + 320
+      setRelativeZoom(finalZoom)
+      setPinchPreviewZoom(null)
+      pinchPreviewZoomRef.current = null
     }
   }, [])
 
@@ -641,7 +695,7 @@ export default function OperationsBlueprintPdfViewer({
         e.preventDefault()
         return
       }
-      const rect = overlayRef.current?.getBoundingClientRect()
+      const rect = scrollAreaRef.current?.getBoundingClientRect()
       if (rect) {
         activeTouchPointersRef.current.set(e.pointerId, {
           x: e.clientX - rect.left,
@@ -669,13 +723,13 @@ export default function OperationsBlueprintPdfViewer({
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'touch') {
-      const rect = overlayRef.current?.getBoundingClientRect()
-      if (rect) {
-        activeTouchPointersRef.current.set(e.pointerId, {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-        })
-      }
+      const rect = scrollAreaRef.current?.getBoundingClientRect()
+        if (rect) {
+          activeTouchPointersRef.current.set(e.pointerId, {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top,
+          })
+        }
       if (activeTouchPointersRef.current.size >= 2 || pinchStateRef.current.active) {
         setDragStart(null)
         setDraftRect(null)
@@ -749,8 +803,13 @@ export default function OperationsBlueprintPdfViewer({
     effectiveTool === 'note'
       ? 'cursor-crosshair'
       : effectiveTool === 'highlight'
-      ? 'cursor-crosshair'
-      : 'cursor-default'
+        ? 'cursor-crosshair'
+        : 'cursor-default'
+
+  const livePinchZoom = pinchPreviewZoom ?? relativeZoom
+  const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, clampRelativeZoom(relativeZoom)))
+  const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
+  const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
 
   return (
     <div className="rounded-xl border overflow-hidden w-full" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
@@ -946,8 +1005,23 @@ export default function OperationsBlueprintPdfViewer({
                 className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-auto'} max-h-[72vh] rounded border border-gray-800`}
                 onWheel={handleWheel}
               >
-                <div className="min-w-full min-h-full flex items-start justify-center p-3">
-                  <div className="relative" style={{ width: displaySize.w || undefined, height: displaySize.h || undefined }}>
+                <div
+                  className="relative p-3"
+                  style={{
+                    width: visualDisplayWidth ? Math.max(visualDisplayWidth + 24, viewportWidth || 0) : '100%',
+                    minHeight: visualDisplayHeight ? visualDisplayHeight + 24 : '100%',
+                  }}
+                >
+                  <div
+                    className="relative"
+                    style={{
+                      width: displaySize.w || undefined,
+                      height: displaySize.h || undefined,
+                      transform: visualScale !== 1 ? `scale(${visualScale})` : undefined,
+                      transformOrigin: 'top left',
+                      willChange: visualScale !== 1 ? 'transform' : undefined,
+                    }}
+                  >
                     <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />
                     <div
                       ref={overlayRef}
