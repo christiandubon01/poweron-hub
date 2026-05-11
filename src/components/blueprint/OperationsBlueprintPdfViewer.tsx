@@ -471,9 +471,16 @@ export default function OperationsBlueprintPdfViewer({
   }, [currentPage, blueprint?.id])
 
   useEffect(() => {
-    if (!Number.isFinite(Number(externalPage))) return
-    const next = Math.max(1, Math.min(numPages || 1, Math.floor(Number(externalPage))))
+    if (externalPage === null || externalPage === undefined) return
+
+    const requestedPage = Number(externalPage)
+    if (!Number.isFinite(requestedPage) || requestedPage < 1) return
+
+    const maxPage = Math.max(1, Number(numPages || 1))
+    const next = Math.max(1, Math.min(maxPage, Math.floor(requestedPage)))
+
     if (next === currentPage) return
+
     pendingScrollResetRef.current = true
     setCurrentPage(next)
     setPageInput(String(next))

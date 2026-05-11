@@ -850,7 +850,7 @@ export default function BlueprintAI() {
         <OperationsBlueprintPdfViewer
           blueprint={selectedItem}
           onAnnotationsChanged={() => setAnnotationRefreshToken((v) => v + 1)}
-          externalPage={viewerJumpPage}
+          externalPage={viewerJumpPage ?? undefined}
           onPageChange={(page) => {
             setCurrentViewerPage(page)
             if (viewerJumpPage === page) setViewerJumpPage(null)
@@ -1279,5 +1279,6 @@ export default function BlueprintAI() {
     </div>
   )
 }
+
 
 
