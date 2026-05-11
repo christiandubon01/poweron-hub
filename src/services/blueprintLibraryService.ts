@@ -172,8 +172,13 @@ export async function saveOperationsBlueprintLibrary(backup: any, items: Bluepri
   }
   backup.blueprintSummaries.operationsBlueprintLibrary = items
   backup._lastSavedAt = new Date().toISOString()
-  const { saveBackupData } = await import('@/services/backupDataService')
-  saveBackupData(backup)
+  const { saveBackupDataAndSyncNow } = await import('@/services/backupDataService')
+  const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
+  if (!result.success) {
+    throw new Error(result.error || 'Failed to sync blueprint library updates.')
+  }
+  try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+  try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
 }
 
 export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900): Promise<string> {
