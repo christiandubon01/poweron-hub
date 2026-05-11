@@ -140,6 +140,13 @@ export default function OperationsBlueprintPdfViewer({
     lastY: number
     moved: boolean
   }>({ active: false, pointerId: null, lastX: 0, lastY: 0, moved: false })
+  const mousePanRef = useRef<{
+    active: boolean
+    pointerId: number | null
+    lastX: number
+    lastY: number
+    moved: boolean
+  }>({ active: false, pointerId: null, lastX: 0, lastY: 0, moved: false })
 
   const [signedUrl, setSignedUrl] = useState('')
   const [pdfDoc, setPdfDoc] = useState<any>(null)
@@ -149,6 +156,7 @@ export default function OperationsBlueprintPdfViewer({
   const [relativeZoom, setRelativeZoom] = useState(1)
   const [pinchPreviewZoom, setPinchPreviewZoom] = useState<number | null>(null)
   const [lockView, setLockView] = useState(false)
+  const [mousePanActive, setMousePanActive] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isRendering, setIsRendering] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -278,6 +286,8 @@ export default function OperationsBlueprintPdfViewer({
       suppressAnnotationUntilRef.current = 0
       activeTouchPointersRef.current.clear()
       touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      mousePanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      setMousePanActive(false)
       pinchStateRef.current = {
         active: false,
         startDistance: 0,
@@ -473,11 +483,36 @@ export default function OperationsBlueprintPdfViewer({
       e.preventDefault()
       return
     }
-    if (!e.ctrlKey) return
     e.preventDefault()
+    const currentZoom = clampRelativeZoom(relativeZoomRef.current)
     const delta = e.deltaY < 0 ? 0.1 : -0.1
-    applyRelativeZoomDelta(delta)
-  }, [applyRelativeZoomDelta, lockView])
+    const nextZoom = clampRelativeZoom(currentZoom + delta)
+    if (Math.abs(nextZoom - currentZoom) < 0.001) return
+
+    const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+    const currentVisualScale = Math.max(1, currentZoom / baseCommittedZoom)
+    const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
+    const currentVisualW = displaySizeRef.current.w * currentVisualScale
+    const currentVisualH = displaySizeRef.current.h * currentVisualScale
+    const nextVisualW = displaySizeRef.current.w * nextVisualScale
+    const nextVisualH = displaySizeRef.current.h * nextVisualScale
+    const anchor = getPinchAnchorFromMidpoint(e.clientX, e.clientY, currentVisualW, currentVisualH)
+    if (anchor) {
+      pendingPinchAnchorRef.current = {
+        ratioX: anchor.ratioX,
+        ratioY: anchor.ratioY,
+        centerInScrollX: anchor.centerInScrollX,
+        centerInScrollY: anchor.centerInScrollY,
+      }
+      const scroll = scrollAreaRef.current
+      if (scroll) {
+        const targetLeft = anchor.pageOffsetX + (anchor.ratioX * nextVisualW) - anchor.centerInScrollX
+        const targetTop = anchor.pageOffsetY + (anchor.ratioY * nextVisualH) - anchor.centerInScrollY
+        clampScroll(scroll, targetLeft, targetTop)
+      }
+    }
+    setRelativeZoom(nextZoom)
+  }, [lockView, clampScroll, getPinchAnchorFromMidpoint])
 
   const pageLabel = useMemo(() => `${Math.max(1, currentPage)} / ${Math.max(1, numPages)}`, [currentPage, numPages])
   useEffect(() => setPageInput(String(currentPage)), [currentPage])
@@ -755,6 +790,30 @@ export default function OperationsBlueprintPdfViewer({
   }, [getPinchAnchorFromMidpoint])
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      e.pointerType === 'mouse' &&
+      e.button === 0 &&
+      effectiveTool === 'select' &&
+      !isEditorOpen &&
+      !lockView
+    ) {
+      const targetEl = e.target as HTMLElement | null
+      if (targetEl?.closest('button, textarea, input, select, a')) {
+        return
+      }
+      mousePanRef.current = {
+        active: true,
+        pointerId: e.pointerId,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        moved: false,
+      }
+      setMousePanActive(true)
+      try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch {}
+      e.preventDefault()
+      return
+    }
+
     if (e.pointerType === 'touch') {
       if (lockView) {
         e.preventDefault()
@@ -790,6 +849,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
     if (Date.now() < suppressAnnotationUntilRef.current) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
     if (effectiveTool !== 'highlight' || isEditorOpen) return
     if (!overlayRef.current) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -800,6 +860,29 @@ export default function OperationsBlueprintPdfViewer({
   }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const mousePan = mousePanRef.current
+    if (
+      e.pointerType === 'mouse' &&
+      mousePan.active &&
+      mousePan.pointerId === e.pointerId &&
+      !lockView
+    ) {
+      const scroll = scrollAreaRef.current
+      if (scroll) {
+        const dx = e.clientX - mousePan.lastX
+        const dy = e.clientY - mousePan.lastY
+        scroll.scrollLeft -= dx
+        scroll.scrollTop -= dy
+        if (!mousePan.moved && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
+          mousePan.moved = true
+        }
+        mousePan.lastX = e.clientX
+        mousePan.lastY = e.clientY
+        e.preventDefault()
+        return
+      }
+    }
+
     if (e.pointerType === 'touch') {
       const rect = scrollAreaRef.current?.getBoundingClientRect()
         if (rect) {
@@ -854,6 +937,19 @@ export default function OperationsBlueprintPdfViewer({
   }, [effectiveTool, dragStart, isEditorOpen, handleTwoFingerGesture, lockView])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
+    const mousePan = mousePanRef.current
+    if (e.pointerType === 'mouse' && mousePan.active && mousePan.pointerId === e.pointerId) {
+      const moved = mousePan.moved
+      mousePanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      setMousePanActive(false)
+      if (moved) {
+        const until = Date.now() + 300
+        suppressAnnotationUntilRef.current = until
+      }
+      e.preventDefault()
+      return
+    }
+
     if (e.pointerType === 'touch') {
       const pan = touchPanRef.current
       if (pan.active && pan.pointerId === e.pointerId) {
@@ -897,6 +993,15 @@ export default function OperationsBlueprintPdfViewer({
   }, [effectiveTool, dragStart, blueprint, currentPage, persistAnnotation, activeColor, isEditorOpen, endTouchPointer])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const mousePan = mousePanRef.current
+    if (e.pointerType === 'mouse' && mousePan.active && mousePan.pointerId === e.pointerId) {
+      const moved = mousePan.moved
+      mousePanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      setMousePanActive(false)
+      if (moved) {
+        suppressAnnotationUntilRef.current = Date.now() + 300
+      }
+    }
     if (e.pointerType === 'touch') {
       const pan = touchPanRef.current
       if (pan.active && pan.pointerId === e.pointerId) {
@@ -921,11 +1026,13 @@ export default function OperationsBlueprintPdfViewer({
   }
 
   const cursorClass =
-    effectiveTool === 'note'
+    mousePanActive
+      ? 'cursor-grabbing'
+      : effectiveTool === 'note'
       ? 'cursor-crosshair'
       : effectiveTool === 'highlight'
         ? 'cursor-crosshair'
-        : 'cursor-default'
+        : 'cursor-grab'
 
   const livePinchZoom = pinchPreviewZoom ?? relativeZoom
   const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, clampRelativeZoom(relativeZoom)))
