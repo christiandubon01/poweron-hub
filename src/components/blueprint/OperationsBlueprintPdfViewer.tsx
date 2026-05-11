@@ -37,15 +37,14 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
   return pdfjsLib
 }
 
-const MIN_ZOOM = 0.5
-const MAX_ZOOM = 2.5
+const MIN_RELATIVE_ZOOM = 1
+const MAX_RELATIVE_ZOOM = 4
 const MAX_RENDER_SCALE = 2.5
 const MIN_HIGHLIGHT_NORM = 0.005
 const NOTE_MARKER_SIZE_NORM = 0.018
 const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444']
 
 type ToolMode = 'select' | 'note' | 'highlight'
-type ViewMode = 'fit-width' | 'fit-page' | 'manual'
 
 interface OperationsBlueprintPdfViewerProps {
   blueprint: BlueprintLibraryItem | null
@@ -80,8 +79,8 @@ function shortText(v?: string, max = 40) {
   return s.length > max ? `${s.slice(0, max)}…` : s
 }
 
-function clampZoom(v: number) {
-  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, v))
+function clampRelativeZoom(v: number) {
+  return Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
 }
 
 export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsChanged }: OperationsBlueprintPdfViewerProps) {
@@ -91,20 +90,20 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
   const renderTaskRef = useRef<any>(null)
   const noteEditorRef = useRef<HTMLTextAreaElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const pendingScrollResetRef = useRef(false)
 
   const [signedUrl, setSignedUrl] = useState('')
   const [pdfDoc, setPdfDoc] = useState<any>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageInput, setPageInput] = useState('1')
-  const [manualZoom, setManualZoom] = useState(1)
-  const [viewMode, setViewMode] = useState<ViewMode>('fit-width')
+  const [relativeZoom, setRelativeZoom] = useState(1)
+  const [lockView, setLockView] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isRendering, setIsRendering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 })
-  const [basePageSize, setBasePageSize] = useState({ w: 0, h: 0 })
-  const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 })
+  const [viewportWidth, setViewportWidth] = useState(0)
 
   const [toolMode, setToolMode] = useState<ToolMode>('select')
   const [activeColor, setActiveColor] = useState('#facc15')
@@ -127,25 +126,6 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
   const canRender = !!pdfDoc && numPages > 0
   const isEditorOpen = !!noteEditor
   const effectiveTool = isEditorOpen ? 'select' : toolMode
-
-  const fitWidthZoom = useMemo(() => {
-    if (!basePageSize.w || !viewportSize.w) return 1
-    const availableWidth = Math.max(120, viewportSize.w - 24)
-    return clampZoom(availableWidth / basePageSize.w)
-  }, [basePageSize.w, viewportSize.w])
-
-  const fitPageZoom = useMemo(() => {
-    if (!basePageSize.w || !basePageSize.h || !viewportSize.w || !viewportSize.h) return 1
-    const availableWidth = Math.max(120, viewportSize.w - 24)
-    const availableHeight = Math.max(120, viewportSize.h - 24)
-    return clampZoom(Math.min(availableWidth / basePageSize.w, availableHeight / basePageSize.h))
-  }, [basePageSize.w, basePageSize.h, viewportSize.w, viewportSize.h])
-
-  const effectiveZoom = useMemo(() => {
-    if (viewMode === 'fit-width') return fitWidthZoom
-    if (viewMode === 'fit-page') return fitPageZoom
-    return clampZoom(manualZoom)
-  }, [viewMode, fitWidthZoom, fitPageZoom, manualZoom])
 
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
@@ -179,13 +159,12 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
       setSignedUrl('')
       setIsRendering(false)
       setDisplaySize({ w: 0, h: 0 })
-      setBasePageSize({ w: 0, h: 0 })
       setDraftRect(null)
       setDragStart(null)
       setNoteEditor(null)
       setFocusedAnnotationId(null)
-      setViewMode('fit-width')
-      setManualZoom(1)
+      setRelativeZoom(1)
+      pendingScrollResetRef.current = true
     }
   }, [])
 
@@ -211,8 +190,8 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
       setNumPages(doc.numPages || 0)
       setCurrentPage(1)
       setPageInput('1')
-      setViewMode('fit-width')
-      setManualZoom(1)
+      setRelativeZoom(1)
+      pendingScrollResetRef.current = true
     } catch (e: any) {
       setError(e?.message || 'Failed to load blueprint PDF.')
     } finally {
@@ -238,7 +217,7 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
     const obs = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
       if (!rect) return
-      setViewportSize({ w: Math.floor(rect.width), h: Math.floor(rect.height) })
+      setViewportWidth(Math.floor(rect.width))
     })
     obs.observe(el)
     return () => obs.disconnect()
@@ -260,29 +239,41 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
 
         const page = await pdfDoc.getPage(clampedPage)
         const baseViewport = page.getViewport({ scale: 1 })
-        if (
-          Math.abs(basePageSize.w - baseViewport.width) > 0.5 ||
-          Math.abs(basePageSize.h - baseViewport.height) > 0.5
-        ) {
-          setBasePageSize({ w: baseViewport.width, h: baseViewport.height })
-        }
-
-        const safeScale = Math.max(MIN_ZOOM, Math.min(MAX_RENDER_SCALE, effectiveZoom))
-        const viewport = page.getViewport({ scale: safeScale })
+        const measuredWidth = viewportWidth || scrollAreaRef.current?.clientWidth || 0
+        const availableWidth = Math.max(120, measuredWidth - 26)
+        const fitWidthScale = Math.max(0.01, availableWidth / Math.max(1, baseViewport.width))
+        const actualRenderScale = Math.max(
+          0.01,
+          Math.min(MAX_RENDER_SCALE, fitWidthScale * clampRelativeZoom(relativeZoom))
+        )
+        const viewport = page.getViewport({ scale: actualRenderScale })
         const canvas = canvasRef.current
         if (!canvas || isDisposed) return
-        const context = canvas.getContext('2d', { alpha: false })
-        if (!context) throw new Error('Could not get canvas context.')
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = Math.floor(viewport.width)
+        tempCanvas.height = Math.floor(viewport.height)
+        const tempContext = tempCanvas.getContext('2d', { alpha: false })
+        if (!tempContext) throw new Error('Could not get canvas context.')
 
-        canvas.width = Math.floor(viewport.width)
-        canvas.height = Math.floor(viewport.height)
-        canvas.style.width = `${Math.floor(viewport.width)}px`
-        canvas.style.height = `${Math.floor(viewport.height)}px`
-        setDisplaySize({ w: Math.floor(viewport.width), h: Math.floor(viewport.height) })
-
-        const task = page.render({ canvasContext: context, viewport })
+        const task = page.render({ canvasContext: tempContext, viewport })
         renderTaskRef.current = task
         await task.promise
+
+        if (isDisposed) return
+        const context = canvas.getContext('2d', { alpha: false })
+        if (!context) throw new Error('Could not get canvas context.')
+        canvas.width = tempCanvas.width
+        canvas.height = tempCanvas.height
+        canvas.style.width = `${tempCanvas.width}px`
+        canvas.style.height = `${tempCanvas.height}px`
+        context.drawImage(tempCanvas, 0, 0)
+        setDisplaySize({ w: tempCanvas.width, h: tempCanvas.height })
+
+        if (pendingScrollResetRef.current && scrollAreaRef.current) {
+          scrollAreaRef.current.scrollTop = 0
+          scrollAreaRef.current.scrollLeft = 0
+          pendingScrollResetRef.current = false
+        }
       } catch (e: any) {
         if (e?.name !== 'RenderingCancelledException') {
           setError(e?.message || 'Failed to render PDF page.')
@@ -299,7 +290,7 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
         try { renderTaskRef.current.cancel() } catch {}
       }
     }
-  }, [pdfDoc, currentPage, numPages, effectiveZoom, basePageSize.w, basePageSize.h])
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom])
 
   useEffect(() => {
     if (!isEditorOpen) return
@@ -318,6 +309,26 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  useEffect(() => {
+    pendingScrollResetRef.current = true
+    setRelativeZoom(1)
+  }, [currentPage, blueprint?.id])
+
+  const applyRelativeZoomDelta = useCallback((delta: number) => {
+    setRelativeZoom((z) => clampRelativeZoom(z + delta))
+  }, [])
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (lockView) {
+      e.preventDefault()
+      return
+    }
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    const delta = e.deltaY < 0 ? 0.1 : -0.1
+    applyRelativeZoomDelta(delta)
+  }, [applyRelativeZoomDelta, lockView])
 
   const pageLabel = useMemo(() => `${Math.max(1, currentPage)} / ${Math.max(1, numPages)}`, [currentPage, numPages])
   useEffect(() => setPageInput(String(currentPage)), [currentPage])
@@ -637,28 +648,31 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
 
             <div className="ml-auto inline-flex items-center gap-2">
               <button
-                onClick={() => setViewMode('fit-width')}
-                className={`text-xs px-2 py-1 rounded-md border ${viewMode === 'fit-width' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                onClick={() => setLockView((v) => !v)}
+                className={`text-xs px-2 py-1 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+              >
+                Lock View
+              </button>
+              <button
+                onClick={() => {
+                  pendingScrollResetRef.current = true
+                  setRelativeZoom(1)
+                }}
+                className="text-xs px-2 py-1 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20"
               >
                 Fit Width
               </button>
               <button
-                disabled={!canRender || effectiveZoom <= MIN_ZOOM}
-                onClick={() => {
-                  setViewMode('manual')
-                  setManualZoom((z) => clampZoom((viewMode === 'manual' ? z : effectiveZoom) - 0.1))
-                }}
+                disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
+                onClick={() => applyRelativeZoomDelta(-0.1)}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
                 <ZoomOut size={12} />
               </button>
-              <span className="text-xs text-gray-400 w-12 text-center">{Math.round(effectiveZoom * 100)}%</span>
+              <span className="text-xs text-gray-400 w-12 text-center">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
               <button
-                disabled={!canRender || effectiveZoom >= MAX_ZOOM}
-                onClick={() => {
-                  setViewMode('manual')
-                  setManualZoom((z) => clampZoom((viewMode === 'manual' ? z : effectiveZoom) + 0.1))
-                }}
+                disabled={!canRender || relativeZoom >= MAX_RELATIVE_ZOOM}
+                onClick={() => applyRelativeZoomDelta(0.1)}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
                 <ZoomIn size={12} />
@@ -681,7 +695,11 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
 
           <div className="p-4">
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4">
-              <div ref={scrollAreaRef} className="operations-pdf-scroll overflow-auto max-h-[72vh] rounded border border-gray-800">
+              <div
+                ref={scrollAreaRef}
+                className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-auto'} max-h-[72vh] rounded border border-gray-800`}
+                onWheel={handleWheel}
+              >
                 <div className="min-w-full min-h-full flex items-start justify-center p-3">
                   <div className="relative" style={{ width: displaySize.w || undefined, height: displaySize.h || undefined }}>
                     <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />
