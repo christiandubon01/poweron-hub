@@ -643,12 +643,6 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
                 Fit Width
               </button>
               <button
-                onClick={() => setViewMode('fit-page')}
-                className={`text-xs px-2 py-1 rounded-md border ${viewMode === 'fit-page' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-              >
-                Fit Page
-              </button>
-              <button
                 disabled={!canRender || effectiveZoom <= MIN_ZOOM}
                 onClick={() => {
                   setViewMode('manual')
@@ -668,16 +662,6 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
                 <ZoomIn size={12} />
-              </button>
-              <button
-                disabled={!canRender}
-                onClick={() => {
-                  setViewMode('manual')
-                  setManualZoom(1)
-                }}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
-              >
-                Reset / 100%
               </button>
             </div>
           </div>
