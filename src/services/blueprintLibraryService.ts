@@ -138,6 +138,19 @@ export async function uploadBlueprintPdfToStorage(params: {
   return { storagePath }
 }
 
+export async function cleanupBlueprintStorageObject(storagePath: string): Promise<void> {
+  const cleanPath = String(storagePath || '').trim()
+  if (!cleanPath) return
+  try {
+    const { error } = await supabase.storage.from('blueprints').remove([cleanPath])
+    if (error) {
+      console.warn('[BlueprintAI] Orphan cleanup failed:', error.message || error)
+    }
+  } catch (err: any) {
+    console.warn('[BlueprintAI] Orphan cleanup threw:', err?.message || err)
+  }
+}
+
 export async function createBlueprintLibraryItem(params: {
   file: File
   projectId: string

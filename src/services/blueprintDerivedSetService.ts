@@ -144,3 +144,15 @@ export async function createDerivedBlueprintSet(params: {
   }
 }
 
+export async function cleanupDerivedBlueprintStorageObject(storagePath: string): Promise<void> {
+  const cleanPath = String(storagePath || '').trim()
+  if (!cleanPath) return
+  try {
+    const { error } = await supabase.storage.from('blueprints').remove([cleanPath])
+    if (error) {
+      console.warn('[BlueprintAI] Derived orphan cleanup failed:', error.message || error)
+    }
+  } catch (err: any) {
+    console.warn('[BlueprintAI] Derived orphan cleanup threw:', err?.message || err)
+  }
+}

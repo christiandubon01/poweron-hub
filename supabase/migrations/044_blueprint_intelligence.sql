@@ -90,7 +90,7 @@ CREATE POLICY blueprint_extracts_delete ON blueprint_extracts
 -- The 'blueprints' storage bucket should be created with these settings:
 --   - Name: blueprints
 --   - Public: false (private bucket)
---   - File size limit: 50MB
+--   - File size limit: 512MB
 --   - Allowed MIME types: application/pdf
 --
 -- Storage path convention: {org_id}/{project_id}/blueprints/{file_id}_{filename}

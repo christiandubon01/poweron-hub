@@ -4,6 +4,7 @@ import { Archive, CheckCircle2, FileText, Loader2, RotateCcw, Upload } from 'luc
 import { getBackupData } from '@/services/backupDataService'
 import OperationsBlueprintPdfViewer from '@/components/blueprint/OperationsBlueprintPdfViewer'
 import {
+  cleanupBlueprintStorageObject,
   createBlueprintLibraryItem,
   deleteBlueprintSheetIndexItem,
   getBlueprintSheetIndex,
@@ -22,6 +23,7 @@ import {
 } from '@/services/blueprintLibraryService'
 import { extractSheetIndexCandidatesFromStorage, type DetectedSheetIndexRow } from '@/services/blueprintExtractor'
 import {
+  cleanupDerivedBlueprintStorageObject,
   createDerivedBlueprintSet,
   MAX_DERIVED_SELECTION_PAGES,
 } from '@/services/blueprintDerivedSetService'
@@ -118,8 +120,9 @@ export default function BlueprintAI() {
   }, [selectedId])
 
   async function persist(next: BlueprintLibraryItem[]) {
-    setLibrary(next)
     await saveOperationsBlueprintLibrary(backup, next)
+    const freshBackup = getBackupData() || backup
+    setLibrary(getOperationsBlueprintLibrary(freshBackup))
   }
 
   async function handleUpload() {
@@ -151,12 +154,14 @@ export default function BlueprintAI() {
     }
 
     setUploading(true)
+    let uploadedStoragePath: string | null = null
     try {
       const { storagePath } = await uploadBlueprintPdfToStorage({
         file,
         projectId: selectedProjectId,
         orgId,
       })
+      uploadedStoragePath = storagePath
 
       const item = await createBlueprintLibraryItem({
         file,
@@ -175,6 +180,11 @@ export default function BlueprintAI() {
       if (fileRef.current) fileRef.current.value = ''
       setSuccess('Blueprint uploaded and linked successfully.')
     } catch (e: any) {
+      if (uploadedStoragePath) {
+        await cleanupBlueprintStorageObject(uploadedStoragePath)
+      }
+      const freshBackup = getBackupData() || backup
+      setLibrary(getOperationsBlueprintLibrary(freshBackup))
       setError(e?.message || 'Upload failed.')
     } finally {
       setUploading(false)
@@ -182,6 +192,8 @@ export default function BlueprintAI() {
   }
 
   async function setArchiveState(item: BlueprintLibraryItem, archived: boolean) {
+    setError(null)
+    setSuccess(null)
     const now = new Date().toISOString()
     const next = library.map(x => {
       if (x.id !== item.id) return x
@@ -192,7 +204,14 @@ export default function BlueprintAI() {
         updatedAt: now,
       }
     })
-    await persist(next)
+    try {
+      await persist(next)
+      setSuccess(`Blueprint ${archived ? 'archived' : 'restored'} successfully.`)
+    } catch (e: any) {
+      const freshLibrary = getOperationsBlueprintLibrary(getBackupData() || backup)
+      setLibrary(freshLibrary)
+      setError(e?.message || `Failed to ${archived ? 'archive' : 'restore'} blueprint.`)
+    }
   }
 
   function removeSelectedPage(pageNumber: number) {
@@ -435,6 +454,7 @@ export default function BlueprintAI() {
     if (creatingDerived) return
 
     setCreatingDerived(true)
+    let derivedStoragePath: string | null = null
     try {
       const derivedItem = await createDerivedBlueprintSet({
         sourceBlueprint: selectedItem,
@@ -442,6 +462,7 @@ export default function BlueprintAI() {
         title: derivedTitle.trim(),
         type: derivedType,
       })
+      derivedStoragePath = derivedItem.storagePath
 
       const next = [derivedItem, ...library]
       await persist(next)
@@ -451,6 +472,11 @@ export default function BlueprintAI() {
       setDerivedType('Electrical Only')
       setSuccess('Derived blueprint set created successfully.')
     } catch (e: any) {
+      if (derivedStoragePath) {
+        await cleanupDerivedBlueprintStorageObject(derivedStoragePath)
+      }
+      const freshLibrary = getOperationsBlueprintLibrary(getBackupData() || backup)
+      setLibrary(freshLibrary)
       setError(e?.message || 'Failed to create derived set. If upload succeeded but metadata sync failed, retry and verify library sync.')
     } finally {
       setCreatingDerived(false)
