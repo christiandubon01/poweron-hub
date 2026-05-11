@@ -103,6 +103,7 @@ export default function OperationsBlueprintPdfViewer({
   const renderTaskRef = useRef<any>(null)
   const noteEditorRef = useRef<HTMLTextAreaElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const pageFrameRef = useRef<HTMLDivElement>(null)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
   const pinchPreviewZoomRef = useRef<number | null>(null)
@@ -129,8 +130,8 @@ export default function OperationsBlueprintPdfViewer({
   const pendingPinchAnchorRef = useRef<{
     ratioX: number
     ratioY: number
-    centerX: number
-    centerY: number
+    centerInScrollX: number
+    centerInScrollY: number
   } | null>(null)
   const touchPanRef = useRef<{
     active: boolean
@@ -187,6 +188,45 @@ export default function OperationsBlueprintPdfViewer({
   useEffect(() => {
     displaySizeRef.current = displaySize
   }, [displaySize])
+
+  const clampScroll = useCallback((scroll: HTMLDivElement, left: number, top: number) => {
+    const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth)
+    const maxTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight)
+    scroll.scrollLeft = Math.max(0, Math.min(maxLeft, left))
+    scroll.scrollTop = Math.max(0, Math.min(maxTop, top))
+  }, [])
+
+  const getPinchAnchorFromMidpoint = useCallback((
+    midpointClientX: number,
+    midpointClientY: number,
+    visualPageWidth: number,
+    visualPageHeight: number
+  ): {
+    ratioX: number
+    ratioY: number
+    centerInScrollX: number
+    centerInScrollY: number
+    pageOffsetX: number
+    pageOffsetY: number
+  } | null => {
+    const scroll = scrollAreaRef.current
+    const page = pageFrameRef.current
+    if (!scroll || !page || visualPageWidth <= 0 || visualPageHeight <= 0) return null
+    const scrollRect = scroll.getBoundingClientRect()
+    const pageRect = page.getBoundingClientRect()
+
+    const centerInScrollX = midpointClientX - scrollRect.left
+    const centerInScrollY = midpointClientY - scrollRect.top
+    const pageOffsetX = (pageRect.left - scrollRect.left) + scroll.scrollLeft
+    const pageOffsetY = (pageRect.top - scrollRect.top) + scroll.scrollTop
+    const centerInPageX = (scroll.scrollLeft + centerInScrollX) - pageOffsetX
+    const centerInPageY = (scroll.scrollTop + centerInScrollY) - pageOffsetY
+
+    const ratioX = Math.max(0, Math.min(1, centerInPageX / Math.max(1, visualPageWidth)))
+    const ratioY = Math.max(0, Math.min(1, centerInPageY / Math.max(1, visualPageHeight)))
+
+    return { ratioX, ratioY, centerInScrollX, centerInScrollY, pageOffsetX, pageOffsetY }
+  }, [])
 
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
@@ -353,11 +393,15 @@ export default function OperationsBlueprintPdfViewer({
         setDisplaySize({ w: tempCanvas.width, h: tempCanvas.height })
 
         const pendingAnchor = pendingPinchAnchorRef.current
-        if (pendingAnchor && scrollAreaRef.current && !lockView) {
-          const targetLeft = (pendingAnchor.ratioX * tempCanvas.width) - pendingAnchor.centerX
-          const targetTop = (pendingAnchor.ratioY * tempCanvas.height) - pendingAnchor.centerY
-          scrollAreaRef.current.scrollLeft = Math.max(0, targetLeft)
-          scrollAreaRef.current.scrollTop = Math.max(0, targetTop)
+        if (pendingAnchor && scrollAreaRef.current && pageFrameRef.current && !lockView) {
+          const scroll = scrollAreaRef.current
+          const scrollRect = scroll.getBoundingClientRect()
+          const pageRect = pageFrameRef.current.getBoundingClientRect()
+          const pageOffsetX = (pageRect.left - scrollRect.left) + scroll.scrollLeft
+          const pageOffsetY = (pageRect.top - scrollRect.top) + scroll.scrollTop
+          const targetLeft = pageOffsetX + (pendingAnchor.ratioX * tempCanvas.width) - pendingAnchor.centerInScrollX
+          const targetTop = pageOffsetY + (pendingAnchor.ratioY * tempCanvas.height) - pendingAnchor.centerInScrollY
+          clampScroll(scroll, targetLeft, targetTop)
           pendingPinchAnchorRef.current = null
         }
 
@@ -382,7 +426,7 @@ export default function OperationsBlueprintPdfViewer({
         try { renderTaskRef.current.cancel() } catch {}
       }
     }
-  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView])
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll])
 
   useEffect(() => {
     if (!isEditorOpen) return
@@ -591,6 +635,9 @@ export default function OperationsBlueprintPdfViewer({
     const dy = p2.y - p1.y
     const distance = Math.hypot(dx, dy)
     const center = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+    const scrollRect = scrollAreaRef.current?.getBoundingClientRect()
+    const midpointClientX = (scrollRect?.left || 0) + center.x
+    const midpointClientY = (scrollRect?.top || 0) + center.y
     const state = pinchStateRef.current
     const scroll = scrollAreaRef.current
 
@@ -618,11 +665,21 @@ export default function OperationsBlueprintPdfViewer({
       const currentPreviewZoom = pinchPreviewZoomRef.current ?? state.finalZoom ?? state.startZoom
 
       if (Math.abs(nextZoom - currentPreviewZoom) >= 0.005) {
-        // Keep the pinch center as stable as possible while visually scaling.
+        // Keep the pinch center anchored in scroll-container coordinates.
         if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
-          const ratio = nextZoom / Math.max(0.001, currentPreviewZoom)
-          scroll.scrollLeft = Math.max(0, ((scroll.scrollLeft + center.x) * ratio) - center.x)
-          scroll.scrollTop = Math.max(0, ((scroll.scrollTop + center.y) * ratio) - center.y)
+          const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+          const currentVisualScale = Math.max(1, currentPreviewZoom / baseCommittedZoom)
+          const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
+          const currentVisualW = displaySizeRef.current.w * currentVisualScale
+          const currentVisualH = displaySizeRef.current.h * currentVisualScale
+          const nextVisualW = displaySizeRef.current.w * nextVisualScale
+          const nextVisualH = displaySizeRef.current.h * nextVisualScale
+          const anchor = getPinchAnchorFromMidpoint(midpointClientX, midpointClientY, currentVisualW, currentVisualH)
+          if (anchor) {
+            const targetLeft = anchor.pageOffsetX + (anchor.ratioX * nextVisualW) - anchor.centerInScrollX
+            const targetTop = anchor.pageOffsetY + (anchor.ratioY * nextVisualH) - anchor.centerInScrollY
+            clampScroll(scroll, targetLeft, targetTop)
+          }
         }
 
         state.finalZoom = nextZoom
@@ -647,7 +704,7 @@ export default function OperationsBlueprintPdfViewer({
     state.lastCenter = center
     suppressAnnotationUntilRef.current = Date.now() + 320
     e.preventDefault()
-  }, [getTouchPoints, lockView])
+  }, [getTouchPoints, lockView, clampScroll, getPinchAnchorFromMidpoint])
 
   const endTouchPointer = useCallback((pointerId: number) => {
     activeTouchPointersRef.current.delete(pointerId)
@@ -667,11 +724,17 @@ export default function OperationsBlueprintPdfViewer({
         const previewWidth = displaySizeRef.current.w * previewScale
         const previewHeight = displaySizeRef.current.h * previewScale
 
-        pendingPinchAnchorRef.current = {
-          ratioX: (scroll.scrollLeft + center.x) / Math.max(1, previewWidth),
-          ratioY: (scroll.scrollTop + center.y) / Math.max(1, previewHeight),
-          centerX: center.x,
-          centerY: center.y,
+        const scrollRect = scroll.getBoundingClientRect()
+        const midpointClientX = scrollRect.left + center.x
+        const midpointClientY = scrollRect.top + center.y
+        const anchor = getPinchAnchorFromMidpoint(midpointClientX, midpointClientY, previewWidth, previewHeight)
+        if (anchor) {
+          pendingPinchAnchorRef.current = {
+            ratioX: anchor.ratioX,
+            ratioY: anchor.ratioY,
+            centerInScrollX: anchor.centerInScrollX,
+            centerInScrollY: anchor.centerInScrollY,
+          }
         }
       }
 
@@ -689,7 +752,7 @@ export default function OperationsBlueprintPdfViewer({
       setPinchPreviewZoom(null)
       pinchPreviewZoomRef.current = null
     }
-  }, [])
+  }, [getPinchAnchorFromMidpoint])
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'touch') {
@@ -1071,6 +1134,7 @@ export default function OperationsBlueprintPdfViewer({
                   }}
                 >
                   <div
+                    ref={pageFrameRef}
                     className="relative"
                     style={{
                       width: displaySize.w || undefined,
