@@ -139,7 +139,7 @@ export default function BlueprintAI() {
   }
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-6 py-6 flex flex-col gap-5">
+    <div className="w-full max-w-none min-w-0 px-6 py-6 flex flex-col gap-5">
       <div className="flex items-center gap-2">
         <FileText size={18} className="text-green-400" />
         <h1 className="text-lg font-semibold text-gray-100">Blueprint AI</h1>
@@ -321,7 +321,7 @@ export default function BlueprintAI() {
         )}
       </div>
 
-      <div>
+      <div className="w-full max-w-none min-w-0">
         <div className="mb-2 text-sm font-semibold text-gray-200">Blueprint Viewer</div>
         <OperationsBlueprintPdfViewer
           blueprint={selectedItem}

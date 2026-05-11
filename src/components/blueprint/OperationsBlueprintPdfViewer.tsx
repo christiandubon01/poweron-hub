@@ -1,6 +1,18 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Loader2, MousePointer2, RefreshCw, Search, StickyNote, Trash2, ZoomIn, ZoomOut } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MousePointer2,
+  RefreshCw,
+  Search,
+  StickyNote,
+  Trash2,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
 import {
   deleteOperationsBlueprintAnnotation,
   getBlueprintSignedUrl,
@@ -26,11 +38,14 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
 }
 
 const MIN_ZOOM = 0.5
-const MAX_ZOOM = 2
-const MAX_RENDER_SCALE = 1.75
+const MAX_ZOOM = 2.5
+const MAX_RENDER_SCALE = 2.5
 const MIN_HIGHLIGHT_NORM = 0.005
+const NOTE_MARKER_SIZE_NORM = 0.018
+const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444']
 
 type ToolMode = 'select' | 'note' | 'highlight'
+type ViewMode = 'fit-width' | 'fit-page' | 'manual'
 
 interface OperationsBlueprintPdfViewerProps {
   blueprint: BlueprintLibraryItem | null
@@ -59,30 +74,78 @@ function normRectFromDrag(start: { x: number; y: number }, end: { x: number; y: 
   }
 }
 
+function shortText(v?: string, max = 40) {
+  const s = String(v || '').trim()
+  if (!s) return '(empty note)'
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+function clampZoom(v: number) {
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, v))
+}
+
 export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsChanged }: OperationsBlueprintPdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const pdfDocRef = useRef<any>(null)
   const renderTaskRef = useRef<any>(null)
+  const noteEditorRef = useRef<HTMLTextAreaElement>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
 
   const [signedUrl, setSignedUrl] = useState('')
   const [pdfDoc, setPdfDoc] = useState<any>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageInput, setPageInput] = useState('1')
-  const [zoom, setZoom] = useState(1)
+  const [manualZoom, setManualZoom] = useState(1)
+  const [viewMode, setViewMode] = useState<ViewMode>('fit-width')
   const [isLoading, setIsLoading] = useState(false)
   const [isRendering, setIsRendering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 })
+  const [basePageSize, setBasePageSize] = useState({ w: 0, h: 0 })
+  const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 })
 
   const [toolMode, setToolMode] = useState<ToolMode>('select')
+  const [activeColor, setActiveColor] = useState('#facc15')
   const [allAnnotations, setAllAnnotations] = useState<BlueprintAnnotation[]>([])
+  const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
+
   const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
 
+  const [noteEditor, setNoteEditor] = useState<{
+    mode: 'create' | 'edit'
+    annotationId?: string
+    x: number
+    y: number
+    text: string
+    color: string
+  } | null>(null)
+
   const hasStoragePath = !!blueprint?.storagePath?.trim()
   const canRender = !!pdfDoc && numPages > 0
+  const isEditorOpen = !!noteEditor
+  const effectiveTool = isEditorOpen ? 'select' : toolMode
+
+  const fitWidthZoom = useMemo(() => {
+    if (!basePageSize.w || !viewportSize.w) return 1
+    const availableWidth = Math.max(120, viewportSize.w - 24)
+    return clampZoom(availableWidth / basePageSize.w)
+  }, [basePageSize.w, viewportSize.w])
+
+  const fitPageZoom = useMemo(() => {
+    if (!basePageSize.w || !basePageSize.h || !viewportSize.w || !viewportSize.h) return 1
+    const availableWidth = Math.max(120, viewportSize.w - 24)
+    const availableHeight = Math.max(120, viewportSize.h - 24)
+    return clampZoom(Math.min(availableWidth / basePageSize.w, availableHeight / basePageSize.h))
+  }, [basePageSize.w, basePageSize.h, viewportSize.w, viewportSize.h])
+
+  const effectiveZoom = useMemo(() => {
+    if (viewMode === 'fit-width') return fitWidthZoom
+    if (viewMode === 'fit-page') return fitPageZoom
+    return clampZoom(manualZoom)
+  }, [viewMode, fitWidthZoom, fitPageZoom, manualZoom])
 
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
@@ -116,8 +179,13 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
       setSignedUrl('')
       setIsRendering(false)
       setDisplaySize({ w: 0, h: 0 })
+      setBasePageSize({ w: 0, h: 0 })
       setDraftRect(null)
       setDragStart(null)
+      setNoteEditor(null)
+      setFocusedAnnotationId(null)
+      setViewMode('fit-width')
+      setManualZoom(1)
     }
   }, [])
 
@@ -143,7 +211,8 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
       setNumPages(doc.numPages || 0)
       setCurrentPage(1)
       setPageInput('1')
-      setZoom(1)
+      setViewMode('fit-width')
+      setManualZoom(1)
     } catch (e: any) {
       setError(e?.message || 'Failed to load blueprint PDF.')
     } finally {
@@ -164,6 +233,18 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
   }, [blueprint?.id])
 
   useEffect(() => {
+    const el = scrollAreaRef.current
+    if (!el) return
+    const obs = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect) return
+      setViewportSize({ w: Math.floor(rect.width), h: Math.floor(rect.height) })
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [scrollAreaRef.current])
+
+  useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return
     const clampedPage = Math.max(1, Math.min(numPages || 1, currentPage))
     let isDisposed = false
@@ -178,7 +259,15 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
         }
 
         const page = await pdfDoc.getPage(clampedPage)
-        const safeScale = Math.max(MIN_ZOOM, Math.min(MAX_RENDER_SCALE, zoom))
+        const baseViewport = page.getViewport({ scale: 1 })
+        if (
+          Math.abs(basePageSize.w - baseViewport.width) > 0.5 ||
+          Math.abs(basePageSize.h - baseViewport.height) > 0.5
+        ) {
+          setBasePageSize({ w: baseViewport.width, h: baseViewport.height })
+        }
+
+        const safeScale = Math.max(MIN_ZOOM, Math.min(MAX_RENDER_SCALE, effectiveZoom))
         const viewport = page.getViewport({ scale: safeScale })
         const canvas = canvasRef.current
         if (!canvas || isDisposed) return
@@ -210,13 +299,28 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
         try { renderTaskRef.current.cancel() } catch {}
       }
     }
-  }, [pdfDoc, currentPage, zoom, numPages])
-
-  const pageLabel = useMemo(() => `${Math.max(1, currentPage)} / ${Math.max(1, numPages)}`, [currentPage, numPages])
+  }, [pdfDoc, currentPage, numPages, effectiveZoom, basePageSize.w, basePageSize.h])
 
   useEffect(() => {
-    setPageInput(String(currentPage))
-  }, [currentPage])
+    if (!isEditorOpen) return
+    setTimeout(() => noteEditorRef.current?.focus(), 20)
+  }, [isEditorOpen])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setDraftRect(null)
+      setDragStart(null)
+      setNoteEditor(null)
+      setFocusedAnnotationId(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const pageLabel = useMemo(() => `${Math.max(1, currentPage)} / ${Math.max(1, numPages)}`, [currentPage, numPages])
+  useEffect(() => setPageInput(String(currentPage)), [currentPage])
 
   const pageAnnotations = useMemo(
     () => allAnnotations.filter(a => Number(a.pageNumber) === Number(currentPage)),
@@ -242,6 +346,7 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
       if (!backup) return
       await deleteOperationsBlueprintAnnotation(backup, blueprint.id, annotationId)
       loadAnnotations()
+      setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
       onAnnotationsChanged?.()
     } catch (e: any) {
       setError(e?.message || 'Failed to delete annotation.')
@@ -254,45 +359,101 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
     const next = Math.max(1, Math.min(numPages || 1, Math.floor(raw)))
     setCurrentPage(next)
     setPageInput(String(next))
+    setFocusedAnnotationId(null)
+    setNoteEditor(null)
+    setDraftRect(null)
+    setDragStart(null)
   }, [pageInput, numPages])
 
-  const handleOverlayClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!blueprint || toolMode !== 'note') return
+  const openCreateNoteEditorAt = useCallback((normX: number, normY: number) => {
+    setFocusedAnnotationId(null)
+    setNoteEditor({
+      mode: 'create',
+      x: normX,
+      y: normY,
+      text: '',
+      color: activeColor,
+    })
+  }, [activeColor])
+
+  const openEditNoteEditor = useCallback((annotation: BlueprintAnnotation) => {
+    const rect = annotation.rect || { x: 0, y: 0 }
+    setFocusedAnnotationId(annotation.id)
+    setNoteEditor({
+      mode: 'edit',
+      annotationId: annotation.id,
+      x: rect.x || 0,
+      y: rect.y || 0,
+      text: annotation.text || '',
+      color: annotation.color || activeColor,
+    })
+  }, [activeColor])
+
+  const saveNoteEditor = useCallback(async () => {
+    if (!blueprint || !noteEditor) return
+    const now = new Date().toISOString()
+    if (noteEditor.mode === 'create') {
+      const trimmed = (noteEditor.text || '').trim()
+      if (!trimmed) {
+        setNoteEditor(null)
+        return
+      }
+      const ann: BlueprintAnnotation = {
+        id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        blueprintSetId: blueprint.id,
+        projectId: blueprint.projectId,
+        pageNumber: currentPage,
+        type: 'note',
+        rect: { x: noteEditor.x, y: noteEditor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM },
+        text: trimmed,
+        color: noteEditor.color || activeColor,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await persistAnnotation(ann)
+      setFocusedAnnotationId(ann.id)
+      setNoteEditor(null)
+      return
+    }
+
+    const existing = allAnnotations.find(a => a.id === noteEditor.annotationId)
+    if (!existing) {
+      setNoteEditor(null)
+      return
+    }
+    const updated: BlueprintAnnotation = {
+      ...existing,
+      text: (noteEditor.text || '').trim(),
+      color: noteEditor.color || activeColor,
+      updatedAt: now,
+    }
+    await persistAnnotation(updated)
+    setFocusedAnnotationId(updated.id)
+    setNoteEditor(null)
+  }, [blueprint, noteEditor, activeColor, currentPage, persistAnnotation, allAnnotations])
+
+  const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!blueprint || effectiveTool !== 'note' || isEditorOpen) return
     if (!overlayRef.current || !displaySize.w || !displaySize.h) return
     const rect = overlayRef.current.getBoundingClientRect()
     const px = e.clientX - rect.left
     const py = e.clientY - rect.top
     const n = toNorm(px, py, rect.width, rect.height)
-    const text = window.prompt('Enter note text:')
-    if (!text || !text.trim()) return
-    const now = new Date().toISOString()
-    const ann: BlueprintAnnotation = {
-      id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      blueprintSetId: blueprint.id,
-      projectId: blueprint.projectId,
-      pageNumber: currentPage,
-      type: 'note',
-      rect: { x: n.x, y: n.y, w: 0.018, h: 0.018 },
-      text: text.trim(),
-      color: '#38bdf8',
-      createdAt: now,
-      updatedAt: now,
-    }
-    await persistAnnotation(ann)
-  }, [toolMode, blueprint, currentPage, persistAnnotation, displaySize])
+    openCreateNoteEditorAt(n.x, n.y)
+  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt])
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (toolMode !== 'highlight') return
+    if (effectiveTool !== 'highlight' || isEditorOpen) return
     if (!overlayRef.current) return
     const rect = overlayRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
     setDragStart({ x, y })
     setDraftRect({ x, y, w: 0, h: 0 })
-  }, [toolMode])
+  }, [effectiveTool, isEditorOpen])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (toolMode !== 'highlight' || !dragStart || !overlayRef.current) return
+    if (effectiveTool !== 'highlight' || !dragStart || !overlayRef.current || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
@@ -301,10 +462,10 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
     const w = Math.abs(x - dragStart.x)
     const h = Math.abs(y - dragStart.y)
     setDraftRect({ x: left, y: top, w, h })
-  }, [toolMode, dragStart])
+  }, [effectiveTool, dragStart, isEditorOpen])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
-    if (toolMode !== 'highlight' || !dragStart || !overlayRef.current || !blueprint) return
+    if (effectiveTool !== 'highlight' || !dragStart || !overlayRef.current || !blueprint || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
@@ -321,12 +482,13 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
       pageNumber: currentPage,
       type: 'highlight',
       rect: norm,
-      color: '#facc15',
+      color: activeColor,
       createdAt: now,
       updatedAt: now,
     }
     await persistAnnotation(ann)
-  }, [toolMode, dragStart, blueprint, currentPage, persistAnnotation])
+    setFocusedAnnotationId(ann.id)
+  }, [effectiveTool, dragStart, blueprint, currentPage, persistAnnotation, activeColor, isEditorOpen])
 
   if (!blueprint) {
     return (
@@ -336,8 +498,43 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
     )
   }
 
+  const cursorClass =
+    effectiveTool === 'note'
+      ? 'cursor-crosshair'
+      : effectiveTool === 'highlight'
+      ? 'cursor-crosshair'
+      : 'cursor-default'
+
   return (
-    <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+    <div className="rounded-xl border overflow-hidden w-full" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+      <style>{`
+        .operations-pdf-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(148,163,184,0.45) rgba(15,23,42,0.35);
+        }
+        .operations-pdf-scroll::-webkit-scrollbar {
+          width: 10px;
+          height: 10px;
+        }
+        .operations-pdf-scroll::-webkit-scrollbar-track {
+          background: rgba(15,23,42,0.35);
+          border-radius: 8px;
+        }
+        .operations-pdf-scroll::-webkit-scrollbar-thumb {
+          background: rgba(148,163,184,0.45);
+          border-radius: 8px;
+          border: 2px solid rgba(15,23,42,0.35);
+        }
+        .operations-pdf-scroll:hover::-webkit-scrollbar {
+          width: 16px;
+          height: 16px;
+        }
+        .operations-pdf-scroll:hover::-webkit-scrollbar-thumb {
+          background: rgba(148,163,184,0.75);
+          border: 2px solid rgba(15,23,42,0.35);
+        }
+      `}</style>
+
       <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
@@ -379,6 +576,26 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
             >
               Highlight
             </button>
+            <span className="text-xs text-gray-400 ml-2">
+              Active Tool: {toolMode === 'select' ? 'Select' : toolMode === 'note' ? 'Add Note' : 'Highlight'}
+              {isEditorOpen ? ' (editing note)' : ''}
+            </span>
+          </div>
+
+          <div className="px-4 py-2 border-b border-gray-800 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-400">Color:</span>
+            {ANNOTATION_COLORS.map((c) => (
+              <button
+                key={c}
+                onClick={() => {
+                  setActiveColor(c)
+                  setNoteEditor((prev) => (prev ? { ...prev, color: c } : prev))
+                }}
+                className={`w-5 h-5 rounded-full border ${activeColor === c ? 'border-white' : 'border-gray-700'}`}
+                style={{ backgroundColor: c }}
+                title={c}
+              />
+            ))}
           </div>
 
           <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2">
@@ -420,26 +637,47 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
 
             <div className="ml-auto inline-flex items-center gap-2">
               <button
-                disabled={!canRender || zoom <= MIN_ZOOM}
-                onClick={() => setZoom(z => Math.max(MIN_ZOOM, Math.round((z - 0.1) * 10) / 10))}
+                onClick={() => setViewMode('fit-width')}
+                className={`text-xs px-2 py-1 rounded-md border ${viewMode === 'fit-width' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+              >
+                Fit Width
+              </button>
+              <button
+                onClick={() => setViewMode('fit-page')}
+                className={`text-xs px-2 py-1 rounded-md border ${viewMode === 'fit-page' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+              >
+                Fit Page
+              </button>
+              <button
+                disabled={!canRender || effectiveZoom <= MIN_ZOOM}
+                onClick={() => {
+                  setViewMode('manual')
+                  setManualZoom((z) => clampZoom((viewMode === 'manual' ? z : effectiveZoom) - 0.1))
+                }}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
                 <ZoomOut size={12} />
               </button>
-              <span className="text-xs text-gray-400 w-12 text-center">{Math.round(zoom * 100)}%</span>
+              <span className="text-xs text-gray-400 w-12 text-center">{Math.round(effectiveZoom * 100)}%</span>
               <button
-                disabled={!canRender || zoom >= MAX_ZOOM}
-                onClick={() => setZoom(z => Math.min(MAX_ZOOM, Math.round((z + 0.1) * 10) / 10))}
+                disabled={!canRender || effectiveZoom >= MAX_ZOOM}
+                onClick={() => {
+                  setViewMode('manual')
+                  setManualZoom((z) => clampZoom((viewMode === 'manual' ? z : effectiveZoom) + 0.1))
+                }}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
                 <ZoomIn size={12} />
               </button>
               <button
                 disabled={!canRender}
-                onClick={() => setZoom(1)}
+                onClick={() => {
+                  setViewMode('manual')
+                  setManualZoom(1)
+                }}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
-                Reset
+                Reset / 100%
               </button>
             </div>
           </div>
@@ -457,67 +695,172 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
             </div>
           )}
 
-          <div className="p-4 overflow-auto max-h-[70vh] flex justify-center">
-            <div className="relative" style={{ width: displaySize.w || undefined, height: displaySize.h || undefined }}>
-              <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />
-              <div
-                ref={overlayRef}
-                className={`absolute inset-0 ${toolMode === 'note' ? 'cursor-crosshair' : toolMode === 'highlight' ? 'cursor-crosshair' : 'cursor-default'}`}
-                onClick={handleOverlayClick}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-              >
-                {pageAnnotations.map((a) => {
-                  if (!a?.rect) return null
-                  const left = `${(a.rect.x || 0) * 100}%`
-                  const top = `${(a.rect.y || 0) * 100}%`
-                  const width = `${Math.max(0.01, (a.rect.w || 0)) * 100}%`
-                  const height = `${Math.max(0.01, (a.rect.h || 0)) * 100}%`
-                  if (a.type === 'highlight') {
-                    return (
-                      <div key={a.id} className="absolute group" style={{ left, top, width, height }}>
-                        <div className="w-full h-full border border-yellow-500/60 bg-yellow-300/30 pointer-events-none" />
-                        <button
-                          onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
-                          className="absolute -top-2 -right-2 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white"
-                          title="Delete annotation"
-                        >
-                          <Trash2 size={10} />
-                        </button>
-                      </div>
-                    )
-                  }
-                  return (
-                    <div key={a.id} className="absolute group" style={{ left, top }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); alert(a.text || 'Note') }}
-                        className="w-5 h-5 rounded-full bg-sky-500 border border-white text-white text-[10px] font-bold"
-                        title={a.text || 'Note'}
-                      >
-                        N
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
-                        className="absolute -top-2 -right-2 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white"
-                        title="Delete note"
-                      >
-                        <Trash2 size={10} />
-                      </button>
-                    </div>
-                  )
-                })}
+          <div className="p-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4">
+              <div ref={scrollAreaRef} className="operations-pdf-scroll overflow-auto max-h-[72vh] rounded border border-gray-800">
+                <div className="min-w-full min-h-full flex items-start justify-center p-3">
+                  <div className="relative" style={{ width: displaySize.w || undefined, height: displaySize.h || undefined }}>
+                    <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />
+                    <div
+                      ref={overlayRef}
+                      className={`absolute inset-0 ${cursorClass}`}
+                      onClick={handleOverlayClick}
+                      onPointerDown={handlePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                    >
+                      {pageAnnotations.map((a) => {
+                        if (!a?.rect) return null
+                        const left = `${(a.rect.x || 0) * 100}%`
+                        const top = `${(a.rect.y || 0) * 100}%`
+                        const width = `${Math.max(0.01, (a.rect.w || 0)) * 100}%`
+                        const height = `${Math.max(0.01, (a.rect.h || 0)) * 100}%`
+                        const isFocused = focusedAnnotationId === a.id
+                        if (a.type === 'highlight') {
+                          return (
+                            <div
+                              key={a.id}
+                              className="absolute group"
+                              style={{ left, top, width, height }}
+                              onClick={(e) => { e.stopPropagation(); setFocusedAnnotationId(a.id) }}
+                            >
+                              <div
+                                className={`w-full h-full pointer-events-none ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                                style={{ border: `1px solid ${a.color || '#facc15'}`, backgroundColor: `${a.color || '#facc15'}55` }}
+                              />
+                              <button
+                                onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
+                                className="absolute -top-2 -right-2 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white"
+                                title="Delete annotation"
+                              >
+                                <Trash2 size={10} />
+                              </button>
+                            </div>
+                          )
+                        }
+                        return (
+                          <div key={a.id} className="absolute group" style={{ left, top }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEditNoteEditor(a) }}
+                              className={`w-5 h-5 rounded-full border text-white text-[10px] font-bold ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                              style={{ backgroundColor: a.color || '#38bdf8' }}
+                              title={a.text || 'Note'}
+                            >
+                              N
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
+                              className="absolute -top-2 -right-2 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white"
+                              title="Delete note"
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                        )
+                      })}
 
-                {draftRect && toolMode === 'highlight' && (
-                  <div
-                    className="absolute border border-yellow-500 bg-yellow-300/30 pointer-events-none"
-                    style={{
-                      left: draftRect.x,
-                      top: draftRect.y,
-                      width: draftRect.w,
-                      height: draftRect.h,
-                    }}
-                  />
+                      {draftRect && effectiveTool === 'highlight' && (
+                        <div
+                          className="absolute border pointer-events-none"
+                          style={{
+                            left: draftRect.x,
+                            top: draftRect.y,
+                            width: draftRect.w,
+                            height: draftRect.h,
+                            borderColor: activeColor,
+                            backgroundColor: `${activeColor}55`,
+                          }}
+                        />
+                      )}
+
+                      {noteEditor && (
+                        <div
+                          className="absolute z-20 w-56 rounded-md border border-gray-700 bg-[#121521] p-2 shadow-xl"
+                          style={{
+                            left: `${Math.min(0.85, Math.max(0.02, noteEditor.x)) * 100}%`,
+                            top: `${Math.min(0.85, Math.max(0.02, noteEditor.y)) * 100}%`,
+                            transform: 'translate(8px, 8px)',
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <textarea
+                            ref={noteEditorRef}
+                            value={noteEditor.text}
+                            onChange={(e) => setNoteEditor((prev) => (prev ? { ...prev, text: e.target.value } : prev))}
+                            className="w-full h-20 resize-none rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs p-2"
+                            placeholder="Enter note..."
+                          />
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1">
+                              {ANNOTATION_COLORS.map((c) => (
+                                <button
+                                  key={c}
+                                  onClick={() => setNoteEditor((prev) => (prev ? { ...prev, color: c } : prev))}
+                                  className={`w-4 h-4 rounded-full border ${(noteEditor.color || activeColor) === c ? 'border-white' : 'border-gray-600'}`}
+                                  style={{ backgroundColor: c }}
+                                />
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setNoteEditor(null)}
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-700 text-gray-300"
+                              >
+                                <X size={10} />
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => void saveNoteEditor()}
+                                className="text-[11px] px-2 py-1 rounded bg-blue-600 text-white"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-gray-800 rounded-md bg-[#10131c] max-h-[72vh] overflow-auto">
+                <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-300">
+                  Current Page Annotations ({pageAnnotations.length})
+                </div>
+                {pageAnnotations.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-gray-500">No annotations on this page.</div>
+                ) : (
+                  <div className="divide-y divide-gray-800">
+                    {pageAnnotations.map((a) => (
+                      <button
+                        key={a.id}
+                        onClick={() => {
+                          setFocusedAnnotationId(a.id)
+                          if (a.type === 'note') openEditNoteEditor(a)
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: a.color || '#facc15' }} />
+                            <span className="text-gray-300 uppercase">{a.type}</span>
+                            <span className="text-gray-500">P{a.pageNumber}</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
+                            className="text-red-300 hover:text-red-200"
+                            title="Delete annotation"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        {a.type === 'note' && (
+                          <div className="mt-1 text-gray-400 truncate">{shortText(a.text)}</div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
