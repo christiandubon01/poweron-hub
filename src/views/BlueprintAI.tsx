@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, CheckCircle2, FileText, Loader2, RotateCcw, Upload } from 'lucide-react'
 import { getBackupData } from '@/services/backupDataService'
 import OperationsBlueprintPdfViewer from '@/components/blueprint/OperationsBlueprintPdfViewer'
@@ -14,8 +14,12 @@ import {
   type BlueprintLibraryItem,
   type BlueprintLibraryType,
 } from '@/services/blueprintLibraryService'
+import {
+  createDerivedBlueprintSet,
+  MAX_DERIVED_SELECTION_PAGES,
+} from '@/services/blueprintDerivedSetService'
 
-const BLUEPRINT_TYPES: BlueprintLibraryType[] = ['Full Set', 'Electrical Only', 'Reference Sheet', 'Other']
+const BLUEPRINT_TYPES: BlueprintLibraryType[] = ['Full Set', 'Electrical Only', 'Plumbing Only', 'Mechanical Only', 'Reference Sheet', 'Other']
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -44,6 +48,10 @@ export default function BlueprintAI() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [annotationRefreshToken, setAnnotationRefreshToken] = useState(0)
+  const [selectedPages, setSelectedPages] = useState<number[]>([])
+  const [derivedTitle, setDerivedTitle] = useState('')
+  const [derivedType, setDerivedType] = useState<BlueprintLibraryType>('Electrical Only')
+  const [creatingDerived, setCreatingDerived] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const selectedItem = library.find(x => x.id === selectedId) || null
@@ -59,6 +67,10 @@ export default function BlueprintAI() {
     const freshBackup = getBackupData() || backup
     return getOperationsBlueprintAnnotationSummary(freshBackup, selectedItem.id)
   }, [selectedItem?.id, annotationRefreshToken, backup])
+
+  useEffect(() => {
+    setSelectedPages([])
+  }, [selectedId])
 
   async function persist(next: BlueprintLibraryItem[]) {
     setLibrary(next)
@@ -136,6 +148,62 @@ export default function BlueprintAI() {
       }
     })
     await persist(next)
+  }
+
+  function removeSelectedPage(pageNumber: number) {
+    setSelectedPages((prev) => prev.filter((p) => p !== pageNumber))
+  }
+
+  function clearSelectedPages() {
+    setSelectedPages([])
+  }
+
+  async function handleCreateDerivedSet() {
+    setError(null)
+    setSuccess(null)
+    if (!selectedItem) {
+      setError('Select a source blueprint set first.')
+      return
+    }
+    if (!selectedItem.storagePath) {
+      setError('Selected blueprint is missing storagePath.')
+      return
+    }
+    if (!derivedTitle.trim()) {
+      setError('Derived set title is required.')
+      return
+    }
+    if (selectedPages.length < 1) {
+      setError('Select at least one page for the derived set.')
+      return
+    }
+    if (selectedPages.length > MAX_DERIVED_SELECTION_PAGES) {
+      setError(`You can select up to ${MAX_DERIVED_SELECTION_PAGES} pages for MVP.`)
+      return
+    }
+    if (creatingDerived) return
+
+    setCreatingDerived(true)
+    try {
+      const derivedItem = await createDerivedBlueprintSet({
+        sourceBlueprint: selectedItem,
+        selectedPageNumbers: selectedPages,
+        title: derivedTitle.trim(),
+        type: derivedType,
+      })
+
+      const next = [derivedItem, ...library]
+      await persist(next)
+      setSelectedId(derivedItem.id)
+      setSelectedPages([])
+      setDerivedTitle('')
+      setDerivedType('Electrical Only')
+      setSuccess('Derived blueprint set created successfully.')
+    } catch (e: any) {
+      setError(e?.message || 'Failed to create derived set. If upload succeeded but metadata sync failed, retry and verify library sync.')
+    } finally {
+      setCreatingDerived(false)
+    }
   }
 
   return (
@@ -326,7 +394,89 @@ export default function BlueprintAI() {
         <OperationsBlueprintPdfViewer
           blueprint={selectedItem}
           onAnnotationsChanged={() => setAnnotationRefreshToken((v) => v + 1)}
+          selectedPageNumbers={selectedPages}
+          onSelectedPagesChange={(pages) => {
+            const clean = Array.isArray(pages)
+              ? pages.map((p) => Math.floor(Number(p))).filter((p) => Number.isFinite(p) && p >= 1)
+              : []
+            const seen = new Set<number>()
+            const ordered: number[] = []
+            for (const p of clean) {
+              if (seen.has(p)) continue
+              seen.add(p)
+              ordered.push(p)
+            }
+            setSelectedPages(ordered)
+          }}
         />
+      </div>
+
+      <div className="rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-gray-200">Selected Pages for Derived Set</p>
+          <div className="text-xs text-gray-400">
+            {selectedPages.length} selected (max {MAX_DERIVED_SELECTION_PAGES})
+          </div>
+        </div>
+
+        {selectedPages.length === 0 ? (
+          <div className="text-xs text-gray-500">Use “Add Current Page” in the viewer to build a focused page set.</div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {selectedPages.map((p) => (
+              <button
+                key={p}
+                onClick={() => removeSelectedPage(p)}
+                className="text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-200 hover:bg-gray-800"
+              >
+                Page {p} ×
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={clearSelectedPages}
+            disabled={selectedPages.length === 0}
+            className="text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
+          >
+            Clear Selection
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="md:col-span-2">
+            <label className="text-xs text-gray-500 block mb-1">Derived Set Title</label>
+            <input
+              value={derivedTitle}
+              onChange={(e) => setDerivedTitle(e.target.value)}
+              className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              placeholder="Example: Electrical Focused"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Derived Set Type</label>
+            <select
+              value={derivedType}
+              onChange={(e) => setDerivedType(e.target.value as BlueprintLibraryType)}
+              className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+            >
+              {BLUEPRINT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <button
+            onClick={handleCreateDerivedSet}
+            disabled={creatingDerived || selectedPages.length < 1 || selectedPages.length > MAX_DERIVED_SELECTION_PAGES || !selectedItem}
+            className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-60"
+          >
+            {creatingDerived ? <Loader2 size={14} className="animate-spin" /> : null}
+            {creatingDerived ? 'Creating Derived Set...' : 'Create Derived Set'}
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -2,7 +2,13 @@
 import { supabase } from '@/lib/supabase'
 import { getPageCount } from '@/services/blueprintExtractor'
 
-export type BlueprintLibraryType = 'Full Set' | 'Electrical Only' | 'Reference Sheet' | 'Other'
+export type BlueprintLibraryType =
+  | 'Full Set'
+  | 'Electrical Only'
+  | 'Plumbing Only'
+  | 'Mechanical Only'
+  | 'Reference Sheet'
+  | 'Other'
 export type BlueprintLibraryStatus = 'active' | 'archived'
 
 export interface BlueprintSheetIndexItem {
@@ -26,6 +32,10 @@ export interface BlueprintLibraryItem {
   pagesWithNotes: number
   sheetIndex: BlueprintSheetIndexItem[]
   annotationsSummary: string
+  parentBlueprintSetId?: string
+  sourcePageNumbers?: number[]
+  derivedFrom?: 'operations_blueprint_ai'
+  derivationKind?: 'subset_pages'
   createdAt: string
   updatedAt: string
   archivedAt: string | null

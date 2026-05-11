@@ -49,6 +49,8 @@ type ToolMode = 'select' | 'note' | 'highlight'
 interface OperationsBlueprintPdfViewerProps {
   blueprint: BlueprintLibraryItem | null
   onAnnotationsChanged?: () => void
+  selectedPageNumbers?: number[]
+  onSelectedPagesChange?: (pages: number[]) => void
 }
 
 function toNorm(x: number, y: number, w: number, h: number) {
@@ -83,7 +85,12 @@ function clampRelativeZoom(v: number) {
   return Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
 }
 
-export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsChanged }: OperationsBlueprintPdfViewerProps) {
+export default function OperationsBlueprintPdfViewer({
+  blueprint,
+  onAnnotationsChanged,
+  selectedPageNumbers = [],
+  onSelectedPagesChange,
+}: OperationsBlueprintPdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const pdfDocRef = useRef<any>(null)
@@ -332,11 +339,25 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
 
   const pageLabel = useMemo(() => `${Math.max(1, currentPage)} / ${Math.max(1, numPages)}`, [currentPage, numPages])
   useEffect(() => setPageInput(String(currentPage)), [currentPage])
+  const isCurrentPageSelected = useMemo(
+    () => selectedPageNumbers.includes(currentPage),
+    [selectedPageNumbers, currentPage]
+  )
 
   const pageAnnotations = useMemo(
     () => allAnnotations.filter(a => Number(a.pageNumber) === Number(currentPage)),
     [allAnnotations, currentPage]
   )
+
+  const toggleCurrentPageSelection = useCallback(() => {
+    if (!onSelectedPagesChange) return
+    const current = Math.max(1, Math.floor(currentPage))
+    if (selectedPageNumbers.includes(current)) {
+      onSelectedPagesChange(selectedPageNumbers.filter((p) => p !== current))
+      return
+    }
+    onSelectedPagesChange([...selectedPageNumbers, current])
+  }, [onSelectedPagesChange, selectedPageNumbers, currentPage])
 
   const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
     try {
@@ -647,6 +668,14 @@ export default function OperationsBlueprintPdfViewer({ blueprint, onAnnotationsC
             <span className="text-xs text-gray-400 ml-1">Page {pageLabel}</span>
 
             <div className="ml-auto inline-flex items-center gap-2">
+              <button
+                disabled={!canRender}
+                onClick={toggleCurrentPageSelection}
+                className={`text-xs px-2 py-1 rounded-md border ${isCurrentPageSelected ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300'}`}
+              >
+                {isCurrentPageSelected ? 'Remove Current Page' : 'Add Current Page'}
+              </button>
+              <span className="text-xs text-gray-400">Selected: {selectedPageNumbers.length}</span>
               <button
                 onClick={() => setLockView((v) => !v)}
                 className={`text-xs px-2 py-1 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
