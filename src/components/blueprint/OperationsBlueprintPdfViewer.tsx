@@ -51,6 +51,8 @@ interface OperationsBlueprintPdfViewerProps {
   onAnnotationsChanged?: () => void
   selectedPageNumbers?: number[]
   onSelectedPagesChange?: (pages: number[]) => void
+  externalPage?: number | null
+  onPageChange?: (page: number) => void
 }
 
 function toNorm(x: number, y: number, w: number, h: number) {
@@ -90,6 +92,8 @@ export default function OperationsBlueprintPdfViewer({
   onAnnotationsChanged,
   selectedPageNumbers = [],
   onSelectedPagesChange,
+  externalPage = null,
+  onPageChange,
 }: OperationsBlueprintPdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -321,6 +325,19 @@ export default function OperationsBlueprintPdfViewer({
     pendingScrollResetRef.current = true
     setRelativeZoom(1)
   }, [currentPage, blueprint?.id])
+
+  useEffect(() => {
+    if (!Number.isFinite(Number(externalPage))) return
+    const next = Math.max(1, Math.min(numPages || 1, Math.floor(Number(externalPage))))
+    if (next === currentPage) return
+    pendingScrollResetRef.current = true
+    setCurrentPage(next)
+    setPageInput(String(next))
+  }, [externalPage, numPages, currentPage])
+
+  useEffect(() => {
+    onPageChange?.(currentPage)
+  }, [currentPage, onPageChange])
 
   const applyRelativeZoomDelta = useCallback((delta: number) => {
     setRelativeZoom((z) => clampRelativeZoom(z + delta))

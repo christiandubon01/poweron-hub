@@ -14,7 +14,12 @@ export type BlueprintLibraryStatus = 'active' | 'archived'
 export interface BlueprintSheetIndexItem {
   pageNumber: number
   sheetLabel?: string
+  sheetNumber?: string
   sheetTitle?: string
+  discipline?: string
+  confidence?: number
+  source?: 'manual' | 'auto'
+  updatedAt?: string
 }
 
 export interface BlueprintLibraryItem {
@@ -176,6 +181,37 @@ export function getOperationsBlueprintLibrary(backup: any): BlueprintLibraryItem
   return Array.isArray(items) ? items : []
 }
 
+export function getBlueprintSheetIndex(blueprint: any): BlueprintSheetIndexItem[] {
+  const raw = blueprint?.sheetIndex
+  if (!Array.isArray(raw)) return []
+  const normalized = raw
+    .map((item: any) => ({
+      pageNumber: Math.max(1, Math.floor(Number(item?.pageNumber) || 1)),
+      sheetLabel: item?.sheetLabel ? String(item.sheetLabel) : undefined,
+      sheetNumber: item?.sheetNumber ? String(item.sheetNumber) : (item?.sheetLabel ? String(item.sheetLabel) : undefined),
+      sheetTitle: item?.sheetTitle ? String(item.sheetTitle) : undefined,
+      discipline: item?.discipline ? String(item.discipline) : undefined,
+      confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : undefined,
+      source: item?.source === 'auto' ? 'auto' : (item?.source === 'manual' ? 'manual' : undefined),
+      updatedAt: item?.updatedAt ? String(item.updatedAt) : undefined,
+    }))
+    .sort((a: any, b: any) => a.pageNumber - b.pageNumber)
+  return normalized
+}
+
+export function getBlueprintSheetIndexSummary(blueprint: any): {
+  total: number
+  byDiscipline: Record<string, number>
+} {
+  const list = getBlueprintSheetIndex(blueprint)
+  const byDiscipline: Record<string, number> = {}
+  for (const row of list) {
+    const key = String(row.discipline || 'Uncategorized')
+    byDiscipline[key] = (byDiscipline[key] || 0) + 1
+  }
+  return { total: list.length, byDiscipline }
+}
+
 export async function saveOperationsBlueprintLibrary(backup: any, items: BlueprintLibraryItem[]): Promise<void> {
   if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
     backup.blueprintSummaries = {}
@@ -189,6 +225,63 @@ export async function saveOperationsBlueprintLibrary(backup: any, items: Bluepri
   }
   try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
   try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+}
+
+export async function upsertBlueprintSheetIndexItem(
+  backup: any,
+  blueprintSetId: string,
+  item: BlueprintSheetIndexItem
+): Promise<void> {
+  const list = getOperationsBlueprintLibrary(backup)
+  const targetIndex = list.findIndex((x) => x.id === blueprintSetId)
+  if (targetIndex < 0) {
+    throw new Error('Blueprint set not found for sheet index update.')
+  }
+
+  const target = list[targetIndex]
+  const nextSheetIndex = getBlueprintSheetIndex(target)
+  const pageNumber = Math.max(1, Math.floor(Number(item?.pageNumber) || 1))
+  const idx = nextSheetIndex.findIndex((x) => x.pageNumber === pageNumber)
+  const row: BlueprintSheetIndexItem = {
+    pageNumber,
+    sheetNumber: item?.sheetNumber ? String(item.sheetNumber).trim() : undefined,
+    sheetLabel: item?.sheetNumber ? String(item.sheetNumber).trim() : undefined,
+    sheetTitle: item?.sheetTitle ? String(item.sheetTitle).trim() : undefined,
+    discipline: item?.discipline ? String(item.discipline).trim() : undefined,
+    confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : undefined,
+    source: item?.source === 'auto' ? 'auto' : 'manual',
+    updatedAt: item?.updatedAt || new Date().toISOString(),
+  }
+  if (idx >= 0) nextSheetIndex[idx] = row
+  else nextSheetIndex.push(row)
+  nextSheetIndex.sort((a, b) => a.pageNumber - b.pageNumber)
+
+  const nextLibrary = list.map((entry) =>
+    entry.id === blueprintSetId
+      ? { ...entry, sheetIndex: nextSheetIndex, updatedAt: new Date().toISOString() }
+      : entry
+  )
+  await saveOperationsBlueprintLibrary(backup, nextLibrary as BlueprintLibraryItem[])
+}
+
+export async function deleteBlueprintSheetIndexItem(
+  backup: any,
+  blueprintSetId: string,
+  pageNumber: number
+): Promise<void> {
+  const list = getOperationsBlueprintLibrary(backup)
+  const target = list.find((x) => x.id === blueprintSetId)
+  if (!target) {
+    throw new Error('Blueprint set not found for sheet index delete.')
+  }
+  const p = Math.max(1, Math.floor(Number(pageNumber) || 1))
+  const nextSheetIndex = getBlueprintSheetIndex(target).filter((x) => x.pageNumber !== p)
+  const nextLibrary = list.map((entry) =>
+    entry.id === blueprintSetId
+      ? { ...entry, sheetIndex: nextSheetIndex, updatedAt: new Date().toISOString() }
+      : entry
+  )
+  await saveOperationsBlueprintLibrary(backup, nextLibrary as BlueprintLibraryItem[])
 }
 
 export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900): Promise<string> {
