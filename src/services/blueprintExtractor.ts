@@ -18,6 +18,23 @@ export interface BlueprintExtract {
   pageTexts: string[]
 }
 
+export interface DetectedSheetIndexRow {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  discipline?: string
+  confidence: 'high' | 'medium' | 'low'
+  source: 'auto'
+  updatedAt: string
+}
+
+export interface SheetIndexDetectionResult {
+  pageCount: number
+  startPage: number
+  endPage: number
+  rows: DetectedSheetIndexRow[]
+}
+
 // ── Electrical keyword detection ──────────────────────────────────────────────
 
 const ELECTRICAL_KEYWORDS = [
@@ -58,6 +75,96 @@ function detectElectricalFlags(text: string): string[] {
     }
   }
   return found
+}
+
+const SHEET_NUMBER_PATTERNS: Array<{ discipline: string; regex: RegExp }> = [
+  { discipline: 'Fire Alarm', regex: /\bFA[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'Electrical', regex: /\bE[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'Plumbing', regex: /\bP[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'Mechanical', regex: /\bM[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'Architectural', regex: /\bA[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'Structural', regex: /\bS[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'Civil', regex: /\bC[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+  { discipline: 'General', regex: /\bG[-\s]?\d{1,3}(?:\.\d{1,3})?\b/i },
+]
+
+const DISCIPLINE_KEYWORDS: Record<string, string[]> = {
+  Electrical: ['electrical', 'lighting', 'power', 'panel', 'one-line', 'one line'],
+  Plumbing: ['plumbing', 'water', 'waste', 'gas'],
+  Mechanical: ['mechanical', 'hvac', 'duct'],
+  'Fire Alarm': ['fire alarm', 'smoke', 'fa'],
+  Architectural: ['architectural', 'floor plan', 'elevation'],
+  Structural: ['structural', 'foundation', 'framing'],
+  Civil: ['civil', 'site', 'grading'],
+  General: ['general', 'notes', 'cover'],
+}
+
+function normalizeSheetNumber(value?: string): string | undefined {
+  if (!value) return undefined
+  return value.replace(/\s+/g, '').toUpperCase()
+}
+
+function guessDisciplineFromText(text: string): string | undefined {
+  const lower = text.toLowerCase()
+  for (const [discipline, kws] of Object.entries(DISCIPLINE_KEYWORDS)) {
+    if (kws.some((kw) => lower.includes(kw))) return discipline
+  }
+  return undefined
+}
+
+function detectSheetFromPageText(pageText: string): {
+  sheetNumber?: string
+  sheetTitle?: string
+  discipline?: string
+  confidence: 'high' | 'medium' | 'low'
+} {
+  const cleanText = String(pageText || '').replace(/\s+/g, ' ').trim()
+  if (!cleanText) return { confidence: 'low' }
+
+  let detectedNumber: string | undefined
+  let detectedDiscipline: string | undefined
+  for (const p of SHEET_NUMBER_PATTERNS) {
+    const m = cleanText.match(p.regex)
+    if (m?.[0]) {
+      detectedNumber = normalizeSheetNumber(m[0])
+      detectedDiscipline = p.discipline
+      break
+    }
+  }
+
+  if (!detectedDiscipline) {
+    detectedDiscipline = guessDisciplineFromText(cleanText)
+  }
+
+  const titleSegments = cleanText
+    .split(/[\n|]/g)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 16)
+  let sheetTitle = ''
+  for (const seg of titleSegments) {
+    const compact = seg.replace(/\s+/g, ' ').trim()
+    if (!compact) continue
+    const upperRatio = compact.replace(/[^A-Z]/g, '').length / Math.max(1, compact.replace(/[^A-Za-z]/g, '').length)
+    const hasWords = compact.split(' ').length >= 2
+    const notJustCode = !/^[A-Z]{1,3}[-\s]?\d/.test(compact)
+    if (hasWords && notJustCode && upperRatio > 0.55) {
+      sheetTitle = compact.slice(0, 120)
+      break
+    }
+  }
+
+  let confidence: 'high' | 'medium' | 'low' = 'low'
+  if (detectedNumber && (detectedDiscipline || sheetTitle)) confidence = 'high'
+  else if (detectedNumber) confidence = 'medium'
+  else if (detectedDiscipline || sheetTitle) confidence = 'low'
+
+  return {
+    sheetNumber: detectedNumber,
+    sheetTitle: sheetTitle || undefined,
+    discipline: detectedDiscipline,
+    confidence,
+  }
 }
 
 // ── PDF.js loader (lazy) ──────────────────────────────────────────────────────
@@ -208,4 +315,68 @@ export async function getPageCount(file: File): Promise<number> {
   } catch {
     return 0
   }
+}
+
+export async function extractSheetIndexCandidatesFromStorage(params: {
+  storagePath: string
+  startPage?: number
+  endPage?: number
+  maxPages?: number
+  onProgress?: (progress: { processed: number; total: number; pageNumber: number }) => void
+}): Promise<SheetIndexDetectionResult> {
+  const storagePath = String(params?.storagePath || '').trim()
+  if (!storagePath) throw new Error('Missing storagePath for auto-detect.')
+
+  const { getBlueprintSignedUrl } = await import('@/services/blueprintLibraryService')
+  const signedUrl = await getBlueprintSignedUrl(storagePath, 1800)
+  const resp = await fetch(signedUrl)
+  if (!resp.ok) throw new Error('Failed to fetch blueprint PDF for auto-detect.')
+  const bytes = await resp.arrayBuffer()
+
+  const pdfjsLib = await getPdfjsLib()
+  const loadingTask = pdfjsLib.getDocument({ data: bytes })
+  const pdfDoc = await loadingTask.promise
+  const pageCount = Number(pdfDoc.numPages || 0)
+  if (pageCount < 1) {
+    return { pageCount: 0, startPage: 1, endPage: 0, rows: [] }
+  }
+
+  const requestedStart = Math.max(1, Math.floor(Number(params?.startPage) || 1))
+  const defaultEnd = Math.min(pageCount, Math.max(1, Number(params?.maxPages) || 30))
+  const requestedEnd = Math.floor(Number(params?.endPage) || defaultEnd)
+  const startPage = Math.max(1, Math.min(pageCount, requestedStart))
+  const endPage = Math.max(startPage, Math.min(pageCount, requestedEnd))
+
+  const rows: DetectedSheetIndexRow[] = []
+  const total = endPage - startPage + 1
+  for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+    const page = await pdfDoc.getPage(pageNum)
+    const textContent = await page.getTextContent()
+    const pageText = textContent.items
+      .filter((item: any) => 'str' in item)
+      .map((item: any) => String((item as { str: string }).str || ''))
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+    const parsed = detectSheetFromPageText(pageText)
+    if (parsed.sheetNumber || parsed.sheetTitle || parsed.discipline) {
+      rows.push({
+        pageNumber: pageNum,
+        sheetNumber: parsed.sheetNumber,
+        sheetTitle: parsed.sheetTitle,
+        discipline: parsed.discipline,
+        confidence: parsed.confidence,
+        source: 'auto',
+        updatedAt: new Date().toISOString(),
+      })
+    }
+
+    const processed = pageNum - startPage + 1
+    params?.onProgress?.({ processed, total, pageNumber: pageNum })
+    if (processed % 3 === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  }
+
+  return { pageCount, startPage, endPage, rows }
 }
