@@ -126,7 +126,7 @@ export default function OperationsBlueprintPdfViewer({
   })
   const pinchZoomRafRef = useRef<number | null>(null)
   const pinchQueuedZoomRef = useRef<number | null>(null)
-  const pinchQueuedAnchorRef = useRef<{
+  const pendingPinchAnchorRef = useRef<{
     ratioX: number
     ratioY: number
     centerX: number
@@ -211,7 +211,7 @@ export default function OperationsBlueprintPdfViewer({
       pdfDocRef.current = null
       pinchZoomRafRef.current = null
       pinchQueuedZoomRef.current = null
-      pinchQueuedAnchorRef.current = null
+      pendingPinchAnchorRef.current = null
       setPdfDoc(null)
       setNumPages(0)
       setCurrentPage(1)
