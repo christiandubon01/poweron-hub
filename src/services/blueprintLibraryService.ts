@@ -151,6 +151,17 @@ export async function cleanupBlueprintStorageObject(storagePath: string): Promis
   }
 }
 
+export async function deleteBlueprintStorageObjectStrict(storagePath: string): Promise<void> {
+  const cleanPath = String(storagePath || '').trim()
+  if (!cleanPath) {
+    throw new Error('Missing storagePath for blueprint file deletion.')
+  }
+  const { error } = await supabase.storage.from('blueprints').remove([cleanPath])
+  if (error) {
+    throw new Error(error.message || 'Failed to delete blueprint PDF from storage.')
+  }
+}
+
 export async function createBlueprintLibraryItem(params: {
   file: File
   projectId: string
@@ -235,6 +246,30 @@ export async function saveOperationsBlueprintLibrary(backup: any, items: Bluepri
   const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
   if (!result.success) {
     throw new Error(result.error || 'Failed to sync blueprint library updates.')
+  }
+  try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+  try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+}
+
+export async function deleteOperationsBlueprintSet(backup: any, blueprintSetId: string): Promise<void> {
+  const list = getOperationsBlueprintLibrary(backup)
+  const nextLibrary = list.filter((x) => x.id !== blueprintSetId)
+
+  if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
+    backup.blueprintSummaries = {}
+  }
+  backup.blueprintSummaries.operationsBlueprintLibrary = nextLibrary
+
+  const annotations = backup.blueprintSummaries.operationsBlueprintAnnotations
+  if (annotations && typeof annotations === 'object' && !Array.isArray(annotations)) {
+    delete annotations[blueprintSetId]
+  }
+
+  backup._lastSavedAt = new Date().toISOString()
+  const { saveBackupDataAndSyncNow } = await import('@/services/backupDataService')
+  const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
+  if (!result.success) {
+    throw new Error(result.error || 'Failed to sync blueprint delete.')
   }
   try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
   try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }

@@ -1,11 +1,13 @@
 // @ts-nocheck
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, CheckCircle2, FileText, Loader2, RotateCcw, Upload } from 'lucide-react'
+import { Archive, CheckCircle2, FileText, Loader2, RotateCcw, Trash2, Upload } from 'lucide-react'
 import { getBackupData } from '@/services/backupDataService'
 import OperationsBlueprintPdfViewer from '@/components/blueprint/OperationsBlueprintPdfViewer'
 import {
   cleanupBlueprintStorageObject,
   createBlueprintLibraryItem,
+  deleteBlueprintStorageObjectStrict,
+  deleteOperationsBlueprintSet,
   deleteBlueprintSheetIndexItem,
   getBlueprintSheetIndex,
   getBlueprintSheetIndexSummary,
@@ -84,6 +86,7 @@ export default function BlueprintAI() {
   const [applyingDetectedRows, setApplyingDetectedRows] = useState(false)
   const [exportMode, setExportMode] = useState<'annotated-pages' | 'all-pages'>('annotated-pages')
   const [exportingPdf, setExportingPdf] = useState(false)
+  const [deletingBlueprintId, setDeletingBlueprintId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const selectedItem = library.find(x => x.id === selectedId) || null
@@ -483,6 +486,63 @@ export default function BlueprintAI() {
     }
   }
 
+  async function handleDeleteBlueprintSet(item: BlueprintLibraryItem) {
+    setError(null)
+    setSuccess(null)
+    if (!item?.id) return
+    if (deletingBlueprintId) return
+
+    const hasDerivedChildren = library.some((x) => x.parentBlueprintSetId === item.id)
+    const confirmMessage =
+      `Permanently delete blueprint set "${item.title}"? This will remove the PDF file, annotations, sheet index, and library record. This cannot be undone.` +
+      (hasDerivedChildren ? `\n\nDerived sets will remain, but this original set will be deleted.` : '')
+
+    const confirmed = window.confirm(confirmMessage)
+    if (!confirmed) return
+
+    setDeletingBlueprintId(item.id)
+    let storageWarning: string | null = null
+    let storageDeleted = false
+    try {
+      if (item.storagePath) {
+        await deleteBlueprintStorageObjectStrict(item.storagePath)
+        storageDeleted = true
+      } else {
+        storageWarning = 'Warning: storagePath missing. Metadata was deleted, but storage file path was unavailable for cleanup.'
+        console.warn('[BlueprintAI] Delete requested for item with missing storagePath:', item.id)
+      }
+
+      await deleteOperationsBlueprintSet(backup, item.id)
+      const freshBackup = getBackupData() || backup
+      const freshLibrary = getOperationsBlueprintLibrary(freshBackup)
+      setLibrary(freshLibrary)
+
+      if (selectedId === item.id) {
+        const nextSelected = freshLibrary.find((x) => x.status === 'active')?.id || freshLibrary[0]?.id || ''
+        setSelectedId(nextSelected)
+        setCurrentViewerPage(1)
+      }
+
+      setSelectedPages([])
+      setDetectedPreviewRows(null)
+      setDetectionProgress(null)
+      setSheetSearch('')
+
+      setSuccess(storageWarning || 'Blueprint set deleted permanently.')
+    } catch (e: any) {
+      const freshBackup = getBackupData() || backup
+      const freshLibrary = getOperationsBlueprintLibrary(freshBackup)
+      setLibrary(freshLibrary)
+      if (storageDeleted) {
+        setError(`Blueprint PDF was deleted from storage, but metadata deletion failed to sync: ${e?.message || 'Unknown error'}`)
+      } else {
+        setError(e?.message || 'Failed to delete blueprint set.')
+      }
+    } finally {
+      setDeletingBlueprintId(null)
+    }
+  }
+
   return (
     <div className="w-full max-w-none min-w-0 px-6 py-6 flex flex-col gap-5">
       <div className="flex items-center gap-2">
@@ -832,6 +892,14 @@ export default function BlueprintAI() {
                     Restore
                   </button>
                 )}
+                <button
+                  onClick={() => void handleDeleteBlueprintSet(item)}
+                  disabled={deletingBlueprintId === item.id}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-red-800/60 text-red-300 hover:text-red-200 disabled:opacity-60"
+                >
+                  {deletingBlueprintId === item.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  Delete
+                </button>
                 {selectedId === item.id && <CheckCircle2 size={14} className="text-green-400 flex-shrink-0" />}
               </div>
             ))}
