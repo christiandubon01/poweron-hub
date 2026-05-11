@@ -40,6 +40,8 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
 const MIN_RELATIVE_ZOOM = 1
 const MAX_RELATIVE_ZOOM = 4
 const MAX_RENDER_SCALE = 2.5
+const PINCH_SENSITIVITY = 0.28
+const PINCH_DEADZONE_PX = 3
 const MIN_HIGHLIGHT_NORM = 0.005
 const NOTE_MARKER_SIZE_NORM = 0.018
 const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444']
@@ -117,6 +119,14 @@ export default function OperationsBlueprintPdfViewer({
     centerX: number
     centerY: number
   } | null>(null)
+  const pinchZoomRafRef = useRef<number | null>(null)
+  const pinchQueuedZoomRef = useRef<number | null>(null)
+  const pinchQueuedAnchorRef = useRef<{
+    ratioX: number
+    ratioY: number
+    centerX: number
+    centerY: number
+  } | null>(null)
 
   const [signedUrl, setSignedUrl] = useState('')
   const [pdfDoc, setPdfDoc] = useState<any>(null)
@@ -184,8 +194,14 @@ export default function OperationsBlueprintPdfViewer({
       if (pdfDocRef.current) {
         try { await pdfDocRef.current.destroy() } catch {}
       }
+      if (pinchZoomRafRef.current != null) {
+        try { cancelAnimationFrame(pinchZoomRafRef.current) } catch {}
+      }
     } finally {
       pdfDocRef.current = null
+      pinchZoomRafRef.current = null
+      pinchQueuedZoomRef.current = null
+      pinchQueuedAnchorRef.current = null
       setPdfDoc(null)
       setNumPages(0)
       setCurrentPage(1)
@@ -565,25 +581,47 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     const distDelta = distance - state.lastDistance
-    if (Math.abs(distDelta) >= 2) {
+    if (Math.abs(distDelta) >= PINCH_DEADZONE_PX) {
       const currentZoom = relativeZoomRef.current
-      const scaleDelta = distance / Math.max(1, state.lastDistance)
-      const nextZoom = clampRelativeZoom(currentZoom * scaleDelta)
+      const rawRatio = distance / Math.max(1, state.lastDistance)
+      const dampedRatio = 1 + ((rawRatio - 1) * PINCH_SENSITIVITY)
+      const nextZoom = clampRelativeZoom(currentZoom * dampedRatio)
       if (Math.abs(nextZoom - currentZoom) >= 0.01) {
+        let nextAnchor: {
+          ratioX: number
+          ratioY: number
+          centerX: number
+          centerY: number
+        } | null = null
         if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
           const contentX = scroll.scrollLeft + center.x
           const contentY = scroll.scrollTop + center.y
-          pendingPinchAnchorRef.current = {
+          nextAnchor = {
             ratioX: Math.max(0, Math.min(1, contentX / Math.max(1, displaySizeRef.current.w))),
             ratioY: Math.max(0, Math.min(1, contentY / Math.max(1, displaySizeRef.current.h))),
             centerX: center.x,
             centerY: center.y,
           }
         }
-        setRelativeZoom(nextZoom)
+        pinchQueuedZoomRef.current = nextZoom
+        pinchQueuedAnchorRef.current = nextAnchor
+        if (pinchZoomRafRef.current == null) {
+          pinchZoomRafRef.current = requestAnimationFrame(() => {
+            pinchZoomRafRef.current = null
+            const queuedZoom = pinchQueuedZoomRef.current
+            const queuedAnchor = pinchQueuedAnchorRef.current
+            pinchQueuedZoomRef.current = null
+            pinchQueuedAnchorRef.current = null
+            if (!Number.isFinite(Number(queuedZoom))) return
+            if (queuedAnchor) {
+              pendingPinchAnchorRef.current = queuedAnchor
+            }
+            setRelativeZoom(clampRelativeZoom(Number(queuedZoom)))
+          })
+        }
       }
-      state.lastDistance = distance
     }
+    state.lastDistance = distance
     state.lastCenter = center
     e.preventDefault()
   }, [getTouchPoints, lockView])
