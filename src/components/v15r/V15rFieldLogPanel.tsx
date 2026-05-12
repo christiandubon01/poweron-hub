@@ -2050,8 +2050,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div className="md:col-span-1">
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Customer / Job Name</label>
                     <input
-                      value={estCust}
-                      onChange={e => { setEstCust(e.target.value); setEstCustEdited(true) }}
+                      key={`estCust-${editEstimateId || editSvcId || 'new'}`}
+                      defaultValue={estCust}
+                      onBlur={e => { setEstCust(e.target.value); setEstCustEdited(true) }}
                       placeholder="e.g. Smith Residence"
                       className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
                       style={{ backgroundColor: 'var(--bg-input)' }}
@@ -2060,8 +2061,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div className="md:col-span-1">
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Address</label>
                     <input
-                      value={estAddr}
-                      onChange={e => setEstAddr(e.target.value)}
+                      key={`estAddr-${editEstimateId || editSvcId || 'new'}`}
+                      defaultValue={estAddr}
+                      onBlur={e => setEstAddr(e.target.value)}
                       placeholder="Job site address"
                       className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
                       style={{ backgroundColor: 'var(--bg-input)' }}
@@ -2158,8 +2160,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 <div>
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Notes</label>
                   <textarea
-                    value={estNotes}
-                    onChange={e => setEstNotes(e.target.value)}
+                    key={`estNotes-${editEstimateId || editSvcId || 'new'}`}
+                    defaultValue={estNotes}
+                    onBlur={e => setEstNotes(e.target.value)}
                     rows={2}
                     placeholder="Scope, special requirements, access notes..."
                     className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
@@ -2171,8 +2174,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 <div>
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Material Notes</label>
                   <textarea
-                    value={estMatNotes}
-                    onChange={e => setEstMatNotes(e.target.value)}
+                    key={`estMatNotes-${editEstimateId || editSvcId || 'new'}`}
+                    defaultValue={estMatNotes}
+                    onBlur={e => setEstMatNotes(e.target.value)}
                     rows={2}
                     placeholder="Describe materials purchased or needed..."
                     className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
@@ -2185,8 +2189,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Receipt URL</label>
                   <div className="flex gap-2">
                     <input
-                      value={estReceiptUrl}
-                      onChange={e => setEstReceiptUrl(e.target.value)}
+                      key={`estReceiptUrl-${editEstimateId || editSvcId || 'new'}`}
+                      defaultValue={estReceiptUrl}
+                      onBlur={e => setEstReceiptUrl(e.target.value)}
                       placeholder="Paste receipt or invoice URL..."
                       className="flex-1 rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
                       style={{ backgroundColor: 'var(--bg-input)' }}
