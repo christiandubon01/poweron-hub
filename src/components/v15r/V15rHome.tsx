@@ -35,6 +35,7 @@ import { supabase } from '@/lib/supabase'
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
   getKPIs,
   health,
   getOverallCompletion,
@@ -311,8 +312,11 @@ export default function V15rHome() {
 
   function persist() {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    // Use auto-sync variant — writes localStorage + fire-and-forget Supabase sync.
+    // The 30s periodic sync handles debouncing so rapid writes don't flood the network.
+    saveBackupDataAndSync(backup)
     window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
   }
 
@@ -350,7 +354,12 @@ export default function V15rHome() {
     const text = prompt('Task:')
     if (!text) return
     pushState(backup)
-    ;(sec.tasks || []).push({ id: 'agt' + Date.now(), text, status: 'pending' })
+    // BUG FIX: ensure sec.tasks is initialized as a real array attached to sec,
+    // not a throw-away (sec.tasks || []). Previously the push went into a temp
+    // array that was never assigned back, so the second task in rapid succession
+    // would be lost.
+    if (!Array.isArray(sec.tasks)) sec.tasks = []
+    sec.tasks.push({ id: 'agt' + Date.now(), text, status: 'pending' })
     persist()
   }
 

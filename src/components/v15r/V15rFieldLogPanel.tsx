@@ -16,6 +16,7 @@ import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, Fi
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
   num,
   fmt,
   fmtK,
@@ -431,7 +432,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   function persist() {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    // Use auto-sync variant — writes localStorage + fire-and-forget Supabase sync
+    // The 30s periodic sync handles debouncing so rapid keystrokes don't flood the network
+    saveBackupDataAndSync(backup)
     // Dispatch event to trigger KPI refresh in Layout
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
