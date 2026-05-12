@@ -39,7 +39,7 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
   return pdfjsLib
 }
 
-const MIN_RELATIVE_ZOOM = 1
+const MIN_RELATIVE_ZOOM = 0.25
 const MAX_RELATIVE_ZOOM = 4
 const MAX_RENDER_SCALE = 2.5
 const PINCH_SENSITIVITY = 0.55
@@ -105,6 +105,10 @@ export default function OperationsBlueprintPdfViewer({
   const renderTaskRef = useRef<any>(null)
   const noteEditorRef = useRef<HTMLTextAreaElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  // Ref to the viewer's outermost element — used as the target for the
+  // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
+  // video does, escaping browser chrome.
+  const viewerRootRef = useRef<HTMLDivElement>(null)
   const pageFrameRef = useRef<HTMLDivElement>(null)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
@@ -377,8 +381,17 @@ export default function OperationsBlueprintPdfViewer({
         const page = await pdfDoc.getPage(clampedPage)
         const baseViewport = page.getViewport({ scale: 1 })
         const measuredWidth = viewportWidth || scrollAreaRef.current?.clientWidth || 0
+        const measuredHeight = scrollAreaRef.current?.clientHeight || 0
         const availableWidth = Math.max(120, measuredWidth - 26)
-        const fitWidthScale = Math.max(0.01, availableWidth / Math.max(1, baseViewport.width))
+        const availableHeight = Math.max(120, measuredHeight - 26)
+        // Fit-to-Full-Page: fit the WHOLE sheet within the container, both
+        // dimensions. Picks the more constraining dimension (width or height)
+        // so nothing gets cut off. User zooms in from there.
+        const widthScale = availableWidth / Math.max(1, baseViewport.width)
+        const heightScale = measuredHeight > 0
+          ? availableHeight / Math.max(1, baseViewport.height)
+          : widthScale
+        const fitWidthScale = Math.max(0.01, Math.min(widthScale, heightScale))
         const actualRenderScale = Math.max(
           0.01,
           Math.min(MAX_RENDER_SCALE, fitWidthScale * clampRelativeZoom(relativeZoom))
@@ -446,6 +459,25 @@ export default function OperationsBlueprintPdfViewer({
     if (!isEditorOpen) return
     setTimeout(() => noteEditorRef.current?.focus(), 20)
   }, [isEditorOpen])
+
+  // Sync isFullScreenView with the browser's native Fullscreen API state.
+  // Fires when user presses Esc, swipes down on iPad, or otherwise exits
+  // OS-level fullscreen, so the UI's "Exit Full Screen" toggle stays correct.
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const doc: any = document
+      const isInFullscreen = !!(doc.fullscreenElement || doc.webkitFullscreenElement)
+      if (!isInFullscreen) {
+        setIsFullScreenView(false)
+      }
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -700,6 +732,25 @@ export default function OperationsBlueprintPdfViewer({
       state.lastDistance = distance
       state.lastCenter = center
       state.finalZoom = startZoom
+      // PINCH DRIFT FIX: Capture the anchor ONCE at gesture start so subsequent
+      // move events reuse the same page-relative pinch midpoint. Without this,
+      // anchor recomputes against a scroll position that itself was moved by
+      // the previous frame, causing the page to drift right during pinch.
+      if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
+        const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+        const startVisualScale = Math.max(1, startZoom / baseCommittedZoom)
+        const startVisualW = displaySizeRef.current.w * startVisualScale
+        const startVisualH = displaySizeRef.current.h * startVisualScale
+        const startAnchor = getPinchAnchorFromMidpoint(midpointClientX, midpointClientY, startVisualW, startVisualH)
+        if (startAnchor) {
+          pendingPinchAnchorRef.current = {
+            ratioX: startAnchor.ratioX,
+            ratioY: startAnchor.ratioY,
+            centerInScrollX: startAnchor.centerInScrollX,
+            centerInScrollY: startAnchor.centerInScrollY,
+          }
+        }
+      }
       return
     }
 
@@ -716,19 +767,24 @@ export default function OperationsBlueprintPdfViewer({
       const currentPreviewZoom = pinchPreviewZoomRef.current ?? state.finalZoom ?? state.startZoom
 
       if (Math.abs(nextZoom - currentPreviewZoom) >= 0.005) {
-        // Keep the pinch center anchored in scroll-container coordinates.
+        // Reuse the anchor captured at pinch start (fixes drift). The anchor's
+        // ratioX/ratioY stay fixed to the page point under the user's fingers;
+        // only the visual width/height change as zoom changes.
         if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
-          const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
-          const currentVisualScale = Math.max(1, currentPreviewZoom / baseCommittedZoom)
-          const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
-          const currentVisualW = displaySizeRef.current.w * currentVisualScale
-          const currentVisualH = displaySizeRef.current.h * currentVisualScale
-          const nextVisualW = displaySizeRef.current.w * nextVisualScale
-          const nextVisualH = displaySizeRef.current.h * nextVisualScale
-          const anchor = getPinchAnchorFromMidpoint(midpointClientX, midpointClientY, currentVisualW, currentVisualH)
-          if (anchor) {
-            const targetLeft = anchor.pageOffsetX + (anchor.ratioX * nextVisualW) - anchor.centerInScrollX
-            const targetTop = anchor.pageOffsetY + (anchor.ratioY * nextVisualH) - anchor.centerInScrollY
+          const startAnchor = pendingPinchAnchorRef.current
+          if (startAnchor) {
+            const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+            const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
+            const nextVisualW = displaySizeRef.current.w * nextVisualScale
+            const nextVisualH = displaySizeRef.current.h * nextVisualScale
+            // Get the page's current top-left offset (it may have moved between events)
+            const page = pageFrameRef.current
+            const scrollRect = scroll.getBoundingClientRect()
+            const pageRect = page?.getBoundingClientRect()
+            const pageOffsetX = pageRect ? (pageRect.left - scrollRect.left) + scroll.scrollLeft : 0
+            const pageOffsetY = pageRect ? (pageRect.top - scrollRect.top) + scroll.scrollTop : 0
+            const targetLeft = pageOffsetX + (startAnchor.ratioX * nextVisualW) - startAnchor.centerInScrollX
+            const targetTop = pageOffsetY + (startAnchor.ratioY * nextVisualH) - startAnchor.centerInScrollY
             clampScroll(scroll, targetLeft, targetTop)
           }
         }
@@ -1130,12 +1186,38 @@ export default function OperationsBlueprintPdfViewer({
                   Refresh Link
                 </button>
                 <button
-                  onClick={() => setIsFullScreenView(false)}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-600 text-gray-200 hover:text-white bg-gray-800/40"
-                >
-                  <Minimize2 size={12} />
-                  Exit Full Screen
-                </button>
+                onClick={() => {
+                  const el = viewerRootRef.current
+                  const doc: any = document
+                  const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                  if (fullscreenEl) {
+                    if (doc.exitFullscreen) doc.exitFullscreen()
+                    else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+                    setIsFullScreenView(false)
+                    return
+                  }
+                  if (isFullScreenView) {
+                    setIsFullScreenView(false)
+                    return
+                  }
+                  if (el && el.requestFullscreen) {
+                    el.requestFullscreen().then(() => {
+                      setIsFullScreenView(true)
+                    }).catch(() => {
+                      setIsFullScreenView(true)
+                    })
+                  } else if (el && (el as any).webkitRequestFullscreen) {
+                    ;(el as any).webkitRequestFullscreen()
+                    setIsFullScreenView(true)
+                  } else {
+                    setIsFullScreenView(true)
+                  }
+                }}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+              >
+                {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
+              </button>
               </div>
             </div>
           )}
@@ -1242,10 +1324,42 @@ export default function OperationsBlueprintPdfViewer({
                 }}
                 className="text-xs px-2 py-1 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20"
               >
-                Fit Width
+                Fit to Full Page
               </button>
               <button
-                onClick={() => setIsFullScreenView((v) => !v)}
+                onClick={() => {
+                  const el = viewerRootRef.current
+                  // If a real fullscreen is already active, exit it
+                  const doc: any = document
+                  const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                  if (fullscreenEl) {
+                    if (doc.exitFullscreen) doc.exitFullscreen()
+                    else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+                    setIsFullScreenView(false)
+                    return
+                  }
+                  // If currently in CSS-only fullscreen (iPhone fallback), toggle off
+                  if (isFullScreenView) {
+                    setIsFullScreenView(false)
+                    return
+                  }
+                  // Try Fullscreen API (iPad/Android/desktop)
+                  if (el && el.requestFullscreen) {
+                    el.requestFullscreen().then(() => {
+                      setIsFullScreenView(true)
+                    }).catch(() => {
+                      // API rejected — fall back to CSS-only fullscreen
+                      setIsFullScreenView(true)
+                    })
+                  } else if (el && (el as any).webkitRequestFullscreen) {
+                    // Safari (older iPadOS / desktop Safari)
+                    ;(el as any).webkitRequestFullscreen()
+                    setIsFullScreenView(true)
+                  } else {
+                    // iPhone Safari and other unsupported — CSS-only fullscreen
+                    setIsFullScreenView(true)
+                  }
+                }}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
               >
                 {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
@@ -1284,9 +1398,19 @@ export default function OperationsBlueprintPdfViewer({
 
           <div className={isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
             <div className={isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
+              <style>{`
+                .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+              `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-auto'} ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'max-h-[72vh]'} rounded border border-gray-800`}
+                className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'h-[calc(100vh-180px)] min-h-[60vh]'} rounded border border-gray-800`}
+                style={{
+                  // Hide scrollbars across all browsers — inline guarantees they
+                  // apply regardless of CSS file load order. Container still
+                  // scrolls programmatically (required by pan/zoom logic).
+                  scrollbarWidth: 'none',          /* Firefox */
+                  msOverflowStyle: 'none' as any,  /* IE / old Edge */
+                } as React.CSSProperties}
                 onWheel={handleWheel}
               >
                 <div
@@ -1432,7 +1556,13 @@ export default function OperationsBlueprintPdfViewer({
                 </div>
               </div>
 
-              <div className={`border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'max-h-[72vh]'}`}>
+              <div
+                className={`operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'h-[calc(100vh-180px)] min-h-[60vh]'}`}
+                style={{
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none' as any,
+                } as React.CSSProperties}
+              >
                 <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-300">
                   Current Page Annotations ({pageAnnotations.length})
                 </div>
