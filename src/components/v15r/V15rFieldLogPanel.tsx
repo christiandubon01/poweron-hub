@@ -17,6 +17,7 @@ import {
   getBackupData,
   saveBackupData,
   saveBackupDataAndSync,
+  loadFromSupabase,
   num,
   fmt,
   fmtK,
@@ -393,6 +394,51 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     window.addEventListener('poweron-open-source-record', handleOpenSourceRecord)
     return () => window.removeEventListener('poweron-open-source-record', handleOpenSourceRecord)
   }, [])
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Mount-load freshness: refetch from Supabase on panel open, window focus,
+  // and tab-visibility change. Mirrors the pattern from V15rLeadsPanel.
+  // Ensures the Field Log always reflects the latest saved state across
+  // devices/tabs instead of stale localStorage.
+  // ─────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (hasHydrated && isDemoMode) return
+    let cancelled = false
+    let refreshing = false
+    const refreshFromLatestSavedState = async (source: string) => {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const result = await loadFromSupabase(false)
+        if (!cancelled && result.success) {
+          console.log(`[FieldLog] Refreshed latest saved state on ${source}`)
+          window.dispatchEvent(new Event('storage'))
+          window.dispatchEvent(new Event('poweron-data-saved'))
+          forceUpdate()
+        }
+      } catch (err) {
+        console.warn(`[FieldLog] latest saved state refresh failed on ${source}`, err)
+      } finally {
+        refreshing = false
+      }
+    }
+    void refreshFromLatestSavedState('panel-open')
+    const handleFocus = () => {
+      void refreshFromLatestSavedState('window-focus')
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshFromLatestSavedState('visibility')
+      }
+    }
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [forceUpdate, hasHydrated, isDemoMode])
 
   const [completingEstimateId, setCompletingEstimateId] = useState<string | null>(null)
   const [actualHours, setActualHours] = useState('')
