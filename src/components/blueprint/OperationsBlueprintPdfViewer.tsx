@@ -41,9 +41,15 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
 
 const MIN_RELATIVE_ZOOM = 0.25
 const MAX_RELATIVE_ZOOM = 4
-const MAX_RENDER_SCALE = 2.5
+const MAX_RENDER_SCALE = 3.0
 const PINCH_SENSITIVITY = 0.55
 const PINCH_DEADZONE_PX = 2
+// Debounce window for committing wheel-zoom changes to the actual PDF canvas
+// re-render. During the debounce window, the page is visually scaled via CSS
+// transform (instant feedback), then re-rendered sharp once the user stops.
+// 120ms keeps the sharp re-render close on the user's heels so the blurry
+// CSS-transform intermediate is barely visible. Tested on desktop wheel.
+const WHEEL_ZOOM_COMMIT_DELAY_MS = 120
 const MIN_HIGHLIGHT_NORM = 0.005
 const NOTE_MARKER_SIZE_NORM = 0.018
 const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444']
