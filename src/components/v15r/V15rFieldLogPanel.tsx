@@ -1353,11 +1353,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Hours</label>
-                <input type="number" step="0.5" value={flHrs} onChange={e => setFlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`flHrs-${editLogId || 'new'}`} type="number" step="0.5" defaultValue={flHrs} onBlur={e => setFlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Miles RT</label>
-                <input type="number" value={flMiles} onChange={e => setFlMiles(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`flMiles-${editLogId || 'new'}`} type="number" defaultValue={flMiles} onBlur={e => setFlMiles(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <VoiceMaterialCapture
                 value={flMat}
@@ -1370,24 +1370,24 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               />
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Collected $</label>
-                <input type="number" step="0.01" value={flCollected} onChange={e => setFlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`flCollected-${editLogId || 'new'}`} type="number" step="0.01" defaultValue={flCollected} onBlur={e => setFlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Store</label>
-                <input value={flStore} onChange={e => setFlStore(e.target.value)} placeholder="Home Depot..." className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`flStore-${editLogId || 'new'}`} defaultValue={flStore} onBlur={e => setFlStore(e.target.value)} placeholder="Home Depot..." className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
             </div>
             <div>
               <label className="text-[9px] text-gray-500 uppercase font-bold">Emergency Mat Info</label>
-              <input value={flEmatInfo} onChange={e => setFlEmatInfo(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+              <input key={`flEmatInfo-${editLogId || 'new'}`} defaultValue={flEmatInfo} onBlur={e => setFlEmatInfo(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
             </div>
             <div>
               <label className="text-[9px] text-gray-500 uppercase font-bold">Detail Link</label>
-              <input value={flDetailLink} onChange={e => setFlDetailLink(e.target.value)} placeholder="Receipt, cart, item link" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+              <input key={`flDetailLink-${editLogId || 'new'}`} defaultValue={flDetailLink} onBlur={e => setFlDetailLink(e.target.value)} placeholder="Receipt, cart, item link" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
             </div>
             <div>
               <label className="text-[9px] text-gray-500 uppercase font-bold">Work Performed</label>
-              <textarea value={flNotes} onChange={e => setFlNotes(e.target.value)} rows={2} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none" />
+              <textarea key={`flNotes-${editLogId || 'new'}`} defaultValue={flNotes} onBlur={e => setFlNotes(e.target.value)} rows={2} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none" />
             </div>
             {/* Spec: Live entry form preview — updates as user types */}
             {flProj && (() => {
@@ -2638,7 +2638,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Customer</label>
                 <div className="space-y-1.5">
-                  <input value={slCust} onChange={e => setSlCust(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                  <input key={`slCust-${editSvcId || 'new'}`} defaultValue={slCust} onBlur={e => setSlCust(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
                   {editSvcId && (
                     <button
                       type="button"
@@ -2655,7 +2655,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Address</label>
-                <input value={slAddr} onChange={e => setSlAddr(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slAddr-${editSvcId || 'new'}`} defaultValue={slAddr} onBlur={e => setSlAddr(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Date</label>
@@ -2663,19 +2663,19 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Est Hrs</label>
-                <input type="number" step="0.25" value={slEstHrs} onChange={e => setSlEstHrs(e.target.value)} placeholder="quoted hrs" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slEstHrs-${editSvcId || 'new'}`} type="number" step="0.25" defaultValue={slEstHrs} onBlur={e => setSlEstHrs(e.target.value)} placeholder="quoted hrs" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Hours</label>
-                <input type="number" step="0.5" value={slHrs} onChange={e => setSlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slHrs-${editSvcId || 'new'}`} type="number" step="0.5" defaultValue={slHrs} onBlur={e => setSlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Miles RT</label>
-                <input type="number" value={slMi} onChange={e => setSlMi(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slMi-${editSvcId || 'new'}`} type="number" defaultValue={slMi} onBlur={e => setSlMi(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Quoted $</label>
-                <input type="number" step="0.01" value={slQuoted} onChange={e => setSlQuoted(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slQuoted-${editSvcId || 'new'}`} type="number" step="0.01" defaultValue={slQuoted} onBlur={e => setSlQuoted(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <VoiceMaterialCapture
                 value={slMat}
@@ -2688,7 +2688,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               />
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Collected $</label>
-                <input type="number" step="0.01" value={slCollected} onChange={e => setSlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slCollected-${editSvcId || 'new'}`} type="number" step="0.01" defaultValue={slCollected} onBlur={e => setSlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Job Type</label>
@@ -2698,7 +2698,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Store</label>
-                <input value={slStore} onChange={e => setSlStore(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <input key={`slStore-${editSvcId || 'new'}`} defaultValue={slStore} onBlur={e => setSlStore(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
               </div>
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Status</label>
@@ -2711,15 +2711,15 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             </div>
             <div>
               <label className="text-[9px] text-gray-500 uppercase font-bold">Emergency Mat Info</label>
-              <input value={slEmatInfo} onChange={e => setSlEmatInfo(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+              <input key={`slEmatInfo-${editSvcId || 'new'}`} defaultValue={slEmatInfo} onBlur={e => setSlEmatInfo(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
             </div>
             <div>
               <label className="text-[9px] text-gray-500 uppercase font-bold">Detail Link</label>
-              <input value={slDetailLink} onChange={e => setSlDetailLink(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+              <input key={`slDetailLink-${editSvcId || 'new'}`} defaultValue={slDetailLink} onBlur={e => setSlDetailLink(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
             </div>
             <div>
               <label className="text-[9px] text-gray-500 uppercase font-bold">Notes</label>
-              <textarea value={slNotes} onChange={e => setSlNotes(e.target.value)} rows={2} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none" />
+              <textarea key={`slNotes-${editSvcId || 'new'}`} defaultValue={slNotes} onBlur={e => setSlNotes(e.target.value)} rows={2} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none" />
             </div>
             <div className="flex gap-2">
               <button onClick={saveSvcEntry} className="px-3 py-1.5 rounded bg-orange-600 text-white text-xs font-semibold">{editSvcId ? 'Update' : 'Save'}</button>
