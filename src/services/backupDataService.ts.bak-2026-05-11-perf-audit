@@ -1,0 +1,1693 @@
+// @ts-nocheck
+/**
+ * backupDataService.ts — Full v15r backup data layer
+ *
+ * Captures ALL keys from the PowerOn v15r backup JSON.
+ * localStorage persistence under 'poweron_backup_data'.
+ *
+ * ── Multi-device Sync Flow ──────────────────────────────────────────────
+ * 1. On mount: loadFromSupabase() fetches remote state from `app_state` table (key: poweron_v2)
+ * 2. Richness guard: remote only overwrites local if it has MORE data
+ *    (checks serviceLogs.length, projects.length, logs.length)
+ * 3. On every save: saveBackupDataAndSync() writes localStorage + fire-and-forget upsert to Supabase
+ * 4. Periodic sync: V15rLayout runs syncToSupabase() every 60s
+ * 5. Build: `npm run build` on Netlify with NODE_VERSION=20 (set in netlify.toml)
+ * 6. SPA routing: public/_redirects `/* /index.html 200` + netlify.toml [[redirects]]
+ * 7. CSP: connect-src allows *.supabase.co, api.anthropic.com, *.upstash.io
+ *
+ * ── PowerShell rebuild command ──────────────────────────────────────────
+ * cd "path\to\Power On Solutions APP - CoWork" && npm run build
+ * Then push to git → Netlify auto-deploys from the connected branch.
+ */
+
+const LEGACY_STORAGE_KEY = 'poweron_backup_data'
+const STORAGE_KEY = LEGACY_STORAGE_KEY
+
+// ── Tenant-scoped local cache ────────────────────────────────────────────────
+// Live authenticated app data must never be read from a browser-global key.
+// The generic legacy key is only kept as a compatibility mirror/migration source.
+let _activeTenantUserId: string | null = null
+let _tenantDataReady = false
+
+function getTenantStorageKey(userId: string): string {
+  return `poweron_backup_data_${userId}`
+}
+
+export function setActiveTenantUser(userId: string): void {
+  _activeTenantUserId = userId
+  _tenantDataReady = false
+}
+
+export function markTenantDataReady(userId: string): void {
+  if (_activeTenantUserId === userId) _tenantDataReady = true
+}
+
+export function clearActiveTenantUser(): void {
+  _activeTenantUserId = null
+  _tenantDataReady = false
+}
+
+export function getActiveTenantUserId(): string | null {
+  return _activeTenantUserId
+}
+
+export function isTenantDataReady(): boolean {
+  return !!_activeTenantUserId && _tenantDataReady
+}
+
+function attachTenantOwner(data: BackupData, userId: string): BackupData {
+  return { ...(data as any), _tenantUserId: userId } as BackupData
+}
+
+function tenantOwnerMatches(data: any, userId: string): boolean {
+  return !data?._tenantUserId || data._tenantUserId === userId
+}
+
+function getEffectiveStorageKey(userId = _activeTenantUserId): string {
+  return userId ? getTenantStorageKey(userId) : LEGACY_STORAGE_KEY
+}
+
+// ── Device ID System ─────────────────────────────────────────────────────────
+const DEVICE_ID_KEY = 'poweron_device_id'
+
+function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY)
+    if (id) return id
+    // Auto-detect device name from user agent
+    const ua = navigator.userAgent || ''
+    let label = 'Unknown'
+    if (/iPhone/.test(ua)) label = 'iPhone'
+    else if (/iPad/.test(ua)) label = 'iPad'
+    else if (/Android/.test(ua)) label = 'Android'
+    else if (/Windows/.test(ua)) label = 'Windows'
+    else if (/Mac/.test(ua)) label = 'Mac'
+    else if (/Linux/.test(ua)) label = 'Linux'
+    id = `${label}_${Date.now().toString(36)}`
+    localStorage.setItem(DEVICE_ID_KEY, id)
+    return id
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** Last sync metadata from Supabase (set during loadFromSupabase) */
+let _lastSyncMeta: { savedBy: string; savedAt: string } | null = null
+export function getLastSyncMeta(): { savedBy: string; savedAt: string } | null {
+  return _lastSyncMeta
+}
+
+// ── Sync infrastructure ──────────────────────────────────────────────────────
+
+let _saveDebounceTimer: any = null
+let _dataChanged = false
+let _lastSyncedAt = 0
+const SYNC_INTERVAL_MS = 13_000 // 13 seconds
+const SAVE_DEBOUNCE_MS = 100
+
+/** Track which top-level keys changed since last sync */
+const _changedKeys = new Set<string>()
+
+/** Per-key last modified timestamps (stored in localStorage) */
+const PER_KEY_TS_KEY = 'poweron_key_timestamps'
+
+function getKeyTimestamps(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(PER_KEY_TS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch { return {} }
+}
+
+function setKeyTimestamp(key: string) {
+  try {
+    const ts = getKeyTimestamps()
+    ts[key] = Date.now()
+    localStorage.setItem(PER_KEY_TS_KEY, JSON.stringify(ts))
+  } catch { /* ignore */ }
+}
+
+/** Mark a data key as changed (called before saving) */
+export function markChanged(...keys: string[]) {
+  keys.forEach(k => {
+    _changedKeys.add(k)
+    setKeyTimestamp(k)
+  })
+  _dataChanged = true
+}
+
+/** Start periodic sync timer — call from V15rLayout on mount */
+export function startPeriodicSync(): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const id = setInterval(() => {
+    if (_dataChanged && Date.now() - _lastSyncedAt >= SYNC_INTERVAL_MS) {
+      _dataChanged = false
+      _lastSyncedAt = Date.now()
+      _changedKeys.clear()
+      syncToSupabase().catch(err => console.warn('[sync] Periodic sync failed:', err))
+    }
+  }, SYNC_INTERVAL_MS)
+  return () => clearInterval(id)
+}
+
+/** Debounced save — waits 100ms before writing to prevent rapid overwrites during typing */
+export function debouncedSave(data: BackupData, changedKey?: string) {
+  if (changedKey) markChanged(changedKey)
+  if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer)
+  _saveDebounceTimer = setTimeout(() => {
+    data._lastSavedAt = new Date().toISOString()
+    saveBackupData(data)
+  }, SAVE_DEBOUNCE_MS)
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface BackupLog {
+  id: string; emp: string; hrs: number; mat: number; date: string; empId: string
+  miles: number; notes: string; phase: string; store: string; profit: number
+  projId: string; quoted: number; projName: string; collected: number
+  detailLink: string; projectQuote: number; emergencyMatInfo: string
+}
+
+export interface BackupProjectPhases { [phaseName: string]: number }
+
+export interface BackupEstimateRef {
+  tax: number; labor: number; total: number; profit: number; mileage: number
+  overhead: number; subtotal: number; marginPct: number; materials: number
+  directCost: number; operatingCost: number
+  materialPhases: Array<{ raw: number; tax: number; count: number; phase: string; total: number }>
+}
+
+export interface BackupProject {
+  id: string; name: string; type: string; status: string; contract: number
+  billed: number; paid: number; mileRT: number; miDays?: number
+  phases: BackupProjectPhases; logs: any[]; finance?: any; laborHrs?: number
+  rfis?: any[]; coord?: any; tasks?: Record<string, string[]>
+  ohRows?: any[]; matRows?: any[]; mtoRows?: any[]; laborRows?: any[]
+  templateId?: string; projectCode?: string; templateName?: string
+  lastMove?: string; lastCollectedAt?: string; lastCollectedAmount?: number
+  estimateReference?: BackupEstimateRef; phaseEstimateRows?: any[]
+  lastEstimateSyncAt?: string; completionPromptSig?: string; completionDeclinedSig?: string
+  plannedStart?: string; plannedEnd?: string
+}
+
+export interface BackupPriceBookItem {
+  id: string; cat: string; src: string; cost: number; link: string
+  name: string; pack: number; unit: string; waste: number; legacyId: string
+  notes?: string; pidBlock?: string; pidBand?: string
+}
+
+export interface BackupWeeklyData {
+  wk: number; svc: number; proj: number; accum: number; start: string
+  _empty: boolean; unbilled: number; pendingInv: number; totalExposure: number
+}
+
+export interface BackupServiceLog {
+  id: string; hrs: number; mat: number; date: string; jtype: string
+  miles: number; notes: string; store: string; opCost: number; profit: number
+  quoted: number; address?: string; customer: string; mileCost?: number
+  collected: number; payStatus: string; balanceDue: number; detailLink?: string
+  adjustments?: any[]; triggersAtSave?: string[]; compareWarnings?: string[]
+  emergencyMatInfo?: string; estimateComparison?: any
+}
+
+export interface BackupTriggerRule {
+  id: string; name: string; type: string; color: string; active: boolean
+  condition: string; threshold: string; thresholdLabel: string
+  situation: string; review: string; solution: string; reflection: string
+}
+
+export interface BackupEmployee {
+  id: string; name: string; role: string; billRate: number; costRate: number
+}
+
+export interface BackupTemplate {
+  id: string; name: string; type?: string
+  tasks: Record<string, string[]>
+  riskNotes?: string[]; travelDefault?: number; laborDefault?: number
+  activatedPhases?: string[]
+}
+
+export interface BackupGCContact {
+  id: string; avg: number; due: string; fit: number; pay: string; role: string
+  sent: number; email: string; intro: string; notes: string; phase: string
+  phone: string; action: string; awarded: number; company: string; contact: string
+  created: string
+}
+
+export interface BackupOverhead {
+  essential: Array<{ id: string; name: string; monthly: number }>
+  extra: Array<{ id: string; name: string; monthly: number }>
+  loans: Array<{ id: string; name: string; monthly: number }>
+  vehicle: Array<{ id: string; name: string; monthly: number }>
+}
+
+export interface BackupSettings {
+  tax: number; markup: number; opCost: number; amBlock: number
+  company: string; gcalUrl: string; license: string; pmBlock: number
+  billRate: number; mileRate: number; overhead: BackupOverhead
+  dayTarget: number; mtoPhases: string[]; phaseWeights: Record<string, number>
+  salaryTarget: number; wasteDefault: number; defaultOHRate: number
+  billableHrsYear: number; defaultTemplateId: string; annualTarget: number
+  theme?: 'dark' | 'light'; logoDark?: string; logoLight?: string
+  personalIncomeGoal?: number; overheadPct?: number
+  employeeCosts?: Array<{id: string, label: string, amount: number}>
+  payrollMult?: number
+}
+
+export interface BackupAgendaSection {
+  id: string; title: string; projectId: string
+  tasks: Array<{ id: string; text: string; status: string }>
+}
+
+export interface BackupCustomAlert {
+  id: string; title: string; description: string; action: string; isAI: boolean; manuallyEdited?: boolean
+}
+
+export interface FieldObservationCard {
+  id: string
+  project_id: string
+  project_name?: string
+  zone?: string
+  source?: string
+  original_sequence?: string
+  observed_condition?: string
+  blocking_dependency?: string
+  revised_sequence?: string
+  urgency?: string
+  affects?: string[]
+  ai_summary?: string
+  next_action?: string
+  next_action_due?: string
+  status?: string
+  photo_ids?: string[]
+  transcript?: string
+  created_at?: string
+  updated_at?: string
+  /** Quick Capture routing metadata */
+  routing?: 'ai' | 'manual' | 'direct'
+  ai_confidence?: 'high' | 'medium' | 'low' | null
+  ai_reasoning?: string | null
+}
+
+export interface BackupData {
+  logs: BackupLog[]
+  projects: BackupProject[]
+  priceBook: BackupPriceBookItem[]
+  weeklyData: BackupWeeklyData[]
+  serviceLogs: BackupServiceLog[]
+  triggerRules: BackupTriggerRule[]
+  calcRefs: Record<string, any>
+  customers: any[]
+  settings: BackupSettings
+  employees: BackupEmployee[]
+  templates: BackupTemplate[]
+  gcContacts: BackupGCContact[]
+  serviceLeads: any[]
+  agendaSections: BackupAgendaSection[]
+  customAlerts?: BackupCustomAlert[]
+  fieldObservationCards?: FieldObservationCard[]
+  completedArchive: any[]
+  projectDashboards: Record<string, any>
+  blueprintSummaries: Record<string, any>
+  activeServiceCalls: any[]
+  serviceEstimates: any[]
+  taskSchedule: any[]
+  dailyJobs: any[]
+  weeklyReviews: any[]
+  imports: any[]
+  gcalUrl?: string
+  _lastSavedAt: string
+  _schemaVersion: number
+  /** Cross-device sync metadata — embedded by syncToSupabase() */
+  _syncMeta?: { savedBy: string; savedAt: string }
+
+  /** Deleted relationship/customer accounts that must not be revived from stale local gcContacts */
+  _deletedRelationshipAccounts?: Array<{
+    id?: string
+    company?: string
+    contact?: string
+    deletedAt?: string
+    source?: string
+  }>
+}
+
+const LEGACY_GC_ONLY_FIELDS = [
+  'phase', 'fit', 'action', 'due', 'awarded', 'sent', 'avg', 'pay',
+  'intro', 'contactLog', 'nextFollowup', 'lastContact', 'created',
+] as const
+
+function isBlankValue(v: any): boolean {
+  return v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
+}
+
+function pickNormalized(existingValue: any, incomingValue: any): any {
+  return isBlankValue(incomingValue) ? existingValue : incomingValue
+}
+
+function normalizeRelationshipDeleteValue(v: any): string {
+  return String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function matchesDeletedRelationshipAccount(record: any, deletedRelationshipAccounts: any[] = []): boolean {
+  const id = normalizeRelationshipDeleteValue(record?.id || record?.legacy_gc_id || record?.legacyGcId)
+  const company = normalizeRelationshipDeleteValue(record?.company || record?.name)
+  const contact = normalizeRelationshipDeleteValue(record?.contact)
+
+  const recordUpdatedAt = record?.updated_at ? new Date(record.updated_at).getTime() : 0
+
+  return (deletedRelationshipAccounts || []).some((d: any) => {
+    const deletedId = normalizeRelationshipDeleteValue(d?.id)
+    const deletedCompany = normalizeRelationshipDeleteValue(d?.company)
+    const deletedContact = normalizeRelationshipDeleteValue(d?.contact)
+    const deletedAt = d?.deletedAt ? new Date(d.deletedAt).getTime() : 0
+
+    // If a relationship_account row was recreated/updated after the tombstone,
+    // allow it to return.
+    if (recordUpdatedAt && deletedAt && recordUpdatedAt > deletedAt) return false
+
+    const sameId = !!id && !!deletedId && id === deletedId
+    const sameCompany = !!company && !!deletedCompany && company === deletedCompany
+    const sameContact = !!contact && !!deletedContact && contact === deletedContact
+
+    return sameId || sameCompany || sameContact
+  })
+}
+
+export function relationshipAccountsToGcContacts(
+  relationshipAccounts: any[],
+  existingGcContacts: any[] = [],
+  deletedRelationshipAccounts: any[] = []
+): any[] {
+  const existingById = new Map<string, any>()
+  const existingByLegacyId = new Map<string, any>()
+  ;(existingGcContacts || []).forEach((gc: any) => {
+    const id = String(gc?.id || '').trim()
+    if (id) existingById.set(id, gc)
+  })
+
+  const merged: any[] = []
+  ;(relationshipAccounts || []).forEach((row: any) => {
+    if (matchesDeletedRelationshipAccount(row, deletedRelationshipAccounts)) return
+
+    const id = String(row?.id || '').trim()
+    if (!id) return
+    const legacyId = String(row?.legacy_gc_id || row?.legacyGcId || '').trim()
+    const existing = existingById.get(id) || (legacyId ? existingById.get(legacyId) : null) || null
+    if (legacyId && existing) existingByLegacyId.set(legacyId, existing)
+
+    const payload = (row?.legacy_payload && typeof row.legacy_payload === 'object') ? row.legacy_payload : {}
+    const base = { ...(existing || {}) }
+    const safePayload = { ...payload }
+    const out: any = { ...base, ...safePayload }
+
+    // Canonical identity from relationship_accounts, but do not wipe with blank/null.
+    out.id = id
+    out.company = pickNormalized(out.company, row?.company)
+    out.contact = pickNormalized(out.contact, row?.contact)
+    out.role = pickNormalized(out.role, row?.role || row?.account_type)
+    out.phone = pickNormalized(out.phone, row?.phone)
+    out.email = pickNormalized(out.email, row?.email)
+    out.address = pickNormalized(out.address, row?.address)
+    out.city = pickNormalized(out.city, row?.city)
+    out.notes = pickNormalized(out.notes, row?.notes)
+    out.tags = pickNormalized(out.tags, row?.tags)
+
+    // Preserve gcContacts-only lifecycle/activity fields.
+    LEGACY_GC_ONLY_FIELDS.forEach((field: string) => {
+      if (out[field] === undefined && existing && existing[field] !== undefined) out[field] = existing[field]
+    })
+
+    // Safe defaults for compatibility.
+    if (out.phase === undefined) out.phase = 'First Contact'
+    if (out.fit === undefined) out.fit = 0
+    if (out.action === undefined) out.action = ''
+    if (out.due === undefined) out.due = ''
+    if (out.awarded === undefined) out.awarded = 0
+    if (out.sent === undefined) out.sent = 0
+    if (out.avg === undefined) out.avg = 0
+    if (out.pay === undefined) out.pay = ''
+    if (out.intro === undefined) out.intro = ''
+    if (!Array.isArray(out.contactLog)) out.contactLog = []
+    if (out.nextFollowup === undefined) out.nextFollowup = ''
+    if (out.lastContact === undefined) out.lastContact = ''
+    if (out.created === undefined) out.created = new Date().toISOString().slice(0, 10)
+
+    merged.push(out)
+  })
+
+  // Keep local-only contacts not yet represented in relationship_accounts,
+  // unless they were explicitly deleted.
+  ;(existingGcContacts || []).forEach((gc: any) => {
+    if (matchesDeletedRelationshipAccount(gc, deletedRelationshipAccounts)) return
+
+    const id = String(gc?.id || '').trim()
+    if (!id) return
+    if (!merged.some((m: any) => String(m?.id || '') === id)) merged.push(gc)
+  })
+
+  return merged
+}
+
+// ── Supabase check ───────────────────────────────────────────────────────────
+
+export function isSupabaseConfigured(): boolean {
+  const url = import.meta.env.VITE_SUPABASE_URL
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+  return !!(url && key && url !== '' && key !== '' && url.startsWith('http'))
+}
+
+// ── LocalStorage CRUD ────────────────────────────────────────────────────────
+
+export function hasBackupData(userId = _activeTenantUserId): boolean {
+  try { return localStorage.getItem(getEffectiveStorageKey(userId)) !== null } catch { return false }
+}
+
+export function getBackupData(userId = _activeTenantUserId): BackupData | null {
+  try {
+    const key = getEffectiveStorageKey(userId)
+    const raw = localStorage.getItem(key)
+    if (raw) {
+      const data = JSON.parse(raw) as BackupData & { _tenantUserId?: string }
+      if (userId && !tenantOwnerMatches(data, userId)) {
+        console.warn('[backupDataService] Ignoring cache owned by another tenant')
+        return null
+      }
+      // ISSUE 4: Price book dual-storage reconciliation. Only run legacy poweron_v2
+      // reconciliation when no active tenant exists; authenticated sessions must not
+      // hydrate from browser-global poweron_v2.
+      const localPBArr = Array.isArray(data.priceBook) ? data.priceBook : (data.priceBook ? Object.values(data.priceBook) : [])
+      if (!userId) {
+        try {
+          const v2Raw = localStorage.getItem('poweron_v2')
+          if (v2Raw) {
+            const v2Data = JSON.parse(v2Raw)
+            const v2PB = Array.isArray(v2Data?.priceBook) ? v2Data.priceBook : (v2Data?.priceBook ? Object.values(v2Data.priceBook) : [])
+            if (localPBArr.length === 0 && v2PB.length > 0) {
+              console.log('[backupDataService] Hydrated priceBook from poweron_v2 key —', v2PB.length, 'items')
+              data.priceBook = Array.isArray(v2Data.priceBook) ? v2Data.priceBook : Object.values(v2Data.priceBook || {})
+            } else if (localPBArr.length > v2PB.length && v2PB.length >= 0) {
+              const v2Ids = new Set(v2PB.map((i: any) => i.id).filter(Boolean))
+              const diff = localPBArr.filter((i: any) => i.id && !v2Ids.has(i.id))
+              if (diff.length > 0) {
+                const merged = [...v2PB, ...diff]
+                v2Data.priceBook = merged
+                localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+                console.log('[backupDataService] One-time migration: merged', diff.length, 'extra items into poweron_v2')
+              }
+            }
+          }
+        } catch { /* ignore poweron_v2 parse errors */ }
+      }
+      if (data && data.priceBook && !Array.isArray(data.priceBook) && typeof data.priceBook === 'object') {
+        console.warn('[backupDataService] Migrating legacy object-shape priceBook to array — one-time conversion')
+        data.priceBook = Object.values(data.priceBook as Record<string, BackupPriceBookItem>)
+        try { localStorage.setItem(key, JSON.stringify(data)) } catch (e) { console.error('[backupDataService] Failed to persist migrated priceBook:', e) }
+      }
+      if (data && Array.isArray(data.serviceLogs)) {
+        let backfilled = 0
+        for (const sl of data.serviceLogs as any[]) {
+          if (!sl) continue
+          if (Array.isArray(sl.statusEvents) && sl.statusEvents.length > 0) continue
+          sl.statusEvents = [{
+            date: sl.date || new Date().toISOString().slice(0, 10),
+            status: sl.payStatus || 'N',
+            collected: Math.max(0, Number(sl.collected) || 0),
+            invoiced: false,
+          }]
+          backfilled++
+        }
+        if (backfilled > 0) {
+          console.log(`[backupDataService] Backfilled statusEvents on ${backfilled} service log(s) — one-time migration`)
+          try { localStorage.setItem(key, JSON.stringify(data)) } catch (e) { console.error('[backupDataService] Failed to persist backfilled statusEvents:', e) }
+        }
+      }
+      if (data && Array.isArray(data.projects) && Array.isArray(data.logs)) {
+        let paidBackfilled = 0
+        for (const p of data.projects as any[]) {
+          if (!p) continue
+          if (p._paidScalarBackfilledAt) continue
+          const scalarPaid = Number(p.paid) || 0
+          if (scalarPaid <= 0) {
+            p._paidScalarBackfilledAt = new Date().toISOString()
+            continue
+          }
+          const loggedSum = (data.logs as any[])
+            .filter(l => l && l.projId === p.id)
+            .reduce((sum, l) => sum + (Number(l.collected) || 0), 0)
+          const manualAdj = Number((p.finance && p.finance.manualPaidAdjustment) || 0)
+          const gap = scalarPaid - (loggedSum + manualAdj)
+          if (gap > 0.005) {
+            const gapDate = (p.lastCollectedAt && String(p.lastCollectedAt).slice(0, 10))
+              || (data._lastSavedAt && String(data._lastSavedAt).slice(0, 10))
+              || new Date().toISOString().slice(0, 10)
+            ;(data.logs as any[]).push({
+              id: 'log-paidbackfill-' + p.id + '-' + Date.now(),
+              projId: p.id,
+              projName: p.name || '',
+              phase: 'Payment',
+              date: gapDate,
+              emp: 'Me',
+              empId: '',
+              hrs: 0,
+              miles: 0,
+              mat: 0,
+              collected: gap,
+              store: '',
+              emergencyMatInfo: '',
+              detailLink: '',
+              notes: 'Backfilled from p.paid scalar (CFOT-COLLECTION-PATH-PARITY migration)',
+            })
+            paidBackfilled++
+          }
+          p._paidScalarBackfilledAt = new Date().toISOString()
+        }
+        if (paidBackfilled > 0) {
+          console.log(`[backupDataService] Backfilled paid-scalar gap on ${paidBackfilled} project(s) — one-time migration`)
+          try { localStorage.setItem(key, JSON.stringify(data)) } catch (e) { console.error('[backupDataService] Failed to persist paid-scalar backfill:', e) }
+        }
+      }
+      return data as BackupData
+    }
+
+    // Only unauthenticated/legacy flows may fall back to poweron_v2. Authenticated
+    // tenant sessions must not read browser-global fallback state.
+    if (!userId) {
+      const v2Raw = localStorage.getItem('poweron_v2')
+      if (v2Raw) {
+        console.log('[backupDataService] No data in', LEGACY_STORAGE_KEY, '— loading from poweron_v2')
+        const v2Parsed = JSON.parse(v2Raw) as BackupData
+        if (v2Parsed && v2Parsed.priceBook && !Array.isArray(v2Parsed.priceBook) && typeof v2Parsed.priceBook === 'object') {
+          console.warn('[backupDataService] Migrating legacy object-shape priceBook (from poweron_v2) to array — one-time conversion')
+          v2Parsed.priceBook = Object.values(v2Parsed.priceBook as Record<string, BackupPriceBookItem>)
+          try { localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(v2Parsed)) } catch (e) { console.error('[backupDataService] Failed to persist migrated priceBook:', e) }
+        }
+        return v2Parsed
+      }
+    }
+    return null
+  } catch (err) {
+    console.error('[backupDataService] Failed to parse backup data:', err)
+    return null
+  }
+}
+
+export function saveBackupData(data: BackupData, userId = _activeTenantUserId): void {
+  try {
+    const owned = userId ? attachTenantOwner(data, userId) : data
+    const key = getEffectiveStorageKey(userId)
+    localStorage.setItem(key, JSON.stringify(owned))
+
+    // Keep legacy key as display compatibility only for the active tenant. Reads
+    // during authenticated sessions still use the tenant key, not this key.
+    if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
+
+    // Global save trigger:
+    // Any normal user-facing save inside a fully hydrated tenant marks data dirty
+    // so startPeriodicSync() can push it to Supabase.
+    // Bootstrap/remote-load saves must not mark dirty before tenantDataReady.
+    if (userId && _activeTenantUserId === userId && _tenantDataReady) {
+      _dataChanged = true
+    }
+  } catch (err) {
+    console.error('[backupDataService] Failed to save:', err)
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent('poweron-data-saved'))
+  } catch {
+    /* ignore */
+  }
+
+  // Do not mirror tenant data into poweron_v2; that key is browser-global and
+  // was a source of cross-account bleed.
+  if (!userId) {
+    try {
+      const v2Raw = localStorage.getItem('poweron_v2')
+      if (v2Raw && data.priceBook) {
+        const v2Data = JSON.parse(v2Raw)
+        const pbArr = Array.isArray(data.priceBook) ? data.priceBook : Object.values(data.priceBook)
+        if (pbArr.length > 0) {
+          v2Data.priceBook = pbArr
+          v2Data._lastSavedAt = data._lastSavedAt
+          localStorage.setItem('poweron_v2', JSON.stringify(v2Data))
+        }
+      }
+    } catch {
+      /* ignore poweron_v2 sync errors */
+    }
+  }
+}
+
+/**
+ * Write data to localStorage silently.
+ * No poweron-data-saved dispatch. Does not set _dataChanged.
+ * Use ONLY for internal sync operations (embedding metadata, saving remote pulls)
+ * to prevent re-triggering the sync loop.
+ */
+function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): void {
+  try {
+    const owned = userId ? attachTenantOwner(data, userId) : data
+    const key = getEffectiveStorageKey(userId)
+    localStorage.setItem(key, JSON.stringify(owned))
+    if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
+  } catch { /* ignore */ }
+}
+
+export function clearBackupData(userId = _activeTenantUserId): void {
+  try { localStorage.removeItem(getEffectiveStorageKey(userId)) } catch { /* ignore */ }
+  if (userId) {
+    try { localStorage.removeItem(LEGACY_STORAGE_KEY) } catch { /* ignore */ }
+  }
+}
+
+// ── Import merge summary type ────────────────────────────────────────────────
+
+export interface ImportMergeSummary {
+  merged: Record<string, number>
+  total: number
+}
+
+// ── Import helper ─────────────────────────────────────────────────────────────
+
+export function createEmptyBackup(): BackupData {
+  return {
+    logs: [], projects: [], priceBook: [], weeklyData: [], serviceLogs: [],
+    triggerRules: [], calcRefs: {}, customers: [], settings: {} as any,
+    employees: [], templates: [], gcContacts: [], serviceLeads: [],
+    agendaSections: [], customAlerts: [], completedArchive: [], projectDashboards: {},
+    blueprintSummaries: {}, activeServiceCalls: [], serviceEstimates: [],
+    taskSchedule: [], dailyJobs: [], weeklyReviews: [], imports: [],
+    _lastSavedAt: new Date().toISOString(), _schemaVersion: 0,
+  }
+}
+
+// ── Import ───────────────────────────────────────────────────────────────────
+
+export async function importBackupFromFile(file: File): Promise<{ data: BackupData; summary: ImportMergeSummary }> {
+  const text = await file.text()
+  const raw = JSON.parse(text)
+  const existing = getBackupData() || createEmptyBackup()
+
+  // Merge arrays by ID — append new, skip duplicates
+  const arrayKeys = ['serviceLogs', 'serviceLeads', 'logs', 'projects', 'gcContacts', 'employees', 'templates', 'triggerRules', 'agendaSections', 'completedArchive', 'activeServiceCalls', 'serviceEstimates', 'taskSchedule', 'dailyJobs', 'weeklyReviews', 'imports', 'customers']
+
+  const summary: ImportMergeSummary = { merged: {}, total: 0 }
+
+  for (const key of arrayKeys) {
+    const incoming = raw[key]
+    if (!Array.isArray(incoming) || incoming.length === 0) continue
+    if (!Array.isArray(existing[key])) existing[key] = []
+
+    const existingIds = new Set(existing[key].map((item: any) => item.id).filter(Boolean))
+    let added = 0
+    for (const item of incoming) {
+      if (item.id && existingIds.has(item.id)) continue // skip duplicate
+      existing[key].push(item)
+      added++
+    }
+    if (added > 0) {
+      summary.merged[key] = added
+      summary.total += added
+    }
+  }
+
+  // Merge object keys (settings, calcRefs, projectDashboards, blueprintSummaries) — key-level merge, don't overwrite
+  const objectKeys = ['settings', 'calcRefs', 'projectDashboards', 'blueprintSummaries']
+  for (const key of objectKeys) {
+    if (raw[key] && typeof raw[key] === 'object' && !Array.isArray(raw[key])) {
+      if (!existing[key] || typeof existing[key] !== 'object') existing[key] = {}
+      // Only add keys that don't exist in current data
+      for (const [k, v] of Object.entries(raw[key])) {
+        if (!(k in existing[key])) {
+          existing[key][k] = v
+        }
+      }
+    }
+  }
+
+  // PriceBook merge — array shape canonical. Accepts legacy object-shape on import only (one-way).
+  if (raw.priceBook) {
+    const incomingItems: BackupPriceBookItem[] = Array.isArray(raw.priceBook)
+      ? raw.priceBook
+      : Object.values(raw.priceBook as Record<string, BackupPriceBookItem>)
+    if (incomingItems.length > 0) {
+      // Normalize existing to array (tolerate legacy object-shape in existing localStorage)
+      if (!Array.isArray(existing.priceBook)) {
+        existing.priceBook = existing.priceBook && typeof existing.priceBook === 'object'
+          ? Object.values(existing.priceBook as Record<string, BackupPriceBookItem>)
+          : []
+      }
+      const existingIds = new Set((existing.priceBook as BackupPriceBookItem[]).map(it => it.id))
+      let added = 0
+      for (const item of incomingItems) {
+        if (item.id && !existingIds.has(item.id)) {
+          (existing.priceBook as BackupPriceBookItem[]).push(item)
+          existingIds.add(item.id)
+          added++
+        }
+      }
+      if (added > 0) {
+        summary.merged['priceBook'] = added
+        summary.total += added
+      }
+    }
+  }
+
+  // Merge weeklyData by 'wk' key instead of id
+  if (Array.isArray(raw.weeklyData) && raw.weeklyData.length > 0) {
+    if (!Array.isArray(existing.weeklyData)) existing.weeklyData = []
+    const existingWks = new Set(existing.weeklyData.map((w: any) => w.wk))
+    let added = 0
+    for (const w of raw.weeklyData) {
+      if (w.wk && existingWks.has(w.wk)) continue
+      existing.weeklyData.push(w)
+      added++
+    }
+    if (added > 0) {
+      summary.merged['weeklyData'] = added
+      summary.total += added
+    }
+    // Sort weeklyData by week number
+    existing.weeklyData.sort((a: any, b: any) => (a.wk || 0) - (b.wk || 0))
+  }
+
+  // Keep gcalUrl if incoming has one and existing doesn't
+  if (raw.gcalUrl && !existing.gcalUrl) existing.gcalUrl = raw.gcalUrl
+
+  existing._lastSavedAt = new Date().toISOString()
+  saveBackupData(existing)
+
+  console.log(`[backupDataService] Merged import: ${JSON.stringify(summary.merged)}`)
+  return { data: existing, summary }
+}
+
+// ── Utility helpers (ported from HTML v15r) ──────────────────────────────────
+
+/** Safe number parser */
+export function num(v: any): number {
+  const n = Number(v)
+  return isNaN(n) ? 0 : n
+}
+
+export function resolveCanonicalCustomerName(record: any, accounts: any[] = []): string {
+  const accountId = String(record?.accountId || record?.customerId || '').trim()
+  if (accountId) {
+    const acc = (accounts || []).find((a: any) => String(a?.id || '') === accountId)
+    const canonical = String(acc?.company || acc?.contact || '').trim()
+    if (canonical) return canonical
+  }
+  return String(
+    record?.customer ||
+    record?.client ||
+    record?.company ||
+    record?.contact ||
+    record?.name ||
+    record?.title ||
+    'Unknown'
+  ).trim()
+}
+
+/** Days since a date string, 999 if missing */
+export function daysSince(d: string | undefined | null): number {
+  if (!d) return 999
+  return Math.floor((Date.now() - new Date(d).getTime()) / 86400000)
+}
+
+/** Dollar format: $1,234.56 */
+export function fmt(v: number | undefined | null): string {
+  return '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/** Compact dollar format: $1.2k / $1.2M */
+export function fmtK(v: number | undefined | null): string {
+  const n = num(v || 0)
+  const abs = Math.abs(n)
+  if (abs >= 1000000) {
+    const s = (n / 1000000).toFixed(abs >= 10000000 ? 0 : 1).replace(/\.0$/, '')
+    return '$' + s + 'M'
+  }
+  if (abs >= 1000) {
+    const s = (n / 1000).toFixed(abs >= 100000 ? 0 : 1).replace(/\.0$/, '')
+    return '$' + s + 'k'
+  }
+  return '$' + Math.round(n)
+}
+
+/** Percentage format */
+export function pct(v: number): string {
+  return v + '%'
+}
+
+/** Phase weights from settings or defaults */
+export function getPhaseWeights(d: BackupData): Record<string, number> {
+  const defaults: Record<string, number> = {
+    Estimating: 5, Planning: 10, 'Site Prep': 15, 'Rough-in': 35, Finish: 25, Trim: 10,
+  }
+  return (d.settings && d.settings.phaseWeights) || defaults
+}
+
+/** Overall completion — weighted phase average (matches HTML ov(p)) */
+export function getOverallCompletion(p: BackupProject, d: BackupData): number {
+  const w = getPhaseWeights(d)
+  const tot = Object.values(w).reduce((s, v) => s + v, 0) || 100
+  const phases = p.phases || {}
+  return Object.entries(w).reduce((s, [ph, wt]) => s + (num(phases[ph]) * wt / tot), 0)
+}
+
+/** Get logs for a specific project */
+export function projectLogsFor(d: BackupData, projId: string): BackupLog[] {
+  return (d.logs || []).filter(l => l.projId === projId)
+}
+
+/** Ensure a project has a finance bucket */
+function ensureProjectFinanceBucket(p: BackupProject): any {
+  if (!p.finance) p.finance = {}
+  return p.finance
+}
+
+/** Get project financials — exact port from HTML getProjectFinancials(p) */
+export function getProjectFinancials(p: BackupProject, d: BackupData): {
+  contract: number; billed: number; paid: number; loggedPaid: number
+  manualPaidAdjustment: number; ar: number; unbilled: number; risk: number
+  matCost: number; lastCollectedAt: string; lastCollectedAmount: number
+} {
+  if (!p) return { contract: 0, billed: 0, paid: 0, loggedPaid: 0, manualPaidAdjustment: 0, ar: 0, unbilled: 0, risk: 0, matCost: 0, lastCollectedAt: '', lastCollectedAmount: 0 }
+  const fin = ensureProjectFinanceBucket(p)
+  const contract = num(p.contract)
+  const billed = num(p.billed)
+  const logs = projectLogsFor(d, p.id)
+  const loggedPaid = logs.reduce((s, l) => s + num(l.collected), 0)
+  const manualPaidAdjustment = num(fin.manualPaidAdjustment || 0)
+  const paid = Math.max(0, loggedPaid + manualPaidAdjustment)
+  const ar = Math.max(0, billed - paid)
+  const unbilled = Math.max(0, contract - billed)
+  const risk = Math.max(0, contract - paid)
+  const estMat = Array.isArray(p.matRows) ? p.matRows.reduce((s: number, r: any) => s + (num(r.cost) * num(r.qty || 1)), 0) : 0
+  const matCost = estMat
+  const paidLogs = logs.filter(l => num(l.collected) > 0).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+  const lastCollectedAt = fin.lastCollectedAt || (paidLogs[0] ? paidLogs[0].date : '') || p.lastCollectedAt || ''
+  const lastCollectedAmount = paidLogs[0] ? num(paidLogs[0].collected) : num(p.lastCollectedAmount || 0)
+  return { contract, billed, paid, loggedPaid, manualPaidAdjustment, ar, unbilled, risk, matCost, lastCollectedAt, lastCollectedAmount }
+}
+
+/** Health scoring — exact port from HTML health(p): score 0-100 */
+export function health(p: BackupProject, d: BackupData): {
+  sc: number; reasons: string[]; cls: string; clr: string
+} {
+  const o = getOverallCompletion(p, d)
+  const ds = daysSince(p.lastMove)
+  const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
+  // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1 — read derived paid from logs,
+  // not the p.paid scalar (scalar is no longer written to; logs are the source of truth).
+  const paidDerived = getProjectFinancials(p, d).paid
+  let sc = 50 + o * 0.28 + (ds < 7 ? 15 : ds < 14 ? 5 : -20) - openR * 5
+    + ((p.logs || []).length ? 10 : 0)
+    + (paidDerived / Math.max(num(p.contract), 1)) * 8
+
+  // Schedule variance component (only applies if plannedEnd is set)
+  const reasons: string[] = []
+  if (p.plannedEnd) {
+    try {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const endDate = new Date(p.plannedEnd + 'T00:00:00')
+      if (!isNaN(endDate.getTime())) {
+        const daysLate = Math.round((today.getTime() - endDate.getTime()) / 86400000)
+        if (daysLate > 0 && p.status !== 'completed') {
+          // Behind schedule
+          if (daysLate >= 15) { sc -= 20; reasons.push(daysLate + 'd past planned end') }
+          else if (daysLate >= 8) { sc -= 10; reasons.push(daysLate + 'd past planned end') }
+          else { sc -= 5; reasons.push(daysLate + 'd past planned end') }
+        }
+        // Ahead of schedule → no penalty, no reason added
+      }
+    } catch { /* ignore date parse errors */ }
+  }
+
+  sc = Math.max(0, Math.min(100, Math.round(sc)))
+  if (openR > 0) reasons.push(openR + ' RFI' + (openR > 1 ? 's' : '') + ' open')
+  if (ds >= 14) reasons.push(ds + 'd no movement')
+  if (!(p.logs || []).length) reasons.push('no logs yet')
+  if (o >= 50) reasons.push(pct(Math.round(o)) + ' complete')
+  const cls = sc >= 70 ? 'hg' : sc >= 50 ? 'hy' : 'hr'
+  const clr = sc >= 70 ? '#10b981' : sc >= 50 ? '#f59e0b' : '#ef4444'
+  return { sc, reasons, cls, clr }
+}
+
+/** Stale class helper */
+export function staleCls(days: number): string {
+  if (days >= 14) return 'cr'
+  if (days >= 7) return 'cy'
+  return 'cg'
+}
+
+/** Resolve project bucket: active/coming/completed */
+export function resolveProjectBucket(p: BackupProject): 'active' | 'coming' | 'completed' {
+  const status = (p.status || '').toLowerCase().trim()
+  if (status === 'completed') return 'completed'
+  if (status === 'coming') return 'coming'
+  return 'active'
+}
+
+/** Ensure agenda sections are properly shaped */
+export function ensureAgendaState(d: BackupData): void {
+  if (!Array.isArray(d.agendaSections)) {
+    d.agendaSections = [{ id: 'ag1', title: 'Today', projectId: '', tasks: [] }]
+  }
+  d.agendaSections = d.agendaSections.map((s: any, i: number) => ({
+    id: s.id || ('ag' + Date.now() + i),
+    title: String(s.title || 'Category'),
+    projectId: String(s.projectId || ''),
+    tasks: Array.isArray(s.tasks) ? s.tasks : [],
+  }))
+  d.agendaSections.forEach((sec: any, si: number) => {
+    sec.tasks = (sec.tasks || []).map((t: any, ti: number) => ({
+      id: t.id || ('agt' + Date.now() + si + ti),
+      text: String(t.text || ''),
+      status: String(t.status || 'pending'),
+    }))
+  })
+}
+
+/** Get agenda project name helper */
+export function getAgendaProjectName(d: BackupData, projectId: string): string {
+  if (!projectId) return 'General'
+  const p = (d.projects || []).find(x => x.id === projectId)
+  return p ? p.name : 'General'
+}
+
+/** Build cumulative log rollup for a project.
+ *  Sorted oldest-to-newest so cumulative fields accumulate correctly.
+ *  Spec:
+ *    Labor cost = hours × internal overhead rate (settings.opCost, NaN if missing)
+ *    Material cost = mat as entered
+ *    Mileage cost = miles × mileRate (settings.mileRate, default $0.67/mi)
+ *    Running balance = contract − cumulative collected − cumulative total cost
+ */
+export function buildProjectLogRollup(d: BackupData, projId: string): {
+  quote: number; logs: BackupLog[]; byId: Record<string, any>
+} {
+  const p = (d.projects || []).find(x => x.id === projId)
+  const quote = num(p && p.contract)
+  const logs = projectLogsFor(d, projId).slice().sort((a, b) => {
+    const da = String(a.date || ''), db = String(b.date || '')
+    if (da !== db) return da.localeCompare(db)
+    return String(a.id || '').localeCompare(String(b.id || ''))
+  })
+  // Spec: internal overhead rate for labor cost (opCost/OH_RATE, NOT billRate)
+  const opCost = num(d.settings && d.settings.opCost)
+  const mileRate = num(d.settings && d.settings.mileRate)
+  if (!opCost) {
+    console.error('[buildProjectLogRollup] Settings opCost missing — returning NaN costs')
+  }
+  if (!mileRate) {
+    console.error('[buildProjectLogRollup] Settings mileRate missing — returning NaN costs')
+  }
+  let cumHours = 0, cumMiles = 0
+  let cumLaborCost = 0, cumMaterialCost = 0, cumMileageCost = 0, cumCollected = 0
+  const byId: Record<string, any> = {}
+  logs.forEach(l => {
+    cumHours += num(l.hrs)
+    cumMiles += num(l.miles)
+    cumCollected += num(l.collected)
+
+    // Per-entry cost (spec: Labor=hrs×opCost, Material=mat, Mileage=milesRT×mileRate)
+    const entryLaborCost = num(l.hrs) * opCost
+    const entryMaterialCost = num(l.mat)
+    const entryMileageCost = num(l.miles) * mileRate
+    const entryTotalCost = entryLaborCost + entryMaterialCost + entryMileageCost
+
+    // Cumulative totals across all entries up to and including this one
+    cumLaborCost += entryLaborCost
+    cumMaterialCost += entryMaterialCost
+    cumMileageCost += entryMileageCost
+    const cumTotalCost = cumLaborCost + cumMaterialCost + cumMileageCost
+
+    // Spec: Running balance = Contract − Cumulative Total Cost (collected is tracked separately, not subtracted)
+    const remainingAfter = quote - cumTotalCost
+
+    byId[l.id] = {
+      cumHours,
+      cumMiles,
+      cumCollected,
+      cumLaborCost,
+      cumMaterialCost,
+      cumMileageCost,
+      cumTotalCost,
+      entryLaborCost,
+      entryMaterialCost,
+      entryMileageCost,
+      entryTotalCost,
+      // Legacy field names preserved for any other consumers
+      dayCost: entryTotalCost,
+      actualCostToDate: cumTotalCost,
+      remainingAfter,
+    }
+  })
+  return { quote, logs, byId }
+}
+
+/**
+ * buildServiceLogRollup — service log cost rollup.
+ * Mirrors buildProjectLogRollup for service logs.
+ * Precedence: per-log opCost override wins over settings opCost
+ * (handles subcontractor/helper calls with different internal rates).
+ * Formula: hours × effectiveOpCost + materials + miles × mileRate
+ */
+export function buildServiceLogRollup(d: BackupData) {
+  const settingsOpCost = num(d.settings && d.settings.opCost)
+  const mileRate = num(d.settings && d.settings.mileRate)
+  if (!settingsOpCost) {
+    console.error('[buildServiceLogRollup] Settings opCost missing — returning NaN costs')
+  }
+  if (!mileRate) {
+    console.error('[buildServiceLogRollup] Settings mileRate missing — returning NaN costs')
+  }
+
+  const serviceLogs = d.serviceLogs || []
+  const byId: Record<string, any> = {}
+  let cumLaborCost = 0
+  let cumMaterialCost = 0
+  let cumMileageCost = 0
+  let cumTotalCost = 0
+
+  for (const l of serviceLogs) {
+    const logOpCost = num(l.opCost)
+    const effectiveOpCost = logOpCost > 0 ? logOpCost : settingsOpCost
+    const entryLaborCost = num(l.hrs) * effectiveOpCost
+    const entryMaterialCost = num(l.mat)
+    const entryMileageCost = num(l.miles) * mileRate
+    const entryTotalCost = entryLaborCost + entryMaterialCost + entryMileageCost
+
+    cumLaborCost += entryLaborCost
+    cumMaterialCost += entryMaterialCost
+    cumMileageCost += entryMileageCost
+    cumTotalCost += entryTotalCost
+
+    byId[l.id] = {
+      entryLaborCost,
+      entryMaterialCost,
+      entryMileageCost,
+      entryTotalCost,
+      cumLaborCost,
+      cumMaterialCost,
+      cumMileageCost,
+      cumTotalCost,
+      effectiveOpCost
+    }
+  }
+
+  return {
+    logs: serviceLogs,
+    byId,
+    totals: {
+      cumLaborCost,
+      cumMaterialCost,
+      cumMileageCost,
+      cumTotalCost
+    }
+  }
+}
+/** Sync all project finance buckets */
+export function syncAllProjectFinanceBuckets(d: BackupData): void {
+  ;(d.projects || []).forEach(p => ensureProjectFinanceBucket(p))
+}
+
+// ── KPIs (matches HTML renderHome exactly) ───────────────────────────────────
+
+export function getKPIs(d: BackupData) {
+  const projects = d.projects || []
+  const logs = d.logs || []
+  const serviceLogs = d.serviceLogs || []
+  syncAllProjectFinanceBuckets(d)
+  // Pipeline = active/coming project contracts + open service calls quoted
+  // Excludes: completed+collected projects, deleted projects, lost/rejected estimates
+  const projectContract = projects
+    .filter(p => {
+      const s = (p.status || '').toLowerCase()
+      // Exclude explicitly completed, deleted, lost, or rejected projects
+      if (s === 'deleted' || s === 'lost' || s === 'rejected') return false
+      // Exclude completed bucket (status=completed OR 100% overall completion)
+      return resolveProjectBucket(p) === 'active'
+    })
+    .reduce((s, p) => s + num(p.contract), 0)
+  // Service calls total: all calls (open + partial); fully-collected ones still part of pipeline history
+  const svcQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
+  // Paid / Cash Received = project paid + service collected (matches HTML cashReceived)
+  const projectPaid = projects.reduce((s, p) => s + getProjectFinancials(p, d).paid, 0)
+  const svcCollected = serviceLogs.reduce((s, l) => s + num(l.collected), 0)
+  const paid = projectPaid + svcCollected
+  const billed = projects.reduce((s, p) => s + num(p.billed), 0)
+  // Exposure = active project bucket balance remaining (matches HTML activeProjectExposure)
+  const activeProjectMoney = projects
+    .filter(p => resolveProjectBucket(p) === 'active')
+    .map(p => getProjectFinancials(p, d))
+  const exposure = activeProjectMoney.reduce((s, m) => s + Math.max(0, m.contract - m.paid), 0)
+  // SVC Unbilled = sum of remaining balance across all service log entriesssS
+  // (totalBillable - collected), zeroed for overpaid entries; money math only, never stale payStatus
+  const svcUnbilled = serviceLogs.reduce((s, l) => {
+    const quoted = num(l.quoted)
+    const collected = num(l.collected)
+    const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
+    const addIncome = adjustments
+      .filter((a: any) => a && a.type === 'income')
+      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
+    const totalBillable = quoted + addIncome
+    return s + Math.max(0, totalBillable - collected)
+  }, 0)
+  
+  const svcWithBalanceDue = serviceLogs.reduce((s, l) => {
+    const quoted = num(l.quoted)
+    const collected = num(l.collected)
+    const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
+    const addIncome = adjustments
+      .filter((a: any) => a && a.type === 'income')
+      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
+    const totalBillable = quoted + addIncome
+    return s + (totalBillable - collected > 0 ? totalBillable : 0)
+  }, 0)
+  const pipeline = projectContract + svcWithBalanceDue
+  const openRfis = projects.reduce((s, p) => s + (p.rfis || []).filter((r: any) => r.status !== 'answered').length, 0)
+  const totalHours = logs.reduce((s, l) => s + num(l.hrs), 0)
+  const activeProjects = projects.filter(p => p.status === 'active' || p.status === 'coming').length
+  return { pipeline, paid, billed, exposure, svcUnbilled, openRfis, totalHours, activeProjects }
+}
+/** Old getProjectHealth kept for backward compat — wraps new health() */
+export function getProjectHealth(p: BackupProject, d?: BackupData): { score: number; label: string; color: string } {
+  if (!d) {
+    // fallback: try to get backup data
+    const backup = getBackupData()
+    if (backup) d = backup
+    else d = { projects: [], logs: [], serviceLogs: [], priceBook: [], weeklyData: [], triggerRules: [], calcRefs: {}, customers: [], settings: {} as any, employees: [], templates: [], gcContacts: [], serviceLeads: [], agendaSections: [], completedArchive: [], projectDashboards: {}, blueprintSummaries: {}, activeServiceCalls: [], serviceEstimates: [], taskSchedule: [], dailyJobs: [], weeklyReviews: [], _lastSavedAt: '', _schemaVersion: 0 }
+  }
+  const h = health(p, d)
+  const label = h.sc >= 70 ? 'Healthy' : h.sc >= 50 ? 'Watch' : h.sc >= 30 ? 'At Risk' : 'Critical'
+  return { score: h.sc, label, color: h.clr }
+}
+
+// ── Export backup ────────────────────────────────────────────────────────────
+
+/**
+ * Export backup — ISSUE 2 Fix 6: Always reads fresh from getBackupData()
+ * at export time, not from a potentially stale reference.
+ */
+export function exportBackup(d?: BackupData): void {
+  // Always read fresh current state, not stale reference
+  const freshData = getBackupData() || d
+  if (!freshData) {
+    console.warn('[export] No data available to export')
+    return
+  }
+
+  const now = new Date()
+  const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filename = `PowerOn_Backup_${ts}.json`
+  const blob = new Blob([JSON.stringify(freshData, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// ── Supabase Sync ────────────────────────────────────────────────────────────
+
+const SUPABASE_STATE_KEY = 'poweron_v2'
+const CACHE_OWNER_KEY = 'poweron_cache_owner'
+
+export function setCacheOwner(userId: string): void {
+  try { localStorage.setItem(CACHE_OWNER_KEY, userId) } catch {}
+}
+export function getCacheOwner(): string | null {
+  try { return localStorage.getItem(CACHE_OWNER_KEY) } catch { return null }
+}
+export function clearCacheOwner(): void {
+  try { localStorage.removeItem(CACHE_OWNER_KEY) } catch {}
+}
+
+// ── Hydration guard ───────────────────────────────────────────────────────────
+// When true, all Supabase writes are blocked. Set to true during login bootstrap
+// and false once tenant data is fully hydrated. Prevents empty seed or stale
+// local state from overwriting real Supabase data during account switching.
+// Legacy hydration flag kept for backward compatibility/debugging only.
+// Tenant readiness below is the actual sync guard.
+let _isHydrating = false
+export function setHydrating(val: boolean): void { 
+  _isHydrating = val 
+  console.log('[Hydration] flag set to:', val)
+}
+export function isHydrating(): boolean { return _isHydrating }
+
+/** Sync current tenant-scoped localStorage data to Supabase app_state table.
+ *  Refuses to run until the authenticated tenant has completed bootstrap. */
+export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  if (!isSupabaseConfigured()) return { success: false, skipped: true, error: 'Supabase not configured' }
+  if (!userId) return { success: false, skipped: true, error: 'No active tenant user' }
+  if (!_tenantDataReady || _activeTenantUserId !== userId) {
+  const localTenantData = getBackupData(userId)
+  if (localTenantData && tenantOwnerMatches(localTenantData as any, userId)) {
+    _activeTenantUserId = userId
+    _tenantDataReady = true
+    console.warn('[Sync] Recovered tenant readiness from local tenant cache', { userId })
+  } else {
+    console.warn('[Sync] BLOCKED: tenant data not ready', { active: _activeTenantUserId, userId, ready: _tenantDataReady })
+    return { success: false, skipped: true, error: 'Tenant data not ready' }
+  }
+}
+  if (_isHydrating) {
+    console.warn('[Sync] BLOCKED by hydration flag — this should clear after login')
+    return { success: false, skipped: true, error: 'Hydration in progress' }
+  }
+  try {
+    const { supabase } = await import('@/lib/supabase')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, skipped: true, error: 'Not authenticated' }
+    if (user.id !== userId) {
+      console.error('[Sync] BLOCKED: Supabase user mismatch', { sessionUser: user.id, activeTenant: userId })
+      return { success: false, skipped: true, error: 'Authenticated user mismatch' }
+    }
+
+    const data = getBackupData(userId)
+    if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
+
+    const now = new Date().toISOString()
+    const deviceId = getDeviceId()
+
+    const payload = attachTenantOwner({
+      ...(data as any),
+      _lastSavedAt: now,
+      _syncMeta: { savedBy: deviceId, savedAt: now },
+    } as BackupData, userId)
+    saveBackupDataSilent(payload, userId)
+
+    const { error } = await supabase
+      .from('app_state')
+      .upsert({
+        user_id: userId,
+        state_key: SUPABASE_STATE_KEY,
+        data: payload,
+        updated_at: now,
+      }, { onConflict: 'user_id,state_key' })
+
+    if (error) {
+      console.error('[Sync] Supabase write failed:', error.message)
+      return { success: false, error: error.message }
+    }
+
+    _lastSyncMeta = { savedBy: deviceId, savedAt: now }
+    console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`)
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Sync] Supabase sync error:', err)
+    return { success: false, error: err?.message || 'Unknown error' }
+  }
+}
+
+async function hydrateRelationshipAccountsIntoLocalProjection(userId: string): Promise<void> {
+  try {
+    const { getRelationshipAccountsNormalized } = await import('@/services/relationshipAccountService')
+    const relationshipAccounts = await getRelationshipAccountsNormalized()
+    if (!Array.isArray(relationshipAccounts) || relationshipAccounts.length === 0) return
+    const local = getBackupData(userId) || createEmptyBackup()
+    const existingGc = Array.isArray((local as any).gcContacts) ? (local as any).gcContacts : []
+    const deletedRelationshipAccounts = Array.isArray((local as any)._deletedRelationshipAccounts)
+     ? (local as any)._deletedRelationshipAccounts
+     : []
+    const mergedGcContacts = relationshipAccountsToGcContacts(relationshipAccounts, existingGc, deletedRelationshipAccounts)
+    ;(local as any).gcContacts = mergedGcContacts
+      saveBackupDataSilent(local as BackupData, userId)
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('storage'))
+        window.dispatchEvent(new Event('poweron-data-saved'))
+        window.dispatchEvent(new CustomEvent('poweron-relationship-accounts-hydrated', {
+        detail: {
+        userId,
+        count: mergedGcContacts.length,
+        source: 'relationship_accounts',
+    },
+  }))
+}
+
+console.log(`[Sync] Hydrated relationship_accounts into gcContacts projection (${mergedGcContacts.length} accounts)`)
+  } catch (err) {
+    console.warn('[Sync] relationship_accounts projection hydration failed', err)
+  }
+}
+
+/**
+ * Load backup from Supabase for one explicit tenant.
+ * During login/bootstrap this function is read-only against Supabase:
+ * remote row wins if present; no row creates a local-only empty cache.
+ */
+export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, maybeForceRemote = false): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string; status?: 'loaded_remote' | 'seeded_empty' | 'failed' }> {
+  const explicitUserId = typeof userIdOrForceRemote === 'string' ? userIdOrForceRemote : null
+  const forceRemote = typeof userIdOrForceRemote === 'boolean' ? userIdOrForceRemote : maybeForceRemote
+  if (!isSupabaseConfigured()) return { success: false, merged: false, status: 'failed', error: 'Supabase not configured' }
+  if (_isHydrating && forceRemote) {
+    console.log('[Sync] Realtime load blocked — hydration in progress')
+    return { success: false, merged: false, status: 'failed', error: 'Hydration in progress' }
+  }
+
+  try {
+    const { supabase } = await import('@/lib/supabase')
+    const thisDevice = getDeviceId()
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, merged: false, status: 'failed', error: 'Not authenticated' }
+
+    const userId = explicitUserId || _activeTenantUserId || user.id
+    if (user.id !== userId) {
+      console.error('[Sync] loadFromSupabase blocked: user mismatch', { requested: userId, sessionUser: user.id })
+      return { success: false, merged: false, status: 'failed', error: 'Authenticated user mismatch' }
+    }
+
+    setActiveTenantUser(userId)
+
+    const { data: row, error } = await supabase
+      .from('app_state')
+      .select('user_id,data,updated_at')
+      .eq('user_id', userId)
+      .eq('state_key', SUPABASE_STATE_KEY)
+      .maybeSingle()
+
+    if (error) {
+      console.warn('[Sync] Supabase read failed:', error.message)
+      return { success: false, merged: false, status: 'failed', error: error.message }
+    }
+
+    if (row?.user_id && row.user_id !== userId) {
+      return { success: false, merged: false, status: 'failed', error: 'Supabase returned wrong tenant row' }
+    }
+
+    if (!row || !row.data) {
+      console.log('[Sync] No remote data found — seeding tenant-local empty cache only')
+      const empty = attachTenantOwner(createEmptyBackup(), userId)
+      saveBackupDataSilent(empty, userId)
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      return { success: true, merged: false, status: 'seeded_empty' }
+    }
+
+    const remote = attachTenantOwner(row.data as BackupData, userId)
+
+    const remoteMeta = (remote as any)._syncMeta as { savedBy?: string; savedAt?: string } | undefined
+    const remoteDevice = remoteMeta?.savedBy || 'unknown'
+    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '' }
+
+    // Explicit bootstrap load: remote is authoritative. Never push local here.
+    if (explicitUserId) {
+      saveBackupDataSilent(remote, userId)
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    }
+
+    const local = getBackupData(userId)
+    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
+    const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
+
+    console.log(`[Sync] This device: ${thisDevice}`)
+    console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
+    console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
+
+    if (!local) {
+      saveBackupDataSilent(remote, userId)
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      console.log('[Sync] No local tenant data – Loading: remote')
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    }
+
+    if (forceRemote || remoteTime > localTime) {
+      if (forceRemote && remoteDevice === thisDevice && localTime > remoteTime) {
+        console.log(`[Sync] forceRemote skipped — remote is from this device (${thisDevice})`)
+        return { success: true, merged: false }
+      }
+      saveBackupDataSilent(remote, userId)
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      console.log(`[Sync] Loading remote tenant data (saved by ${remoteDevice})`)
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    }
+
+    // Local-newer auto-push was the contamination path. Keep local in memory/cache;
+    // do not push from load. User actions or explicit Save to Cloud will sync.
+    if (localTime > remoteTime) {
+      console.log('[Sync] Local tenant cache is newer — keeping local, not pushing during load')
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      return { success: true, merged: false }
+    }
+
+    markTenantDataReady(userId)
+    await hydrateRelationshipAccountsIntoLocalProjection(userId)
+    console.log('[Sync] Timestamps match — no sync needed')
+    return { success: true, merged: false }
+  } catch (err: any) {
+    console.error('[Sync] Supabase load error:', err)
+    return { success: false, merged: false, status: 'failed', error: err?.message || 'Unknown error' }
+  }
+}
+
+/** Enhanced saveBackupData that also syncs to Supabase */
+export function saveBackupDataAndSync(data: BackupData, changedKey?: string): void {
+  data._lastSavedAt = new Date().toISOString()
+  if (changedKey) markChanged(changedKey)
+  _dataChanged = true
+  saveBackupData(data)
+  // Fire and forget — sync to Supabase in background
+  syncToSupabase().catch(err => console.warn('[sync] Background sync failed:', err))
+  // Create snapshot if interval elapsed
+  maybeAutoSnapshot('Data saved')
+}
+
+export async function saveBackupDataAndSyncNow(
+  data: BackupData,
+  changedKey?: string
+): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  data._lastSavedAt = new Date().toISOString()
+  if (changedKey) markChanged(changedKey)
+  _dataChanged = true
+  saveBackupData(data)
+
+  const result = await syncToSupabase()
+
+  if (result.success) {
+    _dataChanged = false
+    _lastSyncedAt = Date.now()
+    _changedKeys.clear()
+  }
+
+  try {
+    maybeAutoSnapshot('Data saved')
+  } catch {
+    /* snapshot is non-critical */
+  }
+
+  return result
+}
+
+// ── ISSUE 2 Fix: Critical change keys that bypass debounce ──────────────────
+const CRITICAL_KEYS = new Set(['serviceLogs', 'projects', 'logs', 'weeklyData'])
+
+/**
+ * Save and immediately sync to Supabase for critical data changes
+ * (payment status, project updates, service logs) — bypasses the 30s debounce.
+ */
+export function saveAndImmediateSync(data: BackupData, changedKey?: string): void {
+  data._lastSavedAt = new Date().toISOString()
+  if (changedKey) markChanged(changedKey)
+  _dataChanged = true
+  saveBackupData(data)
+  // Immediate sync — no debounce for critical data
+  console.log(`[sync] Immediate sync triggered for key: ${changedKey || 'unknown'}`)
+  syncToSupabase().catch(err => console.warn('[sync] Immediate sync failed:', err))
+  // Create snapshot if interval elapsed
+  maybeAutoSnapshot(`Critical update: ${changedKey || 'data'}`)
+}
+
+/**
+ * Force full sync to cloud NOW. Bypasses all debounce/timers.
+ * Use for the "Save to Cloud" button in Settings.
+ * Returns result so UI can show success/failure.
+ */
+export async function forceSyncToCloud(): Promise<{ success: boolean; error?: string }> {
+  const data = getBackupData()
+  if (!data) return { success: false, error: 'No local data to sync' }
+
+  // Always update timestamp before force sync
+  data._lastSavedAt = new Date().toISOString()
+  saveBackupData(data)
+
+  console.log('[sync] Force sync to cloud initiated')
+  const result = await syncToSupabase()
+
+  if (result.success) {
+    _dataChanged = false
+    _lastSyncedAt = Date.now()
+    _changedKeys.clear()
+    console.log('[sync] Force sync successful at', data._lastSavedAt)
+  }
+
+  return result
+}
+
+// Legacy mappers (kept for backward compat)
+export function mapBackupProjects(backup: BackupData) { return backup.projects || [] }
+export function mapBackupLogs(backup: BackupData) { return backup.logs || [] }
+export function mapBackupPriceBook(backup: BackupData): BackupPriceBookItem[] {
+  const raw = backup.priceBook
+  if (!raw) return []
+  // Handle both formats: array (from HTML app backup) and Record (from React app)
+  if (Array.isArray(raw)) return raw as BackupPriceBookItem[]
+  return Object.values(raw)
+}
+export function getBackupKPIs(backup: BackupData) { return getKPIs(backup) }
+export function mapBackupWeeklyData(backup: BackupData) { return backup.weeklyData || [] }
+export function mapBackupInvoices(backup: BackupData) {
+  // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1 — read paid from logs via
+  // getProjectFinancials, not the p.paid scalar. Scalar is no longer written to.
+  return (backup.projects || []).filter(p => {
+    const paidDerived = getProjectFinancials(p, backup).paid
+    return p.billed > 0 || paidDerived > 0
+  }).map((p, i) => {
+    const paidDerived = getProjectFinancials(p, backup).paid
+    return {
+      id: `inv-${p.id}`, invoice_number: `INV-${String(i + 1).padStart(4, '0')}`,
+      client_id: null, total: p.billed || p.contract || 0,
+      balance_due: (p.billed || 0) - paidDerived,
+      status: paidDerived >= p.billed && p.billed > 0 ? 'paid' : paidDerived > 0 ? 'partial' : 'sent',
+      days_overdue: 0, due_date: null, created_at: backup._lastSavedAt || new Date().toISOString(),
+      project_name: p.name,
+    }
+  })
+}
+
+// ── Snapshot System ──────────────────────────────────────────────────────────
+
+export interface DataSnapshot {
+  id: string
+  timestamp: number
+  device: string
+  changeSummary: string
+  data: Record<string, unknown>
+}
+
+const SNAPSHOT_KEY = 'poweron_snapshots'
+const MAX_SNAPSHOTS = 30
+
+// ── Snapshot rate limiter for auto-snapshots ────────────────────────────────
+let _lastSnapshotTime = 0
+const SNAPSHOT_INTERVAL = 5 * 60 * 1000 // 5 minutes minimum between auto-snapshots
+
+function maybeAutoSnapshot(changeSummary: string): void {
+  const now = Date.now()
+  if (now - _lastSnapshotTime < SNAPSHOT_INTERVAL) {
+    console.log('[Snapshot] maybeAutoSnapshot skipped (too soon):', changeSummary)
+    return
+  }
+  _lastSnapshotTime = now
+  console.log('[Snapshot] maybeAutoSnapshot triggered:', changeSummary)
+  try {
+    createSnapshot(`Auto: ${changeSummary}`)
+  } catch {
+    // Non-critical
+  }
+}
+
+function getDeviceIdForSnapshot(): string {
+  const ua = navigator.userAgent
+  if (/iPhone|iPad/.test(ua)) return 'iOS'
+  if (/Android/.test(ua)) return 'Android'
+  if (/Windows/.test(ua)) return 'Windows'
+  if (/Mac/.test(ua)) return 'Mac'
+  return 'Unknown'
+}
+
+export function getSnapshots(): DataSnapshot[] {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+export function createSnapshot(changeSummary: string): DataSnapshot | null {
+  try {
+    const backup = getBackupData()
+    if (!backup) return null
+
+    const snapshot: DataSnapshot = {
+      id: `snap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      device: getDeviceIdForSnapshot(),
+      changeSummary,
+      data: JSON.parse(JSON.stringify(backup)),
+    }
+
+    const snapshots = getSnapshots()
+    snapshots.unshift(snapshot)
+
+    // Trim to max
+    const trimmed = snapshots.slice(0, MAX_SNAPSHOTS)
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(trimmed))
+
+    // Also save to Supabase (fire and forget)
+    saveSnapshotToSupabase(snapshot)
+
+    return snapshot
+  } catch (err) {
+    console.error('[Snapshot] Failed to create:', err)
+    return null
+  }
+}
+
+async function saveSnapshotToSupabase(snapshot: DataSnapshot): Promise<void> {
+  try {
+    const { supabase } = await import('@/lib/supabase')
+    // Store full snapshot list under 'poweron_snapshots' key so all devices sync
+    const allSnapshots = getSnapshots()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    await supabase
+      .from('app_state')
+      .upsert({
+        user_id: user.id,
+        state_key: 'poweron_snapshots',
+        data: allSnapshots,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,state_key' })
+      .select()
+    console.log('[Snapshot] Saved', allSnapshots.length, 'snapshots to Supabase under poweron_snapshots')
+  } catch (err) {
+    console.warn('[Snapshot] Supabase save failed (non-critical):', err)
+  }
+}
+
+export function restoreSnapshot(snapshotId: string): boolean {
+  try {
+    const snapshots = getSnapshots()
+    const snapshot = snapshots.find(s => s.id === snapshotId)
+    if (!snapshot) return false
+
+    // Create a pre-restore snapshot first
+    createSnapshot('Auto-backup before restore')
+
+    // Restore the data
+    saveBackupData(snapshot.data as any)
+    return true
+  } catch (err) {
+    console.error('[Snapshot] Restore failed:', err)
+    return false
+  }
+}
+
+export function deleteSnapshot(snapshotId: string): void {
+  const snapshots = getSnapshots().filter(s => s.id !== snapshotId)
+  localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots))
+}

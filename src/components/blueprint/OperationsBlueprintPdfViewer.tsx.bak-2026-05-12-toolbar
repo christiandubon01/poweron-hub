@@ -1,0 +1,1581 @@
+// @ts-nocheck
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowUpRight,
+  Bold,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  Eraser,
+  Highlighter,
+  Italic,
+  Layers,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Minus,
+  MousePointer2,
+  Move,
+  PenLine,
+  RefreshCw,
+  Search,
+  Shapes,
+  Sparkles,
+  Square,
+  StickyNote,
+  Type,
+  Trash2,
+  Underline,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
+import {
+  deleteOperationsBlueprintAnnotation,
+  getBlueprintSignedUrl,
+  getOperationsBlueprintAnnotations,
+  type BlueprintAnnotation,
+  type BlueprintLibraryItem,
+  upsertOperationsBlueprintAnnotation,
+} from '@/services/blueprintLibraryService'
+import { getBackupData } from '@/services/backupDataService'
+
+let _pdfjsLib: typeof import('pdfjs-dist') | null = null
+async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
+  if (_pdfjsLib) return _pdfjsLib
+  const pdfjsLib = await import(/* @vite-ignore */ 'pdfjs-dist')
+  if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+      'pdfjs-dist/build/pdf.worker.min.mjs',
+      import.meta.url
+    ).toString()
+  }
+  _pdfjsLib = pdfjsLib
+  return pdfjsLib
+}
+
+const MIN_RELATIVE_ZOOM = 0.25
+const MAX_RELATIVE_ZOOM = 4
+const MAX_RENDER_SCALE = 3.0
+const PINCH_SENSITIVITY = 0.55
+const PINCH_DEADZONE_PX = 2
+// Debounce window for committing wheel-zoom changes to the actual PDF canvas
+// re-render. During the debounce window, the page is visually scaled via CSS
+// transform (instant feedback), then re-rendered sharp once the user stops.
+// 120ms keeps the sharp re-render close on the user's heels so the blurry
+// CSS-transform intermediate is barely visible. Tested on desktop wheel.
+const WHEEL_ZOOM_COMMIT_DELAY_MS = 120
+const MIN_HIGHLIGHT_NORM = 0.005
+const NOTE_MARKER_SIZE_NORM = 0.018
+const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444', '#ffffff', '#111827']
+const TEXT_COLOR_OPTIONS = ['#111827', '#ffffff', '#facc15', '#38bdf8', '#22c55e', '#ef4444']
+const FONT_SIZE_OPTIONS = [10, 12, 14, 16, 18, 24]
+const FONT_WEIGHT_OPTIONS = [
+  { label: 'Light', value: 300 },
+  { label: 'Regular', value: 400 },
+  { label: 'Medium', value: 500 },
+  { label: 'Semi Bold', value: 600 },
+  { label: 'Bold', value: 700 },
+  { label: 'Extra Bold', value: 800 },
+]
+const THICKNESS_OPTIONS = [1, 2, 3, 5, 8, 12]
+const OPACITY_OPTIONS = [0.25, 0.4, 0.55, 0.7, 0.85, 1]
+const DEFAULT_TEXT_BOX = { w: 0.22, h: 0.08 }
+const DEFAULT_CALLOUT_BOX = { w: 0.24, h: 0.1 }
+
+type ToolbarBucket = 'annotate' | 'callouts' | 'draw' | 'generate' | 'view'
+type ToolMode =
+  | 'select'
+  | 'note'
+  | 'highlight'
+  | 'underline'
+  | 'textBox'
+  | 'pen'
+  | 'marker'
+  | 'eraser'
+  | 'shape'
+  | 'callout'
+  | 'generate'
+
+type ShapeKind = 'square' | 'circle' | 'line' | 'arrow'
+type BorderStyle = 'solid' | 'dashed' | 'dotted'
+type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
+type GenerateQuestionType = 'coordination' | 'rfi'
+
+interface OperationsBlueprintPdfViewerProps {
+  blueprint: BlueprintLibraryItem | null
+  onAnnotationsChanged?: () => void
+  selectedPageNumbers?: number[]
+  onSelectedPagesChange?: (pages: number[]) => void
+  externalPage?: number | null
+  onPageChange?: (page: number) => void
+  onGenerateQuestion?: (payload: {
+    annotation: BlueprintAnnotation
+    questionType: GenerateQuestionType
+    question: string
+    pageNumber: number
+    blueprint: BlueprintLibraryItem
+  }) => void
+}
+
+function toNorm(x: number, y: number, w: number, h: number) {
+  return {
+    x: Math.max(0, Math.min(1, x / Math.max(1, w))),
+    y: Math.max(0, Math.min(1, y / Math.max(1, h))),
+  }
+}
+
+function normRectFromDrag(start: { x: number; y: number }, end: { x: number; y: number }, w: number, h: number) {
+  const left = Math.min(start.x, end.x)
+  const top = Math.min(start.y, end.y)
+  const right = Math.max(start.x, end.x)
+  const bottom = Math.max(start.y, end.y)
+  const nw = Math.max(0, right - left)
+  const nh = Math.max(0, bottom - top)
+  return {
+    x: Math.max(0, Math.min(1, left / Math.max(1, w))),
+    y: Math.max(0, Math.min(1, top / Math.max(1, h))),
+    w: Math.max(0, Math.min(1, nw / Math.max(1, w))),
+    h: Math.max(0, Math.min(1, nh / Math.max(1, h))),
+  }
+}
+
+function shortText(v?: string, max = 40) {
+  const s = String(v || '').trim()
+  if (!s) return '(empty note)'
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+function clampNorm(v: number, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, Number.isFinite(v) ? v : min))
+}
+
+function clampRectToPage(rect: { x: number; y: number; w: number; h: number }) {
+  const w = clampNorm(rect.w, 0.01, 1)
+  const h = clampNorm(rect.h, 0.01, 1)
+  return {
+    x: clampNorm(rect.x, 0, Math.max(0, 1 - w)),
+    y: clampNorm(rect.y, 0, Math.max(0, 1 - h)),
+    w,
+    h,
+  }
+}
+
+function getAnnotationMeta(annotation: any) {
+  return annotation?.meta || annotation?.metadata || {}
+}
+
+function withAnnotationMeta(annotation: any, meta: Record<string, any>) {
+  return { ...annotation, meta: { ...getAnnotationMeta(annotation), ...meta }, metadata: { ...getAnnotationMeta(annotation), ...meta } }
+}
+
+function hexWithAlpha(hex: string, opacity: number) {
+  const safe = String(hex || '#facc15').replace('#', '')
+  if (safe.length !== 6) return hex
+  const alpha = Math.round(clampNorm(opacity, 0, 1) * 255).toString(16).padStart(2, '0')
+  return `#${safe}${alpha}`
+}
+
+function getHatchBackground(pattern: HatchPattern, color: string, fillColor: string, opacity: number) {
+  const fill = hexWithAlpha(fillColor || color, opacity)
+  const hatch = hexWithAlpha(color || '#facc15', Math.min(1, opacity + 0.15))
+  if (pattern === 'diagonal') {
+    return `repeating-linear-gradient(45deg, ${fill}, ${fill} 6px, ${hatch} 6px, ${hatch} 8px)`
+  }
+  if (pattern === 'cross') {
+    return `repeating-linear-gradient(45deg, ${fill}, ${fill} 6px, ${hatch} 6px, ${hatch} 8px), repeating-linear-gradient(-45deg, transparent, transparent 6px, ${hatch} 6px, ${hatch} 8px)`
+  }
+  if (pattern === 'dots') {
+    return `radial-gradient(${hatch} 1px, ${fill} 1px)`
+  }
+  return fill
+}
+
+function normalizePoints(points: Array<{ x: number; y: number }>, width: number, height: number) {
+  return points.map((p) => toNorm(p.x, p.y, width, height))
+}
+
+function getPointsBounds(points: Array<{ x: number; y: number }>) {
+  if (!points.length) return { x: 0, y: 0, w: 0, h: 0 }
+  const xs = points.map(p => p.x)
+  const ys = points.map(p => p.y)
+  const left = Math.min(...xs)
+  const top = Math.min(...ys)
+  const right = Math.max(...xs)
+  const bottom = Math.max(...ys)
+  return { x: left, y: top, w: Math.max(0.001, right - left), h: Math.max(0.001, bottom - top) }
+}
+
+function clampPx(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min))
+}
+
+function estimateTextBoxSize(
+  text: string,
+  fontSize: number,
+  pageWidth: number,
+  pageHeight: number,
+  hasHeader = false
+) {
+  const safeText = String(text || ' ')
+  const lines = safeText.split(/\r?\n/)
+  const longestLine = Math.max(1, ...lines.map((line) => line.length))
+  const lineCount = Math.max(1, lines.length)
+  const widthPx = clampPx((longestLine * fontSize * 0.62) + 28, 72, Math.max(72, pageWidth * 0.42))
+  const heightPx = clampPx((lineCount * fontSize * 1.35) + 22 + (hasHeader ? 16 : 0), 34, Math.max(34, pageHeight * 0.32))
+  return {
+    w: clampNorm(widthPx / Math.max(1, pageWidth), 0.05, 0.5),
+    h: clampNorm(heightPx / Math.max(1, pageHeight), 0.025, 0.34),
+  }
+}
+
+function annotationLabel(annotation: BlueprintAnnotation) {
+  if (annotation.type === 'textBox') return 'Text Box'
+  if (annotation.type === 'callout') return 'Callout'
+  if (annotation.type === 'generate') return getAnnotationMeta(annotation).questionType === 'rfi' ? 'RFI Question' : 'Coordination Question'
+  if (annotation.type === 'pen') return 'Pen'
+  if (annotation.type === 'marker') return 'Marker'
+  if (annotation.type === 'shape') return `${String(getAnnotationMeta(annotation).shapeKind || 'shape')}`
+  if (annotation.type === 'underline') return 'Underline'
+  return String(annotation.type || 'annotation')
+}
+
+function clampRelativeZoom(v: number) {
+  return Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
+}
+
+export default function OperationsBlueprintPdfViewer({
+  blueprint,
+  onAnnotationsChanged,
+  selectedPageNumbers = [],
+  onSelectedPagesChange,
+  externalPage = null,
+  onPageChange,
+  onGenerateQuestion,
+}: OperationsBlueprintPdfViewerProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const pdfDocRef = useRef<any>(null)
+  const renderTaskRef = useRef<any>(null)
+  const noteEditorRef = useRef<HTMLTextAreaElement>(null)
+  const richTextEditorRef = useRef<HTMLTextAreaElement>(null)
+  const allAnnotationsRef = useRef<BlueprintAnnotation[]>([])
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  // Ref to the viewer's outermost element — used as the target for the
+  // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
+  // video does, escaping browser chrome.
+  const viewerRootRef = useRef<HTMLDivElement>(null)
+  const pageFrameRef = useRef<HTMLDivElement>(null)
+  const pendingScrollResetRef = useRef(false)
+  const relativeZoomRef = useRef(1)
+  const pinchPreviewZoomRef = useRef<number | null>(null)
+  const displaySizeRef = useRef({ w: 0, h: 0 })
+  const suppressAnnotationUntilRef = useRef(0)
+  const activeTouchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinchStateRef = useRef<{
+    active: boolean
+    startDistance: number
+    startZoom: number
+    lastDistance: number
+    lastCenter: { x: number; y: number } | null
+    finalZoom: number
+  }>({
+    active: false,
+    startDistance: 0,
+    startZoom: 1,
+    lastDistance: 0,
+    lastCenter: null,
+    finalZoom: 1,
+  })
+  const pinchZoomRafRef = useRef<number | null>(null)
+  const pinchQueuedZoomRef = useRef<number | null>(null)
+  const pendingPinchAnchorRef = useRef<{
+    ratioX: number
+    ratioY: number
+    centerInScrollX: number
+    centerInScrollY: number
+  } | null>(null)
+  const touchPanRef = useRef<{
+    active: boolean
+    pointerId: number | null
+    lastX: number
+    lastY: number
+    moved: boolean
+  }>({ active: false, pointerId: null, lastX: 0, lastY: 0, moved: false })
+  const mousePanRef = useRef<{
+    active: boolean
+    pointerId: number | null
+    lastX: number
+    lastY: number
+    moved: boolean
+  }>({ active: false, pointerId: null, lastX: 0, lastY: 0, moved: false })
+
+  const [signedUrl, setSignedUrl] = useState('')
+  const [pdfDoc, setPdfDoc] = useState<any>(null)
+  const [numPages, setNumPages] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageInput, setPageInput] = useState('1')
+  const [relativeZoom, setRelativeZoom] = useState(1)
+  const [pinchPreviewZoom, setPinchPreviewZoom] = useState<number | null>(null)
+  const [lockView, setLockView] = useState(false)
+  const [mousePanActive, setMousePanActive] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [isRendering, setIsRendering] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 })
+  const [viewportWidth, setViewportWidth] = useState(0)
+
+  const [isFullScreenView, setIsFullScreenView] = useState(false)
+
+  const [toolbarBucket, setToolbarBucket] = useState<ToolbarBucket>('annotate')
+  const [toolMode, setToolMode] = useState<ToolMode>('select')
+  const [activeColor, setActiveColor] = useState('#facc15')
+  const [allAnnotations, setAllAnnotations] = useState<BlueprintAnnotation[]>([])
+  const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
+  const [layoutEditId, setLayoutEditId] = useState<string | null>(null)
+
+  const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null)
+
+  const [inkDraft, setInkDraft] = useState<Array<{ x: number; y: number }> | null>(null)
+  const inkDraftRef = useRef<Array<{ x: number; y: number }> | null>(null)
+  const [layoutDrag, setLayoutDrag] = useState<{
+    annotationId: string
+    mode: 'move' | 'resize'
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startBox: { x: number; y: number; w: number; h: number }
+  } | null>(null)
+
+  const [noteEditor, setNoteEditor] = useState<{
+    mode: 'create' | 'edit'
+    annotationId?: string
+    x: number
+    y: number
+    text: string
+    color: string
+  } | null>(null)
+
+  const [richTextEditor, setRichTextEditor] = useState<{
+    mode: 'create' | 'edit'
+    annotationId?: string
+    annotationType: 'textBox' | 'callout' | 'generate'
+    x: number
+    y: number
+    w: number
+    h: number
+    anchor?: { x: number; y: number }
+    text: string
+    color: string
+    questionType?: GenerateQuestionType
+  } | null>(null)
+
+  const [textStyle, setTextStyle] = useState({
+    fontSize: 14,
+    fontWeight: 400,
+    italic: false,
+    underline: false,
+    color: '#111827',
+    backgroundColor: '#ffffff',
+  })
+  const [drawOptions, setDrawOptions] = useState({ thickness: 3, opacity: 0.85 })
+  const [markerOptions, setMarkerOptions] = useState({ thickness: 12, opacity: 0.35 })
+  const [shapeKind, setShapeKind] = useState<ShapeKind>('square')
+  const [showShapePicker, setShowShapePicker] = useState(false)
+  const [shapeOptions, setShapeOptions] = useState({
+    borderColor: '#facc15',
+    borderThickness: 2,
+    borderStyle: 'solid' as BorderStyle,
+    hatchPattern: 'none' as HatchPattern,
+    fillColor: '#facc15',
+    fillOpacity: 0.22,
+  })
+  const [generateQuestionType, setGenerateQuestionType] = useState<GenerateQuestionType>('coordination')
+
+  const hasStoragePath = !!blueprint?.storagePath?.trim()
+  const canRender = !!pdfDoc && numPages > 0
+  const isEditorOpen = !!noteEditor || !!richTextEditor
+  const effectiveTool = isEditorOpen ? 'select' : toolMode
+
+  useEffect(() => {
+    relativeZoomRef.current = relativeZoom
+  }, [relativeZoom])
+
+  useEffect(() => {
+    pinchPreviewZoomRef.current = pinchPreviewZoom
+  }, [pinchPreviewZoom])
+
+  useEffect(() => {
+    displaySizeRef.current = displaySize
+  }, [displaySize])
+
+  useEffect(() => {
+    allAnnotationsRef.current = allAnnotations
+  }, [allAnnotations])
+
+  const clampScroll = useCallback((scroll: HTMLDivElement, left: number, top: number) => {
+    const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth)
+    const maxTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight)
+    scroll.scrollLeft = Math.max(0, Math.min(maxLeft, left))
+    scroll.scrollTop = Math.max(0, Math.min(maxTop, top))
+  }, [])
+
+  const getPinchAnchorFromMidpoint = useCallback((
+    midpointClientX: number,
+    midpointClientY: number,
+    visualPageWidth: number,
+    visualPageHeight: number
+  ): {
+    ratioX: number
+    ratioY: number
+    centerInScrollX: number
+    centerInScrollY: number
+    pageOffsetX: number
+    pageOffsetY: number
+  } | null => {
+    const scroll = scrollAreaRef.current
+    const page = pageFrameRef.current
+    if (!scroll || !page || visualPageWidth <= 0 || visualPageHeight <= 0) return null
+    const scrollRect = scroll.getBoundingClientRect()
+    const pageRect = page.getBoundingClientRect()
+
+    const centerInScrollX = midpointClientX - scrollRect.left
+    const centerInScrollY = midpointClientY - scrollRect.top
+    const pageOffsetX = (pageRect.left - scrollRect.left) + scroll.scrollLeft
+    const pageOffsetY = (pageRect.top - scrollRect.top) + scroll.scrollTop
+    const centerInPageX = (scroll.scrollLeft + centerInScrollX) - pageOffsetX
+    const centerInPageY = (scroll.scrollTop + centerInScrollY) - pageOffsetY
+
+    const ratioX = Math.max(0, Math.min(1, centerInPageX / Math.max(1, visualPageWidth)))
+    const ratioY = Math.max(0, Math.min(1, centerInPageY / Math.max(1, visualPageHeight)))
+
+    return { ratioX, ratioY, centerInScrollX, centerInScrollY, pageOffsetX, pageOffsetY }
+  }, [])
+
+  const loadAnnotations = useCallback(() => {
+    if (!blueprint?.id) {
+      setAllAnnotations([])
+      return
+    }
+    try {
+      const backup = getBackupData()
+      const items = getOperationsBlueprintAnnotations(backup || {}, blueprint.id)
+      setAllAnnotations(Array.isArray(items) ? items : [])
+    } catch {
+      setAllAnnotations([])
+    }
+  }, [blueprint?.id])
+
+  const clearDoc = useCallback(async () => {
+    try {
+      if (renderTaskRef.current) {
+        try { renderTaskRef.current.cancel() } catch { }
+        renderTaskRef.current = null
+      }
+      if (pdfDocRef.current) {
+        try { await pdfDocRef.current.destroy() } catch { }
+      }
+      if (pinchZoomRafRef.current != null) {
+        try { cancelAnimationFrame(pinchZoomRafRef.current) } catch { }
+      }
+    } finally {
+      pdfDocRef.current = null
+      pinchZoomRafRef.current = null
+      pinchQueuedZoomRef.current = null
+      pendingPinchAnchorRef.current = null
+      setPdfDoc(null)
+      setNumPages(0)
+      setCurrentPage(1)
+      setPageInput('1')
+      setSignedUrl('')
+      setIsRendering(false)
+      setDisplaySize({ w: 0, h: 0 })
+      setDraftRect(null)
+      setDragStart(null)
+      setInkDraft(null)
+      setNoteEditor(null)
+      setRichTextEditor(null)
+      setFocusedAnnotationId(null)
+      setLayoutEditId(null)
+      setLayoutDrag(null)
+      setRelativeZoom(1)
+      setPinchPreviewZoom(null)
+      relativeZoomRef.current = 1
+      pinchPreviewZoomRef.current = null
+      displaySizeRef.current = { w: 0, h: 0 }
+      suppressAnnotationUntilRef.current = 0
+      activeTouchPointersRef.current.clear()
+      touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      mousePanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      setMousePanActive(false)
+      pinchStateRef.current = {
+        active: false,
+        startDistance: 0,
+        startZoom: 1,
+        lastDistance: 0,
+        lastCenter: null,
+        finalZoom: 1,
+      }
+      pendingPinchAnchorRef.current = null
+      pendingScrollResetRef.current = true
+    }
+  }, [])
+
+  const loadPdf = useCallback(async () => {
+    if (!blueprint) return
+    if (!hasStoragePath) {
+      setError('This blueprint is missing a storage path and cannot be opened.')
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+    try {
+      await clearDoc()
+      const url = await getBlueprintSignedUrl(blueprint.storagePath, 900)
+      setSignedUrl(url)
+
+      const pdfjsLib = await getPdfjsLib()
+      const loadingTask = pdfjsLib.getDocument({ url })
+      const doc = await loadingTask.promise
+      pdfDocRef.current = doc
+      setPdfDoc(doc)
+      setNumPages(doc.numPages || 0)
+      setCurrentPage(1)
+      setPageInput('1')
+      setRelativeZoom(1)
+      pendingScrollResetRef.current = true
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load blueprint PDF.')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [blueprint, clearDoc, hasStoragePath])
+
+  useEffect(() => {
+    if (!blueprint) {
+      clearDoc()
+      setError(null)
+      setAllAnnotations([])
+      return
+    }
+    loadAnnotations()
+    void loadPdf()
+    return () => { void clearDoc() }
+  }, [blueprint?.id])
+
+  useEffect(() => {
+    const el = scrollAreaRef.current
+    if (!el) return
+    const obs = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect) return
+      setViewportWidth(Math.floor(rect.width))
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [scrollAreaRef.current])
+
+  useEffect(() => {
+    if (!pdfDoc || !canvasRef.current) return
+    const clampedPage = Math.max(1, Math.min(numPages || 1, currentPage))
+    let isDisposed = false
+
+    const run = async () => {
+      setIsRendering(true)
+      setError(null)
+      try {
+        if (renderTaskRef.current) {
+          try { renderTaskRef.current.cancel() } catch { }
+          renderTaskRef.current = null
+        }
+
+        const page = await pdfDoc.getPage(clampedPage)
+        const baseViewport = page.getViewport({ scale: 1 })
+        const measuredWidth = viewportWidth || scrollAreaRef.current?.clientWidth || 0
+        const measuredHeight = scrollAreaRef.current?.clientHeight || 0
+        const availableWidth = Math.max(120, measuredWidth - 26)
+        const availableHeight = Math.max(120, measuredHeight - 26)
+        // Fit-to-Full-Page: fit the WHOLE sheet within the container, both
+        // dimensions. Picks the more constraining dimension (width or height)
+        // so nothing gets cut off. User zooms in from there.
+        const widthScale = availableWidth / Math.max(1, baseViewport.width)
+        const heightScale = measuredHeight > 0
+          ? availableHeight / Math.max(1, baseViewport.height)
+          : widthScale
+        const fitWidthScale = Math.max(0.01, Math.min(widthScale, heightScale))
+        const actualRenderScale = Math.max(
+          0.01,
+          Math.min(MAX_RENDER_SCALE, fitWidthScale * clampRelativeZoom(relativeZoom))
+        )
+        const viewport = page.getViewport({ scale: actualRenderScale })
+        const canvas = canvasRef.current
+        if (!canvas || isDisposed) return
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = Math.floor(viewport.width)
+        tempCanvas.height = Math.floor(viewport.height)
+        const tempContext = tempCanvas.getContext('2d', { alpha: false })
+        if (!tempContext) throw new Error('Could not get canvas context.')
+
+        const task = page.render({ canvasContext: tempContext, viewport })
+        renderTaskRef.current = task
+        await task.promise
+
+        if (isDisposed) return
+        const context = canvas.getContext('2d', { alpha: false })
+        if (!context) throw new Error('Could not get canvas context.')
+        canvas.width = tempCanvas.width
+        canvas.height = tempCanvas.height
+        canvas.style.width = `${tempCanvas.width}px`
+        canvas.style.height = `${tempCanvas.height}px`
+        context.drawImage(tempCanvas, 0, 0)
+        setDisplaySize({ w: tempCanvas.width, h: tempCanvas.height })
+
+        const pendingAnchor = pendingPinchAnchorRef.current
+        if (pendingAnchor && scrollAreaRef.current && pageFrameRef.current && !lockView) {
+          const scroll = scrollAreaRef.current
+          const scrollRect = scroll.getBoundingClientRect()
+          const pageRect = pageFrameRef.current.getBoundingClientRect()
+          const pageOffsetX = (pageRect.left - scrollRect.left) + scroll.scrollLeft
+          const pageOffsetY = (pageRect.top - scrollRect.top) + scroll.scrollTop
+          const targetLeft = pageOffsetX + (pendingAnchor.ratioX * tempCanvas.width) - pendingAnchor.centerInScrollX
+          const targetTop = pageOffsetY + (pendingAnchor.ratioY * tempCanvas.height) - pendingAnchor.centerInScrollY
+          clampScroll(scroll, targetLeft, targetTop)
+          pendingPinchAnchorRef.current = null
+        }
+
+        if (pendingScrollResetRef.current && scrollAreaRef.current) {
+          scrollAreaRef.current.scrollTop = 0
+          scrollAreaRef.current.scrollLeft = 0
+          pendingScrollResetRef.current = false
+        }
+      } catch (e: any) {
+        if (e?.name !== 'RenderingCancelledException') {
+          setError(e?.message || 'Failed to render PDF page.')
+        }
+      } finally {
+        if (!isDisposed) setIsRendering(false)
+      }
+    }
+
+    void run()
+    return () => {
+      isDisposed = true
+      if (renderTaskRef.current) {
+        try { renderTaskRef.current.cancel() } catch { }
+      }
+    }
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll])
+
+  useEffect(() => {
+    if (!isEditorOpen) return
+    setTimeout(() => {
+      if (richTextEditor) richTextEditorRef.current?.focus()
+      else noteEditorRef.current?.focus()
+    }, 20)
+  }, [isEditorOpen, richTextEditor])
+
+  // Sync isFullScreenView with the browser's native Fullscreen API state.
+  // Fires when user presses Esc, swipes down on iPad, or otherwise exits
+  // OS-level fullscreen, so the UI's "Exit Full Screen" toggle stays correct.
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const doc: any = document
+      const isInFullscreen = !!(doc.fullscreenElement || doc.webkitFullscreenElement)
+      if (!isInFullscreen) {
+        setIsFullScreenView(false)
+      }
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      const hasOpenState = !!(noteEditor || richTextEditor || draftRect || dragStart || inkDraft || focusedAnnotationId || layoutEditId)
+      if (hasOpenState) {
+        setDraftRect(null)
+        setDragStart(null)
+        setInkDraft(null)
+        setNoteEditor(null)
+        setRichTextEditor(null)
+        setFocusedAnnotationId(null)
+        setLayoutEditId(null)
+        setLayoutDrag(null)
+      } else if (isFullScreenView) {
+        setIsFullScreenView(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isFullScreenView, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId])
+
+  useEffect(() => {
+    pendingScrollResetRef.current = true
+    setRelativeZoom(1)
+  }, [currentPage, blueprint?.id])
+
+  useEffect(() => {
+    if (externalPage === null || externalPage === undefined) return
+
+    const requestedPage = Number(externalPage)
+    if (!Number.isFinite(requestedPage) || requestedPage < 1) return
+
+    const maxPage = Math.max(1, Number(numPages || 1))
+    const next = Math.max(1, Math.min(maxPage, Math.floor(requestedPage)))
+
+    if (next === currentPage) return
+
+    pendingScrollResetRef.current = true
+    setCurrentPage(next)
+    setPageInput(String(next))
+  }, [externalPage, numPages, currentPage])
+
+  useEffect(() => {
+    onPageChange?.(currentPage)
+  }, [currentPage, onPageChange])
+
+  const applyRelativeZoomDelta = useCallback((delta: number) => {
+    setRelativeZoom((z) => clampRelativeZoom(z + delta))
+  }, [])
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (lockView) {
+      e.preventDefault()
+      return
+    }
+    e.preventDefault()
+    const currentZoom = clampRelativeZoom(relativeZoomRef.current)
+    const delta = e.deltaY < 0 ? 0.1 : -0.1
+    const nextZoom = clampRelativeZoom(currentZoom + delta)
+    if (Math.abs(nextZoom - currentZoom) < 0.001) return
+
+    const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+    const currentVisualScale = Math.max(1, currentZoom / baseCommittedZoom)
+    const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
+    const currentVisualW = displaySizeRef.current.w * currentVisualScale
+    const currentVisualH = displaySizeRef.current.h * currentVisualScale
+    const nextVisualW = displaySizeRef.current.w * nextVisualScale
+    const nextVisualH = displaySizeRef.current.h * nextVisualScale
+    const anchor = getPinchAnchorFromMidpoint(e.clientX, e.clientY, currentVisualW, currentVisualH)
+    if (anchor) {
+      pendingPinchAnchorRef.current = {
+        ratioX: anchor.ratioX,
+        ratioY: anchor.ratioY,
+        centerInScrollX: anchor.centerInScrollX,
+        centerInScrollY: anchor.centerInScrollY,
+      }
+      const scroll = scrollAreaRef.current
+      if (scroll) {
+        const targetLeft = anchor.pageOffsetX + (anchor.ratioX * nextVisualW) - anchor.centerInScrollX
+        const targetTop = anchor.pageOffsetY + (anchor.ratioY * nextVisualH) - anchor.centerInScrollY
+        clampScroll(scroll, targetLeft, targetTop)
+      }
+    }
+    setRelativeZoom(nextZoom)
+  }, [lockView, clampScroll, getPinchAnchorFromMidpoint])
+
+  const pageLabel = useMemo(() => `${Math.max(1, currentPage)} / ${Math.max(1, numPages)}`, [currentPage, numPages])
+  useEffect(() => setPageInput(String(currentPage)), [currentPage])
+  const isCurrentPageSelected = useMemo(
+    () => selectedPageNumbers.includes(currentPage),
+    [selectedPageNumbers, currentPage]
+  )
+
+  const pageAnnotations = useMemo(
+    () => allAnnotations.filter(a => Number(a.pageNumber) === Number(currentPage)),
+    [allAnnotations, currentPage]
+  )
+
+  const toggleCurrentPageSelection = useCallback(() => {
+    if (!onSelectedPagesChange) return
+    const current = Math.max(1, Math.floor(currentPage))
+    if (selectedPageNumbers.includes(current)) {
+      onSelectedPagesChange(selectedPageNumbers.filter((p) => p !== current))
+      return
+    }
+    onSelectedPagesChange([...selectedPageNumbers, current])
+  }, [onSelectedPagesChange, selectedPageNumbers, currentPage])
+
+  const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
+    try {
+      const backup = getBackupData()
+      if (!backup) return
+      await upsertOperationsBlueprintAnnotation(backup, annotation)
+      loadAnnotations()
+      onAnnotationsChanged?.()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save annotation.')
+    }
+  }, [loadAnnotations, onAnnotationsChanged])
+
+  const removeAnnotation = useCallback(async (annotationId: string) => {
+    if (!blueprint?.id) return
+    try {
+      const backup = getBackupData()
+      if (!backup) return
+      await deleteOperationsBlueprintAnnotation(backup, blueprint.id, annotationId)
+      loadAnnotations()
+      setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
+      onAnnotationsChanged?.()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to delete annotation.')
+    }
+  }, [blueprint?.id, loadAnnotations, onAnnotationsChanged])
+
+  const jumpToPage = useCallback(() => {
+    const raw = Number(pageInput)
+    if (!Number.isFinite(raw)) return
+    const next = Math.max(1, Math.min(numPages || 1, Math.floor(raw)))
+    setCurrentPage(next)
+    setPageInput(String(next))
+    setFocusedAnnotationId(null)
+    setLayoutEditId(null)
+    setNoteEditor(null)
+    setRichTextEditor(null)
+    setDraftRect(null)
+    setDragStart(null)
+    setInkDraft(null)
+  }, [pageInput, numPages])
+
+  const openCreateNoteEditorAt = useCallback((normX: number, normY: number) => {
+    setFocusedAnnotationId(null)
+    setNoteEditor({
+      mode: 'create',
+      x: normX,
+      y: normY,
+      text: '',
+      color: activeColor,
+    })
+  }, [activeColor])
+
+  const openEditNoteEditor = useCallback((annotation: BlueprintAnnotation) => {
+    const rect = annotation.rect || { x: 0, y: 0 }
+    setFocusedAnnotationId(annotation.id)
+    setNoteEditor({
+      mode: 'edit',
+      annotationId: annotation.id,
+      x: rect.x || 0,
+      y: rect.y || 0,
+      text: annotation.text || '',
+      color: annotation.color || activeColor,
+    })
+  }, [activeColor])
+
+  const saveNoteEditor = useCallback(async () => {
+    if (!blueprint || !noteEditor) return
+    const now = new Date().toISOString()
+    if (noteEditor.mode === 'create') {
+      const trimmed = (noteEditor.text || '').trim()
+      if (!trimmed) {
+        setNoteEditor(null)
+        return
+      }
+      const ann: BlueprintAnnotation = {
+        id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        blueprintSetId: blueprint.id,
+        projectId: blueprint.projectId,
+        pageNumber: currentPage,
+        type: 'note',
+        rect: { x: noteEditor.x, y: noteEditor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM },
+        text: trimmed,
+        color: noteEditor.color || activeColor,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await persistAnnotation(ann)
+      setFocusedAnnotationId(ann.id)
+      setNoteEditor(null)
+      return
+    }
+
+    const existing = allAnnotations.find(a => a.id === noteEditor.annotationId)
+    if (!existing) {
+      setNoteEditor(null)
+      return
+    }
+    const updated: BlueprintAnnotation = {
+      ...existing,
+      text: (noteEditor.text || '').trim(),
+      color: noteEditor.color || activeColor,
+      updatedAt: now,
+    }
+    await persistAnnotation(updated)
+    setFocusedAnnotationId(updated.id)
+    setNoteEditor(null)
+  }, [blueprint, noteEditor, activeColor, currentPage, persistAnnotation, allAnnotations])
+
+
+  const openRichTextEditor = useCallback((annotation: BlueprintAnnotation) => {
+    const rect = clampRectToPage(annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
+    const meta = getAnnotationMeta(annotation)
+    const box = clampRectToPage(meta.box || rect)
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(null)
+    setRichTextEditor({
+      mode: 'edit',
+      annotationId: annotation.id,
+      annotationType: annotation.type === 'generate' ? 'generate' : annotation.type === 'callout' ? 'callout' : 'textBox',
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
+      anchor: meta.anchor,
+      text: annotation.text || '',
+      color: annotation.color || activeColor,
+      questionType: meta.questionType || generateQuestionType,
+    })
+    setTextStyle((prev) => ({
+      ...prev,
+      ...(meta.textStyle || {}),
+      color: meta.textStyle?.color || prev.color,
+      backgroundColor: meta.textStyle?.backgroundColor || prev.backgroundColor,
+    }))
+  }, [activeColor, generateQuestionType])
+
+  const openCreateRichTextEditor = useCallback((annotationType: 'textBox' | 'callout' | 'generate', rect: { x: number; y: number; w: number; h: number }, anchor?: { x: number; y: number }) => {
+    const safeRect = clampRectToPage(rect)
+    setFocusedAnnotationId(null)
+    setLayoutEditId(null)
+    setRichTextEditor({
+      mode: 'create',
+      annotationType,
+      x: safeRect.x,
+      y: safeRect.y,
+      w: safeRect.w,
+      h: safeRect.h,
+      anchor,
+      text: '',
+      color: activeColor,
+      questionType: generateQuestionType,
+    })
+  }, [activeColor, generateQuestionType])
+
+  const saveRichTextEditor = useCallback(async () => {
+    if (!blueprint || !richTextEditor) return
+    const trimmed = (richTextEditor.text || '').trim()
+    if (!trimmed) {
+      setRichTextEditor(null)
+      return
+    }
+
+    const now = new Date().toISOString()
+    const initialBox = { x: richTextEditor.x, y: richTextEditor.y, w: richTextEditor.w, h: richTextEditor.h }
+    const autoSize = richTextEditor.annotationType === 'callout' || richTextEditor.annotationType === 'generate'
+      ? estimateTextBoxSize(
+        trimmed,
+        Number(textStyle.fontSize || 13),
+        Math.max(1, displaySizeRef.current.w || displaySize.w),
+        Math.max(1, displaySizeRef.current.h || displaySize.h),
+        richTextEditor.annotationType === 'generate'
+      )
+      : null
+    const box = clampRectToPage(autoSize ? { ...initialBox, ...autoSize } : initialBox)
+    const anchor = richTextEditor.anchor || { x: box.x, y: box.y }
+    const baseMeta = {
+      box,
+      anchor,
+      textStyle: { ...textStyle, fontWeight: Number(textStyle.fontWeight || 400) },
+      questionType: richTextEditor.questionType || generateQuestionType,
+    }
+
+    if (richTextEditor.mode === 'create') {
+      const ann: BlueprintAnnotation = {
+        id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        blueprintSetId: blueprint.id,
+        projectId: blueprint.projectId,
+        pageNumber: currentPage,
+        type: richTextEditor.annotationType,
+        rect: richTextEditor.annotationType === 'textBox' ? box : { x: anchor.x, y: anchor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM },
+        text: trimmed,
+        color: richTextEditor.color || activeColor,
+        meta: baseMeta,
+        metadata: baseMeta,
+        createdAt: now,
+        updatedAt: now,
+      } as BlueprintAnnotation
+      await persistAnnotation(ann)
+      setFocusedAnnotationId(ann.id)
+      setRichTextEditor(null)
+      if (richTextEditor.annotationType === 'generate') {
+        onGenerateQuestion?.({
+          annotation: ann,
+          questionType: baseMeta.questionType,
+          question: trimmed,
+          pageNumber: currentPage,
+          blueprint,
+        })
+      }
+      return
+    }
+
+    const existing = allAnnotations.find(a => a.id === richTextEditor.annotationId)
+    if (!existing) {
+      setRichTextEditor(null)
+      return
+    }
+    const updated = withAnnotationMeta({
+      ...existing,
+      text: trimmed,
+      color: richTextEditor.color || activeColor,
+      rect: richTextEditor.annotationType === 'textBox' ? box : (existing.rect || { x: anchor.x, y: anchor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM }),
+      updatedAt: now,
+    }, baseMeta) as BlueprintAnnotation
+    await persistAnnotation(updated)
+    setFocusedAnnotationId(updated.id)
+    setRichTextEditor(null)
+    if (richTextEditor.annotationType === 'generate') {
+      onGenerateQuestion?.({
+        annotation: updated,
+        questionType: baseMeta.questionType,
+        question: trimmed,
+        pageNumber: currentPage,
+        blueprint,
+      })
+    }
+  }, [blueprint, richTextEditor, activeColor, currentPage, generateQuestionType, persistAnnotation, allAnnotations, onGenerateQuestion, textStyle, displaySize])
+
+  const updateAnnotationLayout = useCallback((annotationId: string, box: { x: number; y: number; w: number; h: number }) => {
+    const safeBox = clampRectToPage(box)
+    setAllAnnotations((prev) => prev.map((ann) => {
+      if (ann.id !== annotationId) return ann
+      if (ann.type === 'textBox' || ann.type === 'highlight' || ann.type === 'underline' || ann.type === 'shape') {
+        return { ...ann, rect: safeBox, updatedAt: new Date().toISOString() } as BlueprintAnnotation
+      }
+      return withAnnotationMeta({ ...ann, updatedAt: new Date().toISOString() }, { box: safeBox }) as BlueprintAnnotation
+    }))
+  }, [])
+
+  const commitAnnotationLayout = useCallback(async (annotationId: string) => {
+    const ann = allAnnotationsRef.current.find((item) => item.id === annotationId)
+    if (!ann) return
+    await persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+  }, [persistAnnotation])
+
+  const startAnnotationLayoutDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation, mode: 'move' | 'resize') => {
+    const meta = getAnnotationMeta(annotation)
+    const box = clampRectToPage(meta.box || annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    setLayoutDrag({
+      annotationId: annotation.id,
+      mode,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startBox: box,
+    })
+    try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+
+  const handleAnnotationLayoutPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (!layoutDrag || layoutDrag.pointerId !== e.pointerId || !overlayRef.current) return
+    const rect = overlayRef.current.getBoundingClientRect()
+    const dx = (e.clientX - layoutDrag.startClientX) / Math.max(1, rect.width)
+    const dy = (e.clientY - layoutDrag.startClientY) / Math.max(1, rect.height)
+    const start = layoutDrag.startBox
+    const next = layoutDrag.mode === 'resize'
+      ? { ...start, w: start.w + dx, h: start.h + dy }
+      : { ...start, x: start.x + dx, y: start.y + dy }
+    updateAnnotationLayout(layoutDrag.annotationId, next)
+    e.preventDefault()
+    e.stopPropagation()
+  }, [layoutDrag, updateAnnotationLayout])
+
+  const handleAnnotationLayoutPointerUp = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (!layoutDrag || layoutDrag.pointerId !== e.pointerId) return
+    const id = layoutDrag.annotationId
+    setLayoutDrag(null)
+    void commitAnnotationLayout(id)
+    e.preventDefault()
+    e.stopPropagation()
+  }, [layoutDrag, commitAnnotationLayout])
+
+  const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() < suppressAnnotationUntilRef.current) return
+    if (!blueprint || isEditorOpen) return
+    if (!overlayRef.current || !displaySize.w || !displaySize.h) return
+    const rect = overlayRef.current.getBoundingClientRect()
+    const px = e.clientX - rect.left
+    const py = e.clientY - rect.top
+    const n = toNorm(px, py, rect.width, rect.height)
+
+    if (effectiveTool === 'note') {
+      openCreateNoteEditorAt(n.x, n.y)
+      return
+    }
+
+    if (effectiveTool === 'callout' || effectiveTool === 'generate') {
+      const boxW = effectiveTool === 'generate' ? 0.28 : DEFAULT_CALLOUT_BOX.w
+      const boxH = effectiveTool === 'generate' ? 0.12 : DEFAULT_CALLOUT_BOX.h
+      const preferredX = n.x > 0.68 ? n.x - boxW - 0.04 : n.x + 0.04
+      const preferredY = n.y > 0.78 ? n.y - boxH - 0.04 : n.y + 0.04
+      openCreateRichTextEditor(
+        effectiveTool === 'generate' ? 'generate' : 'callout',
+        { x: preferredX, y: preferredY, w: boxW, h: boxH },
+        { x: n.x, y: n.y }
+      )
+    }
+  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor])
+
+  const getTouchPoints = useCallback(() => {
+    const points = Array.from(activeTouchPointersRef.current.values())
+    if (points.length < 2) return null
+    return [points[0], points[1]] as const
+  }, [])
+
+  const handleTwoFingerGesture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (lockView) return
+    if (e.pointerType !== 'touch') return
+
+    const pts = getTouchPoints()
+    if (!pts) return
+
+    const [p1, p2] = pts
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const distance = Math.hypot(dx, dy)
+    const center = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+    const scrollRect = scrollAreaRef.current?.getBoundingClientRect()
+    const midpointClientX = (scrollRect?.left || 0) + center.x
+    const midpointClientY = (scrollRect?.top || 0) + center.y
+    const state = pinchStateRef.current
+    const scroll = scrollAreaRef.current
+
+    if (!state.active) {
+      const startZoom = pinchPreviewZoomRef.current ?? relativeZoomRef.current
+      state.active = true
+      state.startDistance = distance
+      state.startZoom = startZoom
+      state.lastDistance = distance
+      state.lastCenter = center
+      state.finalZoom = startZoom
+      // PINCH DRIFT FIX: Capture the anchor ONCE at gesture start so subsequent
+      // move events reuse the same page-relative pinch midpoint. Without this,
+      // anchor recomputes against a scroll position that itself was moved by
+      // the previous frame, causing the page to drift right during pinch.
+      if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
+        const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+        const startVisualScale = Math.max(1, startZoom / baseCommittedZoom)
+        const startVisualW = displaySizeRef.current.w * startVisualScale
+        const startVisualH = displaySizeRef.current.h * startVisualScale
+        const startAnchor = getPinchAnchorFromMidpoint(midpointClientX, midpointClientY, startVisualW, startVisualH)
+        if (startAnchor) {
+          pendingPinchAnchorRef.current = {
+            ratioX: startAnchor.ratioX,
+            ratioY: startAnchor.ratioY,
+            centerInScrollX: startAnchor.centerInScrollX,
+            centerInScrollY: startAnchor.centerInScrollY,
+          }
+        }
+      }
+      return
+    }
+
+    if (!state.lastCenter) state.lastCenter = center
+
+    // Two-finger gesture is zoom-only for mobile MVP.
+
+    const distDelta = distance - state.lastDistance
+    const totalDistDelta = distance - state.startDistance
+
+    if (Math.abs(distDelta) >= PINCH_DEADZONE_PX || Math.abs(totalDistDelta) >= PINCH_DEADZONE_PX) {
+      const rawRatio = distance / Math.max(1, state.startDistance)
+      const nextZoom = clampRelativeZoom(state.startZoom * Math.pow(rawRatio, PINCH_SENSITIVITY))
+      const currentPreviewZoom = pinchPreviewZoomRef.current ?? state.finalZoom ?? state.startZoom
+
+      if (Math.abs(nextZoom - currentPreviewZoom) >= 0.005) {
+        // Reuse the anchor captured at pinch start (fixes drift). The anchor's
+        // ratioX/ratioY stay fixed to the page point under the user's fingers;
+        // only the visual width/height change as zoom changes.
+        if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
+          const startAnchor = pendingPinchAnchorRef.current
+          if (startAnchor) {
+            const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+            const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
+            const nextVisualW = displaySizeRef.current.w * nextVisualScale
+            const nextVisualH = displaySizeRef.current.h * nextVisualScale
+            // Get the page's current top-left offset (it may have moved between events)
+            const page = pageFrameRef.current
+            const scrollRect = scroll.getBoundingClientRect()
+            const pageRect = page?.getBoundingClientRect()
+            const pageOffsetX = pageRect ? (pageRect.left - scrollRect.left) + scroll.scrollLeft : 0
+            const pageOffsetY = pageRect ? (pageRect.top - scrollRect.top) + scroll.scrollTop : 0
+            const targetLeft = pageOffsetX + (startAnchor.ratioX * nextVisualW) - startAnchor.centerInScrollX
+            const targetTop = pageOffsetY + (startAnchor.ratioY * nextVisualH) - startAnchor.centerInScrollY
+            clampScroll(scroll, targetLeft, targetTop)
+          }
+        }
+
+        state.finalZoom = nextZoom
+        pinchQueuedZoomRef.current = nextZoom
+
+        if (pinchZoomRafRef.current == null) {
+          pinchZoomRafRef.current = requestAnimationFrame(() => {
+            pinchZoomRafRef.current = null
+            const queuedZoom = pinchQueuedZoomRef.current
+            pinchQueuedZoomRef.current = null
+            if (!Number.isFinite(Number(queuedZoom))) return
+
+            const safeZoom = clampRelativeZoom(Number(queuedZoom))
+            pinchPreviewZoomRef.current = safeZoom
+            setPinchPreviewZoom(safeZoom)
+          })
+        }
+      }
+    }
+
+    state.lastDistance = distance
+    state.lastCenter = center
+    suppressAnnotationUntilRef.current = Date.now() + 320
+    e.preventDefault()
+  }, [getTouchPoints, lockView, clampScroll, getPinchAnchorFromMidpoint])
+
+  const endTouchPointer = useCallback((pointerId: number) => {
+    activeTouchPointersRef.current.delete(pointerId)
+
+    if (activeTouchPointersRef.current.size < 2 && pinchStateRef.current.active) {
+      const state = pinchStateRef.current
+      const finalZoom = clampRelativeZoom(
+        Number(pinchPreviewZoomRef.current ?? state.finalZoom ?? relativeZoomRef.current)
+      )
+
+      const scroll = scrollAreaRef.current
+      const center = state.lastCenter
+      const currentZoom = Math.max(0.001, relativeZoomRef.current)
+      const previewScale = finalZoom / currentZoom
+
+      if (scroll && center && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
+        const previewWidth = displaySizeRef.current.w * previewScale
+        const previewHeight = displaySizeRef.current.h * previewScale
+
+        const scrollRect = scroll.getBoundingClientRect()
+        const midpointClientX = scrollRect.left + center.x
+        const midpointClientY = scrollRect.top + center.y
+        const anchor = getPinchAnchorFromMidpoint(midpointClientX, midpointClientY, previewWidth, previewHeight)
+        if (anchor) {
+          pendingPinchAnchorRef.current = {
+            ratioX: anchor.ratioX,
+            ratioY: anchor.ratioY,
+            centerInScrollX: anchor.centerInScrollX,
+            centerInScrollY: anchor.centerInScrollY,
+          }
+        }
+      }
+
+      pinchStateRef.current = {
+        active: false,
+        startDistance: 0,
+        startZoom: finalZoom,
+        lastDistance: 0,
+        lastCenter: null,
+        finalZoom,
+      }
+
+      suppressAnnotationUntilRef.current = Date.now() + 320
+      setRelativeZoom(finalZoom)
+      setPinchPreviewZoom(null)
+      pinchPreviewZoomRef.current = null
+    }
+  }, [getPinchAnchorFromMidpoint])
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      e.pointerType === 'mouse' &&
+      e.button === 0 &&
+      effectiveTool === 'select' &&
+      !isEditorOpen &&
+      !lockView
+    ) {
+      const targetEl = e.target as HTMLElement | null
+      if (targetEl?.closest('button, textarea, input, select, a')) {
+        return
+      }
+      mousePanRef.current = {
+        active: true,
+        pointerId: e.pointerId,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        moved: false,
+      }
+      setMousePanActive(true)
+      try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+      e.preventDefault()
+      return
+    }
+
+    if (e.pointerType === 'touch') {
+      if (lockView) {
+        e.preventDefault()
+        return
+      }
+      const rect = scrollAreaRef.current?.getBoundingClientRect()
+      if (rect) {
+        activeTouchPointersRef.current.set(e.pointerId, {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        })
+      }
+      if (activeTouchPointersRef.current.size >= 2) {
+        suppressAnnotationUntilRef.current = Date.now() + 280
+        touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+        setDragStart(null)
+        setDraftRect(null)
+        handleTwoFingerGesture(e)
+        e.preventDefault()
+        return
+      }
+
+      // One-finger pan only in Select/Pan mode.
+      if (activeTouchPointersRef.current.size === 1 && effectiveTool === 'select' && !isEditorOpen && !lockView) {
+        touchPanRef.current = {
+          active: true,
+          pointerId: e.pointerId,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          moved: false,
+        }
+        return
+      }
+    }
+    if (Date.now() < suppressAnnotationUntilRef.current) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (isEditorOpen) return
+    if (!overlayRef.current) return
+    const rect = overlayRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    if (effectiveTool === 'pen' || effectiveTool === 'marker') {
+      const firstPoint = [{ x, y }]
+      inkDraftRef.current = firstPoint
+      setInkDraft(firstPoint)
+      try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+      e.preventDefault()
+      return
+    }
+
+    if (effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape') {
+      dragStartRef.current = { x, y }
+      setDragStart({ x, y })
+      setDraftRect({ x, y, w: 0, h: 0 })
+      try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+      e.preventDefault()
+    }
+  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const mousePan = mousePanRef.current
+    if (
+      e.pointerType === 'mouse' &&
+      mousePan.active &&
+      mousePan.pointerId === e.pointerId &&
+      !lockView
+    ) {
+      const scroll = scrollAreaRef.current
+      if (scroll) {
+        const dx = e.clientX - mousePan.lastX
+        const dy = e.clientY - mousePan.lastY
+        scroll.scrollLeft -= dx
+        scroll.scrollTop -= dy
+        if (!mousePan.moved && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
+          mousePan.moved = true
+        }
+        mousePan.lastX = e.clientX
+        mousePan.lastY = e.clientY
+        e.preventDefault()
+        return
+      }
+    }
+
+    if (e.pointerType === 'touch') {
+      const rect = scrollAreaRef.current?.getBoundingClientRect()
+      if (rect) {
+        activeTouchPointersRef.current.set(e.pointerId, {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        })
+      }
+      if (activeTouchPointersRef.current.size >= 2 || pinchStateRef.current.active) {
+        setDragStart(null)
+        setDraftRect(null)
+        handleTwoFingerGesture(e)
+        e.preventDefault()
+        return
+      }
+
+      const pan = touchPanRef.current
+      if (
+        pan.active &&
+        pan.pointerId === e.pointerId &&
+        activeTouchPointersRef.current.size === 1 &&
+        effectiveTool === 'select' &&
+        !isEditorOpen &&
+        !lockView
+      ) {
+        const scroll = scrollAreaRef.current
+        if (scroll) {
+          const dx = e.clientX - pan.lastX
+          const dy = e.clientY - pan.lastY
+          scroll.scrollLeft -= dx
+          scroll.scrollTop -= dy
+          if (!pan.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+            pan.moved = true
+          }
+          pan.lastX = e.clientX
+          pan.lastY = e.clientY
+          e.preventDefault()
+          return
+        }
+      }
+    }
+    if (Date.now() < suppressAnnotationUntilRef.current) return
+    if (!overlayRef.current || isEditorOpen) return
+    const rect = overlayRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    if (effectiveTool === 'pen' || effectiveTool === 'marker') {
+      const currentPoints = inkDraftRef.current
+      if (!currentPoints) return
+      const nextPoints = [...currentPoints, { x, y }]
+      inkDraftRef.current = nextPoints
+      setInkDraft(nextPoints)
+      e.preventDefault()
+      return
+    }
+
+    const activeDragStart = dragStartRef.current || dragStart
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser') || !activeDragStart) return
+
+    const left = Math.min(activeDragStart.x, x)
+    const top = Math.min(activeDragStart.y, y)
+    const w = Math.abs(x - activeDragStart.x)
+    const h = Math.abs(y - activeDragStart.y)
+    setDraftRect({ x: left, y: top, w, h })
+  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView])
+
+  const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
+    const mousePan = mousePanRef.current
+    if (e.pointerType === 'mouse' && mousePan.active && mousePan.pointerId === e.pointerId) {
+      const moved = mousePan.moved
+      mousePanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+      setMousePanActive(false)
+      if (moved) {
+        const until = Date.now() + 300
+        suppressAnnotationUntilRef.current = until
+      }
+      e.preventDefault()
+      return
+    }
+
+    if (e.pointerType === 'touch') {
+      const pan = touchPanRef.current
+      if (pan.active && pan.pointerId === e.pointerId) {
+        const moved = pan.moved
+        touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
+        endTouchPointer(e.pointerId)
+        if (moved) {
+          suppressAnnotationUntilRef.current = Date.now() + 300
+        }
+        return
+      }
+      endTouchPointer(e.pointerId)
+      if (pinchStateRef.current.active || Date.now() < suppressAnnotationUntilRef.current) {
+        return
+      }
+    }
+    if (Date.now() < suppressAnnotationUntilRef.current) return
+    if (!overlayRef.current || !blueprint || isEditorOpen) return
+    const rect = overlayRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    if ((effectiveTool === 'pen' || effectiveTool === 'marker') && inkDraft) {
+      const points = [...inkDraft, { x, y }]
+      setInkDraft(null)
+      if (points.length < 2) return
+      const normPoints = normalizePoints(points, rect.width, rect.height)
+      const bounds = clampRectToPage(getPointsBounds(normPoints))
+      const options = effectiveTool === 'marker' ? markerOptions : drawOptions
+      const now = new Date().toISOString()
+      const meta = { points: normPoints, thickness: options.thickness, opacity: options.opacity }
+      const ann: BlueprintAnnotation = {
+        id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        blueprintSetId: blueprint.id,
+        projectId: blueprint.projectId,
+        pageNumber: currentPage,
+        type: effectiveTool,
+        rect: bounds,
+        color: activeColor,
+        meta,
+        metadata: meta,
+        createdAt: now,
+        updatedAt: now,
+      } as BlueprintAnnotation
+      await persistAnnotation(ann)
+      setFocusedAnnotationId(ann.id)
+      return
+    }
+
+    const activeDragStart = dragStartRef.current || dragStart
+
+    if (effectiveTool === 'eraser' && activeDragStart) {
+      const eraseNorm = normRectFromDrag(activeDragStart, { x, y }, rect.width, rect.height)
+      dragStartRef.current = null
+      setDragStart(null)
+      setDraftRect(null)
+      const toDelete = allAnnotationsRef.current.filter((a) => {
+        if (Number(a.pageNumber) !== Number(currentPage)) return false
+        const ar = a.rect
+        if (!ar) return false
+        return !(ar.x > eraseNorm.x + eraseNorm.w || ar.x + ar.w < eraseNorm.x || ar.y > eraseNorm.y + eraseNorm.h || ar.y + ar.h < eraseNorm.y)
+      })
+      for (const a of toDelete) { void removeAnnotation(a.id) }
+      return
+    }
+
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape') || !activeDragStart) return
+
+    const rawNorm = normRectFromDrag(activeDragStart, { x, y }, rect.width, rect.height)
+    const underlineY = toNorm(0, activeDragStart.y, rect.width, rect.height).y
+    const norm = effectiveTool === 'underline'
+      ? clampRectToPage({
+        x: rawNorm.x,
+        y: clampNorm(underlineY - 0.006, 0, 0.994),
+        w: rawNorm.w,
+        h: Math.max(rawNorm.h, 0.012),
+      })
+      : rawNorm
+    dragStartRef.current = null
+    setDragStart(null)
+    setDraftRect(null)
+
+    if (effectiveTool === 'underline') {
+      const minUnderlineWidth = 2 / Math.max(1, rect.width)
+      if (norm.w < minUnderlineWidth) return
+    } else if (norm.w < MIN_HIGHLIGHT_NORM || norm.h < MIN_HIGHLIGHT_NORM) return
+
+    if (effectiveTool === 'textBox') {
+      openCreateRichTextEditor('textBox', { ...norm, w: Math.max(norm.w, DEFAULT_TEXT_BOX.w), h: Math.max(norm.h, DEFAULT_TEXT_BOX.h) })
+      return
+    }
+
+    const now = new Date().toISOString()
+    const type = effectiveTool === 'underline' ? 'underline' : effectiveTool === 'shape' ? 'shape' : 'highlight'
+    const meta = effectiveTool === 'shape'
+      ? { shapeKind, ...shapeOptions }
+      : effectiveTool === 'underline'
+        ? { thickness: drawOptions.thickness, opacity: drawOptions.opacity }
+        : { op

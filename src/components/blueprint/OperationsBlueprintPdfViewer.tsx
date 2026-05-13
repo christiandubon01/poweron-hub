@@ -39,6 +39,7 @@ import {
   upsertOperationsBlueprintAnnotation,
 } from '@/services/blueprintLibraryService'
 import { getBackupData } from '@/services/backupDataService'
+import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './ToolPopover'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -324,12 +325,44 @@ export default function OperationsBlueprintPdfViewer({
   const [error, setError] = useState<string | null>(null)
   const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 })
   const [viewportWidth, setViewportWidth] = useState(0)
+  // containerReady: true once the scroll area has a non-zero height.
+  // Prevents Fit-to-Full-Page from running before the DOM is sized.
+  const [containerReady, setContainerReady] = useState(false)
 
   const [isFullScreenView, setIsFullScreenView] = useState(false)
 
   const [toolbarBucket, setToolbarBucket] = useState<ToolbarBucket>('annotate')
   const [toolMode, setToolMode] = useState<ToolMode>('select')
-  const [activeColor, setActiveColor] = useState('#facc15')
+
+  // Per-tool color memory (replaces single activeColor)
+  type ToolKey = 'highlight' | 'underline' | 'textBox' | 'pen' | 'marker' | 'eraser' | 'shape' | 'callout' | 'generate' | 'note'
+  const [toolColors, setToolColors] = useState<Record<ToolKey, string>>({
+    highlight: '#facc15',
+    underline: '#facc15',
+    textBox: '#111827',
+    pen: '#facc15',
+    marker: '#facc15',
+    eraser: '#facc15',
+    shape: '#facc15',
+    callout: '#facc15',
+    generate: '#facc15',
+    note: '#facc15',
+  })
+  const setToolColor = (tool: ToolKey, color: string) => setToolColors((prev) => ({ ...prev, [tool]: color }))
+
+  // Floating popover state
+  const [openPopover, setOpenPopover] = useState<{
+    tool: ToolMode
+    anchorEl: HTMLElement | null
+    mode: 'tool' | 'edit'
+    editingAnnotationId?: string
+  } | null>(null)
+
+  // Per-tool numeric options
+  const [eraserSize, setEraserSize] = useState(20)
+  const [highlightOpacity, setHighlightOpacity] = useState(35) // stored as 0-100 for stepper
+  const [underlineThickness, setUnderlineThickness] = useState(2)
+
   const [allAnnotations, setAllAnnotations] = useState<BlueprintAnnotation[]>([])
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
   const [layoutEditId, setLayoutEditId] = useState<string | null>(null)
@@ -375,10 +408,16 @@ export default function OperationsBlueprintPdfViewer({
   const [textStyle, setTextStyle] = useState({
     fontSize: 14,
     fontWeight: 400,
+    fontFamily: 'Helvetica',
     italic: false,
     underline: false,
+    bold: false,
     color: '#111827',
     backgroundColor: '#ffffff',
+    boxFill: 'transparent',
+    borderColor: 'transparent',
+    borderWidth: 1,
+    align: 'left' as 'left' | 'center' | 'right',
   })
   const [drawOptions, setDrawOptions] = useState({ thickness: 3, opacity: 0.85 })
   const [markerOptions, setMarkerOptions] = useState({ thickness: 12, opacity: 0.35 })
@@ -389,8 +428,9 @@ export default function OperationsBlueprintPdfViewer({
     borderThickness: 2,
     borderStyle: 'solid' as BorderStyle,
     hatchPattern: 'none' as HatchPattern,
-    fillColor: '#facc15',
+    fillColor: 'transparent',
     fillOpacity: 0.22,
+    opacity: 100, // 10-100 for stepper, % display
   })
   const [generateQuestionType, setGenerateQuestionType] = useState<GenerateQuestionType>('coordination')
 
@@ -573,13 +613,16 @@ export default function OperationsBlueprintPdfViewer({
       const rect = entries[0]?.contentRect
       if (!rect) return
       setViewportWidth(Math.floor(rect.width))
+      // Flip containerReady once the scroll area has a real height so
+      // the render effect can perform an accurate Fit-to-Full-Page calculation.
+      if (rect.height > 0) setContainerReady(true)
     })
     obs.observe(el)
     return () => obs.disconnect()
   }, [scrollAreaRef.current])
 
   useEffect(() => {
-    if (!pdfDoc || !canvasRef.current) return
+    if (!pdfDoc || !canvasRef.current || !containerReady) return
     const clampedPage = Math.max(1, Math.min(numPages || 1, currentPage))
     let isDisposed = false
 
@@ -667,7 +710,7 @@ export default function OperationsBlueprintPdfViewer({
         try { renderTaskRef.current.cancel() } catch { }
       }
     }
-  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll])
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll, containerReady])
 
   useEffect(() => {
     if (!isEditorOpen) return
@@ -853,9 +896,9 @@ export default function OperationsBlueprintPdfViewer({
       x: normX,
       y: normY,
       text: '',
-      color: activeColor,
+      color: toolColors.note,
     })
-  }, [activeColor])
+  }, [toolColors])
 
   const openEditNoteEditor = useCallback((annotation: BlueprintAnnotation) => {
     const rect = annotation.rect || { x: 0, y: 0 }
@@ -866,9 +909,9 @@ export default function OperationsBlueprintPdfViewer({
       x: rect.x || 0,
       y: rect.y || 0,
       text: annotation.text || '',
-      color: annotation.color || activeColor,
+      color: annotation.color || toolColors.note,
     })
-  }, [activeColor])
+  }, [toolColors])
 
   const saveNoteEditor = useCallback(async () => {
     if (!blueprint || !noteEditor) return
@@ -887,7 +930,7 @@ export default function OperationsBlueprintPdfViewer({
         type: 'note',
         rect: { x: noteEditor.x, y: noteEditor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM },
         text: trimmed,
-        color: noteEditor.color || activeColor,
+        color: noteEditor.color || toolColors.note,
         createdAt: now,
         updatedAt: now,
       }
@@ -905,13 +948,13 @@ export default function OperationsBlueprintPdfViewer({
     const updated: BlueprintAnnotation = {
       ...existing,
       text: (noteEditor.text || '').trim(),
-      color: noteEditor.color || activeColor,
+      color: noteEditor.color || toolColors.note,
       updatedAt: now,
     }
     await persistAnnotation(updated)
     setFocusedAnnotationId(updated.id)
     setNoteEditor(null)
-  }, [blueprint, noteEditor, activeColor, currentPage, persistAnnotation, allAnnotations])
+  }, [blueprint, noteEditor, toolColors, currentPage, persistAnnotation, allAnnotations])
 
 
   const openRichTextEditor = useCallback((annotation: BlueprintAnnotation) => {
@@ -930,7 +973,7 @@ export default function OperationsBlueprintPdfViewer({
       h: box.h,
       anchor: meta.anchor,
       text: annotation.text || '',
-      color: annotation.color || activeColor,
+      color: annotation.color || toolColors[annotation.type as ToolKey] || '#facc15',
       questionType: meta.questionType || generateQuestionType,
     })
     setTextStyle((prev) => ({
@@ -939,7 +982,7 @@ export default function OperationsBlueprintPdfViewer({
       color: meta.textStyle?.color || prev.color,
       backgroundColor: meta.textStyle?.backgroundColor || prev.backgroundColor,
     }))
-  }, [activeColor, generateQuestionType])
+  }, [toolColors, generateQuestionType])
 
   const openCreateRichTextEditor = useCallback((annotationType: 'textBox' | 'callout' | 'generate', rect: { x: number; y: number; w: number; h: number }, anchor?: { x: number; y: number }) => {
     const safeRect = clampRectToPage(rect)
@@ -954,10 +997,10 @@ export default function OperationsBlueprintPdfViewer({
       h: safeRect.h,
       anchor,
       text: '',
-      color: activeColor,
+      color: toolColors[annotationType as ToolKey] || '#facc15',
       questionType: generateQuestionType,
     })
-  }, [activeColor, generateQuestionType])
+  }, [toolColors, generateQuestionType])
 
   const saveRichTextEditor = useCallback(async () => {
     if (!blueprint || !richTextEditor) return
@@ -996,7 +1039,7 @@ export default function OperationsBlueprintPdfViewer({
         type: richTextEditor.annotationType,
         rect: richTextEditor.annotationType === 'textBox' ? box : { x: anchor.x, y: anchor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM },
         text: trimmed,
-        color: richTextEditor.color || activeColor,
+        color: richTextEditor.color || toolColors[richTextEditor.annotationType as ToolKey] || '#facc15',
         meta: baseMeta,
         metadata: baseMeta,
         createdAt: now,
@@ -1025,7 +1068,7 @@ export default function OperationsBlueprintPdfViewer({
     const updated = withAnnotationMeta({
       ...existing,
       text: trimmed,
-      color: richTextEditor.color || activeColor,
+      color: richTextEditor.color || toolColors[richTextEditor.annotationType as ToolKey] || '#facc15',
       rect: richTextEditor.annotationType === 'textBox' ? box : (existing.rect || { x: anchor.x, y: anchor.y, w: NOTE_MARKER_SIZE_NORM, h: NOTE_MARKER_SIZE_NORM }),
       updatedAt: now,
     }, baseMeta) as BlueprintAnnotation
@@ -1041,7 +1084,7 @@ export default function OperationsBlueprintPdfViewer({
         blueprint,
       })
     }
-  }, [blueprint, richTextEditor, activeColor, currentPage, generateQuestionType, persistAnnotation, allAnnotations, onGenerateQuestion, textStyle, displaySize])
+  }, [blueprint, richTextEditor, toolColors, currentPage, generateQuestionType, persistAnnotation, allAnnotations, onGenerateQuestion, textStyle, displaySize])
 
   const updateAnnotationLayout = useCallback((annotationId: string, box: { x: number; y: number; w: number; h: number }) => {
     const safeBox = clampRectToPage(box)
@@ -1366,7 +1409,7 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
-    if (effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape') {
+    if (effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
       dragStartRef.current = { x, y }
       setDragStart({ x, y })
       setDraftRect({ x, y, w: 0, h: 0 })
@@ -1457,7 +1500,7 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     const activeDragStart = dragStartRef.current || dragStart
-    if (!(effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser') || !activeDragStart) return
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser' || effectiveTool === 'callout' || effectiveTool === 'generate') || !activeDragStart) return
 
     const left = Math.min(activeDragStart.x, x)
     const top = Math.min(activeDragStart.y, y)
@@ -1518,7 +1561,7 @@ export default function OperationsBlueprintPdfViewer({
         pageNumber: currentPage,
         type: effectiveTool,
         rect: bounds,
-        color: activeColor,
+        color: toolColors[effectiveTool as ToolKey] || '#facc15',
         meta,
         metadata: meta,
         createdAt: now,
@@ -1543,6 +1586,28 @@ export default function OperationsBlueprintPdfViewer({
         return !(ar.x > eraseNorm.x + eraseNorm.w || ar.x + ar.w < eraseNorm.x || ar.y > eraseNorm.y + eraseNorm.h || ar.y + ar.h < eraseNorm.y)
       })
       for (const a of toDelete) { void removeAnnotation(a.id) }
+      return
+    }
+
+    // Callout/Generate: drag defines both the anchor (drag-start) and the box (dragged rect).
+    // Falls back to click-placement (via handleOverlayClick) when the drag is too small.
+    if ((effectiveTool === 'callout' || effectiveTool === 'generate') && activeDragStart) {
+      const rawNorm = normRectFromDrag(activeDragStart, { x, y }, rect.width, rect.height)
+      dragStartRef.current = null
+      setDragStart(null)
+      setDraftRect(null)
+      const anchor = toNorm(activeDragStart.x, activeDragStart.y, rect.width, rect.height)
+      if (rawNorm.w >= MIN_HIGHLIGHT_NORM && rawNorm.h >= MIN_HIGHLIGHT_NORM) {
+        const boxW = effectiveTool === 'generate' ? 0.28 : DEFAULT_CALLOUT_BOX.w
+        const boxH = effectiveTool === 'generate' ? 0.12 : DEFAULT_CALLOUT_BOX.h
+        const boxNorm = clampRectToPage({ ...rawNorm, w: Math.max(rawNorm.w, boxW), h: Math.max(rawNorm.h, boxH) })
+        openCreateRichTextEditor(
+          effectiveTool === 'generate' ? 'generate' : 'callout',
+          boxNorm,
+          anchor,
+        )
+      }
+      // If drag too small, handleOverlayClick will fire and handle single-click placement.
       return
     }
 
@@ -1586,7 +1651,7 @@ export default function OperationsBlueprintPdfViewer({
       pageNumber: currentPage,
       type,
       rect: norm,
-      color: effectiveTool === 'shape' ? shapeOptions.borderColor : activeColor,
+      color: effectiveTool === 'shape' ? shapeOptions.borderColor : (toolColors[effectiveTool as ToolKey] || '#facc15'),
       meta,
       metadata: meta,
       createdAt: now,
@@ -1594,7 +1659,7 @@ export default function OperationsBlueprintPdfViewer({
     } as BlueprintAnnotation
     await persistAnnotation(ann)
     setFocusedAnnotationId(ann.id)
-  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, activeColor, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions])
+  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const mousePan = mousePanRef.current
@@ -1645,6 +1710,396 @@ export default function OperationsBlueprintPdfViewer({
   const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, clampRelativeZoom(relativeZoom)))
   const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
+
+  // ─── Annotation ↔ tool-key mapping ────────────────────────────────────────
+  function annotationTypeToToolKey(type: string): ToolKey | null {
+    const map: Record<string, ToolKey> = {
+      highlight: 'highlight', underline: 'underline', textBox: 'textBox',
+      pen: 'pen', marker: 'marker', shape: 'shape', callout: 'callout',
+      generate: 'generate',
+    }
+    return map[type] ?? null
+  }
+
+  // ─── Edit-mode helpers ────────────────────────────────────────────────────
+  const editingAnnotation = openPopover?.editingAnnotationId
+    ? (allAnnotations.find(a => a.id === openPopover.editingAnnotationId) ?? null)
+    : null
+
+  const persistEditAnnotation = (changes: Partial<BlueprintAnnotation>) => {
+    if (!editingAnnotation) return
+    void persistAnnotation({ ...editingAnnotation, ...changes, updatedAt: new Date().toISOString() })
+  }
+
+  const persistEditAnnotationMeta = (metaChanges: Record<string, any>) => {
+    if (!editingAnnotation) return
+    const updated = withAnnotationMeta(
+      { ...editingAnnotation, updatedAt: new Date().toISOString() },
+      { ...getAnnotationMeta(editingAnnotation), ...metaChanges }
+    )
+    void persistAnnotation(updated)
+  }
+
+  // ─── Per-tool popover content ─────────────────────────────────────────────
+  const FONT_FAMILIES = [
+    { label: 'Helvetica', value: 'Helvetica' },
+    { label: 'Arial', value: 'Arial' },
+    { label: 'Times New Roman', value: 'Times New Roman' },
+    { label: 'Courier', value: 'Courier' },
+    { label: 'Georgia', value: 'Georgia' },
+  ]
+  const WEIGHT_OPTIONS = [
+    { label: 'Light', value: '300' },
+    { label: 'Regular', value: '400' },
+    { label: 'Semibold', value: '600' },
+    { label: 'Bold', value: '700' },
+  ]
+  const ALIGN_OPTIONS = [
+    { label: 'Left', value: 'left' },
+    { label: 'Center', value: 'center' },
+    { label: 'Right', value: 'right' },
+  ]
+
+  type PopoverContent = { title: string; primary: React.ReactNode; additional?: React.ReactNode }
+
+  const getPopoverContent = (): PopoverContent | null => {
+    if (!openPopover) return null
+    const { tool, mode } = openPopover
+    const isEdit = mode === 'edit'
+    const eMeta = editingAnnotation ? getAnnotationMeta(editingAnnotation) : {}
+
+    // ── 1. HIGHLIGHTER ────────────────────────────────────────────────────
+    if (tool === 'highlight') {
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.highlight) : toolColors.highlight
+      const opacity = isEdit ? Math.round((eMeta.opacity ?? 0.35) * 100) : highlightOpacity
+      return {
+        title: 'Highlighter',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('highlight', c)
+            }} />
+          </>
+        ),
+        additional: (
+          <Stepper label="Opacity" value={opacity} min={10} max={100} step={5} unit="%"
+            onChange={(v) => {
+              if (isEdit) persistEditAnnotationMeta({ opacity: v / 100 })
+              else setHighlightOpacity(v)
+            }} />
+        ),
+      }
+    }
+
+    // ── 2. UNDERLINE ──────────────────────────────────────────────────────
+    if (tool === 'underline') {
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.underline) : toolColors.underline
+      const thickness = isEdit ? (eMeta.thickness ?? underlineThickness) : underlineThickness
+      return {
+        title: 'Underline',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('underline', c)
+            }} />
+            <Stepper label="Thickness" value={thickness} min={0.5} max={20} step={0.5} unit="px"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ thickness: v })
+                else setUnderlineThickness(v)
+              }} />
+          </>
+        ),
+      }
+    }
+
+    // ── 3. TEXT BOX ───────────────────────────────────────────────────────
+    if (tool === 'textBox') {
+      const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
+      const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
+      const updateTs = (patch: Partial<typeof textStyle>) => {
+        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...tsMeta, ...patch } })
+        else setTextStyle((p) => ({ ...p, ...patch }))
+      }
+      return {
+        title: 'Text Box',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Text Color</div>
+            <ColorRow value={ts.color} onChange={(c) => updateTs({ color: c })} />
+            <LabeledSelect label="Font" value={ts.fontFamily ?? 'Helvetica'} options={FONT_FAMILIES}
+              onChange={(v) => updateTs({ fontFamily: v })} />
+            <LabeledSelect label="Weight" value={String(ts.fontWeight ?? 400)} options={WEIGHT_OPTIONS}
+              onChange={(v) => updateTs({ fontWeight: Number(v) })} />
+            <Stepper label="Size" value={ts.fontSize ?? 14} min={6} max={144} step={0.5} unit="pt"
+              onChange={(v) => updateTs({ fontSize: v })} />
+            <ToggleRow buttons={[
+              { label: <Bold size={11} />, active: !!(ts.bold), onClick: () => updateTs({ bold: !ts.bold }) },
+              { label: <Italic size={11} />, active: !!(ts.italic), onClick: () => updateTs({ italic: !ts.italic }) },
+              { label: <Underline size={11} />, active: !!(ts.underline), onClick: () => updateTs({ underline: !ts.underline }) },
+            ]} />
+          </>
+        ),
+        additional: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Box Fill</div>
+            <ColorRow value={ts.boxFill ?? 'transparent'} allowTransparent
+              onChange={(c) => updateTs({ boxFill: c })} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4, marginTop: 4 }}>Border Color</div>
+            <ColorRow value={ts.borderColor ?? 'transparent'} allowTransparent
+              onChange={(c) => updateTs({ borderColor: c })} />
+            <Stepper label="Border Width" value={ts.borderWidth ?? 1} min={0.5} max={20} step={0.5} unit="px"
+              onChange={(v) => updateTs({ borderWidth: v })} />
+            <LabeledSelect label="Alignment" value={ts.align ?? 'left'} options={ALIGN_OPTIONS}
+              onChange={(v) => updateTs({ align: v as 'left' | 'center' | 'right' })} />
+          </>
+        ),
+      }
+    }
+
+    // ── 4. PEN ────────────────────────────────────────────────────────────
+    if (tool === 'pen') {
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.pen) : toolColors.pen
+      const thickness = isEdit ? (eMeta.thickness ?? drawOptions.thickness) : drawOptions.thickness
+      const opacity = isEdit ? Math.round((eMeta.opacity ?? drawOptions.opacity) * 100) : Math.round(drawOptions.opacity * 100)
+      return {
+        title: 'Pen',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('pen', c)
+            }} />
+            <Stepper label="Thickness" value={thickness} min={0.5} max={20} step={0.5} unit="px"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ thickness: v })
+                else setDrawOptions((p) => ({ ...p, thickness: v }))
+              }} />
+            <Stepper label="Opacity" value={opacity} min={10} max={100} step={5} unit="%"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ opacity: v / 100 })
+                else setDrawOptions((p) => ({ ...p, opacity: v / 100 }))
+              }} />
+          </>
+        ),
+      }
+    }
+
+    // ── 5. MARKER ────────────────────────────────────────────────────────
+    if (tool === 'marker') {
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.marker) : toolColors.marker
+      const thickness = isEdit ? (eMeta.thickness ?? markerOptions.thickness) : markerOptions.thickness
+      const opacity = isEdit ? Math.round((eMeta.opacity ?? markerOptions.opacity) * 100) : Math.round(markerOptions.opacity * 100)
+      return {
+        title: 'Marker',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('marker', c)
+            }} />
+            <Stepper label="Thickness" value={thickness} min={4} max={40} step={1} unit="px"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ thickness: v })
+                else setMarkerOptions((p) => ({ ...p, thickness: v }))
+              }} />
+            <Stepper label="Opacity" value={opacity} min={10} max={100} step={5} unit="%"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ opacity: v / 100 })
+                else setMarkerOptions((p) => ({ ...p, opacity: v / 100 }))
+              }} />
+          </>
+        ),
+      }
+    }
+
+    // ── 6. ERASER ────────────────────────────────────────────────────────
+    if (tool === 'eraser') {
+      return {
+        title: 'Eraser',
+        primary: (
+          <Stepper label="Size" value={eraserSize} min={4} max={80} step={1} unit="px"
+            onChange={setEraserSize} />
+        ),
+      }
+    }
+
+    // ── 7. SHAPE ─────────────────────────────────────────────────────────
+    if (tool === 'shape') {
+      const borderColor = isEdit ? (eMeta.borderColor ?? shapeOptions.borderColor) : shapeOptions.borderColor
+      const borderThickness = isEdit ? (eMeta.borderThickness ?? shapeOptions.borderThickness) : shapeOptions.borderThickness
+      const fillColor = isEdit ? (eMeta.fillColor ?? shapeOptions.fillColor) : shapeOptions.fillColor
+      const borderStyle = isEdit ? (eMeta.borderStyle ?? shapeOptions.borderStyle) : shapeOptions.borderStyle
+      const hatchPattern = isEdit ? (eMeta.hatchPattern ?? shapeOptions.hatchPattern) : shapeOptions.hatchPattern
+      const opacityPct = isEdit ? Math.round((eMeta.fillOpacity ?? shapeOptions.fillOpacity) * 100) : Math.round(shapeOptions.fillOpacity * 100)
+      const currentKind = isEdit ? (eMeta.shapeKind ?? shapeKind) : shapeKind
+      return {
+        title: 'Shape',
+        primary: (
+          <>
+            <LabeledSelect label="Shape" value={currentKind}
+              options={[
+                { label: 'Square', value: 'square' },
+                { label: 'Circle', value: 'circle' },
+                { label: 'Line', value: 'line' },
+                { label: 'Arrow', value: 'arrow' },
+              ]}
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ shapeKind: v })
+                else setShapeKind(v as ShapeKind)
+              }} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Border Color</div>
+            <ColorRow value={borderColor} onChange={(c) => {
+              if (isEdit) persistEditAnnotationMeta({ borderColor: c })
+              else setShapeOptions((p) => ({ ...p, borderColor: c }))
+            }} />
+            <Stepper label="Border Thickness" value={borderThickness} min={0.5} max={20} step={0.5} unit="px"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ borderThickness: v })
+                else setShapeOptions((p) => ({ ...p, borderThickness: v }))
+              }} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Fill Color</div>
+            <ColorRow value={fillColor} allowTransparent onChange={(c) => {
+              if (isEdit) persistEditAnnotationMeta({ fillColor: c })
+              else setShapeOptions((p) => ({ ...p, fillColor: c }))
+            }} />
+          </>
+        ),
+        additional: (
+          <>
+            <LabeledSelect label="Border Style" value={borderStyle}
+              options={[
+                { label: 'Solid', value: 'solid' },
+                { label: 'Dashed', value: 'dashed' },
+                { label: 'Dotted', value: 'dotted' },
+              ]}
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ borderStyle: v })
+                else setShapeOptions((p) => ({ ...p, borderStyle: v as BorderStyle }))
+              }} />
+            <LabeledSelect label="Hatch" value={hatchPattern}
+              options={[
+                { label: 'None', value: 'none' },
+                { label: 'Diagonal', value: 'diagonal' },
+                { label: 'Cross Hatch', value: 'cross' },
+                { label: 'Horizontal', value: 'horizontal' },
+                { label: 'Vertical', value: 'vertical' },
+              ]}
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ hatchPattern: v })
+                else setShapeOptions((p) => ({ ...p, hatchPattern: v as HatchPattern }))
+              }} />
+            <Stepper label="Opacity" value={opacityPct} min={10} max={100} step={5} unit="%"
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ fillOpacity: v / 100 })
+                else setShapeOptions((p) => ({ ...p, fillOpacity: v / 100 }))
+              }} />
+          </>
+        ),
+      }
+    }
+
+    // ── 8. CALLOUT ───────────────────────────────────────────────────────
+    if (tool === 'callout') {
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.callout) : toolColors.callout
+      const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
+      const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
+      const updateTs = (patch: Partial<typeof textStyle>) => {
+        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...tsMeta, ...patch } })
+        else setTextStyle((p) => ({ ...p, ...patch }))
+      }
+      const boxFillVal = ts.boxFill ?? 'transparent'
+      const sizeVal = ts.fontSize ?? 14
+      return {
+        title: 'Callout',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Border / Arrow Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('callout', c)
+            }} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Text Color</div>
+            <ColorRow value={ts.color} onChange={(c) => updateTs({ color: c })} />
+            <LabeledSelect label="Font" value={ts.fontFamily ?? 'Helvetica'} options={FONT_FAMILIES}
+              onChange={(v) => updateTs({ fontFamily: v })} />
+            <Stepper label="Size" value={sizeVal} min={6} max={144} step={0.5} unit="pt"
+              onChange={(v) => updateTs({ fontSize: v })} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Box Fill</div>
+            <ColorRow value={boxFillVal} allowTransparent onChange={(c) => updateTs({ boxFill: c })} />
+          </>
+        ),
+        additional: (
+          <>
+            <Stepper label="Border Thickness" value={ts.borderWidth ?? 1} min={0.5} max={20} step={0.5} unit="px"
+              onChange={(v) => updateTs({ borderWidth: v })} />
+            <ToggleRow buttons={[
+              { label: <Bold size={11} />, active: !!(ts.bold), onClick: () => updateTs({ bold: !ts.bold }) },
+              { label: <Italic size={11} />, active: !!(ts.italic), onClick: () => updateTs({ italic: !ts.italic }) },
+            ]} />
+            <LabeledSelect label="Alignment" value={ts.align ?? 'left'} options={ALIGN_OPTIONS}
+              onChange={(v) => updateTs({ align: v as 'left' | 'center' | 'right' })} />
+          </>
+        ),
+      }
+    }
+
+    // ── 9. GENERATE ──────────────────────────────────────────────────────
+    if (tool === 'generate') {
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.generate) : toolColors.generate
+      const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
+      const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
+      const updateTs = (patch: Partial<typeof textStyle>) => {
+        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...tsMeta, ...patch } })
+        else setTextStyle((p) => ({ ...p, ...patch }))
+      }
+      const qType = isEdit ? (eMeta.questionType ?? generateQuestionType) : generateQuestionType
+      return {
+        title: 'Generate',
+        primary: (
+          <>
+            <LabeledSelect label="Question Type" value={qType}
+              options={[
+                { label: 'Coordination', value: 'coordination' },
+                { label: 'RFI', value: 'rfi' },
+              ]}
+              onChange={(v) => {
+                if (isEdit) persistEditAnnotationMeta({ questionType: v })
+                else setGenerateQuestionType(v as GenerateQuestionType)
+              }} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Border Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('generate', c)
+            }} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Text Color</div>
+            <ColorRow value={ts.color} onChange={(c) => updateTs({ color: c })} />
+          </>
+        ),
+        additional: (
+          <>
+            <LabeledSelect label="Font" value={ts.fontFamily ?? 'Helvetica'} options={FONT_FAMILIES}
+              onChange={(v) => updateTs({ fontFamily: v })} />
+            <Stepper label="Size" value={ts.fontSize ?? 14} min={6} max={144} step={0.5} unit="pt"
+              onChange={(v) => updateTs({ fontSize: v })} />
+            <ToggleRow buttons={[
+              { label: <Bold size={11} />, active: !!(ts.bold), onClick: () => updateTs({ bold: !ts.bold }) },
+              { label: <Italic size={11} />, active: !!(ts.italic), onClick: () => updateTs({ italic: !ts.italic }) },
+            ]} />
+          </>
+        ),
+      }
+    }
+
+    return null
+  }
+
+  const _popoverContent = getPopoverContent()
 
   return (
     <div
@@ -1758,7 +2213,9 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          <div className="px-4 py-3 border-b border-gray-800 space-y-3">
+          {/* ── Toolbar: 5 bucket selectors + tool buttons (popovers handle options) ── */}
+          <div className="px-4 py-3 border-b border-gray-800 space-y-2">
+            {/* Bucket selectors */}
             <div className="flex flex-wrap items-center gap-2">
               {([
                 ['annotate', 'Annotate'],
@@ -1781,181 +2238,96 @@ export default function OperationsBlueprintPdfViewer({
                 </button>
               ))}
               <span className="text-xs text-gray-400 ml-2">
-                Active Tool: {annotationLabel({ type: toolMode } as BlueprintAnnotation)}{isEditorOpen ? ' (editing)' : ''}
+                Active: <span className="text-gray-200">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
               </span>
             </div>
 
+            {/* Annotate bucket */}
             {toolbarBucket === 'annotate' && (
-              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3">
-                <div className="rounded-lg border border-gray-800 bg-[#10131c] p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-2">Annotate</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={() => { setToolMode('select'); setLayoutEditId(null) }} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><MousePointer2 size={12} /> Select / Pan</button>
-                    <button onClick={() => setToolMode('highlight')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'highlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Highlighter size={12} /> Text Highlighter</button>
-                    <button onClick={() => setToolMode('underline')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Underline size={12} /> Underline</button>
-                    <button onClick={() => setToolMode('textBox')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Type size={12} /> Insert Text Box</button>
-                    <button onClick={() => setToolMode('note')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><StickyNote size={12} /> Add Note</button>
-                    <button onClick={() => { setToolMode('generate'); setToolbarBucket('generate') }} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300'}`}><Sparkles size={12} /> Generate</button>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-400">Shape / mark color:</span>
-                    {ANNOTATION_COLORS.map((c) => (
-                      <button key={c} onClick={() => { setActiveColor(c); setNoteEditor((prev) => (prev ? { ...prev, color: c } : prev)); setRichTextEditor((prev) => (prev ? { ...prev, color: c } : prev)) }} className={`w-5 h-5 rounded-full border ${activeColor === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-gray-800 bg-[#10131c] p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-2">Text formatting</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select value={textStyle.fontSize} onChange={(e) => setTextStyle((prev) => ({ ...prev, fontSize: Number(e.target.value) }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">
-                      {FONT_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}px</option>)}
-                    </select>
-                    <label className="inline-flex items-center gap-1 text-xs text-gray-300">
-                      <Bold size={12} />
-                      <select value={textStyle.fontWeight} onChange={(e) => setTextStyle((prev) => ({ ...prev, fontWeight: Number(e.target.value) }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">
-                        {FONT_WEIGHT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                    </label>
-                    <button onClick={() => setTextStyle((prev) => ({ ...prev, italic: !prev.italic }))} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${textStyle.italic ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Italic size={12} /> Italic</button>
-                    <button onClick={() => setTextStyle((prev) => ({ ...prev, underline: !prev.underline }))} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${textStyle.underline ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Underline size={12} /> Text underline</button>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-400">Text color:</span>
-                    {TEXT_COLOR_OPTIONS.map((c) => <button key={c} onClick={() => setTextStyle((prev) => ({ ...prev, color: c }))} className={`w-5 h-5 rounded-full border ${textStyle.color === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                    <span className="text-xs text-gray-400 ml-2">Box:</span>
-                    {TEXT_COLOR_OPTIONS.map((c) => <button key={c} onClick={() => setTextStyle((prev) => ({ ...prev, backgroundColor: c }))} className={`w-5 h-5 rounded-full border ${textStyle.backgroundColor === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-gray-800 bg-[#10131c] p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-2">Pen, marker and shapes</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={() => setToolMode('pen')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><PenLine size={12} /> Pen</button>
-                    <button onClick={() => setToolMode('marker')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Highlighter size={12} /> Marker</button>
-                    <button onClick={() => setToolMode('eraser')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300'}`}><Eraser size={12} /> Eraser</button>
-                    <button
-                      onClick={() => {
-                        setToolbarBucket('draw')
-                        setToolMode('shape')
-                        setShowShapePicker(true)
-                      }}
-                      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                    >
-                      <Shapes size={12} />
-                      Shapes
-                    </button>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-400">Pen thickness:</span>
-                    <select value={drawOptions.thickness} onChange={(e) => setDrawOptions((prev) => ({ ...prev, thickness: Number(e.target.value) }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">{THICKNESS_OPTIONS.map(v => <option key={v} value={v}>{v}px</option>)}</select>
-                    <span className="text-xs text-gray-400">Marker opacity:</span>
-                    <select value={markerOptions.opacity} onChange={(e) => setMarkerOptions((prev) => ({ ...prev, opacity: Number(e.target.value) }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">{OPACITY_OPTIONS.map(v => <option key={v} value={v}>{Math.round(v * 100)}%</option>)}</select>
-                  </div>
-                </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => { setToolMode('select'); setLayoutEditId(null); setOpenPopover(null) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><MousePointer2 size={12} /> Select / Pan</button>
+                <button
+                  onClick={(e) => { setToolMode('highlight'); setOpenPopover({ tool: 'highlight', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'highlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Highlighter size={12} /> Highlighter</button>
+                <button
+                  onClick={(e) => { setToolMode('underline'); setOpenPopover({ tool: 'underline', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Underline size={12} /> Underline</button>
+                <button
+                  onClick={(e) => { setToolMode('textBox'); setOpenPopover({ tool: 'textBox', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Type size={12} /> Text Box</button>
+                <button
+                  onClick={() => { setToolMode('note'); setOpenPopover(null) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><StickyNote size={12} /> Note</button>
               </div>
             )}
 
+            {/* Callouts bucket */}
             {toolbarBucket === 'callouts' && (
-              <div className="rounded-lg border border-gray-800 bg-[#10131c] p-3 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={() => setToolMode('callout')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><ArrowUpRight size={12} /> Create Callout</button>
-                  <span className="text-xs text-gray-400">Click the exact blueprint point. The callout saves as an auto-sized text box with a two-axis arrow.</span>
-                  <span className="text-xs text-gray-500">After saving, select it, click Move, then drag the box or its corner to resize.</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-gray-400">Shape color:</span>
-                  {ANNOTATION_COLORS.map((c) => <button key={c} onClick={() => { setActiveColor(c); setRichTextEditor((prev) => prev ? { ...prev, color: c } : prev) }} className={`w-5 h-5 rounded-full border ${activeColor === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                  <span className="ml-2 text-xs text-gray-400">Text color:</span>
-                  {TEXT_COLOR_OPTIONS.map((c) => <button key={c} onClick={() => setTextStyle((prev) => ({ ...prev, color: c }))} className={`w-5 h-5 rounded-full border ${textStyle.color === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={(e) => { setToolMode('callout'); setOpenPopover({ tool: 'callout', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><ArrowUpRight size={12} /> Create Callout</button>
+                <span className="text-xs text-gray-500">Drag to define the callout box — the drag start point becomes the anchor.</span>
               </div>
             )}
 
+            {/* Draw bucket */}
             {toolbarBucket === 'draw' && (
-              <div className="rounded-lg border border-gray-800 bg-[#10131c] p-3 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={() => setToolMode('pen')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><PenLine size={12} /> Pen</button>
-                  <button onClick={() => setToolMode('marker')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><Highlighter size={12} /> Marker</button>
-                  <button onClick={() => setToolMode('eraser')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300'}`}><Eraser size={12} /> Eraser</button>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setToolMode('shape')
-                        setShowShapePicker((v) => !v)
-                      }}
-                      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                    >
-                      <Shapes size={12} />
-                      Shapes
-                    </button>
-
-                    {showShapePicker && (
-                      <div className="absolute left-0 top-8 z-50 w-56 rounded-lg border border-gray-700 bg-[#111827] p-2 shadow-xl">
-                        <div className="mb-2 text-[11px] uppercase tracking-wide text-gray-400">Pick shape</div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {(['square', 'circle', 'line', 'arrow'] as ShapeKind[]).map((kind) => (
-                            <button
-                              key={kind}
-                              type="button"
-                              onClick={() => {
-                                setShapeKind(kind)
-                                setToolMode('shape')
-                                setShowShapePicker(false)
-                              }}
-                              className={`inline-flex items-center justify-center gap-1 rounded-md border px-2 py-2 text-xs ${shapeKind === kind ? 'border-blue-500 bg-blue-900/20 text-blue-300' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                            >
-                              {kind === 'square' && <Square size={13} />}
-                              {kind === 'circle' && <Circle size={13} />}
-                              {kind === 'line' && <Minus size={13} />}
-                              {kind === 'arrow' && <ArrowUpRight size={13} />}
-                              {kind}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-gray-400">Selected shape: {shapeKind}</span>
-                  <span className="text-xs text-gray-400 ml-2">Border:</span>
-                  <select value={shapeOptions.borderThickness} onChange={(e) => setShapeOptions((prev) => ({ ...prev, borderThickness: Number(e.target.value) }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">{THICKNESS_OPTIONS.map(v => <option key={v} value={v}>{v}px</option>)}</select>
-                  <select value={shapeOptions.borderStyle} onChange={(e) => setShapeOptions((prev) => ({ ...prev, borderStyle: e.target.value as BorderStyle }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1"><option value="solid">solid</option><option value="dashed">dashed</option><option value="dotted">dotted</option></select>
-                  <select value={shapeOptions.hatchPattern} onChange={(e) => setShapeOptions((prev) => ({ ...prev, hatchPattern: e.target.value as HatchPattern }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1"><option value="none">no hatch</option><option value="diagonal">diagonal hatch</option><option value="cross">cross hatch</option><option value="dots">dots</option></select>
-                  <select value={shapeOptions.fillOpacity} onChange={(e) => setShapeOptions((prev) => ({ ...prev, fillOpacity: Number(e.target.value) }))} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">{OPACITY_OPTIONS.map(v => <option key={v} value={v}>{Math.round(v * 100)}% fill</option>)}</select>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-gray-400">Border color:</span>
-                  {ANNOTATION_COLORS.map((c) => <button key={c} onClick={() => setShapeOptions((prev) => ({ ...prev, borderColor: c }))} className={`w-5 h-5 rounded-full border ${shapeOptions.borderColor === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                  <span className="text-xs text-gray-400 ml-2">Fill:</span>
-                  {ANNOTATION_COLORS.map((c) => <button key={c} onClick={() => setShapeOptions((prev) => ({ ...prev, fillColor: c }))} className={`w-5 h-5 rounded-full border ${shapeOptions.fillColor === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><PenLine size={12} /> Pen</button>
+                <button
+                  onClick={(e) => { setToolMode('marker'); setOpenPopover({ tool: 'marker', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Highlighter size={12} /> Marker</button>
+                <button
+                  onClick={(e) => { setToolMode('eraser'); setOpenPopover({ tool: 'eraser', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Eraser size={12} /> Eraser</button>
+                <button
+                  onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Shapes size={12} /> Shapes {toolMode === 'shape' && <span className="text-gray-400">({shapeKind})</span>}</button>
               </div>
             )}
 
+            {/* Generate bucket */}
             {toolbarBucket === 'generate' && (
-              <div className="rounded-lg border border-amber-900/40 bg-amber-950/10 p-3 flex flex-wrap items-center gap-2">
-                <button onClick={() => setToolMode('generate')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300'}`}><Sparkles size={12} /> Generate from Pinpoint</button>
-                <select value={generateQuestionType} onChange={(e) => setGenerateQuestionType(e.target.value as GenerateQuestionType)} className="rounded border border-gray-700 bg-gray-900/60 text-gray-100 text-xs px-2 py-1">
-                  <option value="coordination">Coordination Question</option>
-                  <option value="rfi">RFI Question</option>
-                </select>
-                <span className="text-xs text-gray-400">Click a point, write the question, and save. If ProjectInner provides onGenerateQuestion, it will receive the generated payload.</span>
-                <span className="text-xs text-gray-400">Shape color:</span>
-                {ANNOTATION_COLORS.map((c) => <button key={c} onClick={() => setActiveColor(c)} className={`w-5 h-5 rounded-full border ${activeColor === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
-                <span className="text-xs text-gray-400">Text color:</span>
-                {TEXT_COLOR_OPTIONS.map((c) => <button key={c} onClick={() => setTextStyle((prev) => ({ ...prev, color: c }))} className={`w-5 h-5 rounded-full border ${textStyle.color === c ? 'border-white' : 'border-gray-700'}`} style={{ backgroundColor: c }} title={c} />)}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={(e) => { setToolMode('generate'); setOpenPopover({ tool: 'generate', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><Sparkles size={12} /> Generate from Pinpoint</button>
+                <span className="text-xs text-gray-500">Click a point on the blueprint, write the question, save.</span>
               </div>
             )}
 
+            {/* View bucket */}
             {toolbarBucket === 'view' && (
-              <div className="rounded-lg border border-gray-800 bg-[#10131c] p-3 flex flex-wrap items-center gap-2">
-                <button onClick={() => setToolMode('select')} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}><MousePointer2 size={12} /> Select / Pan</button>
-                <button onClick={() => setLockView((v) => !v)} className={`text-xs px-2 py-1 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}>Lock View</button>
-                <button onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }} className="text-xs px-2 py-1 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20">Fit to Full Page</button>
-                <span className="text-xs text-gray-400">Use wheel/pinch to zoom, Select / Pan to drag the sheet.</span>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => { setToolMode('select'); setOpenPopover(null) }}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                ><MousePointer2 size={12} /> Select / Pan</button>
+                <button
+                  onClick={() => setLockView((v) => !v)}
+                  className={`text-xs px-2 py-1 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                >Lock View</button>
+                <button
+                  onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
+                  className="text-xs px-2 py-1 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20"
+                >Fit to Full Page</button>
+                <span className="text-xs text-gray-400">Wheel/pinch to zoom · Select / Pan to drag.</span>
               </div>
             )}
           </div>
@@ -2146,7 +2518,7 @@ export default function OperationsBlueprintPdfViewer({
                         const height = `${Math.max(0.01, (rect.h || 0)) * 100}%`
                         const isFocused = focusedAnnotationId === a.id
                         const isLayoutEditing = layoutEditId === a.id
-                        const color = a.color || activeColor || '#facc15'
+                        const color = a.color || '#facc15'
                         const selectAnnotation = (e: React.MouseEvent) => {
                           e.stopPropagation()
                           if (effectiveTool === 'eraser') {
@@ -2154,9 +2526,19 @@ export default function OperationsBlueprintPdfViewer({
                             return
                           }
                           setFocusedAnnotationId(a.id)
-                          if (a.type === 'note') openEditNoteEditor(a)
-                          if (a.type === 'textBox' && e.detail === 2) openRichTextEditor(a)
-                          if ((a.type === 'callout' || a.type === 'generate') && e.detail === 2) openRichTextEditor(a)
+                          if (a.type === 'note') {
+                            openEditNoteEditor(a)
+                            return
+                          }
+                          const toolKey = annotationTypeToToolKey(a.type)
+                          if (toolKey) {
+                            setOpenPopover({
+                              tool: toolKey as ToolMode,
+                              anchorEl: e.currentTarget as HTMLElement,
+                              mode: 'edit',
+                              editingAnnotationId: a.id,
+                            })
+                          }
                         }
                         const ActionButtons = ({ className = '' }: { className?: string }) => (
                           <div
@@ -2396,14 +2778,14 @@ export default function OperationsBlueprintPdfViewer({
                               ? `${shapeOptions.borderThickness}px ${shapeOptions.borderStyle} ${shapeOptions.borderColor}`
                               : effectiveTool === 'underline'
                                 ? 'none'
-                                : `1px solid ${activeColor}`,
+                                : `1px solid ${toolColors[effectiveTool as ToolKey] || '#facc15'}`,
                             borderRadius: effectiveTool === 'shape' && shapeKind === 'circle' ? '9999px' : '0.25rem',
                             background: effectiveTool === 'highlight'
-                              ? hexWithAlpha(activeColor, 0.35)
+                              ? hexWithAlpha(toolColors.highlight || '#facc15', highlightOpacity / 100)
                               : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow'
                                 ? getHatchBackground(shapeOptions.hatchPattern, shapeOptions.borderColor, shapeOptions.fillColor, shapeOptions.fillOpacity)
                                 : 'transparent',
-                            borderBottom: effectiveTool === 'underline' ? `${drawOptions.thickness}px solid ${activeColor}` : undefined,
+                            borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
                           }}
                         />
                       )}
@@ -2413,7 +2795,7 @@ export default function OperationsBlueprintPdfViewer({
                           <polyline
                             points={inkDraft.map((p) => `${p.x},${p.y}`).join(' ')}
                             fill="none"
-                            stroke={activeColor}
+                            stroke={toolColors[effectiveTool as ToolKey] || '#facc15'}
                             strokeWidth={effectiveTool === 'marker' ? markerOptions.thickness : drawOptions.thickness}
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -2447,7 +2829,7 @@ export default function OperationsBlueprintPdfViewer({
                                 key={c}
                                 type="button"
                                 onClick={() => setNoteEditor((prev) => (prev ? { ...prev, color: c } : prev))}
-                                className={`h-4 w-4 rounded-full border ${(noteEditor.color || activeColor) === c ? 'border-white' : 'border-gray-600'}`}
+                                className={`h-4 w-4 rounded-full border ${(noteEditor.color || toolColors.note) === c ? 'border-white' : 'border-gray-600'}`}
                                 style={{ backgroundColor: c }}
                                 title={c}
                               />
@@ -2599,7 +2981,7 @@ export default function OperationsBlueprintPdfViewer({
                                 key={c}
                                 type="button"
                                 onClick={() => setRichTextEditor((prev) => (prev ? { ...prev, color: c } : prev))}
-                                className={`h-4 w-4 rounded-full border ${(richTextEditor.color || activeColor) === c ? 'border-white' : 'border-gray-600'}`}
+                                className={`h-4 w-4 rounded-full border ${(richTextEditor.color || toolColors[richTextEditor.annotationType as ToolKey] || '#facc15') === c ? 'border-white' : 'border-gray-600'}`}
                                 style={{ backgroundColor: c }}
                                 title={c}
                               />
@@ -2671,11 +3053,22 @@ export default function OperationsBlueprintPdfViewer({
                     {pageAnnotations.map((a) => (
                       <button
                         key={a.id}
-                        onClick={() => {
+                        onClick={(e) => {
                           setFocusedAnnotationId(a.id)
                           setLayoutEditId(null)
-                          if (a.type === 'note') openEditNoteEditor(a)
-                          if (a.type === 'textBox' || a.type === 'callout' || a.type === 'generate') openRichTextEditor(a)
+                          if (a.type === 'note') {
+                            openEditNoteEditor(a)
+                            return
+                          }
+                          const toolKey = annotationTypeToToolKey(a.type)
+                          if (toolKey) {
+                            setOpenPopover({
+                              tool: toolKey as ToolMode,
+                              anchorEl: e.currentTarget as HTMLElement,
+                              mode: 'edit',
+                              editingAnnotationId: a.id,
+                            })
+                          }
                         }}
                         className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
                       >
@@ -2713,6 +3106,19 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
         </>
+      )}
+
+      {/* ── Floating tool popover (portal) ── */}
+      {_popoverContent && openPopover && (
+        <ToolPopover
+          open
+          anchorEl={openPopover.anchorEl}
+          onClose={() => setOpenPopover(null)}
+          title={_popoverContent.title}
+          additionalChildren={_popoverContent.additional}
+        >
+          {_popoverContent.primary}
+        </ToolPopover>
       )}
     </div>
   )
