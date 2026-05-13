@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  Crosshair,
   Eraser,
   Highlighter,
   Italic,
@@ -16,8 +17,10 @@ import {
   Minus,
   MousePointer2,
   Move,
+  Pencil,
   PenLine,
   RefreshCw,
+  Ruler,
   Search,
   Shapes,
   Sparkles,
@@ -55,9 +58,28 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
   return pdfjsLib
 }
 
-const MIN_RELATIVE_ZOOM = 0.25
-const MAX_RELATIVE_ZOOM = 4
-const MAX_RENDER_SCALE = 3.0
+
+function shouldUseDesktopBlueprintLayout() {
+  if (typeof window === 'undefined') return false
+  const nav = window.navigator
+  const ua = nav.userAgent || ''
+  const platform = nav.platform || ''
+  const maxTouchPoints = nav.maxTouchPoints || 0
+  const isIPadLike =
+    /iPad/i.test(ua) ||
+    ((/MacIntel|Macintosh/i.test(platform) || /Macintosh/i.test(ua)) && maxTouchPoints > 1)
+
+  return !isIPadLike && window.innerWidth >= 1280
+}
+
+// Zoom floor = 1.0 means the user can never zoom out past "Fit to Full Page".
+// The fit scale is always relativeZoom = 1.0. Going below 1.0 would make the
+// page smaller than the fitted size, which is unwanted.
+const MIN_RELATIVE_ZOOM = 1
+// Desktop cap: 4× fit. Mobile cap: 8× fit (detected at render time).
+const MAX_RELATIVE_ZOOM_DESKTOP = 4.5
+const MAX_RELATIVE_ZOOM_MOBILE = 8
+const MAX_RENDER_SCALE = 4.5
 const PINCH_SENSITIVITY = 0.55
 const PINCH_DEADZONE_PX = 2
 // Debounce window for committing wheel-zoom changes to the actual PDF canvas
@@ -65,7 +87,7 @@ const PINCH_DEADZONE_PX = 2
 // transform (instant feedback), then re-rendered sharp once the user stops.
 // 120ms keeps the sharp re-render close on the user's heels so the blurry
 // CSS-transform intermediate is barely visible. Tested on desktop wheel.
-const WHEEL_ZOOM_COMMIT_DELAY_MS = 120
+const WHEEL_ZOOM_COMMIT_DELAY_MS = 150
 const MIN_HIGHLIGHT_NORM = 0.005
 const NOTE_MARKER_SIZE_NORM = 0.018
 const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444', '#ffffff', '#111827']
@@ -84,11 +106,12 @@ const OPACITY_OPTIONS = [0.25, 0.4, 0.55, 0.7, 0.85, 1]
 const DEFAULT_TEXT_BOX = { w: 0.22, h: 0.08 }
 const DEFAULT_CALLOUT_BOX = { w: 0.24, h: 0.1 }
 
-type ToolbarBucket = 'annotate' | 'callouts' | 'draw' | 'generate' | 'view'
+type ToolbarBucket = 'annotate' | 'draw' | 'generate' | 'view' | 'measure'
 type ToolMode =
   | 'select'
   | 'note'
   | 'highlight'
+  | 'textHighlight'
   | 'underline'
   | 'textBox'
   | 'pen'
@@ -97,11 +120,48 @@ type ToolMode =
   | 'shape'
   | 'callout'
   | 'generate'
+  | 'calibrate'
+  | 'measure-distance'
+  | 'measure-area'
+  | 'measure-perimeter'
 
-type ShapeKind = 'square' | 'circle' | 'line' | 'arrow'
+type ShapeKind = 'square' | 'circle' | 'line' | 'arrow' | 'star' | 'cross' | 'diamond' | 'pentagon'
 type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
+
+// ── Measurement & calibration types ──────────────────────────────────────────
+type CalibrationUnit = 'ft' | 'm' | 'in' | 'cm' | 'mm'
+type CalibrationStatus = 'none' | 'pending' | 'saved'
+
+interface CalibrationData {
+  pageNumber: number
+  // Euclidean distance in normalised page-coords (0-1 × page width)
+  normDistance: number
+  realWorldValue: number
+  realWorldUnit: CalibrationUnit
+  savedAt: string
+}
+
+interface MeasurementStyle {
+  endpointStyle: 'dot' | 'arrow' | 'none'
+  lineThickness: number
+  lineColor: string
+  textSize: number
+  fillColor: string
+  fillOpacity: number
+  fillPattern: 'none' | 'diagonal' | 'cross' | 'dots'
+}
+
+const DEFAULT_MEASUREMENT_STYLE: MeasurementStyle = {
+  endpointStyle: 'dot',
+  lineThickness: 2,
+  lineColor: '#38bdf8',
+  textSize: 12,
+  fillColor: '#38bdf8',
+  fillOpacity: 0.15,
+  fillPattern: 'none',
+}
 
 interface OperationsBlueprintPdfViewerProps {
   blueprint: BlueprintLibraryItem | null
@@ -238,12 +298,21 @@ function annotationLabel(annotation: BlueprintAnnotation) {
   if (annotation.type === 'marker') return 'Marker'
   if (annotation.type === 'shape') return `${String(getAnnotationMeta(annotation).shapeKind || 'shape')}`
   if (annotation.type === 'underline') return 'Underline'
+  if (annotation.type === 'measure-distance') return 'Distance'
+  if (annotation.type === 'measure-area') return 'Area'
+  if (annotation.type === 'measure-perimeter') return 'Perimeter'
+  if (annotation.type === 'calibrate') return 'Calibration'
   return String(annotation.type || 'annotation')
 }
 
-function clampRelativeZoom(v: number) {
-  return Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
+// Note: maxRelativeZoom is resolved inside the component (device-aware).
+// This module-level helper uses the desktop cap; the component uses the
+// instance-level maxRelativeZoom const for clamping zoom state.
+function clampRelativeZoomStatic(v: number, max = MAX_RELATIVE_ZOOM_DESKTOP) {
+  return Math.max(MIN_RELATIVE_ZOOM, Math.min(max, v))
 }
+// Alias used throughout — replaced by component-level clampRelativeZoom below.
+const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
 
 export default function OperationsBlueprintPdfViewer({
   blueprint,
@@ -267,8 +336,34 @@ export default function OperationsBlueprintPdfViewer({
   // video does, escaping browser chrome.
   const viewerRootRef = useRef<HTMLDivElement>(null)
   const pageFrameRef = useRef<HTMLDivElement>(null)
+  // Ref to the toolbar area so we can measure its height and set the
+  // scroll area to exactly fill the remaining vertical space.
+  const toolbarAreaRef = useRef<HTMLDivElement>(null)
+  // Draft rect DOM ref — mutated directly during pointer-move for zero-lag
+  // visual feedback (bypasses React re-renders entirely during active drag).
+  const draftRectDomRef = useRef<HTMLDivElement>(null)
+  const draftLineDomRef = useRef<SVGLineElement>(null)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
+  // True when viewport width is phone/tablet-sized (< 1024px).
+  const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 1024)
+  const [isDesktopBlueprintLayout, setIsDesktopBlueprintLayout] = useState(shouldUseDesktopBlueprintLayout)
+  const maxRelativeZoom = isMobileRef.current ? MAX_RELATIVE_ZOOM_MOBILE : MAX_RELATIVE_ZOOM_DESKTOP
+  // Component-level zoom clamp — uses the correct device-aware ceiling.
+  const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(maxRelativeZoom, v))
+  const [scrollAreaHeight, setScrollAreaHeight] = useState(0)
+  useEffect(() => {
+    const syncViewportFlags = () => {
+      if (typeof window === 'undefined') return
+      isMobileRef.current = window.innerWidth < 1024
+      setIsDesktopBlueprintLayout(shouldUseDesktopBlueprintLayout())
+    }
+
+    syncViewportFlags()
+    window.addEventListener('resize', syncViewportFlags, { passive: true })
+    return () => window.removeEventListener('resize', syncViewportFlags)
+  }, [])
+
   const pinchPreviewZoomRef = useRef<number | null>(null)
   const displaySizeRef = useRef({ w: 0, h: 0 })
   const suppressAnnotationUntilRef = useRef(0)
@@ -331,13 +426,67 @@ export default function OperationsBlueprintPdfViewer({
 
   const [isFullScreenView, setIsFullScreenView] = useState(false)
 
+  // ── Pane resize state — persisted across hard reloads ──────────────────
+  const [leftPaneWidth, setLeftPaneWidth] = useState(() => {
+    const saved = localStorage.getItem('blueprint_left_pane_width')
+    return saved ? Math.max(160, Math.min(480, parseInt(saved, 10))) : 280
+  })
+  const [rightPaneWidth, setRightPaneWidth] = useState(() => {
+    const saved = localStorage.getItem('blueprint_right_pane_width')
+    return saved ? Math.max(160, Math.min(480, parseInt(saved, 10))) : 320
+  })
+  const [draggingDivider, setDraggingDivider] = useState<'left' | 'right' | null>(null)
+  const dragStartXRef = useRef(0)
+  const dragStartWidthRef = useRef(0)
+
+  useEffect(() => {
+    if (!draggingDivider) return
+    const onMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - dragStartXRef.current
+      if (draggingDivider === 'left') {
+        const next = Math.max(160, Math.min(480, dragStartWidthRef.current + delta))
+        setLeftPaneWidth(next)
+        localStorage.setItem('blueprint_left_pane_width', String(next))
+      } else {
+        const next = Math.max(160, Math.min(480, dragStartWidthRef.current - delta))
+        setRightPaneWidth(next)
+        localStorage.setItem('blueprint_right_pane_width', String(next))
+      }
+    }
+    const onMouseUp = () => setDraggingDivider(null)
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [draggingDivider])
+
+  // ── Measurement calibration state — page-specific ─────────────────────────
+  // savedCalibrations: committed calibrations keyed by pageNumber
+  const [savedCalibrations, setSavedCalibrations] = useState<Record<number, CalibrationData>>({})
+  // pendingCalibration: drawn but not yet committed (recalibration replaces this)
+  const [pendingCalibration, setPendingCalibration] = useState<CalibrationData | null>(null)
+  // measurementStyle: shared style options for all measure annotation types
+  const [measurementStyle, setMeasurementStyle] = useState<MeasurementStyle>(DEFAULT_MEASUREMENT_STYLE)
+
+  // Derived: scale factor (norm-units per real-world unit) for the current page
+  const savedCalibration: CalibrationData | null = savedCalibrations[currentPage] ?? null
+  const detectedScale: number | null = savedCalibration
+    ? savedCalibration.normDistance / Math.max(0.001, savedCalibration.realWorldValue)
+    : null
+  const calibrationStatus: CalibrationStatus =
+    pendingCalibration?.pageNumber === currentPage ? 'pending' :
+    savedCalibration ? 'saved' : 'none'
+
   const [toolbarBucket, setToolbarBucket] = useState<ToolbarBucket>('annotate')
   const [toolMode, setToolMode] = useState<ToolMode>('select')
 
   // Per-tool color memory (replaces single activeColor)
-  type ToolKey = 'highlight' | 'underline' | 'textBox' | 'pen' | 'marker' | 'eraser' | 'shape' | 'callout' | 'generate' | 'note'
+  type ToolKey = 'highlight' | 'textHighlight' | 'underline' | 'textBox' | 'pen' | 'marker' | 'eraser' | 'shape' | 'callout' | 'generate' | 'note' | 'calibrate' | 'measure-distance' | 'measure-area' | 'measure-perimeter'
   const [toolColors, setToolColors] = useState<Record<ToolKey, string>>({
     highlight: '#facc15',
+    textHighlight: '#facc15', // default yellow — distinct palette in popover
     underline: '#facc15',
     textBox: '#111827',
     pen: '#facc15',
@@ -347,6 +496,10 @@ export default function OperationsBlueprintPdfViewer({
     callout: '#facc15',
     generate: '#facc15',
     note: '#facc15',
+    calibrate: '#38bdf8',
+    'measure-distance': '#38bdf8',
+    'measure-area': '#22c55e',
+    'measure-perimeter': '#f97316',
   })
   const setToolColor = (tool: ToolKey, color: string) => setToolColors((prev) => ({ ...prev, [tool]: color }))
 
@@ -605,6 +758,21 @@ export default function OperationsBlueprintPdfViewer({
     void loadPdf()
     return () => { void clearDoc() }
   }, [blueprint?.id])
+
+  // Measure toolbar area height so the scroll area can fill exactly the
+  // remaining vertical space without a hard-coded pixel constant.
+  useEffect(() => {
+    const el = toolbarAreaRef.current
+    if (!el) return
+    const obs = new ResizeObserver(() => {
+      setScrollAreaHeight(window.innerHeight - el.getBoundingClientRect().bottom)
+    })
+    obs.observe(el)
+    // Also recompute on window resize.
+    const onResize = () => setScrollAreaHeight(window.innerHeight - el.getBoundingClientRect().bottom)
+    window.addEventListener('resize', onResize, { passive: true })
+    return () => { obs.disconnect(); window.removeEventListener('resize', onResize) }
+  }, [])
 
   useEffect(() => {
     const el = scrollAreaRef.current
@@ -1409,10 +1577,12 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
-    if (effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
+    if (effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
       dragStartRef.current = { x, y }
       setDragStart({ x, y })
-      setDraftRect({ x, y, w: 0, h: 0 })
+      // Reset DOM draft elements (visual state only — no setDraftRect needed)
+      if (draftRectDomRef.current) draftRectDomRef.current.style.display = 'none'
+      if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
       e.preventDefault()
     }
@@ -1500,14 +1670,40 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     const activeDragStart = dragStartRef.current || dragStart
-    if (!(effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser' || effectiveTool === 'callout' || effectiveTool === 'generate') || !activeDragStart) return
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser' || effectiveTool === 'callout' || effectiveTool === 'generate') || !activeDragStart) return
 
     const left = Math.min(activeDragStart.x, x)
     const top = Math.min(activeDragStart.y, y)
     const w = Math.abs(x - activeDragStart.x)
     const h = Math.abs(y - activeDragStart.y)
-    setDraftRect({ x: left, y: top, w, h })
-  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView])
+
+    // Direct DOM mutation — zero React re-renders during drag for smooth preview.
+    const domEl = draftRectDomRef.current
+    if (domEl) {
+      domEl.style.display = 'block'
+      domEl.style.left = `${left}px`
+      domEl.style.top = `${top}px`
+      domEl.style.width = `${w}px`
+      domEl.style.height = `${h}px`
+    }
+    // For line/arrow shapes and callout/generate: also update the SVG line preview.
+    const lineEl = draftLineDomRef.current
+    if (lineEl) {
+      const isLineKind = effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow')
+      if (isLineKind) {
+        lineEl.setAttribute('x1', String(activeDragStart.x))
+        lineEl.setAttribute('y1', String(activeDragStart.y))
+        lineEl.setAttribute('x2', String(x))
+        lineEl.setAttribute('y2', String(y))
+        lineEl.style.display = ''
+      } else {
+        lineEl.style.display = 'none'
+      }
+    }
+    // Keep dragStartRef in sync but do NOT call setDraftRect here —
+    // the DOM refs above give zero-lag visual feedback without any React re-renders.
+    dragStartRef.current = activeDragStart
+  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
     const mousePan = mousePanRef.current
@@ -1579,6 +1775,8 @@ export default function OperationsBlueprintPdfViewer({
       dragStartRef.current = null
       setDragStart(null)
       setDraftRect(null)
+      if (draftRectDomRef.current) draftRectDomRef.current.style.display = 'none'
+      if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
       const toDelete = allAnnotationsRef.current.filter((a) => {
         if (Number(a.pageNumber) !== Number(currentPage)) return false
         const ar = a.rect
@@ -1596,6 +1794,8 @@ export default function OperationsBlueprintPdfViewer({
       dragStartRef.current = null
       setDragStart(null)
       setDraftRect(null)
+      if (draftRectDomRef.current) draftRectDomRef.current.style.display = 'none'
+      if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
       const anchor = toNorm(activeDragStart.x, activeDragStart.y, rect.width, rect.height)
       if (rawNorm.w >= MIN_HIGHLIGHT_NORM && rawNorm.h >= MIN_HIGHLIGHT_NORM) {
         const boxW = effectiveTool === 'generate' ? 0.28 : DEFAULT_CALLOUT_BOX.w
@@ -1611,7 +1811,7 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
-    if (!(effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape') || !activeDragStart) return
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape') || !activeDragStart) return
 
     const rawNorm = normRectFromDrag(activeDragStart, { x, y }, rect.width, rect.height)
     const underlineY = toNorm(0, activeDragStart.y, rect.width, rect.height).y
@@ -1626,6 +1826,9 @@ export default function OperationsBlueprintPdfViewer({
     dragStartRef.current = null
     setDragStart(null)
     setDraftRect(null)
+    // Hide DOM draft elements after commit
+    if (draftRectDomRef.current) draftRectDomRef.current.style.display = 'none'
+    if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
 
     if (effectiveTool === 'underline') {
       const minUnderlineWidth = 2 / Math.max(1, rect.width)
@@ -1638,12 +1841,14 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     const now = new Date().toISOString()
-    const type = effectiveTool === 'underline' ? 'underline' : effectiveTool === 'shape' ? 'shape' : 'highlight'
+    const type = effectiveTool === 'underline' ? 'underline' : effectiveTool === 'shape' ? 'shape' : effectiveTool === 'textHighlight' ? 'textHighlight' : 'highlight'
     const meta = effectiveTool === 'shape'
       ? { shapeKind, ...shapeOptions }
       : effectiveTool === 'underline'
         ? { thickness: drawOptions.thickness, opacity: drawOptions.opacity }
-        : { opacity: 0.35 }
+        : effectiveTool === 'textHighlight'
+          ? { opacity: 0.4 }
+          : { opacity: 0.35 }
     const ann: BlueprintAnnotation = {
       id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       blueprintSetId: blueprint.id,
@@ -1700,7 +1905,7 @@ export default function OperationsBlueprintPdfViewer({
   const cursorClass =
     mousePanActive
       ? 'cursor-grabbing'
-      : ['note', 'highlight', 'underline', 'textBox', 'pen', 'marker', 'shape', 'callout', 'generate'].includes(effectiveTool)
+      : ['note', 'highlight', 'underline', 'textBox', 'pen', 'marker', 'shape', 'callout', 'generate', 'calibrate', 'measure-distance', 'measure-area', 'measure-perimeter'].includes(effectiveTool)
         ? 'cursor-crosshair'
         : effectiveTool === 'eraser'
           ? 'cursor-not-allowed'
@@ -1710,13 +1915,18 @@ export default function OperationsBlueprintPdfViewer({
   const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, clampRelativeZoom(relativeZoom)))
   const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
+  const useDesktopThreePaneLayout = isDesktopBlueprintLayout && !isFullScreenView
 
   // ─── Annotation ↔ tool-key mapping ────────────────────────────────────────
   function annotationTypeToToolKey(type: string): ToolKey | null {
     const map: Record<string, ToolKey> = {
-      highlight: 'highlight', underline: 'underline', textBox: 'textBox',
+      highlight: 'highlight', textHighlight: 'textHighlight', underline: 'underline', textBox: 'textBox',
       pen: 'pen', marker: 'marker', shape: 'shape', callout: 'callout',
       generate: 'generate',
+      calibrate: 'calibrate',
+      'measure-distance': 'measure-distance',
+      'measure-area': 'measure-area',
+      'measure-perimeter': 'measure-perimeter',
     }
     return map[type] ?? null
   }
@@ -1788,6 +1998,31 @@ export default function OperationsBlueprintPdfViewer({
             onChange={(v) => {
               if (isEdit) persistEditAnnotationMeta({ opacity: v / 100 })
               else setHighlightOpacity(v)
+            }} />
+        ),
+      }
+    }
+
+    // ── 1b. TEXT HIGHLIGHTER ─────────────────────────────────────────────
+    if (tool === 'textHighlight') {
+      const TEXT_HIGHLIGHT_COLORS = ['#facc15', '#86efac', '#f9a8d4', '#93c5fd', '#fdba74', '#c4b5fd', '#67e8f9']
+      const color = isEdit ? (editingAnnotation?.color ?? toolColors.textHighlight) : toolColors.textHighlight
+      const opacity = isEdit ? Math.round((eMeta.opacity ?? 0.4) * 100) : 40
+      return {
+        title: 'Text Highlighter',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color</div>
+            <ColorRow value={color} colors={TEXT_HIGHLIGHT_COLORS} onChange={(c) => {
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setToolColor('textHighlight', c)
+            }} />
+          </>
+        ),
+        additional: (
+          <Stepper label="Opacity" value={opacity} min={10} max={100} step={5} unit="%"
+            onChange={(v) => {
+              if (isEdit) persistEditAnnotationMeta({ opacity: v / 100 })
             }} />
         ),
       }
@@ -1948,6 +2183,10 @@ export default function OperationsBlueprintPdfViewer({
                 { label: 'Circle', value: 'circle' },
                 { label: 'Line', value: 'line' },
                 { label: 'Arrow', value: 'arrow' },
+                { label: 'Diamond', value: 'diamond' },
+                { label: 'Star', value: 'star' },
+                { label: 'Cross', value: 'cross' },
+                { label: 'Pentagon', value: 'pentagon' },
               ]}
               onChange={(v) => {
                 if (isEdit) persistEditAnnotationMeta({ shapeKind: v })
@@ -2140,7 +2379,7 @@ export default function OperationsBlueprintPdfViewer({
         }
       `}</style>
 
-      {!isFullScreenView && (
+      {!isFullScreenView && !useDesktopThreePaneLayout && (
         <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
@@ -2213,13 +2452,70 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
+          <div
+            className={useDesktopThreePaneLayout ? `grid min-h-[calc(100vh-180px)] grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : ''}
+            style={useDesktopThreePaneLayout ? {
+              gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
+              columnGap: 0,
+              rowGap: 16,
+            } : undefined}
+          >
+            {useDesktopThreePaneLayout && (
+              <div className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-100 truncate">{blueprint.title}</p>
+                    <p className="mt-1 text-xs text-gray-500">{blueprint.projectName}</p>
+                    <p className="text-xs text-gray-600 break-all">{blueprint.fileName}</p>
+                  </div>
+                  <button
+                    onClick={() => void loadPdf()}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:text-white"
+                  >
+                    <RefreshCw size={12} />
+                    Refresh
+                  </button>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-gray-800 bg-[#0d0e14] px-3 py-2 text-xs">
+                  <span className="text-gray-400">Page</span>
+                  <span className="font-semibold text-gray-200">{pageLabel}</span>
+                </div>
+
+                {!!signedUrl && (
+                  <p className="mt-3 text-[11px] leading-5 text-gray-500">
+                    Signed URL active for this session. {pageAnnotations.length} annotation{pageAnnotations.length !== 1 ? 's' : ''} on this page.
+                  </p>
+                )}
+              </div>
+            )}
+
+          {/* ── Divider 1: drag handle between left panel and center pane ── */}
+          {useDesktopThreePaneLayout && (
+            <div
+              className="col-start-2 row-start-1 row-span-3 flex items-center justify-center cursor-col-resize group z-10"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                dragStartXRef.current = e.clientX
+                dragStartWidthRef.current = leftPaneWidth
+                setDraggingDivider('left')
+              }}
+            >
+              <div className="w-[3px] h-full rounded-full bg-gray-800 group-hover:bg-blue-500/60 transition-colors duration-150" />
+            </div>
+          )}
+
           {/* ── Toolbar: 5 bucket selectors + tool buttons (popovers handle options) ── */}
-          <div className="px-4 py-3 border-b border-gray-800 space-y-2">
-            {/* Bucket selectors */}
-            <div className="flex flex-wrap items-center gap-2">
+          <div
+            ref={toolbarAreaRef}
+            className={useDesktopThreePaneLayout
+              ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
+              : 'px-4 py-3 border-b border-gray-800 space-y-2'}
+          >
+            {/* ── Bucket tabs: 2×2 grid + full-width Measure row ── */}
+            <div className="grid grid-cols-2 gap-1.5">
               {([
                 ['annotate', 'Annotate'],
-                ['callouts', 'Callouts'],
                 ['draw', 'Draw / Mark'],
                 ['generate', 'Generate'],
                 ['view', 'View'],
@@ -2227,112 +2523,184 @@ export default function OperationsBlueprintPdfViewer({
                 <button
                   key={bucket}
                   onClick={() => setToolbarBucket(bucket)}
-                  className={`inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-md border ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 >
                   {bucket === 'annotate' && <Layers size={12} />}
-                  {bucket === 'callouts' && <StickyNote size={12} />}
                   {bucket === 'draw' && <PenLine size={12} />}
                   {bucket === 'generate' && <Sparkles size={12} />}
                   {bucket === 'view' && <MousePointer2 size={12} />}
                   {label}
                 </button>
               ))}
-              <span className="text-xs text-gray-400 ml-2">
-                Active: <span className="text-gray-200">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
-              </span>
+              <button
+                onClick={() => setToolbarBucket('measure')}
+                className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+              >
+                <Ruler size={12} /> Measure
+                {calibrationStatus !== 'none' && (
+                  <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
+                    {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
+                  </span>
+                )}
+              </button>
+            </div>
+            <div className="text-[11px] text-gray-500">
+              Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
             </div>
 
-            {/* Annotate bucket */}
+            {/* ── Annotate: Text Box · Text Highlight · Underline · Note · Callout ── */}
             {toolbarBucket === 'annotate' && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  onClick={() => { setToolMode('select'); setLayoutEditId(null); setOpenPopover(null) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                ><MousePointer2 size={12} /> Select / Pan</button>
-                <button
-                  onClick={(e) => { setToolMode('highlight'); setOpenPopover({ tool: 'highlight', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'highlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                ><Highlighter size={12} /> Highlighter</button>
-                <button
-                  onClick={(e) => { setToolMode('underline'); setOpenPopover({ tool: 'underline', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                ><Underline size={12} /> Underline</button>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
                 <button
                   onClick={(e) => { setToolMode('textBox'); setOpenPopover({ tool: 'textBox', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Type size={12} /> Text Box</button>
                 <button
+                  onClick={(e) => { setToolMode('textHighlight'); setOpenPopover({ tool: 'textHighlight', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textHighlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Highlighter size={12} /> Text Highlight</button>
+                <button
+                  onClick={(e) => { setToolMode('underline'); setOpenPopover({ tool: 'underline', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Underline size={12} /> Underline</button>
+                <button
                   onClick={() => { setToolMode('note'); setOpenPopover(null) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><StickyNote size={12} /> Note</button>
-              </div>
-            )}
-
-            {/* Callouts bucket */}
-            {toolbarBucket === 'callouts' && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   onClick={(e) => { setToolMode('callout'); setOpenPopover({ tool: 'callout', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                ><ArrowUpRight size={12} /> Create Callout</button>
-                <span className="text-xs text-gray-500">Drag to define the callout box — the drag start point becomes the anchor.</span>
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><ArrowUpRight size={12} /> Callout</button>
               </div>
             )}
 
-            {/* Draw bucket */}
+            {/* ── Draw / Mark: Pen · Marker · Eraser · Shapes ── */}
             {toolbarBucket === 'draw' && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
                 <button
                   onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><PenLine size={12} /> Pen</button>
                 <button
                   onClick={(e) => { setToolMode('marker'); setOpenPopover({ tool: 'marker', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Highlighter size={12} /> Marker</button>
                 <button
                   onClick={(e) => { setToolMode('eraser'); setOpenPopover({ tool: 'eraser', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Eraser size={12} /> Eraser</button>
                 <button
                   onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-                ><Shapes size={12} /> Shapes {toolMode === 'shape' && <span className="text-gray-400">({shapeKind})</span>}</button>
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({shapeKind})</span>}</button>
               </div>
             )}
 
-            {/* Generate bucket */}
+            {/* ── Generate ── */}
             {toolbarBucket === 'generate' && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex flex-col gap-1.5 pt-0.5">
                 <button
                   onClick={(e) => { setToolMode('generate'); setOpenPopover({ tool: 'generate', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Sparkles size={12} /> Generate from Pinpoint</button>
-                <span className="text-xs text-gray-500">Click a point on the blueprint, write the question, save.</span>
+                <p className="text-[11px] text-gray-500 leading-snug">Click a point on the blueprint, write the question, save.</p>
               </div>
             )}
 
-            {/* View bucket */}
+            {/* ── View ── */}
             {toolbarBucket === 'view' && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
                 <button
                   onClick={() => { setToolMode('select'); setOpenPopover(null) }}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><MousePointer2 size={12} /> Select / Pan</button>
                 <button
                   onClick={() => setLockView((v) => !v)}
-                  className={`text-xs px-2 py-1 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 >Lock View</button>
                 <button
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
-                  className="text-xs px-2 py-1 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20"
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
                 >Fit to Full Page</button>
-                <span className="text-xs text-gray-400">Wheel/pinch to zoom · Select / Pan to drag.</span>
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} text-[11px] text-gray-500 leading-snug`}>Wheel/pinch to zoom · Select / Pan to drag.</p>
+              </div>
+            )}
+
+            {/* ── Measure ── */}
+            {toolbarBucket === 'measure' && (
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+                {/* Calibration status badge */}
+                <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} flex items-center justify-between px-2 py-1 rounded-md border border-gray-800 bg-gray-900/40 text-[11px]`}>
+                  <span className="text-gray-400">Page {currentPage} calibration</span>
+                  <span className={
+                    calibrationStatus === 'saved' ? 'text-green-400' :
+                    calibrationStatus === 'pending' ? 'text-amber-400' :
+                    'text-gray-600'
+                  }>
+                    {calibrationStatus === 'saved'
+                      ? `${savedCalibration!.realWorldValue} ${savedCalibration!.realWorldUnit} / line`
+                      : calibrationStatus === 'pending'
+                      ? 'pending — not saved'
+                      : 'not calibrated'}
+                  </span>
+                </div>
+
+                {/* Calibrate tool */}
+                <button
+                  onClick={() => { setToolMode('calibrate'); setOpenPopover(null) }}
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Crosshair size={12} /> Calibrate — draw known distance</button>
+
+                {/* Measure tools */}
+                <button
+                  onClick={() => { setToolMode('measure-distance'); setOpenPopover(null) }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-distance' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Ruler size={12} /> Distance</button>
+                <button
+                  onClick={() => { setToolMode('measure-area'); setOpenPopover(null) }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-area' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Square size={12} /> Area</button>
+                <button
+                  onClick={() => { setToolMode('measure-perimeter'); setOpenPopover(null) }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-perimeter' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Shapes size={12} /> Perimeter</button>
+
+                {/* Commit / clear pending calibration */}
+                {calibrationStatus === 'pending' && (
+                  <>
+                    <button
+                      onClick={() => {
+                        if (!pendingCalibration) return
+                        setSavedCalibrations((prev) => ({ ...prev, [pendingCalibration.pageNumber]: pendingCalibration }))
+                        setPendingCalibration(null)
+                      }}
+                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-green-600 text-green-300 bg-green-900/20 hover:bg-green-900/40`}
+                    >Save Calibration for Page {currentPage}</button>
+                    <button
+                      onClick={() => setPendingCalibration(null)}
+                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-gray-200`}
+                    >Discard Pending</button>
+                  </>
+                )}
+                {calibrationStatus === 'saved' && (
+                  <button
+                    onClick={() => setSavedCalibrations((prev) => { const n = { ...prev }; delete n[currentPage]; return n })}
+                    className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-700`}
+                  >Clear Calibration</button>
+                )}
+
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} text-[11px] text-gray-500 leading-snug`}>
+                  Calibrate first, then draw measurements. Calibration is per-page.
+                </p>
               </div>
             )}
           </div>
 
-          <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2">
+          <div
+            className={useDesktopThreePaneLayout
+              ? 'col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 flex flex-wrap items-center gap-2'
+              : 'px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2'}
+          >
             <button
               disabled={!canRender || currentPage <= 1 || isRendering}
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -2441,7 +2809,7 @@ export default function OperationsBlueprintPdfViewer({
               </button>
               <span className="text-xs text-gray-400 w-12 text-center">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
               <button
-                disabled={!canRender || relativeZoom >= MAX_RELATIVE_ZOOM}
+                disabled={!canRender || relativeZoom >= maxRelativeZoom}
                 onClick={() => applyRelativeZoomDelta(0.1)}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
               >
@@ -2451,27 +2819,36 @@ export default function OperationsBlueprintPdfViewer({
           </div>
 
           {(isLoading || isRendering) && (
-            <div className="px-4 py-2 text-xs text-blue-300 flex items-center gap-2">
+            <div className={useDesktopThreePaneLayout ? 'col-start-3 row-start-1 self-start text-xs text-blue-300 flex items-center gap-2' : 'px-4 py-2 text-xs text-blue-300 flex items-center gap-2'}>
               <Loader2 size={12} className="animate-spin" />
               {isLoading ? 'Loading PDF...' : 'Rendering page...'}
             </div>
           )}
 
           {error && (
-            <div className="mx-4 mt-3 text-sm text-red-300 bg-red-900/20 border border-red-800/40 rounded-md px-3 py-2">
+            <div className={useDesktopThreePaneLayout ? 'col-start-3 row-start-1 mt-8 text-sm text-red-300 bg-red-900/20 border border-red-800/40 rounded-md px-3 py-2' : 'mx-4 mt-3 text-sm text-red-300 bg-red-900/20 border border-red-800/40 rounded-md px-3 py-2'}>
               {error}
             </div>
           )}
 
-          <div className={isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
-            <div className={isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
+          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
+            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'h-[calc(100vh-180px)] min-h-[60vh]'} rounded border border-gray-800`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 h-[calc(100vh-180px)] min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'min-h-[400px]'} rounded border border-gray-800`}
                 style={{
+                  // Dynamic height: fills from bottom of toolbar to bottom of viewport.
+                  // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
+                  ...(useDesktopThreePaneLayout
+                    ? { height: 'calc(100vh - 180px)' }
+                    : isFullScreenView
+                      ? {}
+                      : {
+                        height: scrollAreaHeight > 100 ? `${scrollAreaHeight - 16}px` : 'calc(100vh - 300px)',
+                      }),
                   // Hide scrollbars across all browsers — inline guarantees they
                   // apply regardless of CSS file load order. Container still
                   // scrolls programmatically (required by pan/zoom logic).
@@ -2540,13 +2917,28 @@ export default function OperationsBlueprintPdfViewer({
                             })
                           }
                         }
+                        // Opens the ToolPopover (style editor) anchored to a given element.
+                        const openStylePopover = (anchorEl: HTMLElement) => {
+                          const toolKey = annotationTypeToToolKey(a.type)
+                          if (!toolKey) return
+                          setFocusedAnnotationId(a.id)
+                          setOpenPopover({
+                            tool: toolKey as ToolMode,
+                            anchorEl,
+                            mode: 'edit',
+                            editingAnnotationId: a.id,
+                          })
+                        }
+                        const canMove = a.type === 'callout' || a.type === 'generate' || a.type === 'textBox' || a.type === 'shape' || a.type === 'highlight' || a.type === 'textHighlight' || a.type === 'underline' || a.type === 'pen' || a.type === 'marker'
+                        const canStyle = a.type === 'highlight' || a.type === 'textHighlight' || a.type === 'underline' || a.type === 'shape' || a.type === 'pen' || a.type === 'marker' || a.type === 'callout' || a.type === 'generate' || a.type === 'textBox'
+                        const canEditText = a.type === 'textBox' || a.type === 'callout' || a.type === 'generate'
                         const ActionButtons = ({ className = '' }: { className?: string }) => (
                           <div
                             className={`absolute -top-8 right-0 z-50 hidden group-hover:flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg ${isFocused ? '!flex' : ''} ${className}`}
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {(a.type === 'callout' || a.type === 'generate' || a.type === 'textBox' || a.type === 'shape' || a.type === 'highlight' || a.type === 'underline') && (
+                            {canMove && (
                               <button
                                 type="button"
                                 onPointerDown={(e) => e.stopPropagation()}
@@ -2557,7 +2949,18 @@ export default function OperationsBlueprintPdfViewer({
                                 <Move size={10} /> Move
                               </button>
                             )}
-                            {(a.type === 'textBox' || a.type === 'callout' || a.type === 'generate') && (
+                            {canStyle && (
+                              <button
+                                type="button"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openStylePopover(e.currentTarget as HTMLElement) }}
+                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
+                                title="Edit style"
+                              >
+                                <Pencil size={10} /> Style
+                              </button>
+                            )}
+                            {canEditText && (
                               <button
                                 type="button"
                                 onPointerDown={(e) => e.stopPropagation()}
@@ -2750,6 +3153,21 @@ export default function OperationsBlueprintPdfViewer({
                           )
                         }
 
+                        if (a.type === 'textHighlight') {
+                          // Text Highlighter: no border, pure fill — looks like a text marker pen.
+                          return (
+                            <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                              <div
+                                className={`w-full h-full pointer-events-none rounded-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                                style={{ backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.4) }}
+                              />
+                              <ActionButtons />
+                              {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
+                              {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                            </div>
+                          )
+                        }
+
                         return (
                           <div key={a.id} className="absolute group" style={{ left, top }} onClick={selectAnnotation}>
                             <button
@@ -2765,30 +3183,51 @@ export default function OperationsBlueprintPdfViewer({
                         )
                       })}
 
-                      {draftRect && (effectiveTool === 'highlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser') && (
-
-                        <div
-                          className="absolute pointer-events-none"
-                          style={{
-                            left: draftRect.x,
-                            top: draftRect.y,
-                            width: draftRect.w,
-                            height: draftRect.h,
-                            border: effectiveTool === 'shape'
-                              ? `${shapeOptions.borderThickness}px ${shapeOptions.borderStyle} ${shapeOptions.borderColor}`
-                              : effectiveTool === 'underline'
-                                ? 'none'
-                                : `1px solid ${toolColors[effectiveTool as ToolKey] || '#facc15'}`,
-                            borderRadius: effectiveTool === 'shape' && shapeKind === 'circle' ? '9999px' : '0.25rem',
-                            background: effectiveTool === 'highlight'
-                              ? hexWithAlpha(toolColors.highlight || '#facc15', highlightOpacity / 100)
+                      {/* Permanent DOM-ref draft rect — hidden by default, shown + mutated directly
+                          during pointer-move to avoid React re-renders during active drag. */}
+                      <div
+                        ref={draftRectDomRef}
+                        className="absolute pointer-events-none"
+                        style={{
+                          display: 'none',
+                          border: effectiveTool === 'shape'
+                            ? `${shapeOptions.borderThickness}px ${shapeOptions.borderStyle} ${shapeOptions.borderColor}`
+                            : effectiveTool === 'underline'
+                              ? 'none'
+                              : `1px solid ${toolColors[effectiveTool as ToolKey] || '#facc15'}`,
+                          borderRadius: effectiveTool === 'shape' && shapeKind === 'circle' ? '9999px' : '0.25rem',
+                          background: effectiveTool === 'highlight'
+                            ? hexWithAlpha(toolColors.highlight || '#facc15', highlightOpacity / 100)
+                            : effectiveTool === 'textHighlight'
+                              ? hexWithAlpha(toolColors.textHighlight || '#facc15', 0.4)
                               : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow'
                                 ? getHatchBackground(shapeOptions.hatchPattern, shapeOptions.borderColor, shapeOptions.fillColor, shapeOptions.fillOpacity)
                                 : 'transparent',
-                            borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
-                          }}
+                          borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
+                        }}
+                      />
+                      {/* SVG for line/arrow shape preview — line element mutated directly during drag. */}
+                      <svg
+                        className="absolute inset-0 pointer-events-none overflow-visible"
+                        width={displaySize.w}
+                        height={displaySize.h}
+                        style={{ display: effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow') ? '' : 'none' }}
+                      >
+                        <defs>
+                          <marker id="draft-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+                            <path d="M0,0 L9,4.5 L0,9 z" fill={shapeOptions.borderColor} />
+                          </marker>
+                        </defs>
+                        <line
+                          ref={draftLineDomRef}
+                          x1="0" y1="0" x2="0" y2="0"
+                          stroke={shapeOptions.borderColor}
+                          strokeWidth={shapeOptions.borderThickness}
+                          strokeDasharray={shapeOptions.borderStyle === 'dashed' ? '8,4' : shapeOptions.borderStyle === 'dotted' ? '2,4' : undefined}
+                          markerEnd={shapeKind === 'arrow' ? 'url(#draft-arrow)' : undefined}
+                          style={{ display: 'none' }}
                         />
-                      )}
+                      </svg>
 
                       {inkDraft && (effectiveTool === 'pen' || effectiveTool === 'marker') && (
                         <svg className="absolute inset-0 pointer-events-none overflow-visible" width={displaySize.w} height={displaySize.h}>
@@ -3036,8 +3475,23 @@ export default function OperationsBlueprintPdfViewer({
                 </div>
               </div>
 
+              {/* ── Divider 2: drag handle between center pane and right panel ── */}
+              {useDesktopThreePaneLayout && (
+                <div
+                  className="col-start-4 row-start-1 row-span-3 flex items-center justify-center cursor-col-resize group z-10"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    dragStartXRef.current = e.clientX
+                    dragStartWidthRef.current = rightPaneWidth
+                    setDraggingDivider('right')
+                  }}
+                >
+                  <div className="w-[3px] h-full rounded-full bg-gray-800 group-hover:bg-blue-500/60 transition-colors duration-150" />
+                </div>
+              )}
+
               <div
-                className={`operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'h-[calc(100vh-180px)] min-h-[60vh]'}`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 h-[calc(100vh-180px)] min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'h-[calc(100vh-180px)] min-h-[60vh]'}`}
                 style={{
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
@@ -3100,7 +3554,9 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           </div>
 
-          {signedUrl && (
+          </div>
+
+          {signedUrl && !useDesktopThreePaneLayout && (
             <div className="px-4 pb-4 text-[11px] text-gray-500 truncate">
               Signed URL active for this session. {pageAnnotations.length} annotation{pageAnnotations.length !== 1 ? 's' : ''} on this page.
             </div>
