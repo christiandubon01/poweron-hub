@@ -1588,6 +1588,11 @@ export default function OperationsBlueprintPdfViewer({
   }, [layoutDrag, commitAnnotationLayout])
 
   const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Always prevent propagation and default to avoid any parent handlers interfering
+    e.stopPropagation()
+    e.preventDefault()
+    
+    // If suppression window is active (e.g., after a drag/pan), skip annotation creation
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!blueprint || isEditorOpen) return
     if (!overlayRef.current || !displaySize.w || !displaySize.h) return
@@ -1797,6 +1802,7 @@ export default function OperationsBlueprintPdfViewer({
       setMousePanActive(true)
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
       e.preventDefault()
+      e.stopPropagation()
       return
     }
 
@@ -1819,6 +1825,7 @@ export default function OperationsBlueprintPdfViewer({
         setDraftRect(null)
         handleTwoFingerGesture(e)
         e.preventDefault()
+        e.stopPropagation()
         return
       }
 
@@ -1831,6 +1838,8 @@ export default function OperationsBlueprintPdfViewer({
           lastY: e.clientY,
           moved: false,
         }
+        e.preventDefault()
+        e.stopPropagation()
         return
       }
     }
@@ -1926,6 +1935,7 @@ export default function OperationsBlueprintPdfViewer({
         mousePan.lastX = e.clientX
         mousePan.lastY = e.clientY
         e.preventDefault()
+        e.stopPropagation()
         return
       }
     }
@@ -1943,6 +1953,7 @@ export default function OperationsBlueprintPdfViewer({
         setDraftRect(null)
         handleTwoFingerGesture(e)
         e.preventDefault()
+        e.stopPropagation()
         return
       }
 
@@ -1967,6 +1978,7 @@ export default function OperationsBlueprintPdfViewer({
           pan.lastX = e.clientX
           pan.lastY = e.clientY
           e.preventDefault()
+          e.stopPropagation()
           return
         }
       }
@@ -2041,6 +2053,7 @@ export default function OperationsBlueprintPdfViewer({
         suppressAnnotationUntilRef.current = until
       }
       e.preventDefault()
+      e.stopPropagation()
       return
     }
 
@@ -2053,6 +2066,8 @@ export default function OperationsBlueprintPdfViewer({
         if (moved) {
           suppressAnnotationUntilRef.current = Date.now() + 300
         }
+        e.preventDefault()
+        e.stopPropagation()
         return
       }
       endTouchPointer(e.pointerId)
@@ -2675,6 +2690,16 @@ export default function OperationsBlueprintPdfViewer({
         : 'rounded-xl border overflow-hidden w-full'
       }
       style={isFullScreenView ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+      onClick={(e) => {
+        // In fullscreen mode, prevent any clicks that haven't been explicitly handled
+        // from reaching the OS-level fullscreen backdrop, which would exit fullscreen.
+        // This is critical for iPad and other touch devices where the fullscreen
+        // behavior can be triggered by unintended click propagation.
+        if (isFullScreenView && e.target === e.currentTarget) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }}
     >
       <style>{`
         .operations-pdf-scroll {
