@@ -1048,6 +1048,14 @@ export default function OperationsBlueprintPdfViewer({
     }, 20)
   }, [isEditorOpen, richTextEditor])
 
+  // ── Fullscreen Policy ─────────────────────────────────────────────────────
+  // Fullscreen exits ONLY via:
+  //   1. Explicit close button in the header (when isFullScreenView === true)
+  //   2. Escape key (when no annotation UI is open)
+  //   3. OS-level fullscreen exit sync (e.g., swipe-down on iPad, Esc in OS)
+  // No app-side implicit exits from drag, backdrop clicks, or touch logic.
+  // ──────────────────────────────────────────────────────────────────────────
+
   // Sync isFullScreenView with the browser's native Fullscreen API state.
   // Fires when user presses Esc, swipes down on iPad, or otherwise exits
   // OS-level fullscreen, so the UI's "Exit Full Screen" toggle stays correct.
@@ -1056,6 +1064,8 @@ export default function OperationsBlueprintPdfViewer({
       const doc: any = document
       const isInFullscreen = !!(doc.fullscreenElement || doc.webkitFullscreenElement)
       if (!isInFullscreen) {
+        // OS-level fullscreen was exited (e.g., Esc, swipe-down on iPad).
+        // Sync the UI state. This is passive—we do not initiate the exit.
         setIsFullScreenView(false)
       }
     }
@@ -1067,12 +1077,16 @@ export default function OperationsBlueprintPdfViewer({
     }
   }, [])
 
+  // Escape key handler: closes UI state first, then exits fullscreen if no UI open.
+  // This ensures Escape closes annotation editors, measurements, etc. before exiting fullscreen.
+  // Fullscreen exit only happens when all annotation UI is closed.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
       const hasOpenState = !!(noteEditor || richTextEditor || draftRect || dragStart || inkDraft || focusedAnnotationId || layoutEditId)
       if (hasOpenState) {
+        // Annotation UI is open: close it first.
         setDraftRect(null)
         setDragStart(null)
         setInkDraft(null)
@@ -1082,6 +1096,7 @@ export default function OperationsBlueprintPdfViewer({
         setLayoutEditId(null)
         setLayoutDrag(null)
       } else if (isFullScreenView) {
+        // No annotation UI open and in fullscreen: explicit exit.
         setIsFullScreenView(false)
       }
     }
@@ -2691,10 +2706,10 @@ export default function OperationsBlueprintPdfViewer({
       }
       style={isFullScreenView ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
       onClick={(e) => {
-        // In fullscreen mode, prevent any clicks that haven't been explicitly handled
-        // from reaching the OS-level fullscreen backdrop, which would exit fullscreen.
-        // This is critical for iPad and other touch devices where the fullscreen
-        // behavior can be triggered by unintended click propagation.
+        // In fullscreen mode, prevent unhandled clicks from bubbling to the OS-level
+        // fullscreen backdrop (which could exit fullscreen). This ensures that only
+        // explicit close buttons and Escape key exit fullscreen—not accidental clicks
+        // on empty areas or backdrop. Critical for both desktop and tablet fullscreen.
         if (isFullScreenView && e.target === e.currentTarget) {
           e.preventDefault()
           e.stopPropagation()
@@ -2767,35 +2782,50 @@ export default function OperationsBlueprintPdfViewer({
                   <RefreshCw size={12} />
                   Refresh Link
                 </button>
+                {/* Explicit fullscreen toggle button.
+                    Entering: requests OS fullscreen API + sets UI state.
+                    Exiting: calls exitFullscreen API + sets UI state to false.
+                    This is the ONLY app-side fullscreen exit control (besides Escape key).
+                */}
                 <button
                   onClick={() => {
                     const el = viewerRootRef.current
                     const doc: any = document
                     const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                    
+                    // If browser has a fullscreen element, use exitFullscreen API.
                     if (fullscreenEl) {
                       if (doc.exitFullscreen) doc.exitFullscreen()
                       else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
                       setIsFullScreenView(false)
                       return
                     }
+                    
+                    // If in fullscreen mode (but no browser fullscreen), just close UI state.
                     if (isFullScreenView) {
                       setIsFullScreenView(false)
                       return
                     }
+                    
+                    // Not in fullscreen: request fullscreen.
                     if (el && el.requestFullscreen) {
                       el.requestFullscreen().then(() => {
                         setIsFullScreenView(true)
                       }).catch(() => {
+                        // If request fails, still enable UI fullscreen.
                         setIsFullScreenView(true)
                       })
                     } else if (el && (el as any).webkitRequestFullscreen) {
+                      // Safari fallback.
                       ; (el as any).webkitRequestFullscreen()
                       setIsFullScreenView(true)
                     } else {
+                      // No Fullscreen API available: enable UI fullscreen only.
                       setIsFullScreenView(true)
                     }
                   }}
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                  title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
                 >
                   {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                   {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
@@ -3184,32 +3214,45 @@ export default function OperationsBlueprintPdfViewer({
                 {lockView ? '🔒' : '🔓'}
               </button>
 
-              {/* Fullscreen */}
+              {/* Fullscreen button: explicit fullscreen toggle.
+                  Only explicit control for fullscreen exit (besides Escape key).
+                  Entering: requests OS fullscreen + sets UI state.
+                  Exiting: calls exitFullscreen API + sets UI state to false.
+              */}
               <button
                 onClick={() => {
                   const el = viewerRootRef.current
                   const doc: any = document
                   const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                  
+                  // If browser has fullscreen element, use exitFullscreen API.
                   if (fullscreenEl) {
                     if (doc.exitFullscreen) doc.exitFullscreen()
                     else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
                     setIsFullScreenView(false)
                     return
                   }
+                  
+                  // If in fullscreen mode (but no browser fullscreen), close UI state.
                   if (isFullScreenView) {
                     setIsFullScreenView(false)
                     return
                   }
+                  
+                  // Not in fullscreen: request fullscreen.
                   if (el && el.requestFullscreen) {
                     el.requestFullscreen().then(() => {
                       setIsFullScreenView(true)
                     }).catch(() => {
+                      // If request fails, still enable UI fullscreen.
                       setIsFullScreenView(true)
                     })
                   } else if (el && (el as any).webkitRequestFullscreen) {
+                    // Safari fallback.
                     ; (el as any).webkitRequestFullscreen()
                     setIsFullScreenView(true)
                   } else {
+                    // No Fullscreen API available: enable UI fullscreen only.
                     setIsFullScreenView(true)
                   }
                 }}
