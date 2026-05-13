@@ -2786,31 +2786,37 @@ export default function OperationsBlueprintPdfViewer({
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
-              <div className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4">
+              <div className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
+                {/* Document Title & Info */}
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-gray-100 truncate">{blueprint.title}</p>
-                    <p className="mt-1 text-xs text-gray-500">{blueprint.projectName}</p>
-                    <p className="text-xs text-gray-600 break-all">{blueprint.fileName}</p>
+                    <div className="mt-1 space-y-0.5">
+                      <p className="text-xs text-gray-500 truncate">{blueprint.projectName}</p>
+                      <p className="text-xs text-gray-600 truncate" title={blueprint.fileName}>{blueprint.fileName}</p>
+                    </div>
                   </div>
                   <button
                     onClick={() => void loadPdf()}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:text-white"
+                    className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+                    title="Refresh PDF link"
                   >
-                    <RefreshCw size={12} />
-                    Refresh
+                    <RefreshCw size={13} />
                   </button>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-gray-800 bg-[#0d0e14] px-3 py-2 text-xs">
-                  <span className="text-gray-400">Page</span>
-                  <span className="font-semibold text-gray-200">{pageLabel}</span>
+                {/* Page & Annotation Info */}
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-700/50 bg-gray-900/40 px-3 py-2">
+                  <span className="text-xs text-gray-400">Page</span>
+                  <span className="text-sm font-semibold text-gray-200">{pageLabel}</span>
                 </div>
 
+                {/* Annotation Count & URL Status */}
                 {!!signedUrl && (
-                  <p className="mt-3 text-[11px] leading-5 text-gray-500">
-                    Signed URL active for this session. {pageAnnotations.length} annotation{pageAnnotations.length !== 1 ? 's' : ''} on this page.
-                  </p>
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <p>{pageAnnotations.length} annotation{pageAnnotations.length !== 1 ? 's' : ''} on this page</p>
+                    <p className="text-gray-600">Link active for session</p>
+                  </div>
                 )}
               </div>
             )}
@@ -3044,73 +3050,115 @@ export default function OperationsBlueprintPdfViewer({
 
           <div
             className={useDesktopThreePaneLayout
-              ? 'col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 flex flex-wrap items-center gap-2'
-              : 'px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2'}
+              ? 'col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3'
+              : 'px-4 py-3 border-b border-gray-800 space-y-3'}
           >
-            <button
-              disabled={!canRender || currentPage <= 1 || isRendering}
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
-            >
-              <ChevronLeft size={12} />
-              Prev
-            </button>
-            <button
-              disabled={!canRender || currentPage >= numPages || isRendering}
-              onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
-            >
-              Next
-              <ChevronRight size={12} />
-            </button>
+            {/* Page Navigation Group */}
+            <div className="flex items-center gap-2">
+              {/* Prev/Next */}
+              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+                <button
+                  disabled={!canRender || currentPage <= 1 || isRendering}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <button
+                  disabled={!canRender || currentPage >= numPages || isRendering}
+                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
 
-            <div className="inline-flex items-center gap-1 ml-1">
-              <input
-                value={pageInput}
-                onChange={(e) => setPageInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
-                className="w-16 rounded border border-gray-700 bg-gray-900/50 text-gray-100 text-xs px-2 py-1"
-              />
-              <button
-                disabled={!canRender}
-                onClick={jumpToPage}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
-              >
-                <Search size={11} />
-                Go
-              </button>
+              {/* Page Jump Input */}
+              <div className="inline-flex items-center gap-1">
+                <input
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
+                  className="w-12 rounded border border-gray-700 bg-gray-900/40 text-gray-100 text-xs px-2 py-1.5 text-center font-medium"
+                  placeholder="1"
+                  title="Enter page number"
+                />
+                <button
+                  disabled={!canRender}
+                  onClick={jumpToPage}
+                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-50 transition-colors"
+                  title="Go to page"
+                >
+                  <Search size={12} />
+                </button>
+              </div>
+
+              {/* Page Counter */}
+              <span className="text-xs text-gray-400">/ {pageLabel.split(' ').pop()}</span>
+
+              {/* Selection & Fit */}
+              <div className="ml-auto inline-flex items-center gap-1.5">
+                <button
+                  disabled={!canRender}
+                  onClick={toggleCurrentPageSelection}
+                  className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                  title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
+                >
+                  <Minus size={12} />
+                </button>
+                <span className="text-xs text-gray-400 min-w-fit">+{selectedPageNumbers.length}</span>
+              </div>
             </div>
 
-            <span className="text-xs text-gray-400 ml-1">Page {pageLabel}</span>
+            {/* View Controls Group */}
+            <div className="flex items-center gap-2">
+              {/* Zoom & View */}
+              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+                <button
+                  disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
+                  onClick={() => applyRelativeZoomDelta(-0.1)}
+                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  title="Zoom out"
+                >
+                  <ZoomOut size={14} />
+                </button>
+                <span className="text-xs text-gray-400 w-9 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+                <button
+                  disabled={!canRender || relativeZoom >= maxRelativeZoom}
+                  onClick={() => applyRelativeZoomDelta(0.1)}
+                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  title="Zoom in"
+                >
+                  <ZoomIn size={14} />
+                </button>
+              </div>
 
-            <div className="ml-auto inline-flex items-center gap-2">
-              <button
-                disabled={!canRender}
-                onClick={toggleCurrentPageSelection}
-                className={`text-xs px-2 py-1 rounded-md border ${isCurrentPageSelected ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300'}`}
-              >
-                {isCurrentPageSelected ? 'Remove Current Page' : 'Add Current Page'}
-              </button>
-              <span className="text-xs text-gray-400">Selected: {selectedPageNumbers.length}</span>
-              <button
-                onClick={() => setLockView((v) => !v)}
-                className={`text-xs px-2 py-1 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300'}`}
-              >
-                Lock View
-              </button>
+              {/* Fit & Lock */}
               <button
                 onClick={() => {
                   pendingScrollResetRef.current = true
                   setRelativeZoom(1)
                 }}
-                className="text-xs px-2 py-1 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20"
+                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 transition-colors"
+                title="Fit page to view"
               >
-                Fit to Full Page
+                <ArrowUpRight size={13} />
               </button>
+
+              <button
+                onClick={() => setLockView((v) => !v)}
+                className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                title={lockView ? 'Unlock view' : 'Lock view'}
+              >
+                {lockView ? '🔒' : '🔓'}
+              </button>
+
+              {/* Fullscreen */}
               <button
                 onClick={() => {
                   const el = viewerRootRef.current
-                  // If a real fullscreen is already active, exit it
                   const doc: any = document
                   const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
                   if (fullscreenEl) {
@@ -3119,47 +3167,27 @@ export default function OperationsBlueprintPdfViewer({
                     setIsFullScreenView(false)
                     return
                   }
-                  // If currently in CSS-only fullscreen (iPhone fallback), toggle off
                   if (isFullScreenView) {
                     setIsFullScreenView(false)
                     return
                   }
-                  // Try Fullscreen API (iPad/Android/desktop)
                   if (el && el.requestFullscreen) {
                     el.requestFullscreen().then(() => {
                       setIsFullScreenView(true)
                     }).catch(() => {
-                      // API rejected — fall back to CSS-only fullscreen
                       setIsFullScreenView(true)
                     })
                   } else if (el && (el as any).webkitRequestFullscreen) {
-                    // Safari (older iPadOS / desktop Safari)
                     ; (el as any).webkitRequestFullscreen()
                     setIsFullScreenView(true)
                   } else {
-                    // iPhone Safari and other unsupported — CSS-only fullscreen
                     setIsFullScreenView(true)
                   }
                 }}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+                title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
-                {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
-              </button>
-              <button
-                disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
-                onClick={() => applyRelativeZoomDelta(-0.1)}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
-              >
-                <ZoomOut size={12} />
-              </button>
-              <span className="text-xs text-gray-400 w-12 text-center">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
-              <button
-                disabled={!canRender || relativeZoom >= maxRelativeZoom}
-                onClick={() => applyRelativeZoomDelta(0.1)}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 disabled:opacity-50"
-              >
-                <ZoomIn size={12} />
+                {isFullScreenView ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
               </button>
             </div>
           </div>
