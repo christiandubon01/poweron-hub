@@ -2754,54 +2754,157 @@ export default function OperationsBlueprintPdfViewer({
       ) : (
         <>
           {isFullScreenView && (
-            <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
-              <div className="min-w-0 flex items-center gap-3">
-                <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-                <p className="text-xs text-gray-500 truncate hidden xl:block">{blueprint.projectName} • {blueprint.fileName}</p>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  onClick={() => void loadPdf()}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
-                >
-                  <RefreshCw size={12} />
-                  Refresh Link
-                </button>
-                <button
-                  onClick={() => {
-                    const el = viewerRootRef.current
-                    const doc: any = document
-                    const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
-                    if (fullscreenEl) {
-                      if (doc.exitFullscreen) doc.exitFullscreen()
-                      else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
-                      setIsFullScreenView(false)
-                      return
-                    }
-                    if (isFullScreenView) {
-                      setIsFullScreenView(false)
-                      return
-                    }
-                    if (el && el.requestFullscreen) {
-                      el.requestFullscreen().then(() => {
-                        setIsFullScreenView(true)
-                      }).catch(() => {
-                        setIsFullScreenView(true)
-                      })
-                    } else if (el && (el as any).webkitRequestFullscreen) {
-                      ; (el as any).webkitRequestFullscreen()
-                      setIsFullScreenView(true)
-                    } else {
-                      setIsFullScreenView(true)
-                    }
-                  }}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
-                >
-                  {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                  {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
-                </button>
-              </div>
-            </div>
+            <>
+              {/* ── iPad/Tablet Compact Primary Header Row ── */}
+              {isMobileRef.current && (
+                <div className="px-3 py-2 border-b border-gray-800 bg-[#0d0e14] flex-shrink-0 flex items-center justify-between gap-2">
+                  {/* Left: Close/Fullscreen toggle */}
+                  <button
+                    onClick={() => {
+                      const el = viewerRootRef.current
+                      const doc: any = document
+                      const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                      if (fullscreenEl) {
+                        if (doc.exitFullscreen) doc.exitFullscreen()
+                        else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+                        setIsFullScreenView(false)
+                        return
+                      }
+                      if (isFullScreenView) {
+                        setIsFullScreenView(false)
+                        return
+                      }
+                    }}
+                    className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 flex-shrink-0"
+                    title="Exit fullscreen"
+                  >
+                    <X size={14} />
+                  </button>
+
+                  {/* Page Navigation: < Page # > */}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage <= 1}
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:opacity-40 hover:border-gray-600 flex-shrink-0"
+                      title="Previous page"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="text-xs font-semibold text-gray-200 min-w-[3.5rem] text-center">{currentPage}/{totalPages}</span>
+                    <button
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage >= totalPages}
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:opacity-40 hover:border-gray-600 flex-shrink-0"
+                      title="Next page"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+
+                  {/* Zoom/View Quick Controls */}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-blue-500/60 bg-blue-900/20 text-blue-300 hover:border-blue-500 hover:bg-blue-900/40 flex-shrink-0"
+                      title="Fit to page"
+                    >
+                      <Search size={14} />
+                    </button>
+                    <button
+                      onClick={() => setRelativeZoom((z) => clampRelativeZoom(z * 1.2))}
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 flex-shrink-0"
+                      title="Zoom in"
+                    >
+                      <ZoomIn size={14} />
+                    </button>
+                    <button
+                      onClick={() => setRelativeZoom((z) => clampRelativeZoom(z / 1.2))}
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 flex-shrink-0"
+                      title="Zoom out"
+                    >
+                      <ZoomOut size={14} />
+                    </button>
+                  </div>
+
+                  {/* Tool Bucket Mode Tabs (compact, horizontal) */}
+                  <div className="flex items-center gap-1 flex-shrink-0 overflow-x-auto">
+                    {([
+                      ['annotate', <Layers size={12} />],
+                      ['draw', <PenLine size={12} />],
+                      ['generate', <Sparkles size={12} />],
+                      ['view', <MousePointer2 size={12} />],
+                      ['measure', <Ruler size={12} />],
+                    ] as Array<[ToolbarBucket, React.ReactNode]>).map(([bucket, icon]) => (
+                      <button
+                        key={bucket}
+                        onClick={() => setToolbarBucket(bucket)}
+                        className={`inline-flex items-center justify-center h-8 w-8 rounded-md border text-[11px] flex-shrink-0 ${
+                          toolbarBucket === bucket
+                            ? 'border-blue-500 bg-blue-900/20 text-blue-300'
+                            : 'border-gray-700 text-gray-300 hover:text-white hover:border-gray-600'
+                        }`}
+                        title={bucket.charAt(0).toUpperCase() + bucket.slice(1)}
+                      >
+                        {icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Desktop/Wider Fullscreen Header (original) ── */}
+              {!isMobileRef.current && (
+                <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
+                  <div className="min-w-0 flex items-center gap-3">
+                    <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
+                    <p className="text-xs text-gray-500 truncate hidden xl:block">{blueprint.projectName} • {blueprint.fileName}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => void loadPdf()}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                    >
+                      <RefreshCw size={12} />
+                      Refresh Link
+                    </button>
+                    <button
+                      onClick={() => {
+                        const el = viewerRootRef.current
+                        const doc: any = document
+                        const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                        if (fullscreenEl) {
+                          if (doc.exitFullscreen) doc.exitFullscreen()
+                          else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+                          setIsFullScreenView(false)
+                          return
+                        }
+                        if (isFullScreenView) {
+                          setIsFullScreenView(false)
+                          return
+                        }
+                        if (el && el.requestFullscreen) {
+                          el.requestFullscreen().then(() => {
+                            setIsFullScreenView(true)
+                          }).catch(() => {
+                            setIsFullScreenView(true)
+                          })
+                        } else if (el && (el as any).webkitRequestFullscreen) {
+                          ; (el as any).webkitRequestFullscreen()
+                          setIsFullScreenView(true)
+                        } else {
+                          setIsFullScreenView(true)
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                    >
+                      {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                      {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           <div
@@ -2866,6 +2969,7 @@ export default function OperationsBlueprintPdfViewer({
           )}
 
           {/* ── Toolbar: 5 bucket selectors + tool buttons (popovers handle options) ── */}
+          {!(isFullScreenView && isMobileRef.current) && (
           <div
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
@@ -3076,6 +3180,7 @@ export default function OperationsBlueprintPdfViewer({
               </div>
             )}
           </div>
+          )}
 
           <div
             className={useDesktopThreePaneLayout
