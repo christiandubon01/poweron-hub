@@ -2849,17 +2849,17 @@ export default function OperationsBlueprintPdfViewer({
       `}</style>
 
       {!isFullScreenView && !isTabletImmersiveFullscreen && !useDesktopThreePaneLayout && (
-        <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
+        <div className="px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-800 flex items-center justify-between gap-2 sm:gap-3 flex-shrink-0">
           <div className="min-w-0">
-            <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-            <p className="text-xs text-gray-500 truncate">{blueprint.projectName} â€¢ {blueprint.fileName}</p>
+            <p className="text-xs sm:text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 truncate hidden sm:block">{blueprint.projectName} â€¢ {blueprint.fileName}</p>
           </div>
           <button
             onClick={() => void loadPdf()}
-            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
           >
             <RefreshCw size={12} />
-            Refresh Link
+            <span className="hidden sm:inline">Link</span>
           </button>
         </div>
       )}
@@ -2871,18 +2871,19 @@ export default function OperationsBlueprintPdfViewer({
       ) : (
         <>
           {(isFullScreenView || isTabletImmersiveFullscreen) && (
-            <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
-              <div className="min-w-0 flex items-center gap-3">
-                <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-                <p className="text-xs text-gray-500 truncate hidden xl:block">{blueprint.projectName} â€¢ {blueprint.fileName}</p>
+            <div className="px-3 sm:px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-2 sm:gap-3 bg-[#0d0e14] flex-shrink-0">
+              <div className="min-w-0 flex items-center gap-2 sm:gap-3">
+                <p className="text-xs sm:text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
+                <p className="text-[10px] sm:text-xs text-gray-500 truncate hidden lg:block">{blueprint.projectName} â€¢ {blueprint.fileName}</p>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
                 <button
                   onClick={() => void loadPdf()}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
+                  title="Refresh PDF link"
                 >
                   <RefreshCw size={12} />
-                  Refresh Link
+                  <span className="hidden sm:inline">Link</span>
                 </button>
                 {/* Explicit fullscreen toggle button.
                     Entering: requests OS fullscreen API + sets UI state.
@@ -2900,11 +2901,11 @@ export default function OperationsBlueprintPdfViewer({
                       setIsTabletImmersiveFullscreen,
                     )
                   }}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
-                  title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
+                  title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
                 >
                   {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                  {isFullScreenView || isTabletImmersiveFullscreen ? 'Exit Full Screen' : 'Full Size Screen'}
+                  <span className="hidden sm:inline">{isFullScreenView || isTabletImmersiveFullscreen ? 'Exit' : 'Full Size'}</span>
                 </button>
               </div>
             </div>
@@ -2976,7 +2977,7 @@ export default function OperationsBlueprintPdfViewer({
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-4 py-3 border-b border-gray-800 space-y-2'}
+              : 'px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-800 space-y-2'}
           >
             {/* â”€â”€ Bucket tabs: 2Ã—2 grid + full-width Measure row â”€â”€ */}
             <div className="grid grid-cols-2 gap-1.5">
@@ -3327,8 +3328,8 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
-            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
+          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-4' : 'p-3 sm:p-4'}>
+            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-2 sm:gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
@@ -3373,10 +3374,10 @@ export default function OperationsBlueprintPdfViewer({
                 }}
               >
                 <div
-                  className="relative p-3"
+                  className="relative p-2 sm:p-3"
                   style={{
-                    width: visualDisplayWidth ? Math.max(visualDisplayWidth + 24, viewportWidth || 0) : '100%',
-                    minHeight: visualDisplayHeight ? visualDisplayHeight + 24 : '100%',
+                    width: visualDisplayWidth ? Math.max(visualDisplayWidth + (isMobileRef.current ? 16 : 24), viewportWidth || 0) : '100%',
+                    minHeight: visualDisplayHeight ? visualDisplayHeight + (isMobileRef.current ? 16 : 24) : '100%',
                   }}
                 >
                   <div
