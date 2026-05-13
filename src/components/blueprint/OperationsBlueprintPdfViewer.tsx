@@ -89,7 +89,7 @@ function isTabletDevice() {
 // The fit scale is always relativeZoom = 1.0. Going below 1.0 would make the
 // page smaller than the fitted size, which is unwanted.
 const MIN_RELATIVE_ZOOM = 1
-// Desktop cap: 4Ã— fit. Mobile cap: 8Ã— fit (detected at render time).
+// Desktop cap: 4Ãƒâ€” fit. Mobile cap: 8Ãƒâ€” fit (detected at render time).
 const MAX_RELATIVE_ZOOM_DESKTOP = 4.5
 const MAX_RELATIVE_ZOOM_MOBILE = 8
 const MAX_RENDER_SCALE = 4.5
@@ -143,20 +143,20 @@ type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
 
-// â”€â”€ Measurement & calibration types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Measurement & calibration types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 type CalibrationUnit = 'ft' | 'm' | 'in' | 'cm' | 'mm'
 type CalibrationStatus = 'none' | 'pending' | 'saved'
 
 interface CalibrationData {
   pageNumber: number
-  // Euclidean distance in normalised page-coords (0-1 Ã— page width)
+  // Euclidean distance in normalised page-coords (0-1 Ãƒâ€” page width)
   normDistance: number
   realWorldValue: number
   realWorldUnit: CalibrationUnit
   savedAt: string
 }
 
-// â”€â”€ Auto-scale detection types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Auto-scale detection types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 interface DetectedScaleCandidate {
   parsedScale: string
   realWidthFeet: number
@@ -231,7 +231,7 @@ function normRectFromDrag(start: { x: number; y: number }, end: { x: number; y: 
 function shortText(v?: string, max = 40) {
   const s = String(v || '').trim()
   if (!s) return '(empty note)'
-  return s.length > max ? `${s.slice(0, max)}â€¦` : s
+  return s.length > max ? `${s.slice(0, max)}Ã¢â‚¬Â¦` : s
 }
 
 function clampNorm(v: number, min = 0, max = 1) {
@@ -279,7 +279,7 @@ function getHatchBackground(pattern: HatchPattern, color: string, fillColor: str
   return fill
 }
 
-// SVG <pattern> element for measurement area fills â€” returns null for solid/none.
+// SVG <pattern> element for measurement area fills Ã¢â‚¬â€ returns null for solid/none.
 function getMeasurePatternDef(patternId: string, pattern: string, color: string, opacity: number) {
   const col = hexWithAlpha(color, Math.min(1, opacity + 0.25))
   switch (pattern) {
@@ -335,7 +335,7 @@ function detectBlueprintScaleText(
   while ((m = ratioRe.exec(joined)) !== null) {
     const ratio = parseInt(m[1], 10)
     if (ratio >= 5 && ratio <= 10000) {
-      // 1:ratio â†’ 1 paper inch = ratio real inches = ratio/12 feet
+      // 1:ratio Ã¢â€ â€™ 1 paper inch = ratio real inches = ratio/12 feet
       const rw = paperWidthInches * (ratio / 12)
       if (!candidates.some(c => Math.abs(c.realWidthFeet - rw) / Math.max(0.001, rw) < 0.05)) {
         candidates.push({ parsedScale: m[0].trim(), realWidthFeet: rw, confidence: 0.75, sourceText: m[0] })
@@ -414,7 +414,7 @@ function annotationLabel(annotation: BlueprintAnnotation) {
 function clampRelativeZoomStatic(v: number, max = MAX_RELATIVE_ZOOM_DESKTOP) {
   return Math.max(MIN_RELATIVE_ZOOM, Math.min(max, v))
 }
-// Alias used throughout â€” replaced by component-level clampRelativeZoom below.
+// Alias used throughout Ã¢â‚¬â€ replaced by component-level clampRelativeZoom below.
 const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
 
 // Handle fullscreen toggling with device-aware routing:
@@ -485,7 +485,7 @@ export default function OperationsBlueprintPdfViewer({
   const richTextEditorRef = useRef<HTMLTextAreaElement>(null)
   const allAnnotationsRef = useRef<BlueprintAnnotation[]>([])
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  // Ref to the viewer's outermost element â€” used as the target for the
+  // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
   // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
   // video does, escaping browser chrome.
   const viewerRootRef = useRef<HTMLDivElement>(null)
@@ -493,7 +493,7 @@ export default function OperationsBlueprintPdfViewer({
   // Ref to the toolbar area so we can measure its height and set the
   // scroll area to exactly fill the remaining vertical space.
   const toolbarAreaRef = useRef<HTMLDivElement>(null)
-  // Draft rect DOM ref â€” mutated directly during pointer-move for zero-lag
+  // Draft rect DOM ref Ã¢â‚¬â€ mutated directly during pointer-move for zero-lag
   // visual feedback (bypasses React re-renders entirely during active drag).
   const draftRectDomRef = useRef<HTMLDivElement>(null)
   const draftLineDomRef = useRef<SVGLineElement>(null)
@@ -503,7 +503,7 @@ export default function OperationsBlueprintPdfViewer({
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 1024)
   const [isDesktopBlueprintLayout, setIsDesktopBlueprintLayout] = useState(shouldUseDesktopBlueprintLayout)
   const maxRelativeZoom = isMobileRef.current ? MAX_RELATIVE_ZOOM_MOBILE : MAX_RELATIVE_ZOOM_DESKTOP
-  // Component-level zoom clamp â€” uses the correct device-aware ceiling.
+  // Component-level zoom clamp Ã¢â‚¬â€ uses the correct device-aware ceiling.
   const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(maxRelativeZoom, v))
   const [scrollAreaHeight, setScrollAreaHeight] = useState(0)
   useEffect(() => {
@@ -584,7 +584,7 @@ export default function OperationsBlueprintPdfViewer({
   // iPad/tablet immersive fullscreen mode (in-app overlay, not browser fullscreen)
   const [isTabletImmersiveFullscreen, setIsTabletImmersiveFullscreen] = useState(false)
 
-  // â”€â”€ Pane resize state â€” persisted across hard reloads â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Pane resize state Ã¢â‚¬â€ persisted across hard reloads Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [leftPaneWidth, setLeftPaneWidth] = useState(() => {
     const saved = localStorage.getItem('blueprint_left_pane_width')
     return saved ? Math.max(160, Math.min(480, parseInt(saved, 10))) : 280
@@ -620,7 +620,7 @@ export default function OperationsBlueprintPdfViewer({
     }
   }, [draggingDivider])
 
-  // â”€â”€ Measurement calibration state â€” page-specific â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement calibration state Ã¢â‚¬â€ page-specific Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // savedCalibrations: committed calibrations keyed by pageNumber
   const [savedCalibrations, setSavedCalibrations] = useState<Record<number, CalibrationData>>({})
   // pendingCalibration: drawn but not yet committed (recalibration replaces this)
@@ -628,7 +628,7 @@ export default function OperationsBlueprintPdfViewer({
   // measurementStyle: shared style options for all measure annotation types
   const [measurementStyle, setMeasurementStyle] = useState<MeasurementStyle>(DEFAULT_MEASUREMENT_STYLE)
 
-  // â”€â”€ Measurement draft state â€” multi-click accumulation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement draft state Ã¢â‚¬â€ multi-click accumulation Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [measureDraftPoints, setMeasureDraftPoints] = useState<Array<{ x: number; y: number }>>([])
   const measureDraftRef = useRef<Array<{ x: number; y: number }>>([])
   const [measureCursorPx, setMeasureCursorPx] = useState<{ x: number; y: number } | null>(null)
@@ -645,12 +645,12 @@ export default function OperationsBlueprintPdfViewer({
     pageNumber: number
   } | null>(null)
 
-  // â”€â”€ Auto-detected scale results â€” keyed by pageNumber â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detected scale results Ã¢â‚¬â€ keyed by pageNumber Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [detectedScales, setDetectedScales] = useState<Record<number, DetectedScaleResult>>({})
   // Tracks which pages have already been scanned so we don't repeat work.
   const scannedPagesRef = useRef<Set<number>>(new Set())
 
-  // â”€â”€ Derived calibration for current page â€” precedence: manual > auto > none â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Derived calibration for current page Ã¢â‚¬â€ precedence: manual > auto > none Ã¢â€â‚¬
   const savedCalibration: CalibrationData | null = savedCalibrations[currentPage] ?? null
   const detectedResult: DetectedScaleResult | null = detectedScales[currentPage] ?? null
   const autoCalibration: CalibrationData | null = (() => {
@@ -678,7 +678,7 @@ export default function OperationsBlueprintPdfViewer({
   type ToolKey = 'highlight' | 'textHighlight' | 'underline' | 'textBox' | 'pen' | 'marker' | 'eraser' | 'shape' | 'callout' | 'generate' | 'note' | 'calibrate' | 'measure-distance' | 'measure-area' | 'measure-perimeter'
   const [toolColors, setToolColors] = useState<Record<ToolKey, string>>({
     highlight: '#facc15',
-    textHighlight: '#facc15', // default yellow â€” distinct palette in popover
+    textHighlight: '#facc15', // default yellow Ã¢â‚¬â€ distinct palette in popover
     underline: '#facc15',
     textBox: '#111827',
     pen: '#facc15',
@@ -800,7 +800,7 @@ export default function OperationsBlueprintPdfViewer({
     allAnnotationsRef.current = allAnnotations
   }, [allAnnotations])
 
-  // â”€â”€ Keyboard handler for measurement tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Keyboard handler for measurement tools Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -825,7 +825,7 @@ export default function OperationsBlueprintPdfViewer({
     return () => window.removeEventListener('keydown', onKey)
   }, [effectiveTool, calibrateInput])
 
-  // â”€â”€ Clear measure draft on tool/page change â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Clear measure draft on tool/page change Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     measureDraftRef.current = []
     setMeasureDraftPoints([])
@@ -1114,13 +1114,13 @@ export default function OperationsBlueprintPdfViewer({
     }, 20)
   }, [isEditorOpen, richTextEditor])
 
-  // â”€â”€ Fullscreen Policy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Fullscreen Policy Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // Fullscreen exits ONLY via:
   //   1. Explicit close button in the header (when isFullScreenView === true)
   //   2. Escape key (when no annotation UI is open)
   //   3. OS-level fullscreen exit sync (e.g., swipe-down on iPad, Esc in OS)
   // No app-side implicit exits from drag, backdrop clicks, or touch logic.
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
   // Sync isFullScreenView with the browser's native Fullscreen API state.
   // Fires when user presses Esc, swipes down on iPad, or otherwise exits
@@ -1131,7 +1131,7 @@ export default function OperationsBlueprintPdfViewer({
       const isInFullscreen = !!(doc.fullscreenElement || doc.webkitFullscreenElement)
       if (!isInFullscreen) {
         // OS-level fullscreen was exited (e.g., Esc, swipe-down on iPad).
-        // Sync the UI state. This is passiveâ€”we do not initiate the exit.
+        // Sync the UI state. This is passiveÃ¢â‚¬â€we do not initiate the exit.
         setIsFullScreenView(false)
       }
     }
@@ -1305,7 +1305,7 @@ export default function OperationsBlueprintPdfViewer({
     }
   }, [loadAnnotations, onAnnotationsChanged])
 
-  // â”€â”€ Measurement pending commit processor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement pending commit processor Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // Must live AFTER persistAnnotation is declared to avoid TDZ ReferenceError.
   useEffect(() => {
     if (!measurePendingCommit) return
@@ -1343,7 +1343,7 @@ export default function OperationsBlueprintPdfViewer({
       }
       normArea = Math.abs(normArea) / 2
       const realArea = normArea / (scaleForPage * scaleForPage)
-      label = `${realArea.toFixed(2)} ${calForPage.realWorldUnit}Â²`
+      label = `${realArea.toFixed(2)} ${calForPage.realWorldUnit}Ã‚Â²`
       meta = { points, label, normArea, realWorldArea: realArea, unit: calForPage.realWorldUnit, style: measurementStyle }
     } else if (type === 'measure-perimeter' && points.length >= 2) {
       let normPerim = 0
@@ -1374,19 +1374,19 @@ export default function OperationsBlueprintPdfViewer({
     setFocusedAnnotationId(ann.id)
   }, [measurePendingCommit, blueprint, persistAnnotation, savedCalibrations, detectedScales, toolColors, measurementStyle])
 
-  // â”€â”€ Persist manual calibrations to localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Persist manual calibrations to localStorage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     if (!blueprint?.id) return
     try { localStorage.setItem(`blueprint_calibrations_${blueprint.id}`, JSON.stringify(savedCalibrations)) } catch {}
   }, [savedCalibrations, blueprint?.id])
 
-  // â”€â”€ Persist detected scales to localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Persist detected scales to localStorage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     if (!blueprint?.id) return
     try { localStorage.setItem(`blueprint_detected_scales_${blueprint.id}`, JSON.stringify(detectedScales)) } catch {}
   }, [detectedScales, blueprint?.id])
 
-  // â”€â”€ Rehydrate calibration and detection state when blueprint changes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Rehydrate calibration and detection state when blueprint changes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     if (!blueprint?.id) return
     scannedPagesRef.current = new Set()
@@ -1401,7 +1401,7 @@ export default function OperationsBlueprintPdfViewer({
     }
   }, [blueprint?.id])
 
-  // â”€â”€ Auto-detect blueprint scale from PDF text content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detect blueprint scale from PDF text content Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // Runs once per page per blueprint session. Does not overwrite manual calibration.
   useEffect(() => {
     if (!pdfDoc || !currentPage) return
@@ -1979,7 +1979,7 @@ export default function OperationsBlueprintPdfViewer({
 
     if (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') {
       const n = toNorm(x, y, rect.width, rect.height)
-      // Double-click on perimeter â†’ complete
+      // Double-click on perimeter Ã¢â€ â€™ complete
       if (effectiveTool === 'measure-perimeter') {
         const last = lastMeasureClickRef.current
         if (Date.now() - last.time < 300 && Math.hypot(n.x - last.nx, n.y - last.ny) < 0.03) {
@@ -2024,7 +2024,7 @@ export default function OperationsBlueprintPdfViewer({
     if (effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
       dragStartRef.current = { x, y }
       setDragStart({ x, y })
-      // Reset DOM draft elements (visual state only â€” no setDraftRect needed)
+      // Reset DOM draft elements (visual state only Ã¢â‚¬â€ no setDraftRect needed)
       if (draftRectDomRef.current) draftRectDomRef.current.style.display = 'none'
       if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
@@ -2131,7 +2131,7 @@ export default function OperationsBlueprintPdfViewer({
     const w = Math.abs(x - activeDragStart.x)
     const h = Math.abs(y - activeDragStart.y)
 
-    // Direct DOM mutation â€” zero React re-renders during drag for smooth preview.
+    // Direct DOM mutation Ã¢â‚¬â€ zero React re-renders during drag for smooth preview.
     const domEl = draftRectDomRef.current
     if (domEl) {
       domEl.style.display = 'block'
@@ -2154,7 +2154,7 @@ export default function OperationsBlueprintPdfViewer({
         lineEl.style.display = 'none'
       }
     }
-    // Keep dragStartRef in sync but do NOT call setDraftRect here â€”
+    // Keep dragStartRef in sync but do NOT call setDraftRect here Ã¢â‚¬â€
     // the DOM refs above give zero-lag visual feedback without any React re-renders.
     dragStartRef.current = activeDragStart
   }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind])
@@ -2374,7 +2374,7 @@ export default function OperationsBlueprintPdfViewer({
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
   const useDesktopThreePaneLayout = isDesktopBlueprintLayout
 
-  // â”€â”€â”€ Annotation â†” tool-key mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Annotation Ã¢â€ â€ tool-key mapping Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   function annotationTypeToToolKey(type: string): ToolKey | null {
     const map: Record<string, ToolKey> = {
       highlight: 'highlight', textHighlight: 'textHighlight', underline: 'underline', textBox: 'textBox',
@@ -2388,7 +2388,7 @@ export default function OperationsBlueprintPdfViewer({
     return map[type] ?? null
   }
 
-  // â”€â”€â”€ Edit-mode helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Edit-mode helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const editingAnnotation = openPopover?.editingAnnotationId
     ? (allAnnotations.find(a => a.id === openPopover.editingAnnotationId) ?? null)
     : null
@@ -2407,7 +2407,7 @@ export default function OperationsBlueprintPdfViewer({
     void persistAnnotation(updated)
   }
 
-  // â”€â”€â”€ Per-tool popover content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Per-tool popover content Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const FONT_FAMILIES = [
     { label: 'Helvetica', value: 'Helvetica' },
     { label: 'Arial', value: 'Arial' },
@@ -2435,7 +2435,7 @@ export default function OperationsBlueprintPdfViewer({
     const isEdit = mode === 'edit'
     const eMeta = editingAnnotation ? getAnnotationMeta(editingAnnotation) : {}
 
-    // â”€â”€ 1. HIGHLIGHTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 1. HIGHLIGHTER Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'highlight') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.highlight) : toolColors.highlight
       const opacity = isEdit ? Math.round((eMeta.opacity ?? 0.35) * 100) : highlightOpacity
@@ -2460,7 +2460,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 1b. TEXT HIGHLIGHTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 1b. TEXT HIGHLIGHTER Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'textHighlight') {
       const TEXT_HIGHLIGHT_COLORS = ['#facc15', '#86efac', '#f9a8d4', '#93c5fd', '#fdba74', '#c4b5fd', '#67e8f9']
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.textHighlight) : toolColors.textHighlight
@@ -2485,7 +2485,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 2. UNDERLINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 2. UNDERLINE Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'underline') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.underline) : toolColors.underline
       const thickness = isEdit ? (eMeta.thickness ?? underlineThickness) : underlineThickness
@@ -2508,7 +2508,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 3. TEXT BOX â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 3. TEXT BOX Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'textBox') {
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
       const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
@@ -2552,7 +2552,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 4. PEN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 4. PEN Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'pen') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.pen) : toolColors.pen
       const thickness = isEdit ? (eMeta.thickness ?? drawOptions.thickness) : drawOptions.thickness
@@ -2581,7 +2581,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 5. MARKER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 5. MARKER Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'marker') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.marker) : toolColors.marker
       const thickness = isEdit ? (eMeta.thickness ?? markerOptions.thickness) : markerOptions.thickness
@@ -2610,7 +2610,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 6. ERASER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 6. ERASER Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'eraser') {
       return {
         title: 'Eraser',
@@ -2621,7 +2621,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 7. SHAPE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 7. SHAPE Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'shape') {
       const borderColor = isEdit ? (eMeta.borderColor ?? shapeOptions.borderColor) : shapeOptions.borderColor
       const borderThickness = isEdit ? (eMeta.borderThickness ?? shapeOptions.borderThickness) : shapeOptions.borderThickness
@@ -2700,7 +2700,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 8. CALLOUT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 8. CALLOUT Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'callout') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.callout) : toolColors.callout
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
@@ -2745,7 +2745,7 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
 
-    // â”€â”€ 9. GENERATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 9. GENERATE Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     if (tool === 'generate') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.generate) : toolColors.generate
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
@@ -2849,17 +2849,17 @@ export default function OperationsBlueprintPdfViewer({
       `}</style>
 
       {!isFullScreenView && !isTabletImmersiveFullscreen && !useDesktopThreePaneLayout && (
-        <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
+        <div className="px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-800 flex items-center justify-between gap-2 sm:gap-3 flex-shrink-0">
           <div className="min-w-0">
-            <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-            <p className="text-xs text-gray-500 truncate">{blueprint.projectName} â€¢ {blueprint.fileName}</p>
+            <p className="text-xs sm:text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 truncate hidden sm:block">{blueprint.projectName} Ã¢â‚¬Â¢ {blueprint.fileName}</p>
           </div>
           <button
             onClick={() => void loadPdf()}
-            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
           >
             <RefreshCw size={12} />
-            Refresh Link
+            <span className="hidden sm:inline">Link</span>
           </button>
         </div>
       )}
@@ -2874,15 +2874,16 @@ export default function OperationsBlueprintPdfViewer({
             <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
               <div className="min-w-0 flex items-center gap-3">
                 <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-                <p className="text-xs text-gray-500 truncate hidden xl:block">{blueprint.projectName} â€¢ {blueprint.fileName}</p>
+                <p className="text-xs text-gray-500 truncate hidden xl:block">{blueprint.projectName} Ã¢â‚¬Â¢ {blueprint.fileName}</p>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
                 <button
                   onClick={() => void loadPdf()}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
+                  title="Refresh PDF link"
                 >
                   <RefreshCw size={12} />
-                  Refresh Link
+                  <span className="hidden sm:inline">Link</span>
                 </button>
                 {/* Explicit fullscreen toggle button.
                     Entering: requests OS fullscreen API + sets UI state.
@@ -2900,8 +2901,8 @@ export default function OperationsBlueprintPdfViewer({
                       setIsTabletImmersiveFullscreen,
                     )
                   }}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
-                  title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
+                  title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
                 >
                   {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                   {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
@@ -2999,7 +3000,7 @@ export default function OperationsBlueprintPdfViewer({
                   className={`inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border transition-colors text-sm ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'} disabled:opacity-40`}
                   title={lockView ? 'Unlock view' : 'Lock view'}
                 >
-                  {lockView ? '🔒' : '🔓'}
+                  {lockView ? 'ðŸ”’' : 'ðŸ”“'}
                 </button>
               </div>
 
@@ -3063,7 +3064,7 @@ export default function OperationsBlueprintPdfViewer({
               </div>
             )}
 
-          {/* â”€â”€ Divider 1: drag handle between left panel and center pane â”€â”€ */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ Divider 1: drag handle between left panel and center pane Ã¢â€â‚¬Ã¢â€â‚¬ */}
           {useDesktopThreePaneLayout && (
             <div
               className="col-start-2 row-start-1 row-span-3 flex items-center justify-center cursor-col-resize group z-10"
@@ -3078,14 +3079,14 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          {/* â”€â”€ Toolbar: 5 bucket selectors + tool buttons (popovers handle options) â”€â”€ */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ Toolbar: 5 bucket selectors + tool buttons (popovers handle options) Ã¢â€â‚¬Ã¢â€â‚¬ */}
           <div
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-4 py-2 border-b border-gray-800 space-y-1.5'}
+              : 'px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-800 space-y-2'}
           >
-            {/* ──── Tablet: Compact single-row segmented bucket selector ──── */}
+            {/* â”€â”€â”€â”€ Tablet: Compact single-row segmented bucket selector â”€â”€â”€â”€ */}
             {!useDesktopThreePaneLayout && (
               <div className="flex gap-0.5 items-stretch overflow-x-auto">
                 {([
@@ -3117,7 +3118,7 @@ export default function OperationsBlueprintPdfViewer({
               </div>
             )}
 
-            {/* ──── Desktop: 2×2 grid + full-width Measure row ──── */}
+            {/* â”€â”€â”€â”€ Desktop: 2Ã—2 grid + full-width Measure row â”€â”€â”€â”€ */}
             {useDesktopThreePaneLayout && (
               <>
                 <div className="grid grid-cols-2 gap-1.5">
@@ -3157,15 +3158,15 @@ export default function OperationsBlueprintPdfViewer({
               </>
             )}
 
-            {/* ──── Tablet: Compact active tool label ──── */}
+            {/* â”€â”€â”€â”€ Tablet: Compact active tool label â”€â”€â”€â”€ */}
             {!useDesktopThreePaneLayout && (
               <div className="text-[10px] text-gray-600 px-0.5">
-                <span className="text-gray-400">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' · editing' : ''}
+                <span className="text-gray-400">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' Â· editing' : ''}
               </div>
             )}
 
 
-            {/* â”€â”€ Annotate: Text Box Â· Text Highlight Â· Underline Â· Note Â· Callout â”€â”€ */}
+            {/* Ã¢â€â‚¬Ã¢â€â‚¬ Annotate: Text Box Ã‚Â· Text Highlight Ã‚Â· Underline Ã‚Â· Note Ã‚Â· Callout Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'annotate' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
                 <button
@@ -3191,7 +3192,7 @@ export default function OperationsBlueprintPdfViewer({
               </div>
             )}
 
-            {/* â”€â”€ Draw / Mark: Pen Â· Marker Â· Eraser Â· Shapes â”€â”€ */}
+            {/* Ã¢â€â‚¬Ã¢â€â‚¬ Draw / Mark: Pen Ã‚Â· Marker Ã‚Â· Eraser Ã‚Â· Shapes Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'draw' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
                 <button
@@ -3213,7 +3214,7 @@ export default function OperationsBlueprintPdfViewer({
               </div>
             )}
 
-            {/* â”€â”€ Generate â”€â”€ */}
+            {/* Ã¢â€â‚¬Ã¢â€â‚¬ Generate Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'generate' && (
               <div className="flex flex-col gap-1.5 pt-0.5">
                 <button
@@ -3224,7 +3225,7 @@ export default function OperationsBlueprintPdfViewer({
               </div>
             )}
 
-            {/* â”€â”€ View â”€â”€ */}
+            {/* Ã¢â€â‚¬Ã¢â€â‚¬ View Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'view' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
                 <button
@@ -3239,14 +3240,14 @@ export default function OperationsBlueprintPdfViewer({
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
                   className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
                 >Fit to Full Page</button>
-                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} text-[11px] text-gray-500 leading-snug`}>Wheel/pinch to zoom Â· Select / Pan to drag.</p>
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} text-[11px] text-gray-500 leading-snug`}>Wheel/pinch to zoom Ã‚Â· Select / Pan to drag.</p>
               </div>
             )}
 
-            {/* â”€â”€ Measure â”€â”€ */}
+            {/* Ã¢â€â‚¬Ã¢â€â‚¬ Measure Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'measure' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
-                {/* Calibration status badge â€” shows manual / auto / ambiguous / pending / none */}
+                {/* Calibration status badge Ã¢â‚¬â€ shows manual / auto / ambiguous / pending / none */}
                 <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/40 px-2 py-1.5`}>
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-gray-400">Page {currentPage}</span>
@@ -3269,7 +3270,7 @@ export default function OperationsBlueprintPdfViewer({
                   )}
                   {calibrationSource === 'ambiguous' && detectedResult && (
                     <div className="mt-1 flex flex-col gap-1">
-                      <div className="text-[10px] text-orange-300/70">Multiple scales found â€” pick one or calibrate manually:</div>
+                      <div className="text-[10px] text-orange-300/70">Multiple scales found Ã¢â‚¬â€ pick one or calibrate manually:</div>
                       {detectedResult.candidates.map((c, i) => (
                         <button key={i} type="button"
                           onClick={() => setSavedCalibrations(prev => ({
@@ -3287,7 +3288,7 @@ export default function OperationsBlueprintPdfViewer({
                 <button
                   onClick={() => { setToolMode('calibrate'); setOpenPopover(null) }}
                   className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Crosshair size={12} /> Calibrate â€” draw known distance</button>
+                ><Crosshair size={12} /> Calibrate Ã¢â‚¬â€ draw known distance</button>
 
                 {/* Measure tools */}
                 <button
@@ -3438,7 +3439,7 @@ export default function OperationsBlueprintPdfViewer({
                 className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
                 title={lockView ? 'Unlock view' : 'Lock view'}
               >
-                {lockView ? 'ðŸ”’' : 'ðŸ”“'}
+                {lockView ? 'Ã°Å¸â€â€™' : 'Ã°Å¸â€â€œ'}
               </button>
 
               {/* Fullscreen button: explicit fullscreen toggle.
@@ -3478,8 +3479,8 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
-            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
+          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-4' : 'p-3 sm:p-4'}>
+            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-2 sm:gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
@@ -3496,7 +3497,7 @@ export default function OperationsBlueprintPdfViewer({
                       : {
                         height: scrollAreaHeight > 100 ? `${scrollAreaHeight - 16}px` : 'calc(100vh - 300px)',
                       }),
-                  // Hide scrollbars across all browsers â€” inline guarantees they
+                  // Hide scrollbars across all browsers Ã¢â‚¬â€ inline guarantees they
                   // apply regardless of CSS file load order. Container still
                   // scrolls programmatically (required by pan/zoom logic).
                   scrollbarWidth: 'none',          /* Firefox */
@@ -3524,10 +3525,10 @@ export default function OperationsBlueprintPdfViewer({
                 }}
               >
                 <div
-                  className="relative p-3"
+                  className="relative p-2 sm:p-3"
                   style={{
-                    width: visualDisplayWidth ? Math.max(visualDisplayWidth + 24, viewportWidth || 0) : '100%',
-                    minHeight: visualDisplayHeight ? visualDisplayHeight + 24 : '100%',
+                    width: visualDisplayWidth ? Math.max(visualDisplayWidth + (isMobileRef.current ? 16 : 24), viewportWidth || 0) : '100%',
+                    minHeight: visualDisplayHeight ? visualDisplayHeight + (isMobileRef.current ? 16 : 24) : '100%',
                   }}
                 >
                   <div
@@ -3820,7 +3821,7 @@ export default function OperationsBlueprintPdfViewer({
                         }
 
                         if (a.type === 'textHighlight') {
-                          // Text Highlighter: no border, pure fill â€” looks like a text marker pen.
+                          // Text Highlighter: no border, pure fill Ã¢â‚¬â€ looks like a text marker pen.
                           return (
                             <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
@@ -3926,7 +3927,7 @@ export default function OperationsBlueprintPdfViewer({
                         )
                       })}
 
-                      {/* Permanent DOM-ref draft rect â€” hidden by default, shown + mutated directly
+                      {/* Permanent DOM-ref draft rect Ã¢â‚¬â€ hidden by default, shown + mutated directly
                           during pointer-move to avoid React re-renders during active drag. */}
                       <div
                         ref={draftRectDomRef}
@@ -3949,7 +3950,7 @@ export default function OperationsBlueprintPdfViewer({
                           borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
                         }}
                       />
-                      {/* SVG for line/arrow shape preview â€” line element mutated directly during drag. */}
+                      {/* SVG for line/arrow shape preview Ã¢â‚¬â€ line element mutated directly during drag. */}
                       <svg
                         className="absolute inset-0 pointer-events-none overflow-visible"
                         width={displaySize.w}
@@ -3986,7 +3987,7 @@ export default function OperationsBlueprintPdfViewer({
                         </svg>
                       )}
 
-                      {/* Measure draft SVG â€” placed points + rubber-band to cursor */}
+                      {/* Measure draft SVG Ã¢â‚¬â€ placed points + rubber-band to cursor */}
                       {displaySize.w > 0 && measureDraftPoints.length > 0 && (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') && (
                         <svg className="absolute inset-0 pointer-events-none overflow-visible" width={displaySize.w} height={displaySize.h}>
                           {(() => {
@@ -4076,7 +4077,7 @@ export default function OperationsBlueprintPdfViewer({
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-sky-400">
-                            Calibrate â€” real-world distance
+                            Calibrate Ã¢â‚¬â€ real-world distance
                           </div>
                           <div className="flex gap-2">
                             <input
@@ -4333,7 +4334,7 @@ export default function OperationsBlueprintPdfViewer({
                 </div>
               </div>
 
-              {/* â”€â”€ Divider 2: drag handle between center pane and right panel â”€â”€ */}
+              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Divider 2: drag handle between center pane and right panel Ã¢â€â‚¬Ã¢â€â‚¬ */}
               {useDesktopThreePaneLayout && (
                 <div
                   className="col-start-4 row-start-1 row-span-3 flex items-center justify-center cursor-col-resize group z-10"
@@ -4423,7 +4424,7 @@ export default function OperationsBlueprintPdfViewer({
         </>
       )}
 
-      {/* â”€â”€ Floating tool popover (portal) â”€â”€ */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Floating tool popover (portal) Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {_popoverContent && openPopover && (
         <ToolPopover
           open
