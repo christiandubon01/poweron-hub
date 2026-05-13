@@ -438,9 +438,11 @@ export default function OperationsBlueprintPdfViewer({
   // True when viewport width is phone/tablet-sized (< 1024px).
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 1024)
   const [isDesktopBlueprintLayout, setIsDesktopBlueprintLayout] = useState(shouldUseDesktopBlueprintLayout)
-  const maxRelativeZoom = isMobileRef.current ? MAX_RELATIVE_ZOOM_MOBILE : MAX_RELATIVE_ZOOM_DESKTOP
-  // Component-level zoom clamp — uses the correct device-aware ceiling.
-  const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(maxRelativeZoom, v))
+  // Component-level zoom clamp — computed at use-time to pick up ref changes during resize.
+  const clampRelativeZoom = (v: number) => {
+    const maxZoom = isMobileRef.current ? MAX_RELATIVE_ZOOM_MOBILE : MAX_RELATIVE_ZOOM_DESKTOP
+    return Math.max(MIN_RELATIVE_ZOOM, Math.min(maxZoom, v))
+  }
   const [scrollAreaHeight, setScrollAreaHeight] = useState(0)
   useEffect(() => {
     const syncViewportFlags = () => {
@@ -2683,9 +2685,7 @@ export default function OperationsBlueprintPdfViewer({
   return (
     <div
       ref={viewerRootRef}
-      className={isFullScreenView && isDesktopBlueprintLayout
-        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
-        : isFullScreenView
+      className={isFullScreenView
         ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
         : 'rounded-xl border overflow-hidden w-full'
       }
