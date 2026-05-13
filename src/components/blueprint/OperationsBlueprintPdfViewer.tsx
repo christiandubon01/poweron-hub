@@ -1148,7 +1148,7 @@ export default function OperationsBlueprintPdfViewer({
   // iPad/tablet fullscreen: lock background page scroll, own all scroll/pan within viewer.
   // This prevents touch drags from leaking to outer page and prevents accidental fullscreen exit.
   useEffect(() => {
-    if (!isFullScreenView) {
+    if (!isFullScreenView && !isTabletImmersiveFullscreen) {
       // Restore normal scrolling when exiting fullscreen
       const html = document.documentElement
       const body = document.body
@@ -1178,7 +1178,7 @@ export default function OperationsBlueprintPdfViewer({
       html.style.position = originalHtmlPosition
       body.style.position = originalBodyPosition
     }
-  }, [isFullScreenView])
+  }, [isFullScreenView, isTabletImmersiveFullscreen])
   // Escape key handler: closes UI state first, then exits fullscreen if no UI open.
   // This ensures Escape closes annotation editors, measurements, etc. before exiting fullscreen.
   // Fullscreen exit only happens when all annotation UI is closed.
