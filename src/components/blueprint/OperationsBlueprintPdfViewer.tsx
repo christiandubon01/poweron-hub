@@ -143,14 +143,28 @@ interface CalibrationData {
   savedAt: string
 }
 
+// ── Auto-scale detection types ────────────────────────────────────────────────
+interface DetectedScaleCandidate {
+  parsedScale: string
+  realWidthFeet: number
+  confidence: number
+  sourceText: string
+}
+interface DetectedScaleResult {
+  pageNumber: number
+  candidates: DetectedScaleCandidate[]
+  ambiguous: boolean
+  detectedAt: string
+}
+
 interface MeasurementStyle {
-  endpointStyle: 'dot' | 'arrow' | 'none'
+  endpointStyle: 'dot' | 'arrow' | 'bar' | 'none'
   lineThickness: number
   lineColor: string
   textSize: number
   fillColor: string
   fillOpacity: number
-  fillPattern: 'none' | 'diagonal' | 'cross' | 'dots'
+  fillPattern: 'none' | 'solid' | 'diagonal' | 'cross' | 'crosshatch' | 'dots' | 'horizontal'
 }
 
 const DEFAULT_MEASUREMENT_STYLE: MeasurementStyle = {
@@ -250,6 +264,82 @@ function getHatchBackground(pattern: HatchPattern, color: string, fillColor: str
     return `radial-gradient(${hatch} 1px, ${fill} 1px)`
   }
   return fill
+}
+
+// SVG <pattern> element for measurement area fills — returns null for solid/none.
+function getMeasurePatternDef(patternId: string, pattern: string, color: string, opacity: number) {
+  const col = hexWithAlpha(color, Math.min(1, opacity + 0.25))
+  switch (pattern) {
+    case 'diagonal':
+      return <pattern id={patternId} patternUnits="userSpaceOnUse" width={8} height={8} patternTransform="rotate(45 0 0)"><line x1={0} y1={0} x2={0} y2={8} stroke={col} strokeWidth={2} /></pattern>
+    case 'crosshatch': case 'cross':
+      return <pattern id={patternId} patternUnits="userSpaceOnUse" width={8} height={8}><line x1={0} y1={4} x2={8} y2={4} stroke={col} strokeWidth={1} /><line x1={4} y1={0} x2={4} y2={8} stroke={col} strokeWidth={1} /></pattern>
+    case 'dots':
+      return <pattern id={patternId} patternUnits="userSpaceOnUse" width={8} height={8}><circle cx={4} cy={4} r={1.5} fill={col} /></pattern>
+    case 'horizontal':
+      return <pattern id={patternId} patternUnits="userSpaceOnUse" width={8} height={8}><line x1={0} y1={4} x2={8} y2={4} stroke={col} strokeWidth={1.5} /></pattern>
+    default: return null
+  }
+}
+
+// Best-effort blueprint scale text detection from PDF text items.
+// Returns null if no recognisable scale found.
+function detectBlueprintScaleText(
+  textItems: string[],
+  pageWidthPts: number,
+  pageNumber: number,
+): DetectedScaleResult | null {
+  const joined = textItems.join(' ')
+  const paperWidthInches = pageWidthPts / 72
+  const candidates: DetectedScaleCandidate[] = []
+
+  // Fractional inch = 1 foot: e.g. "1/4" = 1'-0"", "3/16" = 1'-0""
+  const fracRe = /(\d+)\s*\/\s*(\d+)\s*["""]?\s*=\s*1\s*[-'''`]\s*0\s*["""]?/g
+  let m: RegExpExecArray | null
+  while ((m = fracRe.exec(joined)) !== null) {
+    const num = parseInt(m[1], 10), den = parseInt(m[2], 10)
+    if (num > 0 && den > 0) {
+      const S = den / num   // feet per paper inch (e.g. 4 for 1/4")
+      candidates.push({ parsedScale: m[0].trim(), realWidthFeet: paperWidthInches * S, confidence: 0.95, sourceText: m[0] })
+    }
+  }
+
+  // Integer inch = 1 foot: e.g. "1" = 1'-0"", "2" = 1'-0""
+  const intRe = /(?<!\d)(\d+)\s*["""]?\s*=\s*1\s*[-'''`]\s*0\s*["""]?/g
+  while ((m = intRe.exec(joined)) !== null) {
+    const num = parseInt(m[1], 10)
+    if (num > 0) {
+      const S = 1 / num   // feet per paper inch (e.g. 0.5 for 2")
+      const rw = paperWidthInches * S
+      if (!candidates.some(c => Math.abs(c.realWidthFeet - rw) / Math.max(0.001, rw) < 0.05)) {
+        candidates.push({ parsedScale: m[0].trim(), realWidthFeet: rw, confidence: 0.85, sourceText: m[0] })
+      }
+    }
+  }
+
+  // Ratio form: "Scale 1:48", "1:100"
+  const ratioRe = /(?:scale\s*[=:]?\s*)?1\s*:\s*(\d+)/gi
+  while ((m = ratioRe.exec(joined)) !== null) {
+    const ratio = parseInt(m[1], 10)
+    if (ratio >= 5 && ratio <= 10000) {
+      // 1:ratio → 1 paper inch = ratio real inches = ratio/12 feet
+      const rw = paperWidthInches * (ratio / 12)
+      if (!candidates.some(c => Math.abs(c.realWidthFeet - rw) / Math.max(0.001, rw) < 0.05)) {
+        candidates.push({ parsedScale: m[0].trim(), realWidthFeet: rw, confidence: 0.75, sourceText: m[0] })
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null
+
+  // Deduplicate within 5% relative tolerance
+  const deduped: DetectedScaleCandidate[] = []
+  for (const c of candidates) {
+    if (!deduped.some(d => Math.abs(d.realWidthFeet - c.realWidthFeet) / Math.max(0.001, c.realWidthFeet) < 0.05)) {
+      deduped.push(c)
+    }
+  }
+  return { pageNumber, candidates: deduped, ambiguous: deduped.length > 1, detectedAt: new Date().toISOString() }
 }
 
 function normalizePoints(points: Array<{ x: number; y: number }>, width: number, height: number) {
@@ -410,6 +500,8 @@ export default function OperationsBlueprintPdfViewer({
   const [pdfDoc, setPdfDoc] = useState<any>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
+  const currentPageRef = useRef(1)
+  currentPageRef.current = currentPage
   const [pageInput, setPageInput] = useState('1')
   const [relativeZoom, setRelativeZoom] = useState(1)
   const [pinchPreviewZoom, setPinchPreviewZoom] = useState<number | null>(null)
@@ -470,14 +562,48 @@ export default function OperationsBlueprintPdfViewer({
   // measurementStyle: shared style options for all measure annotation types
   const [measurementStyle, setMeasurementStyle] = useState<MeasurementStyle>(DEFAULT_MEASUREMENT_STYLE)
 
-  // Derived: scale factor (norm-units per real-world unit) for the current page
+  // ── Measurement draft state — multi-click accumulation ─────────────────────
+  const [measureDraftPoints, setMeasureDraftPoints] = useState<Array<{ x: number; y: number }>>([])
+  const measureDraftRef = useRef<Array<{ x: number; y: number }>>([])
+  const [measureCursorPx, setMeasureCursorPx] = useState<{ x: number; y: number } | null>(null)
+  const lastMeasureClickRef = useRef<{ time: number; nx: number; ny: number }>({ time: 0, nx: 0, ny: 0 })
+  const [calibrateInput, setCalibrateInput] = useState<{
+    p1: { x: number; y: number }
+    p2: { x: number; y: number }
+    value: string
+    unit: CalibrationUnit
+  } | null>(null)
+  const [measurePendingCommit, setMeasurePendingCommit] = useState<{
+    type: 'measure-distance' | 'measure-area' | 'measure-perimeter'
+    points: Array<{ x: number; y: number }>
+    pageNumber: number
+  } | null>(null)
+
+  // ── Auto-detected scale results — keyed by pageNumber ──────────────────────
+  const [detectedScales, setDetectedScales] = useState<Record<number, DetectedScaleResult>>({})
+  // Tracks which pages have already been scanned so we don't repeat work.
+  const scannedPagesRef = useRef<Set<number>>(new Set())
+
+  // ── Derived calibration for current page — precedence: manual > auto > none ─
   const savedCalibration: CalibrationData | null = savedCalibrations[currentPage] ?? null
-  const detectedScale: number | null = savedCalibration
-    ? savedCalibration.normDistance / Math.max(0.001, savedCalibration.realWorldValue)
+  const detectedResult: DetectedScaleResult | null = detectedScales[currentPage] ?? null
+  const autoCalibration: CalibrationData | null = (() => {
+    if (!detectedResult || detectedResult.ambiguous || detectedResult.candidates.length !== 1) return null
+    const c = detectedResult.candidates[0]
+    return { pageNumber: currentPage, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft' as CalibrationUnit, savedAt: detectedResult.detectedAt }
+  })()
+  const activeCalibration: CalibrationData | null = savedCalibration ?? autoCalibration
+  const detectedScale: number | null = activeCalibration
+    ? activeCalibration.normDistance / Math.max(0.001, activeCalibration.realWorldValue)
     : null
+  type CalibrationSource = 'manual' | 'auto' | 'ambiguous' | 'none'
+  const calibrationSource: CalibrationSource =
+    savedCalibration ? 'manual' :
+    detectedResult?.ambiguous ? 'ambiguous' :
+    autoCalibration ? 'auto' : 'none'
   const calibrationStatus: CalibrationStatus =
     pendingCalibration?.pageNumber === currentPage ? 'pending' :
-    savedCalibration ? 'saved' : 'none'
+    activeCalibration ? 'saved' : 'none'
 
   const [toolbarBucket, setToolbarBucket] = useState<ToolbarBucket>('annotate')
   const [toolMode, setToolMode] = useState<ToolMode>('select')
@@ -607,6 +733,40 @@ export default function OperationsBlueprintPdfViewer({
   useEffect(() => {
     allAnnotationsRef.current = allAnnotations
   }, [allAnnotations])
+
+  // ── Keyboard handler for measurement tools ──────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        measureDraftRef.current = []
+        setMeasureDraftPoints([])
+        setMeasureCursorPx(null)
+        setCalibrateInput(null)
+        lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+      }
+      if (e.key === 'Enter' && effectiveTool === 'measure-perimeter' && !calibrateInput) {
+        const pts = [...measureDraftRef.current]
+        if (pts.length >= 2) {
+          setMeasurePendingCommit({ type: 'measure-perimeter', points: pts, pageNumber: currentPageRef.current })
+          measureDraftRef.current = []
+          setMeasureDraftPoints([])
+          setMeasureCursorPx(null)
+          lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [effectiveTool, calibrateInput])
+
+  // ── Clear measure draft on tool/page change ─────────────────────────────────
+  useEffect(() => {
+    measureDraftRef.current = []
+    setMeasureDraftPoints([])
+    setMeasureCursorPx(null)
+    setCalibrateInput(null)
+    lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+  }, [effectiveTool, currentPage])
 
   const clampScroll = useCallback((scroll: HTMLDivElement, left: number, top: number) => {
     const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth)
@@ -1027,6 +1187,120 @@ export default function OperationsBlueprintPdfViewer({
       setError(e?.message || 'Failed to save annotation.')
     }
   }, [loadAnnotations, onAnnotationsChanged])
+
+  // ── Measurement pending commit processor ────────────────────────────────────
+  // Must live AFTER persistAnnotation is declared to avoid TDZ ReferenceError.
+  useEffect(() => {
+    if (!measurePendingCommit) return
+    const { type, points, pageNumber } = measurePendingCommit
+    setMeasurePendingCommit(null)
+    if (!blueprint) return
+    // Manual calibration takes precedence over auto-detected.
+    const manualCal = savedCalibrations[pageNumber] ?? null
+    const detRes = detectedScales[pageNumber] ?? null
+    const autoCal: CalibrationData | null = (() => {
+      if (!detRes || detRes.ambiguous || detRes.candidates.length !== 1) return null
+      const c = detRes.candidates[0]
+      return { pageNumber, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft' as CalibrationUnit, savedAt: detRes.detectedAt }
+    })()
+    const calForPage = manualCal ?? autoCal
+    const scaleForPage = calForPage
+      ? calForPage.normDistance / Math.max(0.001, calForPage.realWorldValue)
+      : null
+    if (!calForPage || !scaleForPage) return
+    const now = new Date().toISOString()
+    const id = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    const color = toolColors[type as ToolKey] || '#38bdf8'
+    let label = ''
+    let meta: Record<string, any> = {}
+    if (type === 'measure-distance' && points.length >= 2) {
+      const normDist = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)
+      const realDist = normDist / scaleForPage
+      label = `${realDist.toFixed(2)} ${calForPage.realWorldUnit}`
+      meta = { points, label, normDistance: normDist, realWorldDistance: realDist, unit: calForPage.realWorldUnit, style: measurementStyle }
+    } else if (type === 'measure-area' && points.length >= 3) {
+      let normArea = 0
+      for (let i = 0; i < points.length; i++) {
+        const j = (i + 1) % points.length
+        normArea += points[i].x * points[j].y - points[j].x * points[i].y
+      }
+      normArea = Math.abs(normArea) / 2
+      const realArea = normArea / (scaleForPage * scaleForPage)
+      label = `${realArea.toFixed(2)} ${calForPage.realWorldUnit}²`
+      meta = { points, label, normArea, realWorldArea: realArea, unit: calForPage.realWorldUnit, style: measurementStyle }
+    } else if (type === 'measure-perimeter' && points.length >= 2) {
+      let normPerim = 0
+      for (let i = 1; i < points.length; i++) {
+        normPerim += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+      }
+      const realPerim = normPerim / scaleForPage
+      label = `${realPerim.toFixed(2)} ${calForPage.realWorldUnit}`
+      meta = { points, label, normPerimeter: normPerim, realWorldPerimeter: realPerim, unit: calForPage.realWorldUnit, style: measurementStyle }
+    } else {
+      return
+    }
+    const bounds = clampRectToPage(getPointsBounds(points))
+    const ann = {
+      id,
+      blueprintSetId: blueprint.id,
+      projectId: blueprint.projectId,
+      pageNumber,
+      type,
+      rect: bounds,
+      color,
+      meta,
+      metadata: meta,
+      createdAt: now,
+      updatedAt: now,
+    } as BlueprintAnnotation
+    void persistAnnotation(ann)
+    setFocusedAnnotationId(ann.id)
+  }, [measurePendingCommit, blueprint, persistAnnotation, savedCalibrations, detectedScales, toolColors, measurementStyle])
+
+  // ── Persist manual calibrations to localStorage ─────────────────────────────
+  useEffect(() => {
+    if (!blueprint?.id) return
+    try { localStorage.setItem(`blueprint_calibrations_${blueprint.id}`, JSON.stringify(savedCalibrations)) } catch {}
+  }, [savedCalibrations, blueprint?.id])
+
+  // ── Persist detected scales to localStorage ──────────────────────────────────
+  useEffect(() => {
+    if (!blueprint?.id) return
+    try { localStorage.setItem(`blueprint_detected_scales_${blueprint.id}`, JSON.stringify(detectedScales)) } catch {}
+  }, [detectedScales, blueprint?.id])
+
+  // ── Rehydrate calibration and detection state when blueprint changes ──────────
+  useEffect(() => {
+    if (!blueprint?.id) return
+    scannedPagesRef.current = new Set()
+    try {
+      const cal = localStorage.getItem(`blueprint_calibrations_${blueprint.id}`)
+      setSavedCalibrations(cal ? JSON.parse(cal) : {})
+      const det = localStorage.getItem(`blueprint_detected_scales_${blueprint.id}`)
+      setDetectedScales(det ? JSON.parse(det) : {})
+    } catch {
+      setSavedCalibrations({})
+      setDetectedScales({})
+    }
+  }, [blueprint?.id])
+
+  // ── Auto-detect blueprint scale from PDF text content ──────────────────────
+  // Runs once per page per blueprint session. Does not overwrite manual calibration.
+  useEffect(() => {
+    if (!pdfDoc || !currentPage) return
+    if (scannedPagesRef.current.has(currentPage)) return
+    scannedPagesRef.current.add(currentPage)
+    void (async () => {
+      try {
+        const page = await pdfDoc.getPage(currentPage)
+        const pageWidthPts: number = page.view?.[2] ?? 612
+        const textContent = await page.getTextContent()
+        const items: string[] = (textContent.items || []).map((it: any) => it.str || '')
+        const result = detectBlueprintScaleText(items, pageWidthPts, currentPage)
+        if (result) setDetectedScales(prev => ({ ...prev, [currentPage]: result }))
+      } catch {}
+    })()
+  }, [pdfDoc, currentPage])
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
     if (!blueprint?.id) return
@@ -1577,6 +1851,50 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
+    if (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') {
+      const n = toNorm(x, y, rect.width, rect.height)
+      // Double-click on perimeter → complete
+      if (effectiveTool === 'measure-perimeter') {
+        const last = lastMeasureClickRef.current
+        if (Date.now() - last.time < 300 && Math.hypot(n.x - last.nx, n.y - last.ny) < 0.03) {
+          const pts = [...measureDraftRef.current]
+          if (pts.length >= 2) {
+            setMeasurePendingCommit({ type: 'measure-perimeter', points: pts, pageNumber: currentPageRef.current })
+          }
+          measureDraftRef.current = []
+          setMeasureDraftPoints([])
+          setMeasureCursorPx(null)
+          lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+          e.preventDefault()
+          return
+        }
+      }
+      lastMeasureClickRef.current = { time: Date.now(), nx: n.x, ny: n.y }
+      const next = [...measureDraftRef.current, n]
+      measureDraftRef.current = next
+      setMeasureDraftPoints([...next])
+      if (effectiveTool === 'calibrate' && next.length === 2) {
+        // Keep measureDraftPoints so the placed line stays visible while input is open
+        setCalibrateInput({ p1: next[0], p2: next[1], value: '', unit: 'ft' })
+        measureDraftRef.current = []
+        lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+      } else if (effectiveTool === 'measure-distance' && next.length === 2) {
+        setMeasurePendingCommit({ type: 'measure-distance', points: next, pageNumber: currentPageRef.current })
+        measureDraftRef.current = []
+        setMeasureDraftPoints([])
+        setMeasureCursorPx(null)
+        lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+      } else if (effectiveTool === 'measure-area' && next.length === 4) {
+        setMeasurePendingCommit({ type: 'measure-area', points: next, pageNumber: currentPageRef.current })
+        measureDraftRef.current = []
+        setMeasureDraftPoints([])
+        setMeasureCursorPx(null)
+        lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+      }
+      e.preventDefault()
+      return
+    }
+
     if (effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
       dragStartRef.current = { x, y }
       setDragStart({ x, y })
@@ -1666,6 +1984,13 @@ export default function OperationsBlueprintPdfViewer({
       inkDraftRef.current = nextPoints
       setInkDraft(nextPoints)
       e.preventDefault()
+      return
+    }
+
+    if (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') {
+      if (measureDraftRef.current.length > 0) {
+        setMeasureCursorPx({ x, y })
+      }
       return
     }
 
@@ -2629,20 +2954,41 @@ export default function OperationsBlueprintPdfViewer({
             {/* ── Measure ── */}
             {toolbarBucket === 'measure' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
-                {/* Calibration status badge */}
-                <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} flex items-center justify-between px-2 py-1 rounded-md border border-gray-800 bg-gray-900/40 text-[11px]`}>
-                  <span className="text-gray-400">Page {currentPage} calibration</span>
-                  <span className={
-                    calibrationStatus === 'saved' ? 'text-green-400' :
-                    calibrationStatus === 'pending' ? 'text-amber-400' :
-                    'text-gray-600'
-                  }>
-                    {calibrationStatus === 'saved'
-                      ? `${savedCalibration!.realWorldValue} ${savedCalibration!.realWorldUnit} / line`
-                      : calibrationStatus === 'pending'
-                      ? 'pending — not saved'
-                      : 'not calibrated'}
-                  </span>
+                {/* Calibration status badge — shows manual / auto / ambiguous / pending / none */}
+                <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/40 px-2 py-1.5`}>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-400">Page {currentPage}</span>
+                    {pendingCalibration?.pageNumber === currentPage
+                      ? <span className="text-amber-400">pending calibration</span>
+                      : calibrationSource === 'manual'
+                      ? <span className="text-green-400">manual</span>
+                      : calibrationSource === 'auto'
+                      ? <span className="text-sky-400">auto-detected</span>
+                      : calibrationSource === 'ambiguous'
+                      ? <span className="text-orange-400">ambiguous</span>
+                      : <span className="text-gray-600">not calibrated</span>
+                    }
+                  </div>
+                  {calibrationSource === 'manual' && savedCalibration && (
+                    <div className="mt-0.5 text-[10px] text-green-300/70 truncate">{savedCalibration.realWorldValue} {savedCalibration.realWorldUnit} per ref line</div>
+                  )}
+                  {calibrationSource === 'auto' && detectedResult && (
+                    <div className="mt-0.5 text-[10px] text-sky-300/70 truncate">{detectedResult.candidates[0].parsedScale}</div>
+                  )}
+                  {calibrationSource === 'ambiguous' && detectedResult && (
+                    <div className="mt-1 flex flex-col gap-1">
+                      <div className="text-[10px] text-orange-300/70">Multiple scales found — pick one or calibrate manually:</div>
+                      {detectedResult.candidates.map((c, i) => (
+                        <button key={i} type="button"
+                          onClick={() => setSavedCalibrations(prev => ({
+                            ...prev,
+                            [currentPage]: { pageNumber: currentPage, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft', savedAt: new Date().toISOString() },
+                          }))}
+                          className="text-left text-[10px] px-2 py-0.5 rounded border border-orange-700/60 text-orange-300 hover:bg-orange-900/20 truncate"
+                        >{c.parsedScale}</button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Calibrate tool */}
@@ -3168,6 +3514,83 @@ export default function OperationsBlueprintPdfViewer({
                           )
                         }
 
+                        if (a.type === 'measure-distance' || a.type === 'measure-area' || a.type === 'measure-perimeter') {
+                          const pts: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
+                          if (pts.length < 2) return null
+                          const col = a.color || '#38bdf8'
+                          const lbl = meta.label || ''
+                          const mStyle = meta.style || {}
+                          const endStyle: string = mStyle.endpointStyle || 'dot'
+                          const fillPat: string = mStyle.fillPattern || 'none'
+                          const fillCol: string = mStyle.fillColor || col
+                          const fillOp: number = mStyle.fillOpacity ?? 0.15
+                          const lineW: number = mStyle.lineThickness || 2
+                          const pxPts = pts.map((p: any) => ({ px: clampNorm(p.x) * displaySize.w, py: clampNorm(p.y) * displaySize.h }))
+                          const midPx = pxPts.reduce((acc, p) => ({ px: acc.px + p.px / pxPts.length, py: acc.py + p.py / pxPts.length }), { px: 0, py: 0 })
+                          const lastPt = pts[pts.length - 1]
+                          const patId = `mfill-${a.id}`
+                          const usePattern = a.type === 'measure-area' && fillPat !== 'none' && fillPat !== 'solid'
+                          const areaFill = a.type !== 'measure-area' ? 'none'
+                            : usePattern ? `url(#${patId})`
+                            : hexWithAlpha(fillCol, fillOp)
+
+                          // Endpoint rendering
+                          const renderEndpoints = () => {
+                            if (endStyle === 'none') return null
+                            if (endStyle === 'dot') return pxPts.map((p, i) => <circle key={i} cx={p.px} cy={p.py} r={4} fill={col} opacity={0.9} />)
+                            if (endStyle === 'bar') {
+                              const bars: any[] = []
+                              const addBar = (ia: number, ib: number, at: number) => {
+                                const pt = pxPts[at]
+                                const dx = pxPts[ib].px - pxPts[ia].px, dy = pxPts[ib].py - pxPts[ia].py
+                                const len = Math.hypot(dx, dy) || 1
+                                const nx = -dy / len * 7, ny = dx / len * 7
+                                bars.push(<line key={`bar-${at}`} x1={pt.px - nx} y1={pt.py - ny} x2={pt.px + nx} y2={pt.py + ny} stroke={col} strokeWidth={lineW} />)
+                              }
+                              addBar(0, 1, 0)
+                              addBar(pxPts.length - 2, pxPts.length - 1, pxPts.length - 1)
+                              return bars
+                            }
+                            return null  // arrows rendered via SVG markers below
+                          }
+                          const arrowMarkStart = endStyle === 'arrow' ? `url(#ms-${a.id})` : undefined
+                          const arrowMarkEnd   = endStyle === 'arrow' ? `url(#me-${a.id})` : undefined
+
+                          return (
+                            <div key={a.id} className="absolute inset-0 group" onClick={selectAnnotation}>
+                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h} style={{ pointerEvents: 'none' }}>
+                                <defs>
+                                  {usePattern && getMeasurePatternDef(patId, fillPat, fillCol, fillOp)}
+                                  {endStyle === 'arrow' && (
+                                    <>
+                                      <marker id={`ms-${a.id}`} markerWidth={8} markerHeight={8} refX={1} refY={4} orient="auto" markerUnits="strokeWidth"><path d="M8,0 L0,4 L8,8 z" fill={col} /></marker>
+                                      <marker id={`me-${a.id}`} markerWidth={8} markerHeight={8} refX={7} refY={4} orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,4 L0,8 z" fill={col} /></marker>
+                                    </>
+                                  )}
+                                </defs>
+                                {a.type === 'measure-distance' ? (
+                                  <line x1={pxPts[0].px} y1={pxPts[0].py} x2={pxPts[1].px} y2={pxPts[1].py} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinecap="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} />
+                                ) : a.type === 'measure-perimeter' ? (
+                                  <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} />
+                                ) : (
+                                  <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill={areaFill} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" />
+                                )}
+                                {renderEndpoints()}
+                                {lbl && (
+                                  <>
+                                    <rect x={midPx.px - 2} y={midPx.py - 10} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} />
+                                    <text x={midPx.px + 3} y={midPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start">{lbl}</text>
+                                  </>
+                                )}
+                                <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke' }} onClick={selectAnnotation as any} />
+                              </svg>
+                              <div className="absolute" style={{ left: `${clampNorm(lastPt.x) * 100}%`, top: `${clampNorm(lastPt.y) * 100}%` }}>
+                                <ActionButtons />
+                              </div>
+                            </div>
+                          )
+                        }
+
                         return (
                           <div key={a.id} className="absolute group" style={{ left, top }} onClick={selectAnnotation}>
                             <button
@@ -3243,6 +3666,33 @@ export default function OperationsBlueprintPdfViewer({
                         </svg>
                       )}
 
+                      {/* Measure draft SVG — placed points + rubber-band to cursor */}
+                      {displaySize.w > 0 && measureDraftPoints.length > 0 && (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') && (
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width={displaySize.w} height={displaySize.h}>
+                          {(() => {
+                            const col = toolColors[effectiveTool as ToolKey] || '#38bdf8'
+                            const pxPts = measureDraftPoints.map(p => ({ px: p.x * displaySize.w, py: p.y * displaySize.h }))
+                            return (
+                              <>
+                                {pxPts.length >= 2 && (
+                                  effectiveTool === 'measure-area'
+                                    ? <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill={hexWithAlpha(col, 0.1)} stroke={col} strokeWidth={2} strokeDasharray="5,3" opacity={0.85} />
+                                    : <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={2} strokeDasharray="5,3" opacity={0.85} />
+                                )}
+                                {pxPts.map((p, i) => <circle key={i} cx={p.px} cy={p.py} r={4} fill={col} opacity={0.9} />)}
+                                {!calibrateInput && measureCursorPx && pxPts.length >= 1 && (
+                                  <line
+                                    x1={pxPts[pxPts.length - 1].px} y1={pxPts[pxPts.length - 1].py}
+                                    x2={measureCursorPx.x} y2={measureCursorPx.y}
+                                    stroke={col} strokeWidth={1.5} strokeDasharray="4,3" opacity={0.55}
+                                  />
+                                )}
+                              </>
+                            )
+                          })()}
+                        </svg>
+                      )}
+
                       {noteEditor && (
                         <div
                           className="absolute z-30 w-64 rounded-lg border border-gray-700 bg-[#121521] p-3 shadow-2xl"
@@ -3288,6 +3738,94 @@ export default function OperationsBlueprintPdfViewer({
                               className="inline-flex min-w-[72px] items-center justify-center rounded bg-blue-600 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500"
                             >
                               Save
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {calibrateInput && (
+                        <div
+                          className="absolute z-40 rounded-lg border border-sky-700 bg-[#0f1624] p-3 shadow-2xl"
+                          style={{
+                            left: `${Math.min(0.68, Math.max(0.02, (calibrateInput.p1.x + calibrateInput.p2.x) / 2)) * 100}%`,
+                            top: `${Math.min(0.85, Math.max(0.02, (calibrateInput.p1.y + calibrateInput.p2.y) / 2)) * 100}%`,
+                            transform: 'translate(-50%, 12px)',
+                            width: 230,
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-sky-400">
+                            Calibrate — real-world distance
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              min={0.01}
+                              step={0.01}
+                              value={calibrateInput.value}
+                              onChange={(e) => setCalibrateInput((prev) => prev ? { ...prev, value: e.target.value } : prev)}
+                              className="w-24 rounded border border-gray-600 bg-gray-900/80 px-2 py-1 text-sm text-white outline-none focus:border-sky-500"
+                              placeholder="e.g. 20"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const val = parseFloat(calibrateInput.value)
+                                  if (!val || val <= 0) return
+                                  const normDist = Math.hypot(calibrateInput.p2.x - calibrateInput.p1.x, calibrateInput.p2.y - calibrateInput.p1.y)
+                                  setSavedCalibrations((prev) => ({
+                                    ...prev,
+                                    [currentPage]: { pageNumber: currentPage, normDistance: normDist, realWorldValue: val, realWorldUnit: calibrateInput.unit, savedAt: new Date().toISOString() },
+                                  }))
+                                  setPendingCalibration(null)
+                                  setCalibrateInput(null)
+                                  setMeasureDraftPoints([])
+                                  setMeasureCursorPx(null)
+                                }
+                              }}
+                            />
+                            <select
+                              value={calibrateInput.unit}
+                              onChange={(e) => setCalibrateInput((prev) => prev ? { ...prev, unit: e.target.value as CalibrationUnit } : prev)}
+                              className="rounded border border-gray-600 bg-gray-900/80 px-2 py-1 text-sm text-white outline-none focus:border-sky-500"
+                            >
+                              <option value="ft">ft</option>
+                              <option value="m">m</option>
+                              <option value="in">in</option>
+                              <option value="cm">cm</option>
+                              <option value="mm">mm</option>
+                            </select>
+                          </div>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const val = parseFloat(calibrateInput.value)
+                                if (!val || val <= 0) return
+                                const normDist = Math.hypot(calibrateInput.p2.x - calibrateInput.p1.x, calibrateInput.p2.y - calibrateInput.p1.y)
+                                setSavedCalibrations((prev) => ({
+                                  ...prev,
+                                  [currentPage]: { pageNumber: currentPage, normDistance: normDist, realWorldValue: val, realWorldUnit: calibrateInput.unit, savedAt: new Date().toISOString() },
+                                }))
+                                setPendingCalibration(null)
+                                setCalibrateInput(null)
+                                setMeasureDraftPoints([])
+                                setMeasureCursorPx(null)
+                              }}
+                              className="flex-1 rounded bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500"
+                            >
+                              Save Calibration
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCalibrateInput(null)
+                                setMeasureDraftPoints([])
+                                setMeasureCursorPx(null)
+                              }}
+                              className="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+                            >
+                              Cancel
                             </button>
                           </div>
                         </div>

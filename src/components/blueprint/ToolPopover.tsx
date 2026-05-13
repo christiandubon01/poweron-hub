@@ -11,9 +11,11 @@ interface ColorRowProps {
   value: string
   onChange: (color: string) => void
   allowTransparent?: boolean
+  colors?: string[]
 }
 
-export function ColorRow({ value, onChange, allowTransparent = false }: ColorRowProps) {
+export function ColorRow({ value, onChange, allowTransparent = false, colors }: ColorRowProps) {
+  const palette = colors ?? PALETTE
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {allowTransparent && (
@@ -32,7 +34,7 @@ export function ColorRow({ value, onChange, allowTransparent = false }: ColorRow
           }}
         />
       )}
-      {PALETTE.map((c) => (
+      {palette.map((c) => (
         <button
           key={c}
           type="button"
