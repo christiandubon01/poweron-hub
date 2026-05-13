@@ -72,6 +72,19 @@ function shouldUseDesktopBlueprintLayout() {
   return !isIPadLike && window.innerWidth >= 1280
 }
 
+function isTabletDevice() {
+  if (typeof window === 'undefined') return false
+  const nav = window.navigator
+  const ua = nav.userAgent || ''
+  const platform = nav.platform || ''
+  const maxTouchPoints = nav.maxTouchPoints || 0
+  const isIPadLike =
+    /iPad/i.test(ua) ||
+    ((/MacIntel|Macintosh/i.test(platform) || /Macintosh/i.test(ua)) && maxTouchPoints > 1)
+  
+  return isIPadLike
+}
+
 // Zoom floor = 1.0 means the user can never zoom out past "Fit to Full Page".
 // The fit scale is always relativeZoom = 1.0. Going below 1.0 would make the
 // page smaller than the fitted size, which is unwanted.
@@ -404,6 +417,57 @@ function clampRelativeZoomStatic(v: number, max = MAX_RELATIVE_ZOOM_DESKTOP) {
 // Alias used throughout — replaced by component-level clampRelativeZoom below.
 const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(MAX_RELATIVE_ZOOM, v))
 
+// Handle fullscreen toggling with device-aware routing:
+// - Desktop: use native browser Fullscreen API
+// - Tablet: use in-app immersive fullscreen overlay (no browser fullscreen)
+function handleFullscreenToggle(
+  isCurrentlyInFullscreen: boolean,
+  isTabletDevice: boolean,
+  viewerElement: HTMLDivElement | null,
+  onSetDesktopFullscreen: (value: boolean) => void,
+  onSetTabletImmersiveFullscreen: (value: boolean) => void,
+) {
+  const doc: any = document
+  const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+
+  // If we're in OS-level fullscreen, exit it first
+  if (fullscreenEl) {
+    if (doc.exitFullscreen) doc.exitFullscreen()
+    else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+    onSetDesktopFullscreen(false)
+    return
+  }
+
+  // Toggle out of any fullscreen state
+  if (isCurrentlyInFullscreen) {
+    onSetDesktopFullscreen(false)
+    onSetTabletImmersiveFullscreen(false)
+    return
+  }
+
+  // Route to device-appropriate fullscreen mode
+  if (isTabletDevice) {
+    // Tablet: use in-app immersive fullscreen overlay
+    onSetTabletImmersiveFullscreen(true)
+  } else {
+    // Desktop: use native browser fullscreen API
+    if (viewerElement && viewerElement.requestFullscreen) {
+      viewerElement.requestFullscreen().then(() => {
+        onSetDesktopFullscreen(true)
+      }).catch(() => {
+        // Fallback if browser fullscreen fails
+        onSetDesktopFullscreen(true)
+      })
+    } else if (viewerElement && (viewerElement as any).webkitRequestFullscreen) {
+      ; (viewerElement as any).webkitRequestFullscreen()
+      onSetDesktopFullscreen(true)
+    } else {
+      // Fallback: use in-app fullscreen
+      onSetDesktopFullscreen(true)
+    }
+  }
+}
+
 export default function OperationsBlueprintPdfViewer({
   blueprint,
   onAnnotationsChanged,
@@ -517,6 +581,8 @@ export default function OperationsBlueprintPdfViewer({
   const [containerReady, setContainerReady] = useState(false)
 
   const [isFullScreenView, setIsFullScreenView] = useState(false)
+  // iPad/tablet immersive fullscreen mode (in-app overlay, not browser fullscreen)
+  const [isTabletImmersiveFullscreen, setIsTabletImmersiveFullscreen] = useState(false)
 
   // ── Pane resize state — persisted across hard reloads ──────────────────
   const [leftPaneWidth, setLeftPaneWidth] = useState(() => {
@@ -1081,13 +1147,15 @@ export default function OperationsBlueprintPdfViewer({
         setFocusedAnnotationId(null)
         setLayoutEditId(null)
         setLayoutDrag(null)
+      } else if (isTabletImmersiveFullscreen) {
+        setIsTabletImmersiveFullscreen(false)
       } else if (isFullScreenView) {
         setIsFullScreenView(false)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -2685,17 +2753,17 @@ export default function OperationsBlueprintPdfViewer({
       ref={viewerRootRef}
       className={isFullScreenView && isDesktopBlueprintLayout
         ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
-        : isFullScreenView
+        : isFullScreenView || isTabletImmersiveFullscreen
         ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
         : 'rounded-xl border overflow-hidden w-full'
       }
-      style={isFullScreenView ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+      style={isFullScreenView || isTabletImmersiveFullscreen ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
       onClick={(e) => {
         // In fullscreen mode, prevent any clicks that haven't been explicitly handled
         // from reaching the OS-level fullscreen backdrop, which would exit fullscreen.
         // This is critical for iPad and other touch devices where the fullscreen
         // behavior can be triggered by unintended click propagation.
-        if (isFullScreenView && e.target === e.currentTarget) {
+        if ((isFullScreenView || isTabletImmersiveFullscreen) && e.target === e.currentTarget) {
           e.preventDefault()
           e.stopPropagation()
         }
@@ -2731,7 +2799,7 @@ export default function OperationsBlueprintPdfViewer({
         }
       `}</style>
 
-      {!isFullScreenView && !useDesktopThreePaneLayout && (
+      {!isFullScreenView && !isTabletImmersiveFullscreen && !useDesktopThreePaneLayout && (
         <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
@@ -2753,7 +2821,7 @@ export default function OperationsBlueprintPdfViewer({
         </div>
       ) : (
         <>
-          {isFullScreenView && (
+          {(isFullScreenView || isTabletImmersiveFullscreen) && (
             <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
               <div className="min-w-0 flex items-center gap-3">
                 <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
@@ -2769,36 +2837,19 @@ export default function OperationsBlueprintPdfViewer({
                 </button>
                 <button
                   onClick={() => {
-                    const el = viewerRootRef.current
-                    const doc: any = document
-                    const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
-                    if (fullscreenEl) {
-                      if (doc.exitFullscreen) doc.exitFullscreen()
-                      else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
-                      setIsFullScreenView(false)
-                      return
-                    }
-                    if (isFullScreenView) {
-                      setIsFullScreenView(false)
-                      return
-                    }
-                    if (el && el.requestFullscreen) {
-                      el.requestFullscreen().then(() => {
-                        setIsFullScreenView(true)
-                      }).catch(() => {
-                        setIsFullScreenView(true)
-                      })
-                    } else if (el && (el as any).webkitRequestFullscreen) {
-                      ; (el as any).webkitRequestFullscreen()
-                      setIsFullScreenView(true)
-                    } else {
-                      setIsFullScreenView(true)
-                    }
+                    const isInAnyFullscreen = isFullScreenView || isTabletImmersiveFullscreen
+                    handleFullscreenToggle(
+                      isInAnyFullscreen,
+                      isTabletDevice(),
+                      viewerRootRef.current,
+                      setIsFullScreenView,
+                      setIsTabletImmersiveFullscreen,
+                    )
                   }}
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
                 >
-                  {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                  {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
+                  {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                  {isFullScreenView || isTabletImmersiveFullscreen ? 'Exit Full Screen' : 'Full Size Screen'}
                 </button>
               </div>
             </div>
@@ -2810,8 +2861,8 @@ export default function OperationsBlueprintPdfViewer({
               gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
               columnGap: 0,
               rowGap: 16,
-              minHeight: isFullScreenView ? 'calc(100vh - 52px)' : 'calc(100vh - 180px)',
-              height: isFullScreenView ? 'calc(100vh - 52px)' : 'auto',
+              minHeight: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px)' : 'calc(100vh - 180px)',
+              height: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px)' : 'auto',
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
@@ -3187,36 +3238,19 @@ export default function OperationsBlueprintPdfViewer({
               {/* Fullscreen */}
               <button
                 onClick={() => {
-                  const el = viewerRootRef.current
-                  const doc: any = document
-                  const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
-                  if (fullscreenEl) {
-                    if (doc.exitFullscreen) doc.exitFullscreen()
-                    else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
-                    setIsFullScreenView(false)
-                    return
-                  }
-                  if (isFullScreenView) {
-                    setIsFullScreenView(false)
-                    return
-                  }
-                  if (el && el.requestFullscreen) {
-                    el.requestFullscreen().then(() => {
-                      setIsFullScreenView(true)
-                    }).catch(() => {
-                      setIsFullScreenView(true)
-                    })
-                  } else if (el && (el as any).webkitRequestFullscreen) {
-                    ; (el as any).webkitRequestFullscreen()
-                    setIsFullScreenView(true)
-                  } else {
-                    setIsFullScreenView(true)
-                  }
+                  const isInAnyFullscreen = isFullScreenView || isTabletImmersiveFullscreen
+                  handleFullscreenToggle(
+                    isInAnyFullscreen,
+                    isTabletDevice(),
+                    viewerRootRef.current,
+                    setIsFullScreenView,
+                    setIsTabletImmersiveFullscreen,
+                  )
                 }}
                 className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
-                title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
+                title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
-                {isFullScreenView ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
               </button>
             </div>
           </div>
@@ -3234,20 +3268,20 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
-            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
+          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden p-4' : 'p-4'}>
+            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'min-h-[400px]' : ''} rounded border border-gray-800`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'min-h-[400px]' : ''} rounded border border-gray-800`}
                 style={{
                   // Dynamic height: fills from bottom of toolbar to bottom of viewport.
                   // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
                   ...(useDesktopThreePaneLayout
-                    ? { height: isFullScreenView ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' }
-                    : isFullScreenView
+                    ? { height: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' }
+                    : isFullScreenView || isTabletImmersiveFullscreen
                       ? {}
                       : {
                         height: scrollAreaHeight > 100 ? `${scrollAreaHeight - 16}px` : 'calc(100vh - 300px)',
@@ -4086,9 +4120,9 @@ export default function OperationsBlueprintPdfViewer({
               )}
 
               <div
-                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'h-[calc(100vh-180px)] min-h-[60vh]' : ''}`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'h-[calc(100vh-180px)] min-h-[60vh]' : ''}`}
                 style={{
-                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
+                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
