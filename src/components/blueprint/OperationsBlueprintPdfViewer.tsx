@@ -2240,7 +2240,7 @@ export default function OperationsBlueprintPdfViewer({
   const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, clampRelativeZoom(relativeZoom)))
   const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
-  const useDesktopThreePaneLayout = isDesktopBlueprintLayout && !isFullScreenView
+  const useDesktopThreePaneLayout = isDesktopBlueprintLayout
 
   // ─── Annotation ↔ tool-key mapping ────────────────────────────────────────
   function annotationTypeToToolKey(type: string): ToolKey | null {
@@ -2668,7 +2668,9 @@ export default function OperationsBlueprintPdfViewer({
   return (
     <div
       ref={viewerRootRef}
-      className={isFullScreenView
+      className={isFullScreenView && isDesktopBlueprintLayout
+        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
+        : isFullScreenView
         ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
         : 'rounded-xl border overflow-hidden w-full'
       }
@@ -2778,11 +2780,13 @@ export default function OperationsBlueprintPdfViewer({
           )}
 
           <div
-            className={useDesktopThreePaneLayout ? `grid min-h-[calc(100vh-180px)] grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : ''}
+            className={useDesktopThreePaneLayout ? `grid grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : ''}
             style={useDesktopThreePaneLayout ? {
               gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
               columnGap: 0,
               rowGap: 16,
+              minHeight: isFullScreenView ? 'calc(100vh - 52px)' : 'calc(100vh - 180px)',
+              height: isFullScreenView ? 'calc(100vh - 52px)' : 'auto',
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
@@ -3184,12 +3188,12 @@ export default function OperationsBlueprintPdfViewer({
               `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 h-[calc(100vh-180px)] min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'min-h-[400px]'} rounded border border-gray-800`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'min-h-[400px]' : ''} rounded border border-gray-800`}
                 style={{
                   // Dynamic height: fills from bottom of toolbar to bottom of viewport.
                   // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
                   ...(useDesktopThreePaneLayout
-                    ? { height: 'calc(100vh - 180px)' }
+                    ? { height: isFullScreenView ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' }
                     : isFullScreenView
                       ? {}
                       : {
@@ -4029,8 +4033,9 @@ export default function OperationsBlueprintPdfViewer({
               )}
 
               <div
-                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 h-[calc(100vh-180px)] min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView ? 'h-full max-h-none min-h-0' : 'h-[calc(100vh-180px)] min-h-[60vh]'}`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'h-[calc(100vh-180px)] min-h-[60vh]' : ''}`}
                 style={{
+                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
