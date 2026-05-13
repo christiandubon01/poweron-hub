@@ -3080,145 +3080,264 @@ export default function OperationsBlueprintPdfViewer({
           <div
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3'
-              : 'px-4 py-3 border-b border-gray-800 space-y-3'}
+              : 'px-4 py-2 border-b border-gray-800'}
           >
-            {/* Page Navigation Group */}
-            <div className="flex items-center gap-2">
-              {/* Prev/Next */}
-              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
-                <button
-                  disabled={!canRender || currentPage <= 1 || isRendering}
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Previous page"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <button
-                  disabled={!canRender || currentPage >= numPages || isRendering}
-                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Next page"
-                >
-                  <ChevronRight size={14} />
-                </button>
+            {useDesktopThreePaneLayout ? (
+              <>
+                {/* Desktop: Two separate rows */}
+                <div className="flex items-center gap-2">
+                  {/* Prev/Next */}
+                  <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+                    <button
+                      disabled={!canRender || currentPage <= 1 || isRendering}
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                      title="Previous page"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <button
+                      disabled={!canRender || currentPage >= numPages || isRendering}
+                      onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                      className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                      title="Next page"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+
+                  {/* Page Jump Input */}
+                  <div className="inline-flex items-center gap-1">
+                    <input
+                      value={pageInput}
+                      onChange={(e) => setPageInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
+                      className="w-12 rounded border border-gray-700 bg-gray-900/40 text-gray-100 text-xs px-2 py-1.5 text-center font-medium"
+                      placeholder="1"
+                      title="Enter page number"
+                    />
+                    <button
+                      disabled={!canRender}
+                      onClick={jumpToPage}
+                      className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-50 transition-colors"
+                      title="Go to page"
+                    >
+                      <Search size={12} />
+                    </button>
+                  </div>
+
+                  {/* Page Counter */}
+                  <span className="text-xs text-gray-400">/ {pageLabel.split(' ').pop()}</span>
+
+                  {/* Selection & Fit */}
+                  <div className="ml-auto inline-flex items-center gap-1.5">
+                    <button
+                      disabled={!canRender}
+                      onClick={toggleCurrentPageSelection}
+                      className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                      title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
+                    >
+                      <Minus size={12} />
+                    </button>
+                    <span className="text-xs text-gray-400 min-w-fit">+{selectedPageNumbers.length}</span>
+                  </div>
+                </div>
+
+                {/* View Controls Group */}
+                <div className="flex items-center gap-2">
+                  {/* Zoom & View */}
+                  <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+                    <button
+                      disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
+                      onClick={() => applyRelativeZoomDelta(-0.1)}
+                      className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                      title="Zoom out"
+                    >
+                      <ZoomOut size={14} />
+                    </button>
+                    <span className="text-xs text-gray-400 w-9 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+                    <button
+                      disabled={!canRender || relativeZoom >= maxRelativeZoom}
+                      onClick={() => applyRelativeZoomDelta(0.1)}
+                      className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                      title="Zoom in"
+                    >
+                      <ZoomIn size={14} />
+                    </button>
+                  </div>
+
+                  {/* Fit & Lock */}
+                  <button
+                    onClick={() => {
+                      pendingScrollResetRef.current = true
+                      setRelativeZoom(1)
+                    }}
+                    className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 transition-colors"
+                    title="Fit page to view"
+                  >
+                    <ArrowUpRight size={13} />
+                  </button>
+
+                  <button
+                    onClick={() => setLockView((v) => !v)}
+                    className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                    title={lockView ? 'Unlock view' : 'Lock view'}
+                  >
+                    {lockView ? '🔒' : '🔓'}
+                  </button>
+
+                  {/* Fullscreen */}
+                  <button
+                    onClick={() => {
+                      const el = viewerRootRef.current
+                      const doc: any = document
+                      const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                      if (fullscreenEl) {
+                        if (doc.exitFullscreen) doc.exitFullscreen()
+                        else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+                        setIsFullScreenView(false)
+                        return
+                      }
+                      if (isFullScreenView) {
+                        setIsFullScreenView(false)
+                        return
+                      }
+                      if (el && el.requestFullscreen) {
+                        el.requestFullscreen().then(() => {
+                          setIsFullScreenView(true)
+                        }).catch(() => {
+                          setIsFullScreenView(true)
+                        })
+                      } else if (el && (el as any).webkitRequestFullscreen) {
+                        ; (el as any).webkitRequestFullscreen()
+                        setIsFullScreenView(true)
+                      } else {
+                        setIsFullScreenView(true)
+                      }
+                    }}
+                    className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+                    title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  >
+                    {isFullScreenView ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* Mobile/iPad: Compact symmetrical cluster */
+              <div className="flex items-center justify-between gap-1.5">
+                {/* Left Group: Navigation */}
+                <div className="inline-flex items-center gap-1 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+                  <button
+                    disabled={!canRender || currentPage <= 1 || isRendering}
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    className="inline-flex items-center justify-center text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                    title="Previous page"
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+                  <button
+                    disabled={!canRender || currentPage >= numPages || isRendering}
+                    onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                    className="inline-flex items-center justify-center text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                    title="Next page"
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+
+                {/* Center Group: Page Input */}
+                <div className="inline-flex items-center gap-0.5 flex-1 justify-center">
+                  <input
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
+                    className="w-10 rounded border border-gray-700 bg-gray-900/40 text-gray-100 text-xs px-1.5 py-1 text-center font-medium"
+                    placeholder="1"
+                    title="Enter page number"
+                  />
+                  <span className="text-xs text-gray-400 whitespace-nowrap">/ {pageLabel.split(' ').pop()}</span>
+                  <button
+                    disabled={!canRender}
+                    onClick={jumpToPage}
+                    className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-50 transition-colors"
+                    title="Go to page"
+                  >
+                    <Search size={11} />
+                  </button>
+                </div>
+
+                {/* Right Group: View Controls */}
+                <div className="inline-flex items-center gap-1 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+                  <button
+                    disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
+                    onClick={() => applyRelativeZoomDelta(-0.1)}
+                    className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                    title="Zoom out"
+                  >
+                    <ZoomOut size={13} />
+                  </button>
+                  <span className="text-xs text-gray-400 w-7 text-center font-medium leading-none">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+                  <button
+                    disabled={!canRender || relativeZoom >= maxRelativeZoom}
+                    onClick={() => applyRelativeZoomDelta(0.1)}
+                    className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                    title="Zoom in"
+                  >
+                    <ZoomIn size={13} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      pendingScrollResetRef.current = true
+                      setRelativeZoom(1)
+                    }}
+                    className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
+                    title="Fit page to view"
+                  >
+                    <ArrowUpRight size={13} />
+                  </button>
+                  <button
+                    onClick={() => setLockView((v) => !v)}
+                    className={`inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20' : 'border-transparent text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                    title={lockView ? 'Unlock view' : 'Lock view'}
+                  >
+                    {lockView ? '🔒' : '🔓'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const el = viewerRootRef.current
+                      const doc: any = document
+                      const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
+                      if (fullscreenEl) {
+                        if (doc.exitFullscreen) doc.exitFullscreen()
+                        else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
+                        setIsFullScreenView(false)
+                        return
+                      }
+                      if (isFullScreenView) {
+                        setIsFullScreenView(false)
+                        return
+                      }
+                      if (el && el.requestFullscreen) {
+                        el.requestFullscreen().then(() => {
+                          setIsFullScreenView(true)
+                        }).catch(() => {
+                          setIsFullScreenView(true)
+                        })
+                      } else if (el && (el as any).webkitRequestFullscreen) {
+                        ; (el as any).webkitRequestFullscreen()
+                        setIsFullScreenView(true)
+                      } else {
+                        setIsFullScreenView(true)
+                      }
+                    }}
+                    className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
+                    title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  >
+                    {isFullScreenView ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                  </button>
+                </div>
               </div>
-
-              {/* Page Jump Input */}
-              <div className="inline-flex items-center gap-1">
-                <input
-                  value={pageInput}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
-                  className="w-12 rounded border border-gray-700 bg-gray-900/40 text-gray-100 text-xs px-2 py-1.5 text-center font-medium"
-                  placeholder="1"
-                  title="Enter page number"
-                />
-                <button
-                  disabled={!canRender}
-                  onClick={jumpToPage}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-50 transition-colors"
-                  title="Go to page"
-                >
-                  <Search size={12} />
-                </button>
-              </div>
-
-              {/* Page Counter */}
-              <span className="text-xs text-gray-400">/ {pageLabel.split(' ').pop()}</span>
-
-              {/* Selection & Fit */}
-              <div className="ml-auto inline-flex items-center gap-1.5">
-                <button
-                  disabled={!canRender}
-                  onClick={toggleCurrentPageSelection}
-                  className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
-                  title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
-                >
-                  <Minus size={12} />
-                </button>
-                <span className="text-xs text-gray-400 min-w-fit">+{selectedPageNumbers.length}</span>
-              </div>
-            </div>
-
-            {/* View Controls Group */}
-            <div className="flex items-center gap-2">
-              {/* Zoom & View */}
-              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
-                <button
-                  disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
-                  onClick={() => applyRelativeZoomDelta(-0.1)}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Zoom out"
-                >
-                  <ZoomOut size={14} />
-                </button>
-                <span className="text-xs text-gray-400 w-9 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
-                <button
-                  disabled={!canRender || relativeZoom >= maxRelativeZoom}
-                  onClick={() => applyRelativeZoomDelta(0.1)}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Zoom in"
-                >
-                  <ZoomIn size={14} />
-                </button>
-              </div>
-
-              {/* Fit & Lock */}
-              <button
-                onClick={() => {
-                  pendingScrollResetRef.current = true
-                  setRelativeZoom(1)
-                }}
-                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 transition-colors"
-                title="Fit page to view"
-              >
-                <ArrowUpRight size={13} />
-              </button>
-
-              <button
-                onClick={() => setLockView((v) => !v)}
-                className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
-                title={lockView ? 'Unlock view' : 'Lock view'}
-              >
-                {lockView ? '🔒' : '🔓'}
-              </button>
-
-              {/* Fullscreen */}
-              <button
-                onClick={() => {
-                  const el = viewerRootRef.current
-                  const doc: any = document
-                  const fullscreenEl = doc.fullscreenElement || doc.webkitFullscreenElement
-                  if (fullscreenEl) {
-                    if (doc.exitFullscreen) doc.exitFullscreen()
-                    else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen()
-                    setIsFullScreenView(false)
-                    return
-                  }
-                  if (isFullScreenView) {
-                    setIsFullScreenView(false)
-                    return
-                  }
-                  if (el && el.requestFullscreen) {
-                    el.requestFullscreen().then(() => {
-                      setIsFullScreenView(true)
-                    }).catch(() => {
-                      setIsFullScreenView(true)
-                    })
-                  } else if (el && (el as any).webkitRequestFullscreen) {
-                    ; (el as any).webkitRequestFullscreen()
-                    setIsFullScreenView(true)
-                  } else {
-                    setIsFullScreenView(true)
-                  }
-                }}
-                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
-                title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
-              >
-                {isFullScreenView ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-            </div>
+            )}
           </div>
 
           {(isLoading || isRendering) && (
