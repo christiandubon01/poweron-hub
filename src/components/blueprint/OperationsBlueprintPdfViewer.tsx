@@ -2870,89 +2870,82 @@ export default function OperationsBlueprintPdfViewer({
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-4 py-3 border-b border-gray-800 space-y-2'}
+              : 'px-4 py-2 border-b border-gray-800 space-y-1.5'}
           >
-            {/* ── Bucket tabs: 2×2 grid + full-width Measure row ── */}
-            <div className="grid grid-cols-2 gap-1.5">
+            {/* ── Bucket tabs: 2×2 grid on desktop, 1×5 row on tablet ── */}
+            <div className={useDesktopThreePaneLayout ? 'grid grid-cols-2 gap-1.5' : 'grid grid-cols-5 gap-1'}>
               {([
-                ['annotate', 'Annotate'],
-                ['draw', 'Draw / Mark'],
-                ['generate', 'Generate'],
-                ['view', 'View'],
-              ] as Array<[ToolbarBucket, string]>).map(([bucket, label]) => (
+                ['annotate', 'Annotate', <Layers size={12} />],
+                ['draw', 'Draw', <PenLine size={12} />],
+                ['generate', 'Gen', <Sparkles size={12} />],
+                ['view', 'View', <MousePointer2 size={12} />],
+                ['measure', 'Measure', <Ruler size={12} />],
+              ] as Array<[ToolbarBucket, string, React.ReactNode]>).map(([bucket, label, icon]) => (
                 <button
                   key={bucket}
                   onClick={() => setToolbarBucket(bucket)}
-                  className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center justify-center gap-0.5 h-7 text-xs rounded-md border truncate px-1 md:px-2 md:gap-1 md:h-8 ${bucket === 'measure' && useDesktopThreePaneLayout ? 'col-span-2' : ''} ${toolbarBucket === bucket ? (bucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-blue-500 text-blue-300 bg-blue-900/20') : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  title={useDesktopThreePaneLayout ? '' : label}
                 >
-                  {bucket === 'annotate' && <Layers size={12} />}
-                  {bucket === 'draw' && <PenLine size={12} />}
-                  {bucket === 'generate' && <Sparkles size={12} />}
-                  {bucket === 'view' && <MousePointer2 size={12} />}
-                  {label}
+                  {icon}
+                  <span className={useDesktopThreePaneLayout ? '' : 'hidden md:inline'}>{label}</span>
+                  {bucket === 'measure' && calibrationStatus !== 'none' && useDesktopThreePaneLayout && (
+                    <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
+                      {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
+                    </span>
+                  )}
                 </button>
               ))}
-              <button
-                onClick={() => setToolbarBucket('measure')}
-                className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-              >
-                <Ruler size={12} /> Measure
-                {calibrationStatus !== 'none' && (
-                  <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
-                    {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
-                  </span>
-                )}
-              </button>
             </div>
-            <div className="text-[11px] text-gray-500">
+            <div className="text-[10px] md:text-[11px] text-gray-500">
               Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
             </div>
 
             {/* ── Annotate: Text Box · Text Highlight · Underline · Note · Callout ── */}
             {toolbarBucket === 'annotate' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'grid grid-cols-2 md:flex md:flex-wrap'} gap-1 md:gap-1.5 pt-0.5`}>
                 <button
                   onClick={(e) => { setToolMode('textBox'); setOpenPopover({ tool: 'textBox', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Type size={12} /> Text Box</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Type size={12} /> <span className="hidden md:inline">Text Box</span></button>
                 <button
                   onClick={(e) => { setToolMode('textHighlight'); setOpenPopover({ tool: 'textHighlight', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textHighlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Highlighter size={12} /> Text Highlight</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'textHighlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Highlighter size={12} /> <span className="hidden md:inline">Highlight</span></button>
                 <button
                   onClick={(e) => { setToolMode('underline'); setOpenPopover({ tool: 'underline', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Underline size={12} /> Underline</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Underline size={12} /> <span className="hidden md:inline">Underline</span></button>
                 <button
                   onClick={() => { setToolMode('note'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><StickyNote size={12} /> Note</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><StickyNote size={12} /> <span className="hidden md:inline">Note</span></button>
                 <button
                   onClick={(e) => { setToolMode('callout'); setOpenPopover({ tool: 'callout', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><ArrowUpRight size={12} /> Callout</button>
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2'} w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><ArrowUpRight size={12} /> <span className="hidden md:inline">Callout</span></button>
               </div>
             )}
 
             {/* ── Draw / Mark: Pen · Marker · Eraser · Shapes ── */}
             {toolbarBucket === 'draw' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'grid grid-cols-2 md:flex md:flex-wrap'} gap-1 md:gap-1.5 pt-0.5`}>
                 <button
                   onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><PenLine size={12} /> Pen</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><PenLine size={12} /> <span className="hidden md:inline">Pen</span></button>
                 <button
                   onClick={(e) => { setToolMode('marker'); setOpenPopover({ tool: 'marker', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Highlighter size={12} /> Marker</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Highlighter size={12} /> <span className="hidden md:inline">Marker</span></button>
                 <button
                   onClick={(e) => { setToolMode('eraser'); setOpenPopover({ tool: 'eraser', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Eraser size={12} /> Eraser</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Eraser size={12} /> <span className="hidden md:inline">Eraser</span></button>
                 <button
                   onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({shapeKind})</span>}</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Shapes size={12} /> <span className="hidden md:inline">Shapes</span>{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5 hidden md:inline">({shapeKind})</span>}</button>
               </div>
             )}
 
@@ -2969,28 +2962,28 @@ export default function OperationsBlueprintPdfViewer({
 
             {/* ── View ── */}
             {toolbarBucket === 'view' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'grid grid-cols-2 md:flex md:flex-wrap'} gap-1 md:gap-1.5 pt-0.5`}>
                 <button
                   onClick={() => { setToolMode('select'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><MousePointer2 size={12} /> Select / Pan</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><MousePointer2 size={12} /> <span className="hidden md:inline">Select</span></button>
                 <button
                   onClick={() => setLockView((v) => !v)}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                >Lock View</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                >🔒</button>
                 <button
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
-                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
-                >Fit to Full Page</button>
-                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} text-[11px] text-gray-500 leading-snug`}>Wheel/pinch to zoom · Select / Pan to drag.</p>
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:col-span-1'} w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
+                ><span className="hidden md:inline">Fit</span><span className="md:hidden">↔</span></button>
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2'} text-[10px] md:text-[11px] text-gray-500 leading-snug`}>Wheel/pinch · Pan to drag</p>
               </div>
             )}
 
             {/* ── Measure ── */}
             {toolbarBucket === 'measure' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'grid grid-cols-2 md:flex md:flex-wrap'} gap-1 md:gap-1.5 pt-0.5`}>
                 {/* Calibration status badge — shows manual / auto / ambiguous / pending / none */}
-                <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/40 px-2 py-1.5`}>
+                <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:w-full'} rounded-md border border-gray-800 bg-gray-900/40 px-2 py-1.5`}>
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-gray-400">Page {currentPage}</span>
                     {pendingCalibration?.pageNumber === currentPage
@@ -3029,22 +3022,22 @@ export default function OperationsBlueprintPdfViewer({
                 {/* Calibrate tool */}
                 <button
                   onClick={() => { setToolMode('calibrate'); setOpenPopover(null) }}
-                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Crosshair size={12} /> Calibrate — draw known distance</button>
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:col-span-1'} w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Crosshair size={12} /> <span className="hidden md:inline">Calibrate</span></button>
 
                 {/* Measure tools */}
                 <button
                   onClick={() => { setToolMode('measure-distance'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-distance' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Ruler size={12} /> Distance</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'measure-distance' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Ruler size={12} /> <span className="hidden md:inline">Distance</span></button>
                 <button
                   onClick={() => { setToolMode('measure-area'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-area' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Square size={12} /> Area</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'measure-area' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Square size={12} /> <span className="hidden md:inline">Area</span></button>
                 <button
                   onClick={() => { setToolMode('measure-perimeter'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-perimeter' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Shapes size={12} /> Perimeter</button>
+                  className={`w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border ${toolMode === 'measure-perimeter' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                ><Shapes size={12} /> <span className="hidden md:inline">Perimeter</span></button>
 
                 {/* Commit / clear pending calibration */}
                 {calibrationStatus === 'pending' && (
@@ -3055,23 +3048,23 @@ export default function OperationsBlueprintPdfViewer({
                         setSavedCalibrations((prev) => ({ ...prev, [pendingCalibration.pageNumber]: pendingCalibration }))
                         setPendingCalibration(null)
                       }}
-                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-green-600 text-green-300 bg-green-900/20 hover:bg-green-900/40`}
-                    >Save Calibration for Page {currentPage}</button>
+                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:col-span-1'} w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border border-green-600 text-green-300 bg-green-900/20 hover:bg-green-900/40`}
+                    ><span className="hidden md:inline">Save Calib</span><span className="md:hidden">✓</span></button>
                     <button
                       onClick={() => setPendingCalibration(null)}
-                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-gray-200`}
-                    >Discard Pending</button>
+                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:col-span-1'} w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border border-gray-700 text-gray-400 hover:text-gray-200`}
+                    ><span className="hidden md:inline">Discard</span><span className="md:hidden">✕</span></button>
                   </>
                 )}
                 {calibrationStatus === 'saved' && (
                   <button
                     onClick={() => setSavedCalibrations((prev) => { const n = { ...prev }; delete n[currentPage]; return n })}
-                    className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-700`}
-                  >Clear Calibration</button>
+                    className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:col-span-1'} w-full inline-flex items-center justify-center md:justify-start gap-1 md:gap-1.5 h-7 md:h-8 text-xs px-1 md:px-2 rounded-md border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-700`}
+                  ><span className="hidden md:inline">Clear</span><span className="md:hidden">✕</span></button>
                 )}
 
-                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} text-[11px] text-gray-500 leading-snug`}>
-                  Calibrate first, then draw measurements. Calibration is per-page.
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'col-span-2 md:w-full'} text-[10px] md:text-[11px] text-gray-500 leading-snug`}>
+                  Calibrate → measure
                 </p>
               </div>
             )}
