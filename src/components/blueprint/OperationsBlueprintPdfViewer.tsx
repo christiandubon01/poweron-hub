@@ -72,6 +72,20 @@ function shouldUseDesktopBlueprintLayout() {
   return !isIPadLike && window.innerWidth >= 1280
 }
 
+function isTabletLandscape() {
+  if (typeof window === 'undefined') return false
+  const nav = window.navigator
+  const ua = nav.userAgent || ''
+  const platform = nav.platform || ''
+  const maxTouchPoints = nav.maxTouchPoints || 0
+  const isIPadLike =
+    /iPad/i.test(ua) ||
+    ((/MacIntel|Macintosh/i.test(platform) || /Macintosh/i.test(ua)) && maxTouchPoints > 1)
+  
+  // Tablet landscape: iPad-like device in landscape (wider than tall)
+  return isIPadLike && window.innerWidth > window.innerHeight && window.innerHeight < 900
+}
+
 // Zoom floor = 1.0 means the user can never zoom out past "Fit to Full Page".
 // The fit scale is always relativeZoom = 1.0. Going below 1.0 would make the
 // page smaller than the fitted size, which is unwanted.
@@ -438,6 +452,7 @@ export default function OperationsBlueprintPdfViewer({
   // True when viewport width is phone/tablet-sized (< 1024px).
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 1024)
   const [isDesktopBlueprintLayout, setIsDesktopBlueprintLayout] = useState(shouldUseDesktopBlueprintLayout)
+  const [isTabletLandscapeMode, setIsTabletLandscapeMode] = useState(isTabletLandscape)
   const maxRelativeZoom = isMobileRef.current ? MAX_RELATIVE_ZOOM_MOBILE : MAX_RELATIVE_ZOOM_DESKTOP
   // Component-level zoom clamp — uses the correct device-aware ceiling.
   const clampRelativeZoom = (v: number) => Math.max(MIN_RELATIVE_ZOOM, Math.min(maxRelativeZoom, v))
@@ -447,6 +462,7 @@ export default function OperationsBlueprintPdfViewer({
       if (typeof window === 'undefined') return
       isMobileRef.current = window.innerWidth < 1024
       setIsDesktopBlueprintLayout(shouldUseDesktopBlueprintLayout())
+      setIsTabletLandscapeMode(isTabletLandscape())
     }
 
     syncViewportFlags()
@@ -2870,10 +2886,10 @@ export default function OperationsBlueprintPdfViewer({
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-4 py-3 border-b border-gray-800 space-y-2'}
+              : isTabletLandscapeMode ? 'px-3 py-1.5 border-b border-gray-800 space-y-1' : 'px-4 py-3 border-b border-gray-800 space-y-2'}
           >
             {/* ── Bucket tabs: 2×2 grid + full-width Measure row ── */}
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className={`grid grid-cols-2 ${isTabletLandscapeMode ? 'gap-1' : 'gap-1.5'}`}>
               {([
                 ['annotate', 'Annotate'],
                 ['draw', 'Draw / Mark'],
@@ -2883,7 +2899,7 @@ export default function OperationsBlueprintPdfViewer({
                 <button
                   key={bucket}
                   onClick={() => setToolbarBucket(bucket)}
-                  className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center justify-center gap-1 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 >
                   {bucket === 'annotate' && <Layers size={12} />}
                   {bucket === 'draw' && <PenLine size={12} />}
@@ -2894,7 +2910,7 @@ export default function OperationsBlueprintPdfViewer({
               ))}
               <button
                 onClick={() => setToolbarBucket('measure')}
-                className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
               >
                 <Ruler size={12} /> Measure
                 {calibrationStatus !== 'none' && (
@@ -2904,94 +2920,94 @@ export default function OperationsBlueprintPdfViewer({
                 )}
               </button>
             </div>
-            <div className="text-[11px] text-gray-500">
+            <div className={`${isTabletLandscapeMode ? 'text-[10px]' : 'text-[11px]'} text-gray-500`}>
               Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
             </div>
 
             {/* ── Annotate: Text Box · Text Highlight · Underline · Note · Callout ── */}
             {toolbarBucket === 'annotate' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} ${isTabletLandscapeMode ? 'gap-1 pt-0' : 'gap-1.5 pt-0.5'}`}>
                 <button
                   onClick={(e) => { setToolMode('textBox'); setOpenPopover({ tool: 'textBox', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Type size={12} /> Text Box</button>
                 <button
                   onClick={(e) => { setToolMode('textHighlight'); setOpenPopover({ tool: 'textHighlight', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textHighlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'textHighlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Highlighter size={12} /> Text Highlight</button>
                 <button
                   onClick={(e) => { setToolMode('underline'); setOpenPopover({ tool: 'underline', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'underline' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Underline size={12} /> Underline</button>
                 <button
                   onClick={() => { setToolMode('note'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'note' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><StickyNote size={12} /> Note</button>
                 <button
                   onClick={(e) => { setToolMode('callout'); setOpenPopover({ tool: 'callout', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'callout' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><ArrowUpRight size={12} /> Callout</button>
               </div>
             )}
 
             {/* ── Draw / Mark: Pen · Marker · Eraser · Shapes ── */}
             {toolbarBucket === 'draw' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} ${isTabletLandscapeMode ? 'gap-1 pt-0' : 'gap-1.5 pt-0.5'}`}>
                 <button
                   onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><PenLine size={12} /> Pen</button>
                 <button
                   onClick={(e) => { setToolMode('marker'); setOpenPopover({ tool: 'marker', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Highlighter size={12} /> Marker</button>
                 <button
                   onClick={(e) => { setToolMode('eraser'); setOpenPopover({ tool: 'eraser', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Eraser size={12} /> Eraser</button>
                 <button
                   onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({shapeKind})</span>}</button>
               </div>
             )}
 
             {/* ── Generate ── */}
             {toolbarBucket === 'generate' && (
-              <div className="flex flex-col gap-1.5 pt-0.5">
+              <div className={`flex flex-col ${isTabletLandscapeMode ? 'gap-1 pt-0' : 'gap-1.5 pt-0.5'}`}>
                 <button
                   onClick={(e) => { setToolMode('generate'); setOpenPopover({ tool: 'generate', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'generate' ? 'border-amber-500 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Sparkles size={12} /> Generate from Pinpoint</button>
-                <p className="text-[11px] text-gray-500 leading-snug">Click a point on the blueprint, write the question, save.</p>
+                <p className={`${isTabletLandscapeMode ? 'text-[10px]' : 'text-[11px]'} text-gray-500 leading-snug`}>Click a point on the blueprint, write the question, save.</p>
               </div>
             )}
 
             {/* ── View ── */}
             {toolbarBucket === 'view' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} ${isTabletLandscapeMode ? 'gap-1 pt-0' : 'gap-1.5 pt-0.5'}`}>
                 <button
                   onClick={() => { setToolMode('select'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><MousePointer2 size={12} /> Select / Pan</button>
                 <button
                   onClick={() => setLockView((v) => !v)}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 >Lock View</button>
                 <button
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
-                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
                 >Fit to Full Page</button>
-                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} text-[11px] text-gray-500 leading-snug`}>Wheel/pinch to zoom · Select / Pan to drag.</p>
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} ${isTabletLandscapeMode ? 'text-[10px]' : 'text-[11px]'} text-gray-500 leading-snug`}>Wheel/pinch to zoom · Select / Pan to drag.</p>
               </div>
             )}
 
             {/* ── Measure ── */}
             {toolbarBucket === 'measure' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-wrap'} ${isTabletLandscapeMode ? 'gap-1 pt-0' : 'gap-1.5 pt-0.5'}`}>
                 {/* Calibration status badge — shows manual / auto / ambiguous / pending / none */}
                 <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/40 px-2 py-1.5`}>
-                  <div className="flex items-center justify-between text-[11px]">
+                  <div className={`flex items-center justify-between ${isTabletLandscapeMode ? 'text-[10px]' : 'text-[11px]'}`}>
                     <span className="text-gray-400">Page {currentPage}</span>
                     {pendingCalibration?.pageNumber === currentPage
                       ? <span className="text-amber-400">pending calibration</span>
@@ -3029,21 +3045,21 @@ export default function OperationsBlueprintPdfViewer({
                 {/* Calibrate tool */}
                 <button
                   onClick={() => { setToolMode('calibrate'); setOpenPopover(null) }}
-                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Crosshair size={12} /> Calibrate — draw known distance</button>
 
                 {/* Measure tools */}
                 <button
                   onClick={() => { setToolMode('measure-distance'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-distance' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'measure-distance' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Ruler size={12} /> Distance</button>
                 <button
                   onClick={() => { setToolMode('measure-area'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-area' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'measure-area' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Square size={12} /> Area</button>
                 <button
                   onClick={() => { setToolMode('measure-perimeter'); setOpenPopover(null) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'measure-perimeter' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  className={`w-full inline-flex items-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border ${toolMode === 'measure-perimeter' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Shapes size={12} /> Perimeter</button>
 
                 {/* Commit / clear pending calibration */}
@@ -3055,22 +3071,22 @@ export default function OperationsBlueprintPdfViewer({
                         setSavedCalibrations((prev) => ({ ...prev, [pendingCalibration.pageNumber]: pendingCalibration }))
                         setPendingCalibration(null)
                       }}
-                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-green-600 text-green-300 bg-green-900/20 hover:bg-green-900/40`}
+                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border border-green-600 text-green-300 bg-green-900/20 hover:bg-green-900/40`}
                     >Save Calibration for Page {currentPage}</button>
                     <button
                       onClick={() => setPendingCalibration(null)}
-                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-gray-200`}
+                      className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-gray-200`}
                     >Discard Pending</button>
                   </>
                 )}
                 {calibrationStatus === 'saved' && (
                   <button
                     onClick={() => setSavedCalibrations((prev) => { const n = { ...prev }; delete n[currentPage]; return n })}
-                    className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-700`}
+                    className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 ${isTabletLandscapeMode ? 'h-7' : 'h-8'} text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-700`}
                   >Clear Calibration</button>
                 )}
 
-                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} text-[11px] text-gray-500 leading-snug`}>
+                <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} ${isTabletLandscapeMode ? 'text-[10px]' : 'text-[11px]'} text-gray-500 leading-snug`}>
                   Calibrate first, then draw measurements. Calibration is per-page.
                 </p>
               </div>
@@ -3080,10 +3096,10 @@ export default function OperationsBlueprintPdfViewer({
           <div
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3'
-              : 'px-4 py-3 border-b border-gray-800 space-y-3'}
+              : isTabletLandscapeMode ? 'px-3 py-1.5 border-b border-gray-800 space-y-1.5' : 'px-4 py-3 border-b border-gray-800 space-y-3'}
           >
             {/* Page Navigation Group */}
-            <div className="flex items-center gap-2">
+            <div className={`flex items-center ${isTabletLandscapeMode ? 'gap-1' : 'gap-2'}`}>
               {/* Prev/Next */}
               <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
                 <button
@@ -3142,7 +3158,7 @@ export default function OperationsBlueprintPdfViewer({
             </div>
 
             {/* View Controls Group */}
-            <div className="flex items-center gap-2">
+            <div className={`flex items-center ${isTabletLandscapeMode ? 'gap-1' : 'gap-2'}`}>
               {/* Zoom & View */}
               <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
                 <button
