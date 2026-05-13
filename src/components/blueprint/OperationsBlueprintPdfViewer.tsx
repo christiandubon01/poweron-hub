@@ -1067,6 +1067,41 @@ export default function OperationsBlueprintPdfViewer({
     }
   }, [])
 
+  // iPad/tablet fullscreen: lock background page scroll, own all scroll/pan within viewer.
+  // This prevents touch drags from leaking to outer page and prevents accidental fullscreen exit.
+  useEffect(() => {
+    if (!isFullScreenView) {
+      // Restore normal scrolling when exiting fullscreen
+      const html = document.documentElement
+      const body = document.body
+      html.style.overflow = ''
+      body.style.overflow = ''
+      html.style.position = ''
+      body.style.position = ''
+      return
+    }
+
+    // Lock outer page scroll during fullscreen so document drags stay contained
+    const html = document.documentElement
+    const body = document.body
+    const originalHtmlOverflow = html.style.overflow
+    const originalBodyOverflow = body.style.overflow
+    const originalHtmlPosition = html.style.position
+    const originalBodyPosition = body.style.position
+
+    html.style.overflow = 'hidden'
+    body.style.overflow = 'hidden'
+    html.style.position = 'fixed'
+    body.style.position = 'fixed'
+
+    return () => {
+      html.style.overflow = originalHtmlOverflow
+      body.style.overflow = originalBodyOverflow
+      html.style.position = originalHtmlPosition
+      body.style.position = originalBodyPosition
+    }
+  }, [isFullScreenView])
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -3259,6 +3294,25 @@ export default function OperationsBlueprintPdfViewer({
                   msOverflowStyle: 'none' as any,  /* IE / old Edge */
                 } as React.CSSProperties}
                 onWheel={handleWheel}
+                onTouchStart={(e) => {
+                  // In fullscreen, ensure scroll container owns all touch events
+                  // so they don't leak to the background page or trigger fullscreen exit
+                  if (isFullScreenView && activeTouchPointersRef.current.size === 0) {
+                    const targetEl = e.target as HTMLElement | null
+                    if (targetEl && (targetEl.closest('button, textarea, input, select, a') === null)) {
+                      e.preventDefault()
+                    }
+                  }
+                }}
+                onTouchMove={(e) => {
+                  // In fullscreen, prevent background page scroll during document pan/zoom
+                  if (isFullScreenView) {
+                    const targetEl = e.target as HTMLElement | null
+                    if (targetEl && !targetEl.closest('button, textarea, input, select, a')) {
+                      e.preventDefault()
+                    }
+                  }
+                }}
               >
                 <div
                   className="relative p-3"
