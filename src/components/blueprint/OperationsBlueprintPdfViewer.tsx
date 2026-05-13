@@ -2870,7 +2870,7 @@ export default function OperationsBlueprintPdfViewer({
         </div>
       ) : (
         <>
-          {(isFullScreenView || isTabletImmersiveFullscreen) && (
+          {isFullScreenView && isDesktopBlueprintLayout && (
             <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between gap-3 bg-[#0d0e14] flex-shrink-0">
               <div className="min-w-0 flex items-center gap-3">
                 <p className="text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
@@ -2903,8 +2903,115 @@ export default function OperationsBlueprintPdfViewer({
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
                   title={isFullScreenView ? 'Exit fullscreen' : 'Enter fullscreen'}
                 >
-                  {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                  {isFullScreenView || isTabletImmersiveFullscreen ? 'Exit Full Screen' : 'Full Size Screen'}
+                  {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                  {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isTabletImmersiveFullscreen && !isDesktopBlueprintLayout && (
+            <div className="px-3 py-1.5 border-b border-gray-800 bg-[#0d0e14] flex-shrink-0 flex items-center justify-between gap-2">
+              {/* Close/Exit Button */}
+              <button
+                onClick={() => {
+                  const isInAnyFullscreen = isFullScreenView || isTabletImmersiveFullscreen
+                  handleFullscreenToggle(
+                    isInAnyFullscreen,
+                    isTabletDevice(),
+                    viewerRootRef.current,
+                    setIsFullScreenView,
+                    setIsTabletImmersiveFullscreen,
+                  )
+                }}
+                className="shrink-0 inline-flex items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+                title="Exit fullscreen"
+              >
+                <Minimize2 size={14} />
+              </button>
+
+              {/* Page Navigation Group */}
+              <div className="inline-flex items-center gap-1 bg-gray-900/40 rounded-md border border-gray-700/50 px-1.5 py-0.5">
+                <button
+                  disabled={!canRender || currentPage <= 1 || isRendering}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft size={12} />
+                </button>
+                <input
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
+                  className="w-8 rounded-sm border border-gray-600 bg-gray-900/60 text-gray-100 text-xs px-1 py-0.5 text-center font-medium"
+                  placeholder="1"
+                  title="Page number"
+                />
+                <span className="text-xs text-gray-500 px-0.5">/{numPages || 1}</span>
+                <button
+                  disabled={!canRender || currentPage >= numPages || isRendering}
+                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                  className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight size={12} />
+                </button>
+              </div>
+
+              {/* Zoom Group */}
+              <div className="inline-flex items-center gap-1 bg-gray-900/40 rounded-md border border-gray-700/50 px-1.5 py-0.5">
+                <button
+                  disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
+                  onClick={() => applyRelativeZoomDelta(-0.1)}
+                  className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+                  title="Zoom out"
+                >
+                  <ZoomOut size={12} />
+                </button>
+                <span className="text-xs text-gray-400 w-7 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+                <button
+                  disabled={!canRender || relativeZoom >= maxRelativeZoom}
+                  onClick={() => applyRelativeZoomDelta(0.1)}
+                  className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+                  title="Zoom in"
+                >
+                  <ZoomIn size={12} />
+                </button>
+              </div>
+
+              {/* Fit + Lock Group */}
+              <div className="inline-flex items-center gap-1">
+                <button
+                  disabled={!canRender}
+                  onClick={() => {
+                    pendingScrollResetRef.current = true
+                    setRelativeZoom(1)
+                  }}
+                  className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 disabled:opacity-40 transition-colors"
+                  title="Fit page to view"
+                >
+                  <ArrowUpRight size={12} />
+                </button>
+                <button
+                  disabled={!canRender}
+                  onClick={() => setLockView((v) => !v)}
+                  className={`inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border transition-colors text-sm ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'} disabled:opacity-40`}
+                  title={lockView ? 'Unlock view' : 'Lock view'}
+                >
+                  {lockView ? '🔒' : '🔓'}
+                </button>
+              </div>
+
+              {/* Title + Status Strip */}
+              <div className="min-w-0 flex-1 ml-2 flex items-center gap-2">
+                <p className="text-xs text-gray-300 font-semibold truncate">{blueprint.title}</p>
+                <button
+                  onClick={() => void loadPdf()}
+                  className="shrink-0 inline-flex items-center justify-center text-xs px-1 py-1 rounded-sm border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600"
+                  title="Refresh PDF link"
+                >
+                  <RefreshCw size={11} />
                 </button>
               </div>
             </div>
@@ -2916,8 +3023,8 @@ export default function OperationsBlueprintPdfViewer({
               gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
               columnGap: 0,
               rowGap: 16,
-              minHeight: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px)' : 'calc(100vh - 180px)',
-              height: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px)' : 'auto',
+              minHeight: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : 'calc(100vh - 180px)',
+              height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : 'auto',
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
@@ -3339,7 +3446,7 @@ export default function OperationsBlueprintPdfViewer({
                   // Dynamic height: fills from bottom of toolbar to bottom of viewport.
                   // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
                   ...(useDesktopThreePaneLayout
-                    ? { height: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' }
+                    ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px - 32px - 16px)' : 'calc(100vh - 180px)' }
                     : isFullScreenView || isTabletImmersiveFullscreen
                       ? {}
                       : {
@@ -4200,7 +4307,7 @@ export default function OperationsBlueprintPdfViewer({
               <div
                 className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'h-[calc(100vh-180px)] min-h-[60vh]' : ''}`}
                 style={{
-                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView || isTabletImmersiveFullscreen ? 'calc(100vh - 52px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
+                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
