@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowUpRight,
@@ -12,8 +12,10 @@ import {
   Italic,
   Layers,
   Loader2,
+  Lock,
   Maximize2,
   Minimize2,
+  Unlock,
   Minus,
   MousePointer2,
   Move,
@@ -2906,11 +2908,11 @@ export default function OperationsBlueprintPdfViewer({
                       setIsTabletImmersiveFullscreen,
                     )
                   }}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0 font-medium"
                   title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
                 >
-                  {isFullScreenView ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                  {isFullScreenView ? 'Exit Full Screen' : 'Full Size Screen'}
+                  {isFullScreenView ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  {isFullScreenView ? 'Exit Full Screen' : 'Full Screen'}
                 </button>
               </div>
             </div>
@@ -3444,7 +3446,7 @@ export default function OperationsBlueprintPdfViewer({
                 className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
                 title={lockView ? 'Unlock view' : 'Lock view'}
               >
-                {lockView ? 'Ã°Å¸â€â€™' : 'Ã°Å¸â€â€œ'}
+                {lockView ? <Lock size={14} /> : <Unlock size={14} />}
               </button>
 
               {/* Fullscreen button: explicit fullscreen toggle.
@@ -3463,10 +3465,11 @@ export default function OperationsBlueprintPdfViewer({
                     setIsTabletImmersiveFullscreen,
                   )
                 }}
-                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+                className={`inline-flex items-center text-xs rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors ${useDesktopThreePaneLayout ? 'gap-1.5 px-3 py-2 font-medium' : 'justify-center px-2.5 py-1.5'}`}
                 title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
                 {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                {useDesktopThreePaneLayout && (isFullScreenView ? 'Exit Full Screen' : 'Full Screen')}
               </button>
             </div>
           </div>
