@@ -2976,43 +2976,87 @@ export default function OperationsBlueprintPdfViewer({
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-4 py-3 border-b border-gray-800 space-y-2'}
+              : 'px-4 py-2 border-b border-gray-800 space-y-1.5'}
           >
-            {/* â”€â”€ Bucket tabs: 2Ã—2 grid + full-width Measure row â”€â”€ */}
-            <div className="grid grid-cols-2 gap-1.5">
-              {([
-                ['annotate', 'Annotate'],
-                ['draw', 'Draw / Mark'],
-                ['generate', 'Generate'],
-                ['view', 'View'],
-              ] as Array<[ToolbarBucket, string]>).map(([bucket, label]) => (
-                <button
-                  key={bucket}
-                  onClick={() => setToolbarBucket(bucket)}
-                  className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                >
-                  {bucket === 'annotate' && <Layers size={12} />}
-                  {bucket === 'draw' && <PenLine size={12} />}
-                  {bucket === 'generate' && <Sparkles size={12} />}
-                  {bucket === 'view' && <MousePointer2 size={12} />}
-                  {label}
-                </button>
-              ))}
-              <button
-                onClick={() => setToolbarBucket('measure')}
-                className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-              >
-                <Ruler size={12} /> Measure
-                {calibrationStatus !== 'none' && (
-                  <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
-                    {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
-                  </span>
-                )}
-              </button>
-            </div>
-            <div className="text-[11px] text-gray-500">
-              Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
-            </div>
+            {/* ──── Tablet: Compact single-row segmented bucket selector ──── */}
+            {!useDesktopThreePaneLayout && (
+              <div className="flex gap-0.5 items-stretch overflow-x-auto">
+                {([
+                  ['annotate', 'Annotate', Layers],
+                  ['draw', 'Draw / Mark', PenLine],
+                  ['generate', 'Generate', Sparkles],
+                  ['view', 'View', MousePointer2],
+                  ['measure', 'Measure', Ruler],
+                ] as Array<[ToolbarBucket, string, any]>).map(([bucket, label, Icon]) => (
+                  <button
+                    key={bucket}
+                    onClick={() => setToolbarBucket(bucket)}
+                    className={`shrink-0 flex items-center gap-1 h-7 text-xs px-2.5 rounded-md border transition-colors ${
+                      toolbarBucket === bucket
+                        ? bucket === 'measure'
+                          ? 'border-sky-500 text-sky-300 bg-sky-900/25'
+                          : 'border-blue-500 text-blue-300 bg-blue-900/25'
+                        : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+                    }`}
+                    title={label}
+                  >
+                    <Icon size={11} className="shrink-0" />
+                    <span className="whitespace-nowrap">{label}</span>
+                    {bucket === 'measure' && calibrationStatus !== 'none' && (
+                      <span className={`ml-0.5 w-1.5 h-1.5 rounded-full ${calibrationStatus === 'saved' ? 'bg-green-500' : 'bg-amber-500'}`} />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ──── Desktop: 2×2 grid + full-width Measure row ──── */}
+            {useDesktopThreePaneLayout && (
+              <>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    ['annotate', 'Annotate'],
+                    ['draw', 'Draw / Mark'],
+                    ['generate', 'Generate'],
+                    ['view', 'View'],
+                  ] as Array<[ToolbarBucket, string]>).map(([bucket, label]) => (
+                    <button
+                      key={bucket}
+                      onClick={() => setToolbarBucket(bucket)}
+                      className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                    >
+                      {bucket === 'annotate' && <Layers size={12} />}
+                      {bucket === 'draw' && <PenLine size={12} />}
+                      {bucket === 'generate' && <Sparkles size={12} />}
+                      {bucket === 'view' && <MousePointer2 size={12} />}
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setToolbarBucket('measure')}
+                    className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  >
+                    <Ruler size={12} /> Measure
+                    {calibrationStatus !== 'none' && (
+                      <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
+                        {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
+                </div>
+              </>
+            )}
+
+            {/* ──── Tablet: Compact active tool label ──── */}
+            {!useDesktopThreePaneLayout && (
+              <div className="text-[10px] text-gray-600 px-0.5">
+                <span className="text-gray-400">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' · editing' : ''}
+              </div>
+            )}
+
 
             {/* â”€â”€ Annotate: Text Box Â· Text Highlight Â· Underline Â· Note Â· Callout â”€â”€ */}
             {toolbarBucket === 'annotate' && (
