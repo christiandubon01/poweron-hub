@@ -25,7 +25,7 @@ import {
 } from './stages'
 import { getCatalogItemsByStage } from './electricalCatalog'
 import type { ElectricalCatalogItem } from './electricalCatalog'
-import BlueprintVRLandscapeViewer from './BlueprintVRLandscapeViewer'
+import Blueprint3DSpaceViewer from './Blueprint3DSpaceViewer'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -455,9 +455,9 @@ export default function BlueprintVRExperiencePanel({
           scrollbarColor: 'rgba(0,229,204,0.2) transparent',
         }}>
 
-          {/* SVG landscape viewer */}
+          {/* Planner5D-style 3D space viewer */}
           <div style={{ padding: '14px 16px 0' }}>
-            <BlueprintVRLandscapeViewer selectedStage={selectedStage} />
+            <Blueprint3DSpaceViewer activeStage={selectedStage} />
           </div>
 
           {/* Stage tabs */}
