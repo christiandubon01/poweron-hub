@@ -28,6 +28,8 @@ import type {
   BlueprintDimensionExtractionResult,
 } from './blueprintDimensionExtractor'
 import { extractBlueprintDimensions } from './blueprintDimensionExtractor'
+import { scanBlueprintPlan, convertPlanScanToBuildingModel } from './blueprintPlanScanner'
+import type { BlueprintPlanScanResult } from './blueprintPlanScanner'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Adapter Types
@@ -45,6 +47,14 @@ export interface BlueprintToBuildingModelInput extends BlueprintDimensionExtract
     roomId?: string
     heightAboveFloor?: number // in inches
   }>
+  /**
+   * When true (default), the converter will prefer the Blueprint plan scanner
+   * for the room / wall / opening layout and only fall back to the legacy
+   * dimension extractor when no scanner result is usable.
+   */
+  preferPlanScanner?: boolean
+  /** Current active page number, surfaced to the scanner. */
+  activePageNumber?: number
 }
 
 export interface BlueprintToBuildingModelResult {
@@ -52,6 +62,8 @@ export interface BlueprintToBuildingModelResult {
   model: BlueprintBuildingModel
   /** Extraction result with warnings and confidence */
   extraction: BlueprintDimensionExtractionResult
+  /** Scanner result, when the scanner path was used. */
+  planScan?: BlueprintPlanScanResult
   /** List of any model-level warnings or issues */
   warnings: Array<{ severity: 'info' | 'warning' | 'error'; message: string }>
   /** Overall confidence 0–1 */
@@ -185,9 +197,99 @@ export function convertBlueprintToModel(
   input: BlueprintToBuildingModelInput,
 ): BlueprintToBuildingModelResult {
   const warnings: Array<{ severity: 'info' | 'warning' | 'error'; message: string }> = []
+  const preferScanner = input.preferPlanScanner !== false
 
-  // Step 1: Extract dimensions and scale from blueprint
+  // Step 0: Run the deterministic plan scanner. It always succeeds and gives
+  // us a long/narrow context-aware suite when trace data is absent.
+  const planScan = preferScanner
+    ? scanBlueprintPlan({
+        projectName: input.projectName,
+        blueprintTitle: input.title,
+        fileName: input.fileName,
+        activePageNumber: input.activePageNumber,
+        extractedText: input.extractedText,
+        annotationsSummary: input.annotationsSummary,
+        sheetIndex: Array.isArray(input.sheetIndex)
+          ? input.sheetIndex.map((s) => ({
+              pageNumber: typeof s.pageNumber === 'number' ? s.pageNumber : 0,
+              sheetNumber: s.sheetNumber,
+              sheetTitle: s.sheetTitle,
+              sheetLabel: s.sheetLabel,
+              discipline: s.discipline,
+            }))
+          : undefined,
+        knownDimensionsFt: {
+          width: input.knownWidthFt,
+          depth: input.knownDepthFt,
+        },
+      })
+    : undefined
+
+  // Step 1: Extract dimensions and scale from blueprint (still used for
+  // measurement warnings and scale info even when scanner drives the layout).
   const extraction = extractBlueprintDimensions(input)
+
+  // Step 1.5: If scanner produced a sensible layout, use it as the model
+  // baseline. Electrical anchors below will still be associated with rooms.
+  if (planScan) {
+    const scannerModel = convertPlanScanToBuildingModel(planScan)
+    const electricalAnchors: BuildingElectricalAnchorModel[] = []
+    if (input.electricalAnchors && Array.isArray(input.electricalAnchors)) {
+      for (const anchor of input.electricalAnchors) {
+        let roomId: string | undefined
+        let roomLabel: string | undefined
+        const rooms = scannerModel.levels[0]?.rooms || []
+        for (const room of rooms) {
+          const { min, max } = room.bounds
+          if (
+            anchor.position.x >= min.x &&
+            anchor.position.x <= max.x &&
+            anchor.position.y >= min.y &&
+            anchor.position.y <= max.y
+          ) {
+            roomId = room.id
+            roomLabel = room.label
+            break
+          }
+        }
+        electricalAnchors.push({
+          id: `elec-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          type: anchor.type,
+          position: anchor.position,
+          roomId,
+          roomLabel,
+          heightAboveFloor: anchor.heightAboveFloor
+            ? {
+                value: anchor.heightAboveFloor,
+                unit: 'in',
+                display: `${anchor.heightAboveFloor}"`,
+                confidence: 1,
+                source: 'user',
+              }
+            : undefined,
+          visible: true,
+        })
+      }
+    }
+    scannerModel.electricalAnchors = electricalAnchors
+
+    for (const w of extraction.warnings) {
+      warnings.push({
+        severity: w.code === 'FALLBACK_USED' ? 'info' : 'info',
+        message: w.message,
+      })
+    }
+    for (const w of planScan.warnings) {
+      warnings.push({ severity: planScan.isFallback ? 'warning' : 'info', message: w.message })
+    }
+    return {
+      model: scannerModel,
+      extraction,
+      planScan,
+      warnings,
+      confidence: planScan.confidence,
+    }
+  }
 
   // Step 2: Build room models from extracted space
   const rooms: BuildingRoomModel[] = extraction.space.rooms.map((zone) => {

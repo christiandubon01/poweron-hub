@@ -28,8 +28,9 @@ import type { ElectricalCatalogItem } from './electricalCatalog'
 import Blueprint3DSpaceViewer from './Blueprint3DSpaceViewer'
 import MeasuredPlanViewer from './MeasuredPlanViewer'
 import BlueprintRoomInteriorView from './BlueprintRoomInteriorView'
-import { createAutoDetectedDefaultModel } from './buildingModelDefaults'
 import type { BlueprintBuildingModel } from './buildingModel'
+import { scanBlueprintPlan, convertPlanScanToBuildingModel } from './blueprintPlanScanner'
+import type { BlueprintPlanScanResult } from './blueprintPlanScanner'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -337,6 +338,90 @@ function StageItemList({ stage }: { stage: VRStage }) {
   )
 }
 
+// ── Subcomponent: Scan Status Banner ─────────────────────────────────
+
+function ScanStatusBanner({ scan }: { scan: BlueprintPlanScanResult }) {
+  const top = scan.warnings.slice(0, 3)
+  const accent = scan.isFallback ? '#FFB347' : '#7BE5D8'
+  const labelText = scan.isFallback ? 'SCAN · INFERRED' : 'SCAN · MEASURED'
+  return (
+    <div
+      style={{
+        background: 'rgba(8,14,22,0.65)',
+        border: `1px solid ${accent}44`,
+        borderRadius: 4,
+        padding: '8px 10px',
+        fontFamily: 'monospace',
+        fontSize: 10,
+        color: 'rgba(220,230,240,0.85)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ color: accent, fontWeight: 700, letterSpacing: 0.8 }}>{labelText}</span>
+        <span style={{ opacity: 0.6 }}>
+          {scan.layoutContext.replace(/-/g, ' ')} · {(scan.confidence * 100).toFixed(0)}% confidence
+        </span>
+        <span style={{ opacity: 0.5 }}>
+          {Math.round(scan.footprint.width)}'-0" W × {Math.round(scan.footprint.height)}'-0" D · {scan.rooms.length} rooms
+        </span>
+      </div>
+      {top.map((w, i) => (
+        <div key={i} style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.35 }}>
+          • {w.message}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Subcomponent: Room Nav Strip ─────────────────────────────────────
+
+interface RoomNavStripProps {
+  rooms: Array<{ id: string; label: string }>
+  selectedRoomId: string | null
+  onSelect: (roomId: string) => void
+  onBackToDollhouse: () => void
+  onBackToPlan: () => void
+}
+
+function RoomNavStrip({ rooms, selectedRoomId, onSelect, onBackToDollhouse, onBackToPlan }: RoomNavStripProps) {
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 6,
+        padding: '8px 10px',
+        background: 'rgba(8,14,22,0.55)',
+        border: '1px solid rgba(0,229,204,0.18)',
+        borderRadius: 4,
+        alignItems: 'center',
+      }}
+    >
+      <button onClick={onBackToDollhouse} style={controlButtonStyle(false)}>
+        ← Dollhouse
+      </button>
+      <button onClick={onBackToPlan} style={controlButtonStyle(false)}>
+        ← 2D Plan
+      </button>
+      <span style={{ ...smallLabelStyle, marginLeft: 4 }}>Rooms</span>
+      {rooms.map((r) => (
+        <button
+          key={r.id}
+          onClick={() => onSelect(r.id)}
+          style={controlButtonStyle(selectedRoomId === r.id)}
+        >
+          {r.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────────────
 
 export default function BlueprintVRExperiencePanel({
@@ -353,11 +438,22 @@ export default function BlueprintVRExperiencePanel({
   const [wallOpacity, setWallOpacity] = useState(0.82)
   const [cameraPreset, setCameraPreset] = useState<'top' | 'iso' | 'room'>('iso')
 
-  const buildingModel = useMemo<BlueprintBuildingModel>(() => {
-    const manifestName = job.outputManifest?.projectName || sourceBlueprint.name
+  const scanResult = useMemo<BlueprintPlanScanResult>(() => {
+    const projectName = job.outputManifest?.projectName || sourceBlueprint.name
+    const blueprintTitle = sourceBlueprint.name
     const manifestDescription = job.outputManifest?.metadata?.description
-    return createAutoDetectedDefaultModel(manifestName, sourceBlueprint.name, manifestDescription)
-  }, [job.outputManifest, sourceBlueprint.name])
+    return scanBlueprintPlan({
+      projectName,
+      blueprintTitle,
+      fileName: sourceBlueprint.filePath,
+      extractedText: manifestDescription,
+    })
+  }, [job.outputManifest, sourceBlueprint.name, sourceBlueprint.filePath])
+
+  const buildingModel = useMemo<BlueprintBuildingModel>(
+    () => convertPlanScanToBuildingModel(scanResult),
+    [scanResult],
+  )
 
   const handleBackdropClick = useCallback(() => { onClose() }, [onClose])
   const firstRoomId = buildingModel.levels[0]?.rooms[0]?.id || null
@@ -369,6 +465,14 @@ export default function BlueprintVRExperiencePanel({
   }, [selectedRoomId, firstRoomId])
 
   const handleRoomSelect = useCallback((roomId: string) => {
+    setSelectedRoomId(roomId)
+    // From the 3D dollhouse, room click should focus that room without forcing
+    // the user out of 3D. Plan view → click moves into Room View.
+    setCameraPreset((prev) => (prev === 'top' ? 'room' : prev === 'room' ? 'room' : 'room'))
+    setViewMode((prev) => (prev === 'plan' ? 'room' : prev === 'room' ? 'room' : 'dollhouse'))
+  }, [])
+
+  const handleRoomEnter = useCallback((roomId: string) => {
     setSelectedRoomId(roomId)
     setViewMode('room')
     setCameraPreset('room')
@@ -420,8 +524,8 @@ export default function BlueprintVRExperiencePanel({
         position: 'fixed',
         top: '50%', left: '50%',
         transform: 'translate(-50%, -50%)',
-        width: 'min(92vw, 820px)',
-        maxHeight: '92vh',
+        width: 'min(96vw, 960px)',
+        maxHeight: '94vh',
         background: 'rgba(4,8,12,0.97)',
         backdropFilter: 'blur(12px)',
         borderRadius: 8,
@@ -568,13 +672,15 @@ export default function BlueprintVRExperiencePanel({
               <button onClick={() => setCameraPreset('room')} style={controlButtonStyle(cameraPreset === 'room')}>Room</button>
             </div>
 
+            <ScanStatusBanner scan={scanResult} />
+
             {viewMode === 'plan' && (
               <MeasuredPlanViewer
                 model={buildingModel}
                 width={760}
                 height={430}
                 selectedRoomId={selectedRoomId}
-                onRoomSelect={handleRoomSelect}
+                onRoomSelect={handleRoomEnter}
                 activeStage={activeStage}
                 showDimensions={showDimensions}
                 showRoomLabels={showLabels}
@@ -598,15 +704,30 @@ export default function BlueprintVRExperiencePanel({
             )}
 
             {viewMode === 'room' && (
-              <BlueprintRoomInteriorView
-                model={buildingModel}
-                selectedRoomId={selectedRoomId || firstRoomId}
-                activeStage={activeStage}
-                showElectrical={showElectrical}
-                showDimensions={showDimensions}
-                showLabels={showLabels}
-                wallOpacity={wallOpacity}
-              />
+              <>
+                <BlueprintRoomInteriorView
+                  model={buildingModel}
+                  selectedRoomId={selectedRoomId || firstRoomId}
+                  activeStage={activeStage}
+                  showElectrical={showElectrical}
+                  showDimensions={showDimensions}
+                  showLabels={showLabels}
+                  wallOpacity={wallOpacity}
+                />
+                <RoomNavStrip
+                  rooms={buildingModel.levels[0]?.rooms || []}
+                  selectedRoomId={selectedRoomId}
+                  onSelect={(rid) => setSelectedRoomId(rid)}
+                  onBackToDollhouse={() => {
+                    setViewMode('dollhouse')
+                    setCameraPreset('iso')
+                  }}
+                  onBackToPlan={() => {
+                    setViewMode('plan')
+                    setCameraPreset('top')
+                  }}
+                />
+              </>
             )}
           </div>
 
