@@ -11,7 +11,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { VRGenerationJob, VRStage, BlueprintSource } from './types'
+import type { VRGenerationJob, VRStage, BlueprintSource, VRSceneManifest } from './types'
 
 /**
  * Internal stage in the generation pipeline.
@@ -66,6 +66,7 @@ export interface GenerationInput {
   projectName?: string
   sourceBlueprints: BlueprintSource[]
   stages: VRStage[]
+  outputManifest?: VRSceneManifest
 }
 
 /**
@@ -218,6 +219,11 @@ export function useBlueprintVRGeneration(): BlueprintVRGenerationState {
         simulateStageProgression(stage, () => resolve())
       })
 
+      // Update job.progress proportionally after each stage
+      const stageIdx = GENERATION_PIPELINE.indexOf(stage) + 1
+      const progressPct = Math.round((stageIdx / GENERATION_PIPELINE.length) * 100)
+      setCurrentJob(prev => prev ? { ...prev, progress: progressPct } : null)
+
       // Small delay between stages for visual breathing room
       await new Promise<void>(resolve => {
         const timeout = setTimeout(() => resolve(), 300)
@@ -232,6 +238,7 @@ export function useBlueprintVRGeneration(): BlueprintVRGenerationState {
         ? {
             ...prev,
             status: 'complete',
+            progress: 100,
             completedAt: new Date().toISOString(),
           }
         : null
@@ -264,6 +271,7 @@ export function useBlueprintVRGeneration(): BlueprintVRGenerationState {
       discipline: 'electrical',
       stages: input.stages,
       sourceBlueprints: input.sourceBlueprints,
+      outputManifest: input.outputManifest,
       progress: 0,
       createdAt: now,
       startedAt: now,

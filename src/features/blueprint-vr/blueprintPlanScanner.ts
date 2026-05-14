@@ -1,0 +1,2459 @@
+/**
+ * src/features/blueprint-vr/blueprintPlanScanner.ts
+ *
+ * Deterministic blueprint plan scanner — first foundation for the Generate VR
+ * pipeline that walks "active blueprint → traced floor plan → 3D dollhouse".
+ *
+ * Today this module focuses on the architecture seam and a deterministic
+ * "scan-ready fallback" so the rest of the Generate VR experience can stop
+ * stacking generic 40×30 boxes. When real PDF vector trace data arrives
+ * upstream (see blueprintTraceAdapter.ts), the scanner consumes it through the
+ * exact same contract and returns a higher-confidence model.
+ *
+ * Behavior:
+ *  - Never calls OCR, AI, cloud, or external services.
+ *  - Never pretends recognition succeeded when no data is available.
+ *  - Always returns deterministic output for the same input.
+ *  - When no trace lines are available, it returns a "scan-ready fallback" with
+ *    plain-language warnings, plus a project-context aware suite layout (e.g.
+ *    a long/narrow Beauty Salon tenant-improvement plan).
+ */
+
+import type {
+  BlueprintBuildingModel,
+  BuildingLevelModel,
+  BuildingRoomModel,
+  BuildingWallModel,
+  BuildingOpeningModel,
+  Point2D,
+  Rectangle,
+  Bounds2D,
+  MeasurementValue,
+  WallKind,
+  DoorSwingDirection,
+  OpeningSubtype,
+  RoomEquipmentHint,
+  RoomRole,
+} from './buildingModel'
+import { createMeasurement } from './dimensionModel'
+import type {
+  AdaptedTrace,
+  PlanTraceLine,
+} from './blueprintTraceAdapter'
+import { adaptPdfTraceToPlanLines } from './blueprintTraceAdapter'
+import type { PdfTracePagePayload } from './pdfTraceTypes'
+
+// ---------------------------------------------------------------------------
+// Scanner input / output contracts
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-sheet hint that the scanner uses for context (titles, labels, page).
+ */
+export interface BlueprintPlanScanSheetHint {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  sheetLabel?: string
+  discipline?: string
+}
+
+/**
+ * Input shape consumed by scanBlueprintPlan().
+ *
+ * Anything optional may be omitted — the scanner degrades gracefully.
+ */
+export interface BlueprintPlanScanInput {
+  /** Project / customer name (e.g. "Beauty Salon"). */
+  projectName?: string
+  /** Active blueprint title (e.g. "BEAUTY SALON FINAL"). */
+  blueprintTitle?: string
+  /** File name of the active blueprint. */
+  fileName?: string
+  /** Currently active page in the PDF viewer, 1-based. */
+  activePageNumber?: number
+  /** Total pages in the active PDF, if known. */
+  totalPages?: number
+  /** Free-form extracted text (any side-channel). */
+  extractedText?: string
+  /** Annotation summary text. */
+  annotationsSummary?: string
+  /** Sheet index rows associated with this set. */
+  sheetIndex?: BlueprintPlanScanSheetHint[]
+  /** Vector trace payload for the active page, if available. */
+  tracePayload?: PdfTracePagePayload | null
+  /** Any known dimension strings already parsed elsewhere. */
+  knownDimensionsFt?: { width?: number; depth?: number }
+}
+
+/**
+ * A wall the scanner believes is part of the final building plan.
+ */
+export interface PlanWallCandidate {
+  id: string
+  start: Point2D
+  end: Point2D
+  thicknessFt: number
+  exterior: boolean
+  confidence: number
+  /** Optional wall kind (exterior / partition / divider / glass / pony). */
+  kind?: WallKind
+  /** Optional owning room id (for layout grouping). */
+  roomId?: string
+}
+
+/**
+ * A wall opening (door or window) the scanner believes is part of the plan.
+ */
+export interface PlanOpeningCandidate {
+  id: string
+  /** Wall id this opening lives on. */
+  wallId: string
+  type: 'door' | 'window'
+  /** Distance from wall start, in feet. */
+  positionFt: number
+  widthFt: number
+  heightFt: number
+  confidence: number
+  /** Door swing direction or window subtype. */
+  swing?: DoorSwingDirection
+  /** Swing arc in degrees (default 90 for hinged doors). */
+  swingDegrees?: number
+  /** Refined opening subtype (storefront, pocket, etc.). */
+  subtype?: OpeningSubtype
+}
+
+/**
+ * An enclosed room region.
+ */
+export interface PlanRoomCandidate {
+  id: string
+  label: string
+  bounds: Bounds2D
+  type: 'reception' | 'waiting' | 'styling' | 'hallway' | 'bath' | 'utility' |
+        'storage' | 'service' | 'office' | 'living' | 'bedroom' | 'kitchen' |
+        'garage' | 'other'
+  confidence: number
+  /**
+   * Optional role override surfaced by the fallback layout (e.g.
+   * 'wash-station' on top of a 'service' type). Lets the building-model
+   * conversion preserve specialised room roles for the 3D / interior views.
+   */
+  roleHint?: RoomRole
+}
+
+/**
+ * Dimension annotation discovered or inferred by the scanner.
+ */
+export interface PlanDimensionCandidate {
+  id: string
+  start: Point2D
+  end: Point2D
+  valueFt: number
+  label: string
+  confidence: number
+}
+
+export type PlanScanWarningCode =
+  | 'NO_TRACE_INPUT'
+  | 'NO_SHEET_CONTEXT'
+  | 'AMBIGUOUS_SUITE_SHAPE'
+  | 'FALLBACK_LAYOUT_USED'
+  | 'LOW_CONFIDENCE'
+  | 'NARROW_SUITE_ASSUMED'
+  | 'SALON_CONTEXT_DETECTED'
+  | 'COMMERCIAL_CONTEXT_DETECTED'
+  | 'RESIDENTIAL_CONTEXT_DETECTED'
+  | 'FULL_SET_INFERRED'
+  | 'SHEET_ROLES_INFERRED'
+  | 'NO_FLOOR_PLAN_SHEET'
+  | 'NO_ELECTRICAL_SHEET'
+  | 'NO_RENDERING_SHEET'
+
+export interface PlanScanWarning {
+  code: PlanScanWarningCode
+  message: string
+}
+
+// ---------------------------------------------------------------------------
+// Equipment / fixture / door / wall hint types (carried out of full-set scan)
+// ---------------------------------------------------------------------------
+
+/**
+ * Equipment hint surfaced by the scanner — e.g. styling chair, reception
+ * counter, panel box. Each hint is anchored to a room id when possible.
+ */
+export interface EquipmentHint {
+  id: string
+  roomId?: string
+  kind: RoomEquipmentHint['kind']
+  label: string
+  /** Optional normalized position 0..1 inside the room rectangle. */
+  positionNormalized?: { x: number; y: number }
+  confidence: number
+  sourceTag?: string
+}
+
+/**
+ * Finish hint — what surface / material a room is expected to have.
+ */
+export interface FinishHint {
+  id: string
+  roomId?: string
+  surface: 'floor' | 'wall' | 'ceiling'
+  finish: string
+  confidence: number
+}
+
+/**
+ * Electrical device hint placed on a wall or floor for stage rendering.
+ */
+export interface ElectricalDeviceHint {
+  id: string
+  roomId?: string
+  kind: 'receptacle' | 'switch' | 'gfci' | 'light' | 'panel' | 'disconnect' | 'other'
+  positionNormalized?: { x: number; y: number }
+  heightInches?: number
+  confidence: number
+  sourceTag?: string
+}
+
+/**
+ * Door hint — used by full-set scan to refine door positions / swing.
+ */
+export interface DoorHint {
+  id: string
+  roomId?: string
+  /** Approximate world position in feet, or normalized to room. */
+  positionWorld?: Point2D
+  widthFt?: number
+  swing?: DoorSwingDirection
+  swingDegrees?: number
+  confidence: number
+}
+
+/**
+ * Wall hint — refines wall classification (exterior / partition / divider /
+ * glass / pony) from full-set context.
+ */
+export interface WallHint {
+  id: string
+  start?: Point2D
+  end?: Point2D
+  thicknessFt?: number
+  kind?: WallKind
+  confidence: number
+}
+
+/**
+ * Composite "project style" hint produced from the full-set scan.
+ */
+export interface ExtractedProjectHint {
+  projectKind: 'beauty-salon' | 'barber-shop' | 'nail-salon' | 'spa' | 'office' |
+                'residential' | 'retail' | 'electrical-room' | 'generic'
+  /** Detected style keywords (e.g. "modern", "luxury", "industrial"). */
+  styleKeywords: string[]
+  /** Suggested wall-thickness defaults in feet. */
+  wallThicknessDefaults: {
+    exterior: number
+    partition: number
+    divider: number
+  }
+  /** Suggested overall room palette / finish defaults. */
+  finishDefaults: {
+    floor?: string
+    wall?: string
+    ceiling?: string
+  }
+  confidence: number
+}
+
+export interface BlueprintPlanScanResult {
+  /** Building footprint in feet (axis-aligned). */
+  footprint: Rectangle
+  /** Wall candidates that close the footprint. */
+  walls: PlanWallCandidate[]
+  /** Door / window candidates positioned along walls. */
+  openings: PlanOpeningCandidate[]
+  /** Room candidates that tile the suite without overlap. */
+  rooms: PlanRoomCandidate[]
+  /** Dimension annotations. */
+  dimensions: PlanDimensionCandidate[]
+  /** Warning messages for the UI. */
+  warnings: PlanScanWarning[]
+  /** Adapted plan trace lines (empty when no upstream trace was supplied). */
+  traceLines: PlanTraceLine[]
+  /** True when the scan came from fallback / context inference. */
+  isFallback: boolean
+  /** Overall confidence in the scan result, 0–1. */
+  confidence: number
+  /** Snapshot of the suite "character" the scanner picked. */
+  layoutContext:
+    | 'salon-tenant-suite'
+    | 'commercial-suite'
+    | 'residential'
+    | 'electrical-room'
+    | 'generic'
+  /** Equipment / fixture hints anchored to rooms. */
+  equipmentHints: EquipmentHint[]
+  /** Finish hints anchored to rooms. */
+  finishHints: FinishHint[]
+  /** Electrical device hints anchored to rooms. */
+  electricalHints: ElectricalDeviceHint[]
+  /** Door swing / opening hints. */
+  doorHints: DoorHint[]
+  /** Wall thickness / kind hints. */
+  wallHints: WallHint[]
+  /** Composite project-style hint. */
+  projectHint: ExtractedProjectHint
+  /** Metadata snapshot for diagnostics / display. */
+  metadata: {
+    projectName?: string
+    blueprintTitle?: string
+    activePageNumber?: number
+    totalPages?: number
+    generatedAt: string
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Footprint and wall inference helpers (used by future real-trace path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a tight axis-aligned bounding box around all trace lines.
+ */
+export function inferBuildingFootprintFromTraceLines(
+  lines: PlanTraceLine[],
+): Rectangle | null {
+  if (!lines || lines.length === 0) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const l of lines) {
+    minX = Math.min(minX, l.start.x, l.end.x)
+    minY = Math.min(minY, l.start.y, l.end.y)
+    maxX = Math.max(maxX, l.start.x, l.end.x)
+    maxY = Math.max(maxY, l.start.y, l.end.y)
+  }
+  if (!isFinite(minX) || !isFinite(maxX)) return null
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+/**
+ * Keep orthogonal lines longer than a minimum length as walls.
+ */
+export function inferWallsFromOrthogonalLines(
+  lines: PlanTraceLine[],
+  minLengthFt = 3,
+): PlanWallCandidate[] {
+  if (!lines || lines.length === 0) return []
+  return lines
+    .filter((l) => l.orthogonal && l.lengthFt >= minLengthFt)
+    .map((l, i) => ({
+      id: `wall-trace-${i}`,
+      start: l.start,
+      end: l.end,
+      thicknessFt: 0.5,
+      exterior: l.role === 'exterior-wall',
+      confidence: l.confidence ?? 0.5,
+    }))
+}
+
+/**
+ * Place opening candidates where short collinear gaps appear in wall runs.
+ *
+ * Today this is intentionally simple: it produces no openings when the trace
+ * line set is empty (fallback path supplies its own openings).
+ */
+export function inferOpeningsFromGaps(
+  walls: PlanWallCandidate[],
+  lines: PlanTraceLine[],
+): PlanOpeningCandidate[] {
+  if (!walls.length || !lines.length) return []
+  const openings: PlanOpeningCandidate[] = []
+  let id = 0
+  for (const line of lines) {
+    if (line.role !== 'door' && line.role !== 'window') continue
+    // Find the closest wall this opening belongs to.
+    let best: PlanWallCandidate | null = null
+    let bestDist = Infinity
+    for (const wall of walls) {
+      const dx = (wall.start.x + wall.end.x) / 2 - (line.start.x + line.end.x) / 2
+      const dy = (wall.start.y + wall.end.y) / 2 - (line.start.y + line.end.y) / 2
+      const d = Math.hypot(dx, dy)
+      if (d < bestDist) {
+        best = wall
+        bestDist = d
+      }
+    }
+    if (!best) continue
+    const wallLen = Math.hypot(best.end.x - best.start.x, best.end.y - best.start.y) || 1
+    const mid = {
+      x: (line.start.x + line.end.x) / 2,
+      y: (line.start.y + line.end.y) / 2,
+    }
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        ((mid.x - best.start.x) * (best.end.x - best.start.x) +
+          (mid.y - best.start.y) * (best.end.y - best.start.y)) /
+          (wallLen * wallLen),
+      ),
+    )
+    openings.push({
+      id: `opening-trace-${id++}`,
+      wallId: best.id,
+      type: line.role === 'window' ? 'window' : 'door',
+      positionFt: t * wallLen,
+      widthFt: Math.min(4, Math.max(2, line.lengthFt)),
+      heightFt: line.role === 'window' ? 4 : 7,
+      confidence: line.confidence ?? 0.4,
+    })
+  }
+  return openings
+}
+
+/**
+ * Very lightweight room inference from a trace set.
+ *
+ * Today, when no enclosed regions can be derived, this returns an empty array
+ * and the scanner falls through to the context-aware suite generator.
+ */
+export function inferRoomsFromEnclosedOrGridLayout(
+  walls: PlanWallCandidate[],
+  footprint: Rectangle | null,
+): PlanRoomCandidate[] {
+  if (!walls.length || !footprint) return []
+  // The deterministic "trace path" room solver is intentionally stubbed for
+  // now. Returning an empty array signals to scanBlueprintPlan() that it should
+  // hand off to the context fallback.
+  return []
+}
+
+// ---------------------------------------------------------------------------
+// Context detection
+// ---------------------------------------------------------------------------
+
+function detectLayoutContext(
+  input: BlueprintPlanScanInput,
+): BlueprintPlanScanResult['layoutContext'] {
+  const combined = [
+    input.projectName,
+    input.blueprintTitle,
+    input.fileName,
+    input.extractedText,
+    input.annotationsSummary,
+    ...(input.sheetIndex || []).map((s) =>
+      [s.sheetNumber, s.sheetTitle, s.sheetLabel, s.discipline].join(' '),
+    ),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  if (
+    combined.includes('salon') ||
+    combined.includes('spa') ||
+    combined.includes('beauty') ||
+    combined.includes('barber') ||
+    combined.includes('nail')
+  ) {
+    return 'salon-tenant-suite'
+  }
+  if (
+    combined.includes('panel room') ||
+    combined.includes('electrical room') ||
+    combined.includes('mep')
+  ) {
+    return 'electrical-room'
+  }
+  if (
+    combined.includes('office') ||
+    combined.includes('suite') ||
+    combined.includes('tenant') ||
+    combined.includes('commercial')
+  ) {
+    return 'commercial-suite'
+  }
+  if (
+    combined.includes('residential') ||
+    combined.includes('house') ||
+    combined.includes('apartment') ||
+    combined.includes('home')
+  ) {
+    return 'residential'
+  }
+  return 'generic'
+}
+
+// ---------------------------------------------------------------------------
+// Long / narrow Beauty Salon fallback layout
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal raw room shape used by the fallback layout builders. Carries
+ * enough metadata so doors / dividers / equipment hints can be attached
+ * deterministically.
+ */
+interface RawRoom {
+  id: string
+  label: string
+  type: PlanRoomCandidate['type']
+  bounds: Bounds2D
+  role?: RoomRole
+  /** Optional standalone divider walls (thin partitions inside the room). */
+  dividers?: Array<{
+    id: string
+    start: Point2D
+    end: Point2D
+    thicknessFt?: number
+  }>
+  /** Optional door overrides keyed by wall side. */
+  doorPlan?: Array<{
+    side: 'n' | 's' | 'e' | 'w'
+    positionFraction?: number
+    widthFt?: number
+    swing?: DoorSwingDirection
+    swingDegrees?: number
+    subtype?: OpeningSubtype
+  }>
+}
+
+/**
+ * Beauty Salon fallback: 18 ft × 50 ft long-narrow tenant suite tuned to the
+ * actual project floor plan and interior elevation references. Includes:
+ *   - storefront / reception at the front with glass entry
+ *   - a wide reception → styling pass-through flanked by thin divider columns
+ *     so the render's gold/black trim reads as a finish detail, not a wall
+ *   - styling floor with hair-station dividers along both side walls
+ *   - dedicated hair-wash sub-zone at the back of styling (shampoo bowls)
+ *   - back-of-house split into treatment room, restroom, utility/panel,
+ *     storage, and a circulation hallway connecting them
+ *   - explicit door swing directions
+ */
+function buildSalonSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } {
+  const W = 18
+  const D = 50
+  const footprint: Rectangle = { x: 0, y: 0, width: W, height: D }
+
+  // ── Station divider walls (thin partitions) inside the styling room.
+  // They mark the visual separators between styling stations along each side.
+  // The numbers mirror the elevation sheet's HAIR STATION #1 / #2 placement.
+  const stationDividers: RawRoom['dividers'] = []
+  ;[13.5, 19.5, 25.5].forEach((yPos, i) => {
+    stationDividers.push({
+      id: `styling_divider_l_${i}`,
+      start: { x: 0, y: yPos },
+      end: { x: 3.6, y: yPos },
+      thicknessFt: 0.18,
+    })
+  })
+  ;[13.5, 19.5, 25.5].forEach((yPos, i) => {
+    stationDividers.push({
+      id: `styling_divider_r_${i}`,
+      start: { x: W - 3.6, y: yPos },
+      end: { x: W, y: yPos },
+      thicknessFt: 0.18,
+    })
+  })
+
+  // ── Reception / styling transition. The actual floor plan shows a wide,
+  //    nearly-full-width opening between reception and the styling floor.
+  //    The gold/black render elements are an accent finish, not a wall.
+  //    We model the transition as a wide 14 ft pass-through plus two short
+  //    column-style divider stubs (vertical, perpendicular to the partition).
+  const transitionDividers: RawRoom['dividers'] = [
+    // Left column stub (vertical) at the inside edge of the exterior wall
+    {
+      id: 'reception_styling_col_l',
+      start: { x: 1.8, y: 8.4 },
+      end: { x: 1.8, y: 9.6 },
+      thicknessFt: 0.5,
+    },
+    // Right column stub mirroring the left
+    {
+      id: 'reception_styling_col_r',
+      start: { x: W - 1.8, y: 8.4 },
+      end: { x: W - 1.8, y: 9.6 },
+      thicknessFt: 0.5,
+    },
+  ]
+
+  const rooms: RawRoom[] = [
+    {
+      id: 'entrance',
+      label: 'Entrance / Reception',
+      type: 'reception',
+      role: 'reception',
+      bounds: { min: { x: 0, y: 0 }, max: { x: W, y: 9 } },
+      doorPlan: [
+        // Front storefront entry — large glass facade with a centered door
+        {
+          side: 'n',
+          positionFraction: 0.5,
+          widthFt: 10,
+          swing: 'fixed',
+          subtype: 'window-storefront',
+        },
+        // Reception → styling open transition (wide). The flanking
+        // transitionDividers (placed on the styling room) sit at the corners
+        // so the opening reads as a wide pass instead of a doorway.
+        {
+          side: 's',
+          positionFraction: 0.5,
+          widthFt: 14,
+          swing: 'fixed',
+          subtype: 'pass-through',
+        },
+      ],
+      dividers: transitionDividers,
+    },
+    {
+      id: 'styling',
+      label: 'Styling Floor',
+      type: 'styling',
+      role: 'styling',
+      bounds: { min: { x: 0, y: 9 }, max: { x: W, y: 27 } },
+      dividers: stationDividers,
+    },
+    {
+      id: 'wash',
+      label: 'Hair Wash',
+      type: 'service',
+      role: 'wash-station',
+      bounds: { min: { x: 0, y: 27 }, max: { x: W, y: 32 } },
+      doorPlan: [
+        // Styling → wash open transition
+        {
+          side: 'n',
+          positionFraction: 0.5,
+          widthFt: 12,
+          swing: 'fixed',
+          subtype: 'pass-through',
+        },
+      ],
+    },
+    {
+      id: 'hallway',
+      label: 'Hallway / Circulation',
+      type: 'hallway',
+      role: 'hallway',
+      bounds: { min: { x: 6, y: 32 }, max: { x: 12, y: 50 } },
+      doorPlan: [
+        // Wash → hallway opening (smaller, more architectural)
+        {
+          side: 'n',
+          positionFraction: 0.5,
+          widthFt: 4,
+          swing: 'fixed',
+          subtype: 'pass-through',
+        },
+      ],
+    },
+    {
+      id: 'service',
+      label: 'Treatment Room',
+      type: 'service',
+      role: 'service',
+      bounds: { min: { x: 0, y: 32 }, max: { x: 6, y: 44 } },
+      doorPlan: [
+        {
+          side: 'e',
+          positionFraction: 0.3,
+          widthFt: 3,
+          swing: 'right',
+          swingDegrees: 90,
+          subtype: 'door-swing',
+        },
+      ],
+    },
+    {
+      id: 'storage',
+      label: 'Storage',
+      type: 'storage',
+      role: 'storage',
+      bounds: { min: { x: 0, y: 44 }, max: { x: 6, y: 50 } },
+      doorPlan: [
+        {
+          side: 'e',
+          positionFraction: 0.5,
+          widthFt: 2.8,
+          swing: 'left',
+          swingDegrees: 90,
+          subtype: 'door-swing',
+        },
+      ],
+    },
+    {
+      id: 'bath',
+      label: 'Restroom',
+      type: 'bath',
+      role: 'bath',
+      bounds: { min: { x: 12, y: 32 }, max: { x: W, y: 42 } },
+      doorPlan: [
+        {
+          side: 'w',
+          positionFraction: 0.4,
+          widthFt: 2.8,
+          swing: 'left',
+          swingDegrees: 90,
+          subtype: 'door-swing',
+        },
+      ],
+    },
+    {
+      id: 'utility',
+      label: 'Utility / Panel',
+      type: 'utility',
+      role: 'utility',
+      bounds: { min: { x: 12, y: 42 }, max: { x: W, y: 50 } },
+      doorPlan: [
+        {
+          side: 'w',
+          positionFraction: 0.5,
+          widthFt: 2.8,
+          swing: 'right',
+          swingDegrees: 90,
+          subtype: 'door-swing',
+        },
+      ],
+    },
+  ]
+  return { footprint, rooms }
+}
+
+function buildCommercialSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } {
+  // Commercial tenant suite: 22 ft wide × 36 ft deep.
+  const W = 22
+  const D = 36
+  return {
+    footprint: { x: 0, y: 0, width: W, height: D },
+    rooms: [
+      {
+        id: 'reception',
+        label: 'Reception / Lobby',
+        type: 'reception',
+        role: 'reception',
+        bounds: { min: { x: 0, y: 0 }, max: { x: W, y: 9 } },
+        doorPlan: [
+          { side: 'n', positionFraction: 0.5, widthFt: 6, swing: 'fixed', subtype: 'window-storefront' },
+        ],
+      },
+      {
+        id: 'office-a',
+        label: 'Office A',
+        type: 'office',
+        role: 'office',
+        bounds: { min: { x: 0, y: 9 }, max: { x: 11, y: 22 } },
+        doorPlan: [{ side: 'n', positionFraction: 0.7, widthFt: 3, swing: 'right', swingDegrees: 90 }],
+      },
+      {
+        id: 'office-b',
+        label: 'Office B',
+        type: 'office',
+        role: 'office',
+        bounds: { min: { x: 11, y: 9 }, max: { x: W, y: 22 } },
+        doorPlan: [{ side: 'n', positionFraction: 0.3, widthFt: 3, swing: 'left', swingDegrees: 90 }],
+      },
+      {
+        id: 'conference',
+        label: 'Conference',
+        type: 'other',
+        role: 'conference',
+        bounds: { min: { x: 0, y: 22 }, max: { x: 14, y: 36 } },
+        doorPlan: [{ side: 'n', positionFraction: 0.7, widthFt: 3, swing: 'left', swingDegrees: 90 }],
+      },
+      {
+        id: 'bath',
+        label: 'Restroom',
+        type: 'bath',
+        role: 'bath',
+        bounds: { min: { x: 14, y: 22 }, max: { x: W, y: 30 } },
+        doorPlan: [{ side: 'w', positionFraction: 0.5, widthFt: 2.8, swing: 'right', swingDegrees: 90 }],
+      },
+      {
+        id: 'utility',
+        label: 'Utility / Panel',
+        type: 'utility',
+        role: 'utility',
+        bounds: { min: { x: 14, y: 30 }, max: { x: W, y: 36 } },
+        doorPlan: [{ side: 'w', positionFraction: 0.5, widthFt: 2.8, swing: 'left', swingDegrees: 90 }],
+      },
+    ],
+  }
+}
+
+function buildResidentialLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } {
+  // Residential: 28 ft × 36 ft.
+  const W = 28
+  const D = 36
+  return {
+    footprint: { x: 0, y: 0, width: W, height: D },
+    rooms: [
+      {
+        id: 'living',
+        label: 'Living Room',
+        type: 'living',
+        bounds: { min: { x: 0, y: 0 }, max: { x: 18, y: 16 } },
+      },
+      {
+        id: 'kitchen',
+        label: 'Kitchen',
+        type: 'kitchen',
+        bounds: { min: { x: 18, y: 0 }, max: { x: W, y: 16 } },
+      },
+      {
+        id: 'bedroom',
+        label: 'Bedroom',
+        type: 'bedroom',
+        bounds: { min: { x: 0, y: 16 }, max: { x: 14, y: 30 } },
+      },
+      {
+        id: 'bath',
+        label: 'Bathroom',
+        type: 'bath',
+        bounds: { min: { x: 14, y: 16 }, max: { x: 22, y: 30 } },
+      },
+      {
+        id: 'utility',
+        label: 'Utility / Panel',
+        type: 'utility',
+        bounds: { min: { x: 22, y: 16 }, max: { x: W, y: 36 } },
+      },
+      {
+        id: 'hall',
+        label: 'Hallway',
+        type: 'hallway',
+        bounds: { min: { x: 0, y: 30 }, max: { x: 22, y: 36 } },
+      },
+    ],
+  }
+}
+
+function buildElectricalRoomLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } {
+  const W = 22
+  const D = 16
+  return {
+    footprint: { x: 0, y: 0, width: W, height: D },
+    rooms: [
+      {
+        id: 'panel-room',
+        label: 'Electrical Panel Room',
+        type: 'utility',
+        bounds: { min: { x: 0, y: 0 }, max: { x: W, y: D } },
+      },
+    ],
+  }
+}
+
+function buildGenericLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } {
+  const W = 30
+  const D = 22
+  return {
+    footprint: { x: 0, y: 0, width: W, height: D },
+    rooms: [
+      {
+        id: 'main',
+        label: 'Main Space',
+        type: 'other',
+        bounds: { min: { x: 0, y: 0 }, max: { x: W - 6, y: D } },
+      },
+      {
+        id: 'utility',
+        label: 'Utility / Panel',
+        type: 'utility',
+        bounds: { min: { x: W - 6, y: 0 }, max: { x: W, y: D } },
+      },
+    ],
+  }
+}
+
+/**
+ * Choose the suite fallback layout based on blueprint context.
+ *
+ * Exported so external callers can preview which layout the scanner would pick
+ * without running the full scan pipeline.
+ */
+export function chooseSalonSuiteFallbackFromBlueprintContext(
+  context: BlueprintPlanScanResult['layoutContext'],
+): { footprint: Rectangle; rooms: RawRoom[] } {
+  switch (context) {
+    case 'salon-tenant-suite':
+      return buildSalonSuiteLayoutRaw()
+    case 'commercial-suite':
+      return buildCommercialSuiteLayoutRaw()
+    case 'residential':
+      return buildResidentialLayoutRaw()
+    case 'electrical-room':
+      return buildElectricalRoomLayoutRaw()
+    case 'generic':
+    default:
+      return buildGenericLayoutRaw()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Equipment / fixture hint builders per layout context
+// ---------------------------------------------------------------------------
+
+function projectHintForContext(
+  context: BlueprintPlanScanResult['layoutContext'],
+): ExtractedProjectHint {
+  if (context === 'salon-tenant-suite') {
+    return {
+      projectKind: 'beauty-salon',
+      styleKeywords: ['salon', 'beauty', 'tenant-improvement', 'commercial'],
+      wallThicknessDefaults: DEFAULT_WALL_THICKNESS_FT,
+      finishDefaults: {
+        floor: 'polished concrete / luxury vinyl plank',
+        wall: 'painted drywall with feature accents',
+        ceiling: 'painted gypsum / acoustic tile',
+      },
+      confidence: 0.5,
+    }
+  }
+  if (context === 'commercial-suite') {
+    return {
+      projectKind: 'office',
+      styleKeywords: ['commercial', 'tenant', 'office'],
+      wallThicknessDefaults: DEFAULT_WALL_THICKNESS_FT,
+      finishDefaults: {
+        floor: 'commercial carpet tile',
+        wall: 'painted drywall',
+        ceiling: 'acoustic tile grid',
+      },
+      confidence: 0.45,
+    }
+  }
+  if (context === 'residential') {
+    return {
+      projectKind: 'residential',
+      styleKeywords: ['residential'],
+      wallThicknessDefaults: { exterior: 0.5, partition: 0.34, divider: 0.25 },
+      finishDefaults: {
+        floor: 'engineered hardwood / tile',
+        wall: 'painted drywall',
+        ceiling: 'painted drywall',
+      },
+      confidence: 0.4,
+    }
+  }
+  if (context === 'electrical-room') {
+    return {
+      projectKind: 'electrical-room',
+      styleKeywords: ['electrical', 'mep', 'panel-room'],
+      wallThicknessDefaults: DEFAULT_WALL_THICKNESS_FT,
+      finishDefaults: {
+        floor: 'sealed concrete',
+        wall: 'sealed CMU / drywall',
+        ceiling: 'exposed structure',
+      },
+      confidence: 0.55,
+    }
+  }
+  return {
+    projectKind: 'generic',
+    styleKeywords: [],
+    wallThicknessDefaults: DEFAULT_WALL_THICKNESS_FT,
+    finishDefaults: {},
+    confidence: 0.3,
+  }
+}
+
+function pushHint(
+  acc: EquipmentHint[],
+  roomId: string,
+  kind: EquipmentHint['kind'],
+  label: string,
+  nx: number,
+  ny: number,
+  confidence = 0.5,
+  sourceTag = 'fallback-context',
+): void {
+  acc.push({
+    id: `${roomId}_${kind}_${acc.length}`,
+    roomId,
+    kind,
+    label,
+    positionNormalized: { x: nx, y: ny },
+    confidence,
+    sourceTag,
+  })
+}
+
+function pushElec(
+  acc: ElectricalDeviceHint[],
+  roomId: string,
+  kind: ElectricalDeviceHint['kind'],
+  nx: number,
+  ny: number,
+  heightInches?: number,
+): void {
+  acc.push({
+    id: `${roomId}_elec_${kind}_${acc.length}`,
+    roomId,
+    kind,
+    positionNormalized: { x: nx, y: ny },
+    heightInches,
+    confidence: 0.45,
+    sourceTag: 'fallback-context',
+  })
+}
+
+function buildSalonHints(
+  rooms: RawRoom[],
+): { equipment: EquipmentHint[]; finishes: FinishHint[]; electrical: ElectricalDeviceHint[] } {
+  const equipment: EquipmentHint[] = []
+  const finishes: FinishHint[] = []
+  const electrical: ElectricalDeviceHint[] = []
+
+  for (const room of rooms) {
+    const role = room.role || 'other'
+    if (role === 'reception') {
+      pushHint(equipment, room.id, 'reception-counter', 'Reception Counter', 0.5, 0.7, 0.65)
+      pushHint(equipment, room.id, 'waiting-couch', 'Waiting Couch', 0.2, 0.3, 0.5)
+      pushHint(equipment, room.id, 'waiting-chair', 'Waiting Chair', 0.5, 0.3, 0.5)
+      pushHint(equipment, room.id, 'waiting-chair', 'Waiting Chair', 0.8, 0.3, 0.5)
+      pushHint(equipment, room.id, 'side-table', 'Side Table', 0.35, 0.45, 0.45)
+      pushHint(equipment, room.id, 'storefront-sign', 'Storefront Sign', 0.5, 0.05, 0.4)
+      pushHint(equipment, room.id, 'chandelier', 'Reception Chandelier', 0.5, 0.5, 0.55, 'lighting')
+      pushElec(electrical, room.id, 'receptacle', 0.15, 0.7, 18)
+      pushElec(electrical, room.id, 'receptacle', 0.85, 0.7, 18)
+      pushElec(electrical, room.id, 'switch', 0.95, 0.5, 48)
+      pushElec(electrical, room.id, 'light', 0.5, 0.5)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Luxury vinyl plank · driftwood tone',
+        confidence: 0.5,
+      })
+    } else if (role === 'styling') {
+      // Stations along left and right walls. Three stations per side mirrors
+      // the elevation sheet's HAIR STATION #1 / #2 spacing.
+      const leftStations = [0.22, 0.5, 0.78]
+      const rightStations = [0.22, 0.5, 0.78]
+      leftStations.forEach((y) => {
+        pushHint(equipment, room.id, 'styling-mirror', 'Mirror', 0.07, y, 0.6)
+        pushHint(equipment, room.id, 'styling-chair', 'Styling Chair', 0.2, y, 0.6)
+        pushHint(equipment, room.id, 'vanity-counter', 'Station Vanity', 0.13, y + 0.04, 0.55)
+        pushElec(electrical, room.id, 'receptacle', 0.08, y, 42)
+      })
+      rightStations.forEach((y) => {
+        pushHint(equipment, room.id, 'styling-mirror', 'Mirror', 0.93, y, 0.6)
+        pushHint(equipment, room.id, 'styling-chair', 'Styling Chair', 0.8, y, 0.6)
+        pushHint(equipment, room.id, 'vanity-counter', 'Station Vanity', 0.87, y + 0.04, 0.55)
+        pushElec(electrical, room.id, 'receptacle', 0.92, y, 42)
+      })
+      // Track lights along the centerline
+      pushHint(equipment, room.id, 'track-light', 'Track Lighting', 0.5, 0.25, 0.5, 'lighting')
+      pushHint(equipment, room.id, 'track-light', 'Track Lighting', 0.5, 0.55, 0.5, 'lighting')
+      pushHint(equipment, room.id, 'track-light', 'Track Lighting', 0.5, 0.85, 0.5, 'lighting')
+      pushElec(electrical, room.id, 'light', 0.5, 0.25)
+      pushElec(electrical, room.id, 'light', 0.5, 0.55)
+      pushElec(electrical, room.id, 'light', 0.5, 0.85)
+      pushElec(electrical, room.id, 'switch', 0.05, 0.05, 48)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Polished concrete · light grey',
+        confidence: 0.5,
+      })
+    } else if (role === 'wash-station') {
+      // Hair-wash bowls in a row. Mirrors the salon's shampoo wall.
+      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.25, 0.5, 0.55)
+      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.45, 0.5, 0.55)
+      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.65, 0.5, 0.55)
+      pushHint(equipment, room.id, 'vanity-counter', 'Wash Counter', 0.85, 0.5, 0.5)
+      pushHint(equipment, room.id, 'overhead-light', 'Recessed Light', 0.5, 0.3, 0.5, 'lighting')
+      pushHint(equipment, room.id, 'overhead-light', 'Recessed Light', 0.5, 0.7, 0.5, 'lighting')
+      pushElec(electrical, room.id, 'gfci', 0.15, 0.5, 42)
+      pushElec(electrical, room.id, 'gfci', 0.95, 0.5, 42)
+      pushElec(electrical, room.id, 'light', 0.5, 0.3)
+      pushElec(electrical, room.id, 'light', 0.5, 0.7)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Porcelain tile · slip-resistant',
+        confidence: 0.5,
+      })
+    } else if (role === 'bath') {
+      pushHint(equipment, room.id, 'restroom-sink', 'Restroom Sink', 0.25, 0.7, 0.6)
+      pushHint(equipment, room.id, 'toilet', 'Toilet', 0.75, 0.7, 0.6)
+      pushHint(equipment, room.id, 'styling-mirror', 'Mirror over Sink', 0.25, 0.25, 0.5)
+      pushHint(equipment, room.id, 'overhead-light', 'Vanity Light', 0.25, 0.1, 0.55, 'lighting')
+      pushElec(electrical, room.id, 'gfci', 0.25, 0.55, 42)
+      pushElec(electrical, room.id, 'switch', 0.92, 0.1, 48)
+      pushElec(electrical, room.id, 'light', 0.5, 0.5)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Porcelain tile · matte',
+        confidence: 0.55,
+      })
+    } else if (role === 'utility') {
+      pushHint(equipment, room.id, 'utility-panel', 'Main Panel 200A', 0.5, 0.05, 0.65)
+      pushHint(equipment, room.id, 'service-equipment', 'HVAC / Water Heater', 0.25, 0.6, 0.45)
+      pushHint(equipment, room.id, 'service-equipment', 'Disconnect', 0.75, 0.55, 0.45)
+      pushElec(electrical, room.id, 'panel', 0.5, 0.05, 60)
+      pushElec(electrical, room.id, 'light', 0.5, 0.5)
+      pushElec(electrical, room.id, 'switch', 0.05, 0.05, 48)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Sealed concrete',
+        confidence: 0.5,
+      })
+    } else if (role === 'storage') {
+      pushHint(equipment, room.id, 'storage-shelving', 'Storage Shelving', 0.1, 0.5, 0.5)
+      pushHint(equipment, room.id, 'storage-shelving', 'Storage Shelving', 0.9, 0.5, 0.5)
+      pushHint(equipment, room.id, 'overhead-light', 'Service Light', 0.5, 0.5, 0.45, 'lighting')
+      pushElec(electrical, room.id, 'receptacle', 0.5, 0.7, 18)
+      pushElec(electrical, room.id, 'light', 0.5, 0.5)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Sealed concrete',
+        confidence: 0.45,
+      })
+    } else if (role === 'service') {
+      // Treatment room — single chair, mirror, side counter, soft lighting.
+      pushHint(equipment, room.id, 'styling-chair', 'Treatment Chair', 0.5, 0.45, 0.55)
+      pushHint(equipment, room.id, 'styling-mirror', 'Treatment Mirror', 0.5, 0.18, 0.5)
+      pushHint(equipment, room.id, 'wash-sink', 'Treatment Sink', 0.18, 0.78, 0.5)
+      pushHint(equipment, room.id, 'vanity-counter', 'Work Counter', 0.65, 0.8, 0.5)
+      pushHint(equipment, room.id, 'overhead-light', 'Treatment Light', 0.5, 0.5, 0.5, 'lighting')
+      pushElec(electrical, room.id, 'gfci', 0.18, 0.7, 42)
+      pushElec(electrical, room.id, 'receptacle', 0.65, 0.7, 18)
+      pushElec(electrical, room.id, 'switch', 0.92, 0.05, 48)
+      pushElec(electrical, room.id, 'light', 0.5, 0.5)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Slip-resistant tile',
+        confidence: 0.45,
+      })
+    } else if (role === 'hallway') {
+      pushHint(equipment, room.id, 'overhead-light', 'Hallway Downlight', 0.5, 0.25, 0.45, 'lighting')
+      pushHint(equipment, room.id, 'overhead-light', 'Hallway Downlight', 0.5, 0.75, 0.45, 'lighting')
+      pushElec(electrical, room.id, 'light', 0.5, 0.25)
+      pushElec(electrical, room.id, 'light', 0.5, 0.75)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Luxury vinyl plank',
+        confidence: 0.45,
+      })
+    }
+  }
+
+  return { equipment, finishes, electrical }
+}
+
+function buildCommercialHints(
+  rooms: RawRoom[],
+): { equipment: EquipmentHint[]; finishes: FinishHint[]; electrical: ElectricalDeviceHint[] } {
+  const equipment: EquipmentHint[] = []
+  const finishes: FinishHint[] = []
+  const electrical: ElectricalDeviceHint[] = []
+  for (const room of rooms) {
+    pushHint(equipment, room.id, 'overhead-light', 'Recessed Light', 0.5, 0.5, 0.4, 'lighting')
+    pushElec(electrical, room.id, 'light', 0.5, 0.5)
+    pushElec(electrical, room.id, 'receptacle', 0.1, 0.5, 18)
+    pushElec(electrical, room.id, 'receptacle', 0.9, 0.5, 18)
+    pushElec(electrical, room.id, 'switch', 0.05, 0.05, 48)
+    finishes.push({
+      id: `${room.id}_floor_finish`,
+      roomId: room.id,
+      surface: 'floor',
+      finish: 'Commercial carpet tile',
+      confidence: 0.4,
+    })
+  }
+  return { equipment, finishes, electrical }
+}
+
+function buildResidentialHints(
+  rooms: RawRoom[],
+): { equipment: EquipmentHint[]; finishes: FinishHint[]; electrical: ElectricalDeviceHint[] } {
+  const equipment: EquipmentHint[] = []
+  const finishes: FinishHint[] = []
+  const electrical: ElectricalDeviceHint[] = []
+  for (const room of rooms) {
+    pushHint(equipment, room.id, 'overhead-light', 'Ceiling Light', 0.5, 0.5, 0.4, 'lighting')
+    pushElec(electrical, room.id, 'light', 0.5, 0.5)
+    pushElec(electrical, room.id, 'receptacle', 0.1, 0.5, 18)
+    pushElec(electrical, room.id, 'receptacle', 0.9, 0.5, 18)
+    pushElec(electrical, room.id, 'switch', 0.05, 0.05, 48)
+    finishes.push({
+      id: `${room.id}_floor_finish`,
+      roomId: room.id,
+      surface: 'floor',
+      finish: 'Engineered hardwood',
+      confidence: 0.4,
+    })
+  }
+  return { equipment, finishes, electrical }
+}
+
+function buildGenericHints(
+  rooms: RawRoom[],
+): { equipment: EquipmentHint[]; finishes: FinishHint[]; electrical: ElectricalDeviceHint[] } {
+  return buildCommercialHints(rooms)
+}
+
+function buildHintsForContext(
+  context: BlueprintPlanScanResult['layoutContext'],
+  rooms: RawRoom[],
+): { equipment: EquipmentHint[]; finishes: FinishHint[]; electrical: ElectricalDeviceHint[] } {
+  switch (context) {
+    case 'salon-tenant-suite':
+      return buildSalonHints(rooms)
+    case 'commercial-suite':
+      return buildCommercialHints(rooms)
+    case 'residential':
+      return buildResidentialHints(rooms)
+    case 'electrical-room':
+      return {
+        equipment: rooms.flatMap((r) => [
+          {
+            id: `${r.id}_panel`,
+            roomId: r.id,
+            kind: 'utility-panel' as const,
+            label: 'Electrical Panel',
+            positionNormalized: { x: 0.5, y: 0.1 },
+            confidence: 0.7,
+            sourceTag: 'fallback-context',
+          },
+        ]),
+        finishes: [],
+        electrical: rooms.flatMap((r) => [
+          {
+            id: `${r.id}_panel_elec`,
+            roomId: r.id,
+            kind: 'panel' as const,
+            positionNormalized: { x: 0.5, y: 0.1 },
+            heightInches: 60,
+            confidence: 0.7,
+            sourceTag: 'fallback-context',
+          },
+        ]),
+      }
+    case 'generic':
+    default:
+      return buildGenericHints(rooms)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Walls / openings from a tiled room set
+// ---------------------------------------------------------------------------
+
+/**
+ * Default wall-thickness defaults (feet) for the project hint shape. The
+ * scanner reads these and applies them per wall kind during build.
+ */
+const DEFAULT_WALL_THICKNESS_FT = {
+  exterior: 0.5, // 6 in
+  partition: 0.34, // 4 in
+  divider: 0.17, // 2 in
+}
+
+/** Wall side helpers used by the room/door plan. */
+type WallSide = 'n' | 's' | 'e' | 'w'
+
+function wallSideKey(roomId: string, side: WallSide): string {
+  return `${roomId}_wall_${side}`
+}
+
+function pointsForSide(bounds: Bounds2D, side: WallSide): { a: Point2D; b: Point2D } {
+  const { min, max } = bounds
+  switch (side) {
+    case 'n':
+      return { a: { x: min.x, y: min.y }, b: { x: max.x, y: min.y } }
+    case 's':
+      return { a: { x: min.x, y: max.y }, b: { x: max.x, y: max.y } }
+    case 'w':
+      return { a: { x: min.x, y: min.y }, b: { x: min.x, y: max.y } }
+    case 'e':
+      return { a: { x: max.x, y: min.y }, b: { x: max.x, y: max.y } }
+  }
+}
+
+function buildWallsAndOpeningsFromRooms(
+  footprint: Rectangle,
+  rooms: RawRoom[],
+  thicknessDefaults: { exterior: number; partition: number; divider: number } = DEFAULT_WALL_THICKNESS_FT,
+): { walls: PlanWallCandidate[]; openings: PlanOpeningCandidate[] } {
+  const walls: PlanWallCandidate[] = []
+  const openings: PlanOpeningCandidate[] = []
+  const fpMinX = footprint.x
+  const fpMinY = footprint.y
+  const fpMaxX = footprint.x + footprint.width
+  const fpMaxY = footprint.y + footprint.height
+
+  // ── 1. Perimeter walls for every room (4 sides). Classify each as
+  //       exterior or partition based on footprint edges.
+  rooms.forEach((room) => {
+    const sides: WallSide[] = ['n', 's', 'w', 'e']
+    for (const side of sides) {
+      const { a, b } = pointsForSide(room.bounds, side)
+      const onNorth = a.y === fpMinY && b.y === fpMinY
+      const onSouth = a.y === fpMaxY && b.y === fpMaxY
+      const onWest = a.x === fpMinX && b.x === fpMinX
+      const onEast = a.x === fpMaxX && b.x === fpMaxX
+      const exterior = onWest || onEast || onNorth || onSouth
+      const kind: WallKind = exterior ? 'exterior' : 'partition'
+      const thicknessFt = exterior ? thicknessDefaults.exterior : thicknessDefaults.partition
+      walls.push({
+        id: wallSideKey(room.id, side),
+        start: a,
+        end: b,
+        thicknessFt,
+        exterior,
+        confidence: 0.6,
+        kind,
+        roomId: room.id,
+      })
+    }
+  })
+
+  // ── 2. Standalone divider walls (thin station partitions). These are
+  //       attached to a room id and rendered visibly thinner.
+  rooms.forEach((room) => {
+    if (!room.dividers || room.dividers.length === 0) return
+    for (const div of room.dividers) {
+      walls.push({
+        id: div.id,
+        start: div.start,
+        end: div.end,
+        thicknessFt: div.thicknessFt ?? thicknessDefaults.divider,
+        exterior: false,
+        confidence: 0.5,
+        kind: 'divider',
+        roomId: room.id,
+      })
+    }
+  })
+
+  // ── 3. Door plan from room metadata. Falls back to a simple "inward door"
+  //       heuristic when no doorPlan was provided.
+  rooms.forEach((room) => {
+    if (room.doorPlan && room.doorPlan.length > 0) {
+      for (const door of room.doorPlan) {
+        const wallId = wallSideKey(room.id, door.side)
+        const wall = walls.find((w) => w.id === wallId)
+        if (!wall) continue
+        const wallLen = Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y)
+        if (wallLen < 1.5) continue
+        const t = Math.max(0.05, Math.min(0.95, door.positionFraction ?? 0.5))
+        const widthFt = Math.min(wallLen - 0.5, Math.max(2, door.widthFt ?? 3))
+        const subtype: OpeningSubtype | undefined = door.subtype
+        const isWindow = subtype === 'window-standard' ||
+                         subtype === 'window-storefront' ||
+                         subtype === 'window-clerestory'
+        const isFixed = door.swing === 'fixed' || subtype === 'pass-through'
+        // Reclassify glass walls / storefront as the "glass" wall kind
+        if (subtype === 'window-storefront') wall.kind = 'glass'
+        openings.push({
+          id: `${room.id}_${door.side}_door_${Math.round(t * 100)}`,
+          wallId,
+          type: isWindow ? 'window' : 'door',
+          positionFt: t * wallLen,
+          widthFt,
+          heightFt: isWindow ? 6 : 7,
+          confidence: 0.55,
+          swing: door.swing,
+          swingDegrees: door.swingDegrees ?? (isFixed ? 0 : 90),
+          subtype: subtype,
+        })
+      }
+      return
+    }
+
+    // Heuristic fallback: place one door on the side closest to suite center.
+    const cx = footprint.x + footprint.width / 2
+    const cy = footprint.y + footprint.height / 2
+    const rcx = (room.bounds.min.x + room.bounds.max.x) / 2
+    const rcy = (room.bounds.min.y + room.bounds.max.y) / 2
+    const side: WallSide =
+      Math.abs(rcx - cx) > Math.abs(rcy - cy)
+        ? rcx > cx
+          ? 'w'
+          : 'e'
+        : rcy > cy
+        ? 'n'
+        : 's'
+    const targetWall = walls.find((w) => w.id === wallSideKey(room.id, side))
+    if (!targetWall) return
+    const wallLen = Math.hypot(
+      targetWall.end.x - targetWall.start.x,
+      targetWall.end.y - targetWall.start.y,
+    )
+    if (wallLen < 3) return
+    openings.push({
+      id: `${room.id}_door`,
+      wallId: targetWall.id,
+      type: 'door',
+      positionFt: wallLen / 2,
+      widthFt: Math.min(3.5, Math.max(2.5, wallLen / 4)),
+      heightFt: 7,
+      confidence: 0.45,
+      swing: side === 'w' || side === 'n' ? 'right' : 'left',
+      swingDegrees: 90,
+      subtype: 'door-swing',
+    })
+  })
+
+  // ── 3.5 Mirror openings onto the matching wall of the adjacent room so
+  //         shared partition walls read as a single opening from both sides.
+  //         Without this, one room's wall is solid while the other has the
+  //         opening, which produces the "reversed wall / opening" artifact
+  //         that previously made the entrance → styling transition look wrong.
+  const wallByEndpoints = new Map<string, PlanWallCandidate[]>()
+  for (const w of walls) {
+    const a = `${w.start.x.toFixed(2)},${w.start.y.toFixed(2)}`
+    const b = `${w.end.x.toFixed(2)},${w.end.y.toFixed(2)}`
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    const list = wallByEndpoints.get(key) || []
+    list.push(w)
+    wallByEndpoints.set(key, list)
+  }
+  const seedOpenings = [...openings]
+  for (const op of seedOpenings) {
+    const sourceWall = walls.find((x) => x.id === op.wallId)
+    if (!sourceWall) continue
+    const a = `${sourceWall.start.x.toFixed(2)},${sourceWall.start.y.toFixed(2)}`
+    const b = `${sourceWall.end.x.toFixed(2)},${sourceWall.end.y.toFixed(2)}`
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    const siblings = (wallByEndpoints.get(key) || []).filter((p) => p.id !== sourceWall.id)
+    for (const sib of siblings) {
+      const exists = openings.some(
+        (o) => o.wallId === sib.id && Math.abs(o.positionFt - op.positionFt) < 0.25,
+      )
+      if (exists) continue
+      openings.push({
+        ...op,
+        id: `${op.id}_mirror_${sib.id}`,
+        wallId: sib.id,
+      })
+      if (op.subtype === 'window-storefront') sib.kind = 'glass'
+      if (op.subtype === 'pass-through') {
+        // Pass-through marks both walls as "open"; downstream renderers can
+        // skip drawing solid wall mass at that gap.
+        sib.kind = sib.kind === 'exterior' ? sib.kind : 'partition'
+      }
+    }
+  }
+
+  // ── 4. Default front storefront if no glass-storefront opening was
+  //       explicitly described in the layout's doorPlan.
+  const alreadyHasStorefront = openings.some(
+    (op) => op.subtype === 'window-storefront' || op.subtype === 'pass-through',
+  )
+  if (!alreadyHasStorefront) {
+    const frontExterior = walls.find(
+      (w) =>
+        w.exterior &&
+        w.start.y === fpMinY &&
+        w.end.y === fpMinY &&
+        Math.abs(w.end.x - w.start.x) >= 6,
+    )
+    if (frontExterior) {
+      const wallLen = Math.abs(frontExterior.end.x - frontExterior.start.x)
+      frontExterior.kind = 'glass'
+      openings.push({
+        id: `${frontExterior.id}_storefront`,
+        wallId: frontExterior.id,
+        type: 'window',
+        positionFt: wallLen / 2,
+        widthFt: Math.min(8, wallLen * 0.5),
+        heightFt: 6,
+        confidence: 0.5,
+        swing: 'fixed',
+        swingDegrees: 0,
+        subtype: 'window-storefront',
+      })
+    }
+  }
+
+  return { walls, openings }
+}
+
+// ---------------------------------------------------------------------------
+// Main scan entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan a blueprint plan into a deterministic candidate model.
+ *
+ * If the input provides a vector trace payload, the scanner will adapt it and
+ * attempt to recover walls/openings/rooms from those candidates. When trace
+ * data is unavailable (the common case today), the scanner falls back to a
+ * context-aware suite layout and reports the inferred status clearly.
+ */
+export function scanBlueprintPlan(
+  input: BlueprintPlanScanInput,
+): BlueprintPlanScanResult {
+  const warnings: PlanScanWarning[] = []
+  const layoutContext = detectLayoutContext(input)
+  const generatedAt = new Date().toISOString()
+
+  // 1. Adapt any upstream trace data.
+  const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(input.tracePayload)
+  const traceLines = adapted.lines
+
+  // 2. When real trace lines exist, try to infer geometry from them.
+  let inferredFootprint = inferBuildingFootprintFromTraceLines(traceLines)
+  let inferredWalls = inferWallsFromOrthogonalLines(traceLines)
+  let inferredOpenings = inferOpeningsFromGaps(inferredWalls, traceLines)
+  let inferredRooms = inferRoomsFromEnclosedOrGridLayout(inferredWalls, inferredFootprint)
+
+  // 3. Decide whether the trace path can succeed.
+  const traceUsable =
+    !!inferredFootprint &&
+    inferredFootprint.width > 6 &&
+    inferredFootprint.height > 6 &&
+    inferredWalls.length >= 4 &&
+    inferredRooms.length >= 1
+
+  // 4. If trace not usable, fall back to context layout.
+  let footprint: Rectangle
+  let walls: PlanWallCandidate[]
+  let openings: PlanOpeningCandidate[]
+  let rooms: PlanRoomCandidate[]
+  let isFallback: boolean
+  let confidence: number
+
+  const projectHint = projectHintForContext(layoutContext)
+  let rawRooms: RawRoom[] = []
+  let equipmentHints: EquipmentHint[] = []
+  let finishHints: FinishHint[] = []
+  let electricalHints: ElectricalDeviceHint[] = []
+  let doorHints: DoorHint[] = []
+  let wallHints: WallHint[] = []
+
+  if (traceUsable) {
+    footprint = inferredFootprint!
+    walls = inferredWalls
+    openings = inferredOpenings
+    rooms = inferredRooms
+    isFallback = false
+    confidence = Math.min(
+      0.85,
+      Math.max(0.4, walls.reduce((acc, w) => acc + w.confidence, 0) / Math.max(1, walls.length)),
+    )
+  } else {
+    if (traceLines.length === 0) {
+      warnings.push({
+        code: 'NO_TRACE_INPUT',
+        message:
+          'No vector trace data is available for the active blueprint page. ' +
+          'Falling back to a deterministic suite layout from blueprint context.',
+      })
+    } else {
+      warnings.push({
+        code: 'AMBIGUOUS_SUITE_SHAPE',
+        message:
+          'Vector trace data did not form a clean enclosed suite. ' +
+          'Using a context-derived layout until trace recovery improves.',
+      })
+    }
+
+    const fb = chooseSalonSuiteFallbackFromBlueprintContext(layoutContext)
+    footprint = fb.footprint
+    rawRooms = fb.rooms
+    rooms = fb.rooms.map((r) => ({
+      id: r.id,
+      label: r.label,
+      type: r.type,
+      bounds: r.bounds,
+      confidence: 0.4,
+      roleHint: r.role,
+    }))
+    const wallsOpenings = buildWallsAndOpeningsFromRooms(
+      fb.footprint,
+      fb.rooms,
+      projectHint.wallThicknessDefaults,
+    )
+    walls = wallsOpenings.walls
+    openings = wallsOpenings.openings
+
+    const hintsBundle = buildHintsForContext(layoutContext, fb.rooms)
+    equipmentHints = hintsBundle.equipment
+    finishHints = hintsBundle.finishes
+    electricalHints = hintsBundle.electrical
+
+    // Door hints surfaced from openings so external consumers can preview
+    // swing direction without re-walking the openings array.
+    doorHints = openings
+      .filter((op) => op.type === 'door')
+      .map((op) => ({
+        id: `${op.id}_hint`,
+        roomId: op.wallId.split('_wall_')[0],
+        widthFt: op.widthFt,
+        swing: op.swing,
+        swingDegrees: op.swingDegrees,
+        confidence: op.confidence,
+      }))
+
+    // Wall hints summarise wall kinds for downstream views/UI.
+    wallHints = walls.map((w) => ({
+      id: `${w.id}_hint`,
+      start: w.start,
+      end: w.end,
+      thicknessFt: w.thicknessFt,
+      kind: w.kind,
+      confidence: w.confidence,
+    }))
+
+    isFallback = true
+    confidence = 0.35
+
+    if (layoutContext === 'salon-tenant-suite') {
+      warnings.push({
+        code: 'SALON_CONTEXT_DETECTED',
+        message:
+          'Beauty Salon / tenant-improvement context detected. Rendering a long, narrow ' +
+          'salon suite (18 ft × 50 ft) with reception at the front, styling floor down the ' +
+          'main run, and restroom / utility / storage / service rooms at the back.',
+      })
+      warnings.push({
+        code: 'NARROW_SUITE_ASSUMED',
+        message: 'Suite shape assumed long and narrow until floor-plan trace is available.',
+      })
+    } else if (layoutContext === 'commercial-suite') {
+      warnings.push({
+        code: 'COMMERCIAL_CONTEXT_DETECTED',
+        message: 'Commercial tenant-suite context detected — using office / conference layout.',
+      })
+    } else if (layoutContext === 'residential') {
+      warnings.push({
+        code: 'RESIDENTIAL_CONTEXT_DETECTED',
+        message: 'Residential context detected — using living / kitchen / bedroom / bath layout.',
+      })
+    } else {
+      warnings.push({
+        code: 'FALLBACK_LAYOUT_USED',
+        message:
+          'No specific project context detected. A generic main + utility fallback layout is used.',
+      })
+    }
+  }
+
+  if (!input.sheetIndex || input.sheetIndex.length === 0) {
+    warnings.push({
+      code: 'NO_SHEET_CONTEXT',
+      message:
+        'No sheet index rows were provided. Scanner could not weight sheet labels into context.',
+    })
+  }
+
+  if (confidence < 0.5) {
+    warnings.push({
+      code: 'LOW_CONFIDENCE',
+      message:
+        'Floor-plan scan is below 50% confidence. The model is a scan-ready inference and may ' +
+        'not match the printed sheet until vector trace extraction lands.',
+    })
+  }
+
+  // 5. Build deterministic dimension annotations.
+  const dimensions: PlanDimensionCandidate[] = [
+    {
+      id: 'dim-overall-width',
+      start: { x: footprint.x, y: footprint.y + footprint.height + 2 },
+      end: { x: footprint.x + footprint.width, y: footprint.y + footprint.height + 2 },
+      valueFt: footprint.width,
+      label: `${Math.round(footprint.width)}'-0" SUITE WIDTH`,
+      confidence,
+    },
+    {
+      id: 'dim-overall-depth',
+      start: { x: footprint.x + footprint.width + 2, y: footprint.y },
+      end: { x: footprint.x + footprint.width + 2, y: footprint.y + footprint.height },
+      valueFt: footprint.height,
+      label: `${Math.round(footprint.height)}'-0" SUITE DEPTH`,
+      confidence,
+    },
+  ]
+
+  return {
+    footprint,
+    walls,
+    openings,
+    rooms,
+    dimensions,
+    warnings,
+    traceLines,
+    isFallback,
+    confidence,
+    layoutContext,
+    equipmentHints,
+    finishHints,
+    electricalHints,
+    doorHints,
+    wallHints,
+    projectHint,
+    metadata: {
+      projectName: input.projectName,
+      blueprintTitle: input.blueprintTitle,
+      activePageNumber: input.activePageNumber,
+      totalPages: input.totalPages,
+      generatedAt,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// BuildingModel conversion
+// ---------------------------------------------------------------------------
+
+function wallModelFromCandidate(
+  wall: PlanWallCandidate,
+  wallHeight: MeasurementValue,
+  openings: BuildingOpeningModel[],
+): BuildingWallModel {
+  return {
+    id: wall.id,
+    start: wall.start,
+    end: wall.end,
+    thickness: createMeasurement(wall.thicknessFt, 'ft', 'scanner', wall.confidence),
+    height: wallHeight,
+    openings,
+    visible: true,
+    kind: wall.kind ?? (wall.exterior ? 'exterior' : 'partition'),
+    confidence: wall.confidence,
+  }
+}
+
+function openingModelFromCandidate(opening: PlanOpeningCandidate): BuildingOpeningModel {
+  return {
+    id: opening.id,
+    type: opening.type,
+    positionAlongWall: createMeasurement(opening.positionFt, 'ft', 'scanner', opening.confidence),
+    width: createMeasurement(opening.widthFt, 'ft', 'scanner', opening.confidence),
+    height: createMeasurement(opening.heightFt, 'ft', 'scanner', opening.confidence),
+    visible: true,
+    swing: opening.swing,
+    swingDegrees: opening.swingDegrees,
+    subtype: opening.subtype,
+    metadata: {
+      sourceTag: 'scanner',
+    },
+  }
+}
+
+/**
+ * Convert a scan result into a fully-built BlueprintBuildingModel ready for the
+ * 2D plan, 3D dollhouse, and room interior views.
+ */
+export function convertPlanScanToBuildingModel(
+  scan: BlueprintPlanScanResult,
+): BlueprintBuildingModel {
+  const wallHeight = createMeasurement(9, 'ft', 'scanner', scan.confidence)
+  const ceilingHeight = createMeasurement(9, 'ft', 'scanner', scan.confidence)
+  const slabThickness = createMeasurement(4, 'in', 'scanner', scan.confidence)
+
+  // Group openings by the wall id they live on.
+  const openingsByWall = new Map<string, BuildingOpeningModel[]>()
+  for (const o of scan.openings) {
+    const list = openingsByWall.get(o.wallId) || []
+    list.push(openingModelFromCandidate(o))
+    openingsByWall.set(o.wallId, list)
+  }
+
+  // Map scanner room types onto the building-model's restricted enum.
+  const toModelType = (
+    t: PlanRoomCandidate['type'],
+  ): 'living' | 'bedroom' | 'kitchen' | 'bath' | 'utility' | 'garage' | 'other' => {
+    switch (t) {
+      case 'living':
+      case 'bedroom':
+      case 'kitchen':
+      case 'bath':
+      case 'utility':
+      case 'garage':
+        return t
+      default:
+        return 'other'
+    }
+  }
+
+  const roleFromPlanType = (t: PlanRoomCandidate['type']): RoomRole => {
+    switch (t) {
+      case 'reception':
+        return 'reception'
+      case 'waiting':
+        return 'waiting'
+      case 'styling':
+        return 'styling'
+      case 'hallway':
+        return 'hallway'
+      case 'bath':
+        return 'bath'
+      case 'utility':
+        return 'utility'
+      case 'storage':
+        return 'storage'
+      case 'service':
+        return 'service'
+      case 'office':
+        return 'office'
+      case 'living':
+        return 'living'
+      case 'bedroom':
+        return 'bedroom'
+      case 'kitchen':
+        return 'kitchen'
+      case 'garage':
+        return 'garage'
+      default:
+        return 'other'
+    }
+  }
+
+  // Group equipment hints by room id for fast attach.
+  const equipmentByRoom = new Map<string, RoomEquipmentHint[]>()
+  for (const hint of scan.equipmentHints || []) {
+    if (!hint.roomId) continue
+    const list = equipmentByRoom.get(hint.roomId) || []
+    list.push({
+      id: hint.id,
+      kind: hint.kind,
+      label: hint.label,
+      positionNormalized: hint.positionNormalized,
+      confidence: hint.confidence,
+      sourceTag: hint.sourceTag,
+    })
+    equipmentByRoom.set(hint.roomId, list)
+  }
+
+  // Build rooms. Each room owns the 4 walls that form its perimeter plus any
+  // standalone divider walls that the scanner attributed to it.
+  const rooms: BuildingRoomModel[] = scan.rooms.map((room) => {
+    const perimeterIds = ['n', 's', 'w', 'e'].map((s) => `${room.id}_wall_${s}`)
+    const wallCandidates = scan.walls.filter(
+      (w) =>
+        perimeterIds.includes(w.id) ||
+        w.roomId === room.id ||
+        w.id.startsWith(`${room.id}_wall_`) ||
+        w.id.startsWith(`${room.id}_divider_`),
+    )
+    const wallList: BuildingWallModel[] = wallCandidates.map((wc) =>
+      wallModelFromCandidate(wc, wallHeight, openingsByWall.get(wc.id) || []),
+    )
+    const width = room.bounds.max.x - room.bounds.min.x
+    const depth = room.bounds.max.y - room.bounds.min.y
+    const roomHints = equipmentByRoom.get(room.id) || []
+    return {
+      id: room.id,
+      label: room.label,
+      bounds: room.bounds,
+      area: width * depth,
+      height: wallHeight,
+      walls: wallList,
+      electricalAnchors: [],
+      visible: true,
+      equipmentHints: roomHints,
+      metadata: {
+        type: toModelType(room.type),
+        floor: 0,
+        notes: `Scanner role: ${room.roleHint || room.type}`,
+        role: room.roleHint || roleFromPlanType(room.type),
+      },
+    }
+  })
+
+  const level: BuildingLevelModel = {
+    levelNumber: 0,
+    label: 'Ground Floor',
+    rooms,
+    footprint: scan.footprint,
+    visible: true,
+  }
+
+  const now = new Date().toISOString()
+  const displayLabel = `${scan.metadata.projectName || 'Project'} — ${
+    scan.layoutContext === 'salon-tenant-suite' ? 'Beauty Salon Suite' :
+    scan.layoutContext === 'commercial-suite' ? 'Commercial Suite' :
+    scan.layoutContext === 'residential' ? 'Residential Layout' :
+    scan.layoutContext === 'electrical-room' ? 'Electrical Panel Room' :
+    'Suite Layout'
+  }`
+
+  return {
+    id: `scan-${Date.now()}`,
+    name: displayLabel,
+    footprint: scan.footprint,
+    levels: [level],
+    wallHeight,
+    ceilingHeight,
+    slabThickness,
+    scale: {
+      pixelsPerUnit: 1,
+      unit: 'ft',
+      source: scan.isFallback ? 'default' : 'measured',
+    },
+    confidence: scan.confidence,
+    metadata: {
+      createdAt: now,
+      updatedAt: now,
+      source: scan.isFallback ? 'fallback' : 'extraction',
+      sourceBlueprint: scan.metadata.blueprintTitle,
+      sourceProject: scan.metadata.projectName,
+      sourcePage: scan.metadata.activePageNumber,
+      notes:
+        scan.isFallback
+          ? `Scan-ready fallback: ${scan.layoutContext}. ${scan.warnings.length} warning(s).`
+          : `Scanned floor plan: ${scan.layoutContext}. Confidence ${(scan.confidence * 100).toFixed(0)}%.`,
+      displayLabel,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Full-set scanner — multi-sheet classification + merged hints
+// ---------------------------------------------------------------------------
+
+/**
+ * Coarse role classification for a sheet inside a multi-sheet blueprint set.
+ *
+ *  - 'floor_plan' — primary architectural floor plan
+ *  - 'reflected_ceiling_plan' — RCP
+ *  - 'electrical' — generic electrical sheet
+ *  - 'lighting' — lighting plan
+ *  - 'power' — power / receptacle plan
+ *  - 'finish' — finish plan / interiors
+ *  - 'rendering' — perspective renders or 3D model
+ *  - 'elevations' — exterior / interior elevations
+ *  - 'schedules' — door / equipment / panel schedules
+ *  - 'unknown' — could not classify
+ */
+export type SheetRole =
+  | 'floor_plan'
+  | 'reflected_ceiling_plan'
+  | 'electrical'
+  | 'lighting'
+  | 'power'
+  | 'finish'
+  | 'rendering'
+  | 'elevations'
+  | 'schedules'
+  | 'unknown'
+
+/**
+ * A single sheet inside a full-set source. The scanner only needs label / title
+ * / discipline / page-number context — actual vector trace is optional.
+ */
+export interface BlueprintVRSourceSheet {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  sheetLabel?: string
+  discipline?: string
+  fileName?: string
+  /** Optional structured payload for future vector extraction. */
+  tracePayload?: PdfTracePagePayload | null
+}
+
+/**
+ * Blueprint set used as the canonical Generate VR source for a project. Each
+ * source set typically corresponds to a "Full Set" or "Updated Revisions"
+ * upload but may also be a custom derived set.
+ */
+export interface BlueprintVRSourceSet {
+  id: string
+  name: string
+  /** Optional set type (Full Set, Electrical Only, etc.). */
+  type?: string
+  /** Project id this set belongs to. */
+  projectId?: string
+  /** Project display name. */
+  projectName?: string
+  /** Sheets contained in the set. */
+  sheets: BlueprintVRSourceSheet[]
+  /** Optional storage key / file name. */
+  filePath?: string
+  /** Optional total page count when fewer sheet rows are listed. */
+  totalPages?: number
+}
+
+/**
+ * Input shape consumed by scanBlueprintFullSet().
+ */
+export interface BlueprintFullSetScanInput {
+  projectName?: string
+  /** The blueprint set selected as the VR source. */
+  sourceSet: BlueprintVRSourceSet
+  /** Active sheet/page the user is currently viewing (for tie-break). */
+  activePageNumber?: number
+  /** Optional extracted text from the set for context detection. */
+  extractedText?: string
+  /** Optional annotation summary for the set. */
+  annotationsSummary?: string
+}
+
+/**
+ * Per-sheet classification entry returned by the full-set scan.
+ */
+export interface FullSetSheetClassification {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  sheetLabel?: string
+  discipline?: string
+  roles: SheetRole[]
+  /** Classification confidence, 0–1. */
+  confidence: number
+}
+
+/**
+ * Output of the full-set scan. Combines a base plan scan with classifications
+ * for every sheet and merged hints across the set.
+ */
+export interface BlueprintFullSetScanResult {
+  /** Underlying plan scan that drove the geometry. */
+  planScan: BlueprintPlanScanResult
+  /** Per-sheet role classifications. */
+  classifications: FullSetSheetClassification[]
+  /** Best floor-plan sheet chosen from the set (if any). */
+  bestFloorPlanSheet: BlueprintVRSourceSheet | null
+  /** Best electrical sheets in priority order. */
+  bestElectricalSheets: BlueprintVRSourceSheet[]
+  /** Best rendering / perspective sheets. */
+  bestRenderingSheets: BlueprintVRSourceSheet[]
+  /** Equipment hints aggregated from the set (project context). */
+  equipmentHints: EquipmentHint[]
+  /** Door / opening hints aggregated from the set. */
+  doorHints: DoorHint[]
+  /** Wall thickness / kind hints aggregated from the set. */
+  wallHints: WallHint[]
+  /** Composite project hint (style, finishes, wall defaults). */
+  projectHint: ExtractedProjectHint
+  /** Warnings surfaced during the full-set walk. */
+  warnings: PlanScanWarning[]
+  /** Metadata for diagnostics. */
+  metadata: {
+    sourceSetId: string
+    sourceSetName: string
+    projectName?: string
+    sheetCount: number
+    generatedAt: string
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sheet classification heuristics
+// ---------------------------------------------------------------------------
+
+const SHEET_ROLE_KEYWORDS: Array<{ role: SheetRole; needles: string[] }> = [
+  {
+    role: 'floor_plan',
+    needles: [
+      'floor plan',
+      'overall plan',
+      'partition plan',
+      'tenant plan',
+      'plan view',
+      'a1.0',
+      'a-1',
+      'a1-',
+      'arch plan',
+    ],
+  },
+  {
+    role: 'reflected_ceiling_plan',
+    needles: ['reflected ceiling', 'rcp', 'ceiling plan', 'a2.0', 'a-2'],
+  },
+  { role: 'lighting', needles: ['lighting', 'e1.0', 'e-1', 'lt-', 'light plan'] },
+  { role: 'power', needles: ['power', 'receptacle', 'e2.0', 'e-2', 'pwr-'] },
+  {
+    role: 'electrical',
+    needles: ['electrical', 'panel', 'e1.', 'e-1', 'e2.', 'e-2', 'mep', 'single line'],
+  },
+  {
+    role: 'finish',
+    needles: ['finish', 'interiors', 'material plan', 'a3', 'a-3', 'fp-'],
+  },
+  {
+    role: 'rendering',
+    needles: ['render', '3d view', 'perspective', 'view', 'a4', 'a-4'],
+  },
+  {
+    role: 'elevations',
+    needles: ['elevation', 'a5', 'a-5', 'east elev', 'west elev', 'north elev', 'south elev'],
+  },
+  {
+    role: 'schedules',
+    needles: ['schedule', 'door schedule', 'panel schedule', 'equipment schedule', 'a0.', 'g0.'],
+  },
+]
+
+function normalizeText(parts: Array<string | undefined | null>): string {
+  return parts
+    .filter(Boolean)
+    .map((p) => String(p))
+    .join(' ')
+    .toLowerCase()
+}
+
+/**
+ * Classify a single sheet into one or more roles based on its label, title,
+ * discipline, and (when known) page number range.
+ */
+export function classifySheetRole(sheet: BlueprintVRSourceSheet): SheetRole[] {
+  const combined = normalizeText([
+    sheet.sheetNumber,
+    sheet.sheetTitle,
+    sheet.sheetLabel,
+    sheet.discipline,
+    sheet.fileName,
+  ])
+  const roles = new Set<SheetRole>()
+  for (const { role, needles } of SHEET_ROLE_KEYWORDS) {
+    for (const needle of needles) {
+      if (combined.includes(needle)) {
+        roles.add(role)
+        break
+      }
+    }
+  }
+  // Discipline-only fallback signals
+  if (sheet.discipline) {
+    const d = sheet.discipline.toLowerCase()
+    if (d.includes('electrical')) roles.add('electrical')
+    if (d.includes('architectural') && roles.size === 0) roles.add('floor_plan')
+    if (d.includes('mechanical') && roles.size === 0) roles.add('electrical')
+    if (d.includes('structural') && roles.size === 0) roles.add('elevations')
+  }
+  if (roles.size === 0) roles.add('unknown')
+  return Array.from(roles)
+}
+
+function classifyAllSheets(
+  sheets: BlueprintVRSourceSheet[],
+): FullSetSheetClassification[] {
+  return sheets.map((sheet) => {
+    const roles = classifySheetRole(sheet)
+    const isKnown = !roles.includes('unknown') || roles.length > 1
+    return {
+      pageNumber: sheet.pageNumber,
+      sheetNumber: sheet.sheetNumber,
+      sheetTitle: sheet.sheetTitle,
+      sheetLabel: sheet.sheetLabel,
+      discipline: sheet.discipline,
+      roles,
+      confidence: isKnown ? 0.65 : 0.25,
+    }
+  })
+}
+
+/**
+ * Pick the best floor plan sheet from a classified set. Preference order:
+ * sheets explicitly tagged floor_plan, then architectural discipline + plan,
+ * then lowest page number with "plan" in the title.
+ */
+export function chooseBestFloorPlanSheet(
+  sheets: BlueprintVRSourceSheet[],
+): BlueprintVRSourceSheet | null {
+  if (!sheets || sheets.length === 0) return null
+  const byRole = sheets.filter((s) => classifySheetRole(s).includes('floor_plan'))
+  if (byRole.length > 0) {
+    return byRole.sort((a, b) => a.pageNumber - b.pageNumber)[0]
+  }
+  // Fallback: pick first sheet whose label contains "plan"
+  const byLabel = sheets.find((s) => {
+    const combined = normalizeText([s.sheetNumber, s.sheetTitle, s.sheetLabel])
+    return combined.includes('plan')
+  })
+  if (byLabel) return byLabel
+  // Last resort: first sheet
+  return sheets[0]
+}
+
+export function chooseBestElectricalSheets(
+  sheets: BlueprintVRSourceSheet[],
+): BlueprintVRSourceSheet[] {
+  if (!sheets || sheets.length === 0) return []
+  return sheets
+    .filter((s) => {
+      const roles = classifySheetRole(s)
+      return (
+        roles.includes('electrical') ||
+        roles.includes('lighting') ||
+        roles.includes('power')
+      )
+    })
+    .sort((a, b) => a.pageNumber - b.pageNumber)
+}
+
+export function chooseBestRenderingSheets(
+  sheets: BlueprintVRSourceSheet[],
+): BlueprintVRSourceSheet[] {
+  if (!sheets || sheets.length === 0) return []
+  return sheets
+    .filter((s) => classifySheetRole(s).includes('rendering'))
+    .sort((a, b) => a.pageNumber - b.pageNumber)
+}
+
+// ---------------------------------------------------------------------------
+// Hint extractors driven by the full-set context
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract project style / finish hints from a full-set source. Today this
+ * mostly reads project name / titles / labels and applies deterministic
+ * defaults; it is the seam where richer text recovery will land.
+ */
+export function extractProjectStyleHints(
+  input: BlueprintFullSetScanInput,
+): ExtractedProjectHint {
+  const combined = normalizeText([
+    input.projectName,
+    input.sourceSet?.name,
+    input.sourceSet?.projectName,
+    input.extractedText,
+    input.annotationsSummary,
+    ...(input.sourceSet?.sheets || []).map((s) =>
+      [s.sheetNumber, s.sheetTitle, s.sheetLabel, s.discipline].join(' '),
+    ),
+  ])
+  const ctx: BlueprintPlanScanResult['layoutContext'] = combined.includes('salon')
+    ? 'salon-tenant-suite'
+    : combined.includes('office') || combined.includes('tenant') || combined.includes('commercial')
+    ? 'commercial-suite'
+    : combined.includes('panel room') || combined.includes('mep')
+    ? 'electrical-room'
+    : combined.includes('residential') || combined.includes('home')
+    ? 'residential'
+    : 'generic'
+
+  const base = projectHintForContext(ctx)
+  const styles: string[] = []
+  if (combined.includes('modern')) styles.push('modern')
+  if (combined.includes('luxury')) styles.push('luxury')
+  if (combined.includes('industrial')) styles.push('industrial')
+  if (combined.includes('boutique')) styles.push('boutique')
+  return {
+    ...base,
+    styleKeywords: Array.from(new Set([...base.styleKeywords, ...styles])),
+  }
+}
+
+/**
+ * Equipment hints derived from a full-set scan. Defers to per-context
+ * fallback hints today; future versions will read schedules.
+ */
+export function extractEquipmentHints(
+  scan: BlueprintPlanScanResult,
+): EquipmentHint[] {
+  return scan.equipmentHints || []
+}
+
+/**
+ * Door / opening hints from full-set context. Today this reads openings from
+ * the plan scan and surfaces them with refined source tags.
+ */
+export function extractDoorAndOpeningHints(
+  scan: BlueprintPlanScanResult,
+): DoorHint[] {
+  return scan.openings
+    .filter((op) => op.type === 'door')
+    .map((op) => ({
+      id: `${op.id}_set_hint`,
+      widthFt: op.widthFt,
+      swing: op.swing,
+      swingDegrees: op.swingDegrees,
+      confidence: op.confidence,
+    }))
+}
+
+/**
+ * Wall-thickness hints from full-set context. Returns the project-default
+ * thicknesses plus any per-wall kind classification carried by the scan.
+ */
+export function extractWallThicknessHints(
+  scan: BlueprintPlanScanResult,
+): WallHint[] {
+  return scan.walls.map((w) => ({
+    id: `${w.id}_thickness`,
+    start: w.start,
+    end: w.end,
+    thicknessFt: w.thicknessFt,
+    kind: w.kind,
+    confidence: w.confidence,
+  }))
+}
+
+/**
+ * Merge a full-set scan back into a building model. Today this attaches the
+ * equipment hints from the full-set scan onto matching rooms; future versions
+ * can also rewrite finishes / electrical anchors.
+ */
+export function mergeFullSetScanIntoBuildingModel(
+  scan: BlueprintFullSetScanResult,
+  baseModel: BlueprintBuildingModel,
+): BlueprintBuildingModel {
+  if (!scan || !baseModel) return baseModel
+  const equipmentByRoom = new Map<string, EquipmentHint[]>()
+  for (const hint of scan.equipmentHints) {
+    if (!hint.roomId) continue
+    const list = equipmentByRoom.get(hint.roomId) || []
+    list.push(hint)
+    equipmentByRoom.set(hint.roomId, list)
+  }
+
+  const newLevels = baseModel.levels.map((level) => ({
+    ...level,
+    rooms: level.rooms.map((room) => {
+      const fromSet = equipmentByRoom.get(room.id)
+      if (!fromSet || fromSet.length === 0) return room
+      const merged: RoomEquipmentHint[] = [
+        ...(room.equipmentHints || []),
+        ...fromSet.map((h) => ({
+          id: h.id,
+          kind: h.kind,
+          label: h.label,
+          positionNormalized: h.positionNormalized,
+          confidence: h.confidence,
+          sourceTag: h.sourceTag || 'full-set',
+        })),
+      ]
+      // Dedupe by id
+      const seen = new Set<string>()
+      const deduped = merged.filter((h) => {
+        if (seen.has(h.id)) return false
+        seen.add(h.id)
+        return true
+      })
+      return { ...room, equipmentHints: deduped }
+    }),
+  }))
+
+  return {
+    ...baseModel,
+    levels: newLevels,
+    metadata: {
+      ...baseModel.metadata,
+      notes:
+        (baseModel.metadata.notes || '') +
+        ` Full-set merge: ${scan.classifications.length} sheets, ` +
+        `${scan.equipmentHints.length} equipment hints.`,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Full-set scan entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan a full blueprint set into a deterministic project-level model.
+ *
+ * Steps:
+ *   1. Classify every sheet in the set into one or more roles.
+ *   2. Pick the best floor-plan sheet for the geometry seed.
+ *   3. Run scanBlueprintPlan() with combined sheet context.
+ *   4. Aggregate hints (equipment, doors, walls, project style).
+ *   5. Return a merged BlueprintFullSetScanResult.
+ *
+ * The result is deterministic for the same input.
+ */
+export function scanBlueprintFullSet(
+  input: BlueprintFullSetScanInput,
+): BlueprintFullSetScanResult {
+  const warnings: PlanScanWarning[] = []
+  const sheets = input.sourceSet?.sheets || []
+  const classifications = classifyAllSheets(sheets)
+  const bestFloorPlanSheet = chooseBestFloorPlanSheet(sheets)
+  const bestElectricalSheets = chooseBestElectricalSheets(sheets)
+  const bestRenderingSheets = chooseBestRenderingSheets(sheets)
+
+  if (!bestFloorPlanSheet && sheets.length > 0) {
+    warnings.push({
+      code: 'NO_FLOOR_PLAN_SHEET',
+      message:
+        'No floor-plan sheet identified in the source set. Using context fallback for geometry.',
+    })
+  }
+  if (bestElectricalSheets.length === 0 && sheets.length > 0) {
+    warnings.push({
+      code: 'NO_ELECTRICAL_SHEET',
+      message:
+        'No electrical sheet identified in the source set. Stage overlays will use deterministic defaults.',
+    })
+  }
+  if (bestRenderingSheets.length === 0 && sheets.length > 0) {
+    warnings.push({
+      code: 'NO_RENDERING_SHEET',
+      message:
+        'No rendering / perspective sheet identified in the source set. Finish hints inferred from context only.',
+    })
+  }
+
+  // Pass an aggregated sheetIndex to the plan scanner so it can read all
+  // sheets and not just the active page.
+  const sheetIndex: BlueprintPlanScanSheetHint[] = sheets.map((s) => ({
+    pageNumber: s.pageNumber,
+    sheetNumber: s.sheetNumber,
+    sheetTitle: s.sheetTitle,
+    sheetLabel: s.sheetLabel,
+    discipline: s.discipline,
+  }))
+
+  const planScan = scanBlueprintPlan({
+    projectName: input.projectName || input.sourceSet?.projectName,
+    blueprintTitle: input.sourceSet?.name,
+    fileName: input.sourceSet?.filePath || bestFloorPlanSheet?.fileName,
+    activePageNumber: input.activePageNumber || bestFloorPlanSheet?.pageNumber,
+    totalPages: input.sourceSet?.totalPages || sheets.length,
+    extractedText: input.extractedText,
+    annotationsSummary: input.annotationsSummary,
+    sheetIndex,
+    tracePayload: bestFloorPlanSheet?.tracePayload ?? null,
+  })
+
+  const projectHint = extractProjectStyleHints(input)
+  const equipmentHints = extractEquipmentHints(planScan)
+  const doorHints = extractDoorAndOpeningHints(planScan)
+  const wallHints = extractWallThicknessHints(planScan)
+
+  warnings.push({
+    code: 'FULL_SET_INFERRED',
+    message:
+      `Full-set scan classified ${classifications.length} sheets and chose ` +
+      `${bestFloorPlanSheet ? 'a floor plan sheet' : 'a context fallback'} ` +
+      `for geometry. Equipment / finish hints derived from project context.`,
+  })
+
+  return {
+    planScan,
+    classifications,
+    bestFloorPlanSheet,
+    bestElectricalSheets,
+    bestRenderingSheets,
+    equipmentHints,
+    doorHints,
+    wallHints,
+    projectHint,
+    warnings: [...planScan.warnings, ...warnings],
+    metadata: {
+      sourceSetId: input.sourceSet?.id || 'unknown',
+      sourceSetName: input.sourceSet?.name || 'Unknown Set',
+      projectName: input.projectName || input.sourceSet?.projectName,
+      sheetCount: sheets.length,
+      generatedAt: new Date().toISOString(),
+    },
+  }
+}
