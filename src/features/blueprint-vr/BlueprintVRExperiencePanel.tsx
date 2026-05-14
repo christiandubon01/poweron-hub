@@ -117,14 +117,95 @@ function ProgressRegion({ progress, status }: { progress?: number; status: strin
 
 /**
  * Canvas placeholder for VR scene preview.
- * When Three.js integration is ready, this will render actual geometry.
- * For now, displays a grid pattern with helpful message.
+ * Renders an isometric-style 3D construction landscape with colored electrical components.
  */
-function ScenePreviewArea() {
+function ScenePreviewArea({ manifest }: { manifest?: any }) {
+  // Build a simple isometric 3D visualization using SVG
+  const svgWidth = 400
+  const svgHeight = 280
+  
+  // Convert 3D coordinates to isometric 2D
+  const toIsometric = (x: number, y: number, z: number) => {
+    const iso_x = (x - z) * 0.866 // cos(30°)
+    const iso_y = (x + z) * 0.5 - y
+    return { x: svgWidth / 2 + iso_x * 15, y: svgHeight / 2 + iso_y * 15 }
+  }
+
+  // Stage color mapping
+  const stageColors: Record<string, string> = {
+    underground: '#FF6B6B', // Red for underground
+    roughIn: '#FFD93D',     // Yellow for rough in
+    trim: '#6BCB77',        // Green for trim
+    finished: '#4D96FF',    // Blue for finished
+  }
+
+  // Generate visual elements for each stage
+  const visualElements = []
+  const items = manifest?.stages || []
+  
+  // Add ground plane
+  visualElements.push({
+    key: 'ground',
+    type: 'polygon',
+    points: [
+      toIsometric(0, 0, 0),
+      toIsometric(4, 0, 0),
+      toIsometric(4, 0, 4),
+      toIsometric(0, 0, 4),
+    ],
+    fill: '#1a1a2e',
+    stroke: 'rgba(0,229,204,0.3)',
+  })
+
+  // Add building footprint (simple box)
+  const footprintPoints = [
+    toIsometric(0.5, 0, 0.5),
+    toIsometric(3.5, 0, 0.5),
+    toIsometric(3.5, 3, 0.5),
+    toIsometric(0.5, 3, 0.5),
+  ]
+  visualElements.push({
+    key: 'footprint',
+    type: 'polygon',
+    points: footprintPoints,
+    fill: '#2d3561',
+    stroke: 'rgba(0,229,204,0.5)',
+  })
+
+  // Add components for each stage
+  let componentIndex = 0
+  for (const item of items) {
+    const stageColor = stageColors[item.stage] || '#808080'
+    
+    // Add 2-3 visual blocks per stage
+    for (let i = 0; i < 3; i++) {
+      const x = 1 + (componentIndex % 2) * 2 + Math.random() * 0.5
+      const y = 0.5 + (i * 0.7)
+      const z = 1 + ((componentIndex / 2) % 2) * 1.5 + Math.random() * 0.5
+      
+      const p1 = toIsometric(x, y, z)
+      const p2 = toIsometric(x + 0.4, y, z)
+      const p3 = toIsometric(x + 0.4, y, z + 0.4)
+      const p4 = toIsometric(x, y, z + 0.4)
+      const p5 = toIsometric(x, y + 0.4, z)
+      
+      visualElements.push({
+        key: `component-${item.stage}-${i}`,
+        type: 'box3d',
+        x: x, y: y, z: z,
+        size: 0.4,
+        color: stageColor,
+        opacity: 0.8,
+        points: [p1, p2, p3, p4, p5],
+      })
+      componentIndex++
+    }
+  }
+
   return (
     <div style={{
       width: '100%',
-      height: 240,
+      height: 280,
       background: 'linear-gradient(135deg, rgba(0,229,204,0.04) 0%, rgba(255,215,0,0.04) 100%)',
       border: '1px solid rgba(0,229,204,0.15)',
       borderRadius: 6,
@@ -134,51 +215,153 @@ function ScenePreviewArea() {
       position: 'relative',
       overflow: 'hidden',
       flexDirection: 'column',
-      gap: 12,
-      padding: 16,
+      padding: 8,
       boxSizing: 'border-box',
     }}>
-      {/* Grid background pattern */}
-      <div
+      <svg
+        width={svgWidth}
+        height={svgHeight}
         style={{
-          position: 'absolute',
-          inset: 0,
-          backgroundImage: `
-            linear-gradient(0deg, rgba(0,229,204,0.03) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(0,229,204,0.03) 1px, transparent 1px)
-          `,
-          backgroundSize: '20px 20px',
-          pointerEvents: 'none',
+          background: 'linear-gradient(180deg, rgba(13,14,20,0.8) 0%, rgba(13,14,20,0.95) 100%)',
+          border: '1px solid rgba(0,229,204,0.1)',
+          borderRadius: 4,
         }}
-      />
+      >
+        <defs>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="2" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
 
-      {/* Content */}
-      <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
-        <div style={{
-          color: '#00ddcc',
-          fontSize: 28,
-          marginBottom: 8,
-        }}>
-          ▲
+        {/* Draw ground and footprint */}
+        {visualElements
+          .filter(el => ['polygon'].includes(el.type))
+          .map((el, idx) => (
+            <polygon
+              key={el.key}
+              points={el.points.map((p: any) => `${p.x},${p.y}`).join(' ')}
+              fill={el.fill}
+              stroke={el.stroke}
+              strokeWidth="0.5"
+              opacity="0.6"
+            />
+          ))}
+
+        {/* Draw 3D boxes for electrical components */}
+        {visualElements
+          .filter(el => el.type === 'box3d')
+          .map((el) => {
+            const p1 = el.points[0]
+            const p2 = el.points[1]
+            const p3 = el.points[2]
+            const p4 = el.points[3]
+            const p5 = el.points[4]
+            
+            return (
+              <g key={el.key} filter="url(#glow)" opacity={el.opacity}>
+                {/* Front face */}
+                <polygon
+                  points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y} ${p4.x},${p4.y}`}
+                  fill={el.color}
+                  stroke={el.color}
+                  strokeWidth="0.5"
+                />
+                {/* Top face */}
+                <polygon
+                  points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${p5.x},${p5.y}`}
+                  fill={el.color}
+                  stroke={el.color}
+                  strokeWidth="0.5"
+                  opacity="0.7"
+                />
+                {/* Side face */}
+                <polygon
+                  points={`${p2.x},${p2.y} ${p3.x},${p3.y} ${p5.x},${p5.y}`}
+                  fill={el.color}
+                  stroke={el.color}
+                  strokeWidth="0.5"
+                  opacity="0.5"
+                />
+              </g>
+            )
+          })}
+
+        {/* Add grid lines for reference */}
+        {[0, 1, 2, 3, 4].map((i) => {
+          const p1 = toIsometric(i, 0, 0)
+          const p2 = toIsometric(i, 0, 4)
+          return (
+            <line
+              key={`grid-x-${i}`}
+              x1={p1.x}
+              y1={p1.y}
+              x2={p2.x}
+              y2={p2.y}
+              stroke="rgba(0,229,204,0.08)"
+              strokeWidth="0.3"
+            />
+          )
+        })}
+        {[0, 1, 2, 3, 4].map((i) => {
+          const p1 = toIsometric(0, 0, i)
+          const p2 = toIsometric(4, 0, i)
+          return (
+            <line
+              key={`grid-z-${i}`}
+              x1={p1.x}
+              y1={p1.y}
+              x2={p2.x}
+              y2={p2.y}
+              stroke="rgba(0,229,204,0.08)"
+              strokeWidth="0.3"
+            />
+          )
+        })}
+
+        {/* Title */}
+        <text
+          x={svgWidth / 2}
+          y={20}
+          textAnchor="middle"
+          fill="rgba(0,221,204,0.6)"
+          fontSize="11"
+          fontFamily="monospace"
+          fontWeight="700"
+          letterSpacing="1"
+        >
+          CONSTRUCTION LANDSCAPE
+        </text>
+      </svg>
+
+      {/* Legend */}
+      <div style={{
+        display: 'flex',
+        gap: 12,
+        marginTop: 8,
+        fontSize: 10,
+        fontFamily: 'monospace',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ width: 8, height: 8, background: '#FF6B6B', borderRadius: 1 }} />
+          <span style={{ color: 'rgba(255,255,255,0.6)' }}>Underground</span>
         </div>
-        <div style={{
-          color: 'rgba(255,255,255,0.7)',
-          fontSize: 12,
-          fontFamily: 'monospace',
-          fontWeight: 700,
-          letterSpacing: 0.5,
-          marginBottom: 4,
-        }}>
-          VR SCENE PREVIEW
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ width: 8, height: 8, background: '#FFD93D', borderRadius: 1 }} />
+          <span style={{ color: 'rgba(255,255,255,0.6)' }}>Rough In</span>
         </div>
-        <div style={{
-          color: 'rgba(255,255,255,0.4)',
-          fontSize: 10,
-          fontFamily: 'monospace',
-          lineHeight: 1.4,
-          maxWidth: 200,
-        }}>
-          3D scene generated from blueprint PDF intelligence
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ width: 8, height: 8, background: '#6BCB77', borderRadius: 1 }} />
+          <span style={{ color: 'rgba(255,255,255,0.6)' }}>Trim</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ width: 8, height: 8, background: '#4D96FF', borderRadius: 1 }} />
+          <span style={{ color: 'rgba(255,255,255,0.6)' }}>Finished</span>
         </div>
       </div>
     </div>
@@ -543,7 +726,7 @@ export default function BlueprintVRExperiencePanel({
         >
           {/* Scene Preview */}
           <div style={{ padding: '16px' }}>
-            <ScenePreviewArea />
+            <ScenePreviewArea manifest={manifest} />
           </div>
 
           {/* Stage Tabs */}
