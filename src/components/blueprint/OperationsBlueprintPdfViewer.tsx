@@ -495,6 +495,8 @@ export default function OperationsBlueprintPdfViewer({
   const inlineTextBoxEditorRef = useRef<HTMLDivElement | null>(null)
   const cancelTextBoxEditSessionRef = useRef<() => void>(() => {})
   const focusedAnnotationElRef = useRef<HTMLElement | null>(null)
+  const isSavingTextBoxRef = useRef(false)
+  const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
   // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
@@ -1344,15 +1346,19 @@ export default function OperationsBlueprintPdfViewer({
   }, [onSelectedPagesChange, selectedPageNumbers, currentPage])
 
   const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
-    try {
-      const backup = getBackupData()
-      if (!backup) return
-      await upsertOperationsBlueprintAnnotation(backup, annotation)
-      loadAnnotations()
-      onAnnotationsChanged?.()
-    } catch (e: any) {
-      setError(e?.message || 'Failed to save annotation.')
+    const op = async () => {
+      try {
+        const backup = getBackupData()
+        if (!backup) return
+        await upsertOperationsBlueprintAnnotation(backup, annotation)
+        loadAnnotations()
+        onAnnotationsChanged?.()
+      } catch (e: any) {
+        setError(e?.message || 'Failed to save annotation.')
+      }
     }
+    mutationQueueRef.current = mutationQueueRef.current.then(op)
+    return mutationQueueRef.current
   }, [loadAnnotations, onAnnotationsChanged])
 
   const clearTextBoxEditSessionState = useCallback(() => {
@@ -1387,44 +1393,60 @@ export default function OperationsBlueprintPdfViewer({
 
   const saveTextBoxEditSession = useCallback(async () => {
     if (!blueprint || !inlineTextEditId) return
-    const editingId = inlineTextEditId
-    const current = allAnnotationsRef.current.find((ann) => ann.id === editingId)
-    if (!current || current.type !== 'textBox') {
+    if (isSavingTextBoxRef.current) return
+    isSavingTextBoxRef.current = true
+    try {
+      const editingId = inlineTextEditId
+      const current = allAnnotationsRef.current.find((ann) => ann.id === editingId)
+      if (!current || current.type !== 'textBox') {
+        clearTextBoxEditSessionState()
+        return
+      }
+      const now = new Date().toISOString()
+      const meta = getAnnotationMeta(current)
+      const rect = clampRectToPage(current.rect || meta.box || DEFAULT_TEXT_BOX)
+      const isDraft = draftTextBoxIdRef.current === editingId
+      if (isDraft && !(current.text || '').trim()) {
+        setAllAnnotations((prev) => prev.filter((ann) => ann.id !== editingId))
+        setFocusedAnnotationId(null)
+        clearTextBoxEditSessionState()
+        return
+      }
+      const persistedId = isDraft
+        ? `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+        : current.id
+      const payload = withAnnotationMeta(
+        {
+          ...current,
+          id: persistedId,
+          rect,
+          updatedAt: now,
+        },
+        {
+          ...meta,
+          box: rect,
+          anchor: meta.anchor || { x: rect.x, y: rect.y },
+        },
+      ) as BlueprintAnnotation
+      if (isDraft) {
+        setAllAnnotations((prev) => prev.map((ann) => (ann.id === editingId ? payload : ann)))
+      }
+      setFocusedAnnotationId(persistedId)
       clearTextBoxEditSessionState()
-      return
+      setToolMode('select')
+      const fId = persistedId
+      requestAnimationFrame(() => {
+        const el = overlayRef.current?.querySelector(`[data-annotation-id="${fId}"]`) as HTMLElement | null
+        if (el) {
+          focusedAnnotationElRef.current = el
+          const r = el.getBoundingClientRect()
+          setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+        }
+      })
+      await persistAnnotation(payload)
+    } finally {
+      isSavingTextBoxRef.current = false
     }
-    const now = new Date().toISOString()
-    const meta = getAnnotationMeta(current)
-    const rect = clampRectToPage(current.rect || meta.box || DEFAULT_TEXT_BOX)
-    const isDraft = draftTextBoxIdRef.current === editingId
-    if (isDraft && !(current.text || '').trim()) {
-      setAllAnnotations((prev) => prev.filter((ann) => ann.id !== editingId))
-      setFocusedAnnotationId(null)
-      clearTextBoxEditSessionState()
-      return
-    }
-    const persistedId = isDraft
-      ? `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-      : current.id
-    const payload = withAnnotationMeta(
-      {
-        ...current,
-        id: persistedId,
-        rect,
-        updatedAt: now,
-      },
-      {
-        ...meta,
-        box: rect,
-        anchor: meta.anchor || { x: rect.x, y: rect.y },
-      },
-    ) as BlueprintAnnotation
-    if (isDraft) {
-      setAllAnnotations((prev) => prev.map((ann) => (ann.id === editingId ? payload : ann)))
-    }
-    setFocusedAnnotationId(persistedId)
-    clearTextBoxEditSessionState()
-    await persistAnnotation(payload)
   }, [blueprint, inlineTextEditId, clearTextBoxEditSessionState, persistAnnotation])
 
   useEffect(() => {
@@ -1548,16 +1570,21 @@ export default function OperationsBlueprintPdfViewer({
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
     if (!blueprint?.id) return
-    try {
-      const backup = getBackupData()
-      if (!backup) return
-      await deleteOperationsBlueprintAnnotation(backup, blueprint.id, annotationId)
-      loadAnnotations()
-      setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
-      onAnnotationsChanged?.()
-    } catch (e: any) {
-      setError(e?.message || 'Failed to delete annotation.')
+    setAllAnnotations((prev) => prev.filter((a) => a.id !== annotationId))
+    setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
+    const bpId = blueprint.id
+    const op = async () => {
+      try {
+        const backup = getBackupData()
+        if (!backup) return
+        await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
+        onAnnotationsChanged?.()
+      } catch (e: any) {
+        setError(e?.message || 'Failed to delete annotation.')
+        loadAnnotations()
+      }
     }
+    mutationQueueRef.current = mutationQueueRef.current.then(op)
   }, [blueprint?.id, loadAnnotations, onAnnotationsChanged])
 
   const jumpToPage = useCallback(() => {
@@ -3938,8 +3965,8 @@ export default function OperationsBlueprintPdfViewer({
                           const hatchPattern = meta.hatchPattern || 'none'
                           if (kind === 'line' || kind === 'arrow') {
                             return (
-                              <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
-                                <svg className={`absolute inset-0 overflow-visible ${isFocused ? 'ring-2 ring-white/80' : ''}`} width="100%" height="100%" preserveAspectRatio="none">
+                              <div key={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                                <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" preserveAspectRatio="none">
                                   <defs>
                                     <marker id={`arrow-${a.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
                                       <path d="M0,0 L8,4 L0,8 z" fill={borderColor} />
@@ -3953,13 +3980,14 @@ export default function OperationsBlueprintPdfViewer({
                             )
                           }
                           return (
-                            <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
-                                className={`w-full h-full pointer-events-none ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                                className="w-full h-full pointer-events-none"
                                 style={{
+                                  opacity: fillOpacity,
                                   border: `${borderThickness}px ${borderStyle} ${borderColor}`,
                                   borderRadius: kind === 'circle' ? '9999px' : '0.25rem',
-                                  background: getHatchBackground(hatchPattern, borderColor, fillColor, fillOpacity),
+                                  background: getHatchBackground(hatchPattern, borderColor, fillColor, 1),
                                   backgroundSize: hatchPattern === 'dots' ? '8px 8px' : undefined,
                                 }}
                               />
@@ -4017,6 +4045,10 @@ export default function OperationsBlueprintPdfViewer({
                                         e.preventDefault()
                                         e.stopPropagation()
                                         cancelTextBoxEditSession()
+                                      }
+                                      if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault()
+                                        void saveTextBoxEditSession()
                                       }
                                     }}
                                     onPointerDown={(e) => e.stopPropagation()}
