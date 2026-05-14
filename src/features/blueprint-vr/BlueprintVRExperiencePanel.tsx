@@ -380,21 +380,33 @@ function ScanStatusBanner({
   scan,
   fullSetScan,
   fromCache,
+  sourceLabel,
+  sourceType,
 }: {
   scan: BlueprintPlanScanResult
   fullSetScan?: BlueprintFullSetScanResult
   fromCache?: boolean
+  sourceLabel?: string
+  sourceType?: string
 }) {
-  const top = scan.warnings.slice(0, 3)
-  const accent = scan.isFallback ? '#FFB347' : '#7BE5D8'
-  const baseLabel = scan.isFallback ? 'SCAN RESULT · INFERRED' : 'SCAN RESULT · MEASURED'
-  const labelText = fromCache ? `${baseLabel} · CACHED` : baseLabel
-  const sheetSummary = fullSetScan
-    ? `${fullSetScan.classifications.length} sheets · ` +
-      `${fullSetScan.bestFloorPlanSheet ? 'floor plan ✓' : 'no floor-plan sheet'} · ` +
-      `${fullSetScan.bestElectricalSheets.length} electrical · ` +
-      `${fullSetScan.bestRenderingSheets.length} render`
-    : null
+  const top = scan.warnings.slice(0, 5)
+  const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
+  const resultLabel =
+    resultKind === 'measured-trace'
+      ? 'Measured Trace'
+      : resultKind === 'cached-inferred'
+      ? 'Cached Inferred'
+      : resultKind === 'inferred'
+      ? 'Inferred'
+      : 'Fallback'
+  const accent =
+    resultKind === 'measured-trace' ? '#7BE5D8' : resultKind === 'fallback' ? '#FF9966' : '#FFB347'
+  const sheetCounts = fullSetScan?.sheetRoleCounts
+  const confidenceBreakdown = scan.confidenceBreakdown || fullSetScan?.confidenceBreakdown
+  const selectedFloorPlan = scan.selectedFloorPlanSheet || fullSetScan?.bestFloorPlanSheet || null
+  const traceStatus = scan.traceStatus || 'missing'
+  const scaleStatus = scan.scaleStatus || 'default'
+
   return (
     <div
       style={{
@@ -411,19 +423,37 @@ function ScanStatusBanner({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ color: accent, fontWeight: 700, letterSpacing: 0.8 }}>{labelText}</span>
+        <span style={{ color: accent, fontWeight: 700, letterSpacing: 0.8 }}>SCANNER STATUS</span>
         <span style={{ opacity: 0.6 }}>
-          {scan.layoutContext.replace(/-/g, ' ')} · {(scan.confidence * 100).toFixed(0)}% confidence
+          VR Source: {sourceLabel || 'Unknown'}{sourceType ? ` · ${sourceType}` : ''}
         </span>
         <span style={{ opacity: 0.5 }}>
-          {Math.round(scan.footprint.width)}'-0" W × {Math.round(scan.footprint.height)}'-0" D · {scan.rooms.length} rooms
+          Scan Result: {fromCache && resultLabel !== 'Cached Inferred' ? `Cached ${resultLabel}` : resultLabel} · {(scan.confidence * 100).toFixed(0)}%
         </span>
       </div>
-      {sheetSummary && (
-        <div style={{ opacity: 0.65, fontSize: 9.5, color: 'rgba(170,220,235,0.85)' }}>
-          Full-set scan: {sheetSummary}
+
+      <div style={{ opacity: 0.72, fontSize: 9.5, color: 'rgba(200,230,240,0.9)' }}>
+        Selected floor plan: {selectedFloorPlan
+          ? `Pg ${selectedFloorPlan.pageNumber} · ${selectedFloorPlan.sheetNumber || '(no #)'} · ${selectedFloorPlan.sheetTitle || '(no title)'} · ${Math.round(selectedFloorPlan.confidence * 100)}%`
+          : 'Not selected (missing reliable floor-plan sheet metadata)'}
+      </div>
+
+      {sheetCounts && (
+        <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
+          Roles: floor plan {sheetCounts.floorPlan} · electrical/power {sheetCounts.electricalPower} · rendering {sheetCounts.rendering} · interior elevation {sheetCounts.interiorElevation} · finish/material {sheetCounts.finishMaterial} · schedule {sheetCounts.schedule} · unknown {sheetCounts.unknown}
         </div>
       )}
+
+      <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
+        Trace: {traceStatus} · Scale: {scaleStatus} · Geometry: walls {scan.walls.length}, openings {scan.openings.length}, rooms {scan.rooms.length}
+      </div>
+
+      {confidenceBreakdown && (
+        <div style={{ opacity: 0.72, fontSize: 9.2, lineHeight: 1.4, color: 'rgba(170,220,235,0.92)' }}>
+          Confidence points ({confidenceBreakdown.totalPercent}%): source {confidenceBreakdown.items.sourceSetSelected} · classify {confidenceBreakdown.items.sheetsClassified} · floor plan {confidenceBreakdown.items.floorPlanSheetSelected} · scale {confidenceBreakdown.items.scaleDetected} · dimensions {confidenceBreakdown.items.dimensionsDetected} · trace {confidenceBreakdown.items.vectorTraceAvailable} · walls {confidenceBreakdown.items.wallCandidatesFound} · openings {confidenceBreakdown.items.openingsFound} · rooms {confidenceBreakdown.items.roomsValidated} · elevations {confidenceBreakdown.items.elevationsMatched} · electrical {confidenceBreakdown.items.electricalSheetsMatched}
+        </div>
+      )}
+
       {top.map((w, i) => (
         <div key={i} style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.35 }}>
           • {w.message}
@@ -631,12 +661,11 @@ export default function BlueprintVRExperiencePanel({
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
-    const measured = !scanResult.isFallback
-    if (fromCache) return measured ? 'cached-measured' : 'cached-inferred'
-    if (measured) return 'measured'
-    if (scanResult.layoutContext === 'generic') return 'fallback'
-    return 'inferred'
-  }, [fromCache, scanResult.isFallback, scanResult.layoutContext])
+    const kind = scanResult.scanResultKind || (scanResult.isFallback ? 'fallback' : 'measured-trace')
+    if (kind === 'measured-trace') return fromCache ? 'cached-measured' : 'measured'
+    if (kind === 'fallback') return 'fallback'
+    return fromCache ? 'cached-inferred' : 'inferred'
+  }, [fromCache, scanResult.scanResultKind, scanResult.isFallback])
 
   const scanSummary = useMemo(() => {
     const w = Math.round(scanResult.footprint.width)
@@ -739,19 +768,19 @@ export default function BlueprintVRExperiencePanel({
                 style={{
                   padding: '1px 6px',
                   borderRadius: 3,
-                  background: scanResult.isFallback
-                    ? 'rgba(255,179,71,0.10)'
-                    : 'rgba(123,229,216,0.10)',
-                  border: scanResult.isFallback
-                    ? '1px solid rgba(255,179,71,0.4)'
-                    : '1px solid rgba(123,229,216,0.4)',
-                  color: scanResult.isFallback ? '#FFD0A0' : '#9EF0E2',
+                  background: (scanResult.scanResultKind === 'measured-trace')
+                    ? 'rgba(123,229,216,0.10)'
+                    : 'rgba(255,179,71,0.10)',
+                  border: (scanResult.scanResultKind === 'measured-trace')
+                    ? '1px solid rgba(123,229,216,0.4)'
+                    : '1px solid rgba(255,179,71,0.4)',
+                  color: (scanResult.scanResultKind === 'measured-trace') ? '#9EF0E2' : '#FFD0A0',
                   fontSize: 9,
                   letterSpacing: 0.6,
                   textTransform: 'uppercase',
                 }}
               >
-                Scan: {scanResult.isFallback ? 'Inferred' : 'Measured'} ·{' '}
+                Scan: {scanResult.scanResultKind === 'measured-trace' ? 'Measured Trace' : 'Inferred'} ·{' '}
                 {Math.round((scanResult.confidence || 0) * 100)}%
               </span>
               <span style={{ color: 'rgba(0,221,204,0.4)' }}>
@@ -886,7 +915,13 @@ export default function BlueprintVRExperiencePanel({
               />
             )}
 
-            <ScanStatusBanner scan={scanResult} fullSetScan={fullSetScan} fromCache={fromCache} />
+            <ScanStatusBanner
+              scan={scanResult}
+              fullSetScan={fullSetScan}
+              fromCache={fromCache}
+              sourceLabel={selectedSourceSet?.name || sourceBlueprint.name}
+              sourceType={selectedSourceSet?.type}
+            />
 
             {viewMode === 'plan' && (
               <MeasuredPlanViewer

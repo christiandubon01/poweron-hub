@@ -163,8 +163,12 @@ export default function BlueprintAI() {
           sheetNumber: row.sheetNumber,
           sheetTitle: row.sheetTitle,
           sheetLabel: row.sheetLabel,
+          label: row.sheetLabel || row.sheetNumber,
           discipline: row.discipline,
           fileName: item.fileName,
+          sourceSetName: item.title,
+          sourceSetType: item.type,
+          blueprintTitle: item.title,
         })),
       }
     })
