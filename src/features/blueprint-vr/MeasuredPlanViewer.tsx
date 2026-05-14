@@ -84,6 +84,65 @@ interface WallStyle {
   dash?: string
 }
 
+interface FurnitureSymbol {
+  shape: 'rect' | 'circle'
+  widthFt: number
+  depthFt: number
+  fill: string
+  stroke: string
+  opacity: number
+  shortLabel?: string
+}
+
+/**
+ * Map an equipment hint kind to a tiny in-plan furniture symbol. Keeps the
+ * 2D plan reading as a CAD-style architectural floor plan instead of just
+ * colored room rectangles.
+ */
+function furnitureSymbol(
+  kind: NonNullable<BuildingRoomModel['equipmentHints']>[number]['kind'],
+): FurnitureSymbol | null {
+  switch (kind) {
+    case 'reception-counter':
+      return { shape: 'rect', widthFt: 6, depthFt: 2, fill: '#2a2118', stroke: '#c4a873', opacity: 0.9, shortLabel: 'COUNTER' }
+    case 'waiting-couch':
+      return { shape: 'rect', widthFt: 4.5, depthFt: 2, fill: '#26303f', stroke: '#9a8d80', opacity: 0.9, shortLabel: 'SOFA' }
+    case 'waiting-chair':
+      return { shape: 'rect', widthFt: 1.8, depthFt: 1.8, fill: '#26303f', stroke: '#9a8d80', opacity: 0.9 }
+    case 'side-table':
+      return { shape: 'rect', widthFt: 1.4, depthFt: 1.4, fill: '#3a2e1f', stroke: '#c4a873', opacity: 0.85 }
+    case 'styling-chair':
+      return { shape: 'rect', widthFt: 2, depthFt: 2, fill: '#1d2230', stroke: '#c4a873', opacity: 0.85, shortLabel: 'CHAIR' }
+    case 'styling-mirror':
+      return { shape: 'rect', widthFt: 0.4, depthFt: 2.6, fill: '#0a1018', stroke: '#d7c084', opacity: 1, shortLabel: 'MIR' }
+    case 'vanity-counter':
+      return { shape: 'rect', widthFt: 2.6, depthFt: 1.4, fill: '#3a2e1f', stroke: '#c4a873', opacity: 0.85 }
+    case 'wash-sink':
+    case 'shampoo-bowl':
+      return { shape: 'circle', widthFt: 2.2, depthFt: 2.2, fill: '#d7e2ef', stroke: '#86a8c4', opacity: 0.95, shortLabel: 'BOWL' }
+    case 'restroom-sink':
+      return { shape: 'rect', widthFt: 1.6, depthFt: 1.2, fill: '#d7e2ef', stroke: '#86a8c4', opacity: 0.95, shortLabel: 'SINK' }
+    case 'toilet':
+      return { shape: 'rect', widthFt: 1.4, depthFt: 2, fill: '#eef3f8', stroke: '#86a8c4', opacity: 0.95, shortLabel: 'WC' }
+    case 'utility-panel':
+      return { shape: 'rect', widthFt: 1.6, depthFt: 0.4, fill: '#101820', stroke: '#eab308', opacity: 1, shortLabel: 'PANEL' }
+    case 'service-equipment':
+      return { shape: 'rect', widthFt: 2, depthFt: 1.8, fill: '#1d2230', stroke: '#c4a873', opacity: 0.8 }
+    case 'storage-shelving':
+      return { shape: 'rect', widthFt: 1.2, depthFt: 4, fill: '#2b313c', stroke: '#9a8d80', opacity: 0.85, shortLabel: 'SHELF' }
+    case 'storefront-sign':
+      return { shape: 'rect', widthFt: 4, depthFt: 0.4, fill: '#6b4a26', stroke: '#c4a873', opacity: 0.7 }
+    case 'decor-wall':
+      return { shape: 'rect', widthFt: 4, depthFt: 0.4, fill: '#6b4a26', stroke: '#c4a873', opacity: 0.7 }
+    case 'overhead-light':
+    case 'track-light':
+    case 'chandelier':
+      return null
+    default:
+      return null
+  }
+}
+
 function styleForWall(wall: BuildingWallModel, selected: boolean): WallStyle {
   const kind = wall.kind || 'partition'
   if (kind === 'exterior') {
@@ -438,8 +497,10 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           ),
         )}
 
-        {/* Wall thickness / kind annotation for the selected room */}
-        {showDimensions && selectedRoomId &&
+        {/* Wall thickness / kind annotation for the selected room — only when
+            both Dimensions and Labels are enabled, so the "Show Labels" toggle
+            consistently hides every text annotation in the plan. */}
+        {showDimensions && showRoomLabels && selectedRoomId &&
           allWalls
             .filter(({ room }) => room.id === selectedRoomId)
             .slice(0, 4)
@@ -464,6 +525,70 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
                 </text>
               )
             })}
+
+        {/* Furniture / fixture footprint symbols. These map an equipment hint
+            to a tiny rectangle so the 2D plan reads as a CAD plan and not just
+            colored rectangles. Symbols are independent of the labels toggle —
+            their text labels follow it. */}
+        {allRooms.map((room) => {
+          const hints = room.equipmentHints || []
+          if (!hints.length) return null
+          const w = room.bounds.max.x - room.bounds.min.x
+          const d = room.bounds.max.y - room.bounds.min.y
+          return (
+            <g key={`furn-${room.id}`}>
+              {hints.map((h, hi) => {
+                const sym = furnitureSymbol(h.kind)
+                if (!sym) return null
+                const nx = h.positionNormalized?.x ?? 0.5
+                const ny = h.positionNormalized?.y ?? 0.5
+                const cx = offsetX + (room.bounds.min.x + nx * w) * scalePerFoot
+                const cy = offsetY + (room.bounds.min.y + ny * d) * scalePerFoot
+                const wPx = sym.widthFt * scalePerFoot
+                const hPx = sym.depthFt * scalePerFoot
+                return (
+                  <g key={`${room.id}-furn-${hi}`} pointerEvents="none">
+                    {sym.shape === 'circle' ? (
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={Math.max(2, Math.min(wPx, hPx) / 2)}
+                        fill={sym.fill}
+                        stroke={sym.stroke}
+                        strokeWidth={0.8}
+                        opacity={sym.opacity}
+                      />
+                    ) : (
+                      <rect
+                        x={cx - wPx / 2}
+                        y={cy - hPx / 2}
+                        width={wPx}
+                        height={hPx}
+                        rx={1.2}
+                        fill={sym.fill}
+                        stroke={sym.stroke}
+                        strokeWidth={0.8}
+                        opacity={sym.opacity}
+                      />
+                    )}
+                    {showRoomLabels && (room.id === selectedRoomId) && sym.shortLabel && (
+                      <text
+                        x={cx}
+                        y={cy + hPx / 2 + 8}
+                        textAnchor="middle"
+                        fill="rgba(220,230,240,0.7)"
+                        fontSize={7}
+                        fontFamily="monospace"
+                      >
+                        {sym.shortLabel}
+                      </text>
+                    )}
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })}
 
         {/* Suite dimension lines */}
         {showDimensions && (
@@ -510,7 +635,8 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           </g>
         )}
 
-        {/* Electrical anchor markers */}
+        {/* Electrical anchor markers — label respects showRoomLabels so the
+            "Show Labels" toggle hides every text annotation in the plan. */}
         {showElectrical &&
           model.electricalAnchors?.map((anchor) => {
             const x = offsetX + anchor.position.x * scalePerFoot

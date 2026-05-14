@@ -604,13 +604,26 @@ export default function Blueprint3DSpaceViewer({
 
     // Walls: render each unique wall once. For simplicity we render the four
     // perimeter walls of each room (interior walls naturally double up where
-    // rooms touch, which gives a believable thickness).
+    // rooms touch, which gives a believable thickness). When a wall is mostly
+    // covered by a pass-through opening we skip the wall mesh so the gap reads
+    // as an actual open archway between rooms.
     for (const room of rooms) {
       for (const wall of room.walls) {
         const dx = wall.end.x - wall.start.x
         const dz = wall.end.y - wall.start.y
         const length = Math.hypot(dx, dz)
         if (length < 0.5) continue
+
+        const passThroughCoverage = wall.openings.reduce((acc, op) => {
+          if (op.subtype !== 'pass-through') return acc
+          const w = op.width.unit === 'ft' ? op.width.value : op.width.value / 12
+          return acc + w
+        }, 0)
+        if (length > 0 && passThroughCoverage / length > 0.7) {
+          // Skip this wall mesh — the room transition is mostly open.
+          continue
+        }
+
         const exterior =
           wall.start.x === buildingModel.footprint.x ||
           wall.end.x === buildingModel.footprint.x ||
@@ -642,8 +655,11 @@ export default function Blueprint3DSpaceViewer({
         )
         buildingGroup.add(wallMesh)
 
-        // Openings (door / window)
+        // Openings (door / window). Pass-through openings represent open
+        // archways between rooms — we skip the block mesh so the gap reads
+        // as actual open space instead of a wood-colored door block.
         for (const opening of wall.openings) {
+          if (opening.subtype === 'pass-through') continue
           const t = Math.min(1, Math.max(0, opening.positionAlongWall.value / length))
           const ox = wall.start.x + dx * t
           const oz = wall.start.y + dz * t

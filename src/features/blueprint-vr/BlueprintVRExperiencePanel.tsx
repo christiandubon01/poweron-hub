@@ -29,6 +29,7 @@ import Blueprint3DSpaceViewer from './Blueprint3DSpaceViewer'
 import MeasuredPlanViewer from './MeasuredPlanViewer'
 import BlueprintRoomInteriorView from './BlueprintRoomInteriorView'
 import BlueprintVRSourceSelector from './BlueprintVRSourceSelector'
+import type { SourceScanAccuracy } from './BlueprintVRSourceSelector'
 import type { BlueprintBuildingModel } from './buildingModel'
 import {
   scanBlueprintPlan,
@@ -378,19 +379,34 @@ function StageItemList({ stage }: { stage: VRStage }) {
 function ScanStatusBanner({
   scan,
   fullSetScan,
+  fromCache,
+  sourceLabel,
+  sourceType,
 }: {
   scan: BlueprintPlanScanResult
   fullSetScan?: BlueprintFullSetScanResult
+  fromCache?: boolean
+  sourceLabel?: string
+  sourceType?: string
 }) {
-  const top = scan.warnings.slice(0, 3)
-  const accent = scan.isFallback ? '#FFB347' : '#7BE5D8'
-  const labelText = scan.isFallback ? 'SCAN · INFERRED' : 'SCAN · MEASURED'
-  const sheetSummary = fullSetScan
-    ? `${fullSetScan.classifications.length} sheets · ` +
-      `${fullSetScan.bestFloorPlanSheet ? 'floor plan ✓' : 'no floor-plan sheet'} · ` +
-      `${fullSetScan.bestElectricalSheets.length} electrical · ` +
-      `${fullSetScan.bestRenderingSheets.length} render`
-    : null
+  const top = scan.warnings.slice(0, 5)
+  const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
+  const resultLabel =
+    resultKind === 'measured-trace'
+      ? 'Measured Trace'
+      : resultKind === 'cached-inferred'
+      ? 'Cached Inferred'
+      : resultKind === 'inferred'
+      ? 'Inferred'
+      : 'Fallback'
+  const accent =
+    resultKind === 'measured-trace' ? '#7BE5D8' : resultKind === 'fallback' ? '#FF9966' : '#FFB347'
+  const sheetCounts = fullSetScan?.sheetRoleCounts
+  const confidenceBreakdown = scan.confidenceBreakdown || fullSetScan?.confidenceBreakdown
+  const selectedFloorPlan = scan.selectedFloorPlanSheet || fullSetScan?.bestFloorPlanSheet || null
+  const traceStatus = scan.traceStatus || 'missing'
+  const scaleStatus = scan.scaleStatus || 'default'
+
   return (
     <div
       style={{
@@ -407,19 +423,37 @@ function ScanStatusBanner({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ color: accent, fontWeight: 700, letterSpacing: 0.8 }}>{labelText}</span>
+        <span style={{ color: accent, fontWeight: 700, letterSpacing: 0.8 }}>SCANNER STATUS</span>
         <span style={{ opacity: 0.6 }}>
-          {scan.layoutContext.replace(/-/g, ' ')} · {(scan.confidence * 100).toFixed(0)}% confidence
+          VR Source: {sourceLabel || 'Unknown'}{sourceType ? ` · ${sourceType}` : ''}
         </span>
         <span style={{ opacity: 0.5 }}>
-          {Math.round(scan.footprint.width)}'-0" W × {Math.round(scan.footprint.height)}'-0" D · {scan.rooms.length} rooms
+          Scan Result: {fromCache && resultLabel !== 'Cached Inferred' ? `Cached ${resultLabel}` : resultLabel} · {(scan.confidence * 100).toFixed(0)}%
         </span>
       </div>
-      {sheetSummary && (
-        <div style={{ opacity: 0.65, fontSize: 9.5, color: 'rgba(170,220,235,0.85)' }}>
-          Full-set scan: {sheetSummary}
+
+      <div style={{ opacity: 0.72, fontSize: 9.5, color: 'rgba(200,230,240,0.9)' }}>
+        Selected floor plan: {selectedFloorPlan
+          ? `Pg ${selectedFloorPlan.pageNumber} · ${selectedFloorPlan.sheetNumber || '(no #)'} · ${selectedFloorPlan.sheetTitle || '(no title)'} · ${Math.round(selectedFloorPlan.confidence * 100)}%`
+          : 'Not selected (missing reliable floor-plan sheet metadata)'}
+      </div>
+
+      {sheetCounts && (
+        <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
+          Roles: floor plan {sheetCounts.floorPlan} · electrical/power {sheetCounts.electricalPower} · rendering {sheetCounts.rendering} · interior elevation {sheetCounts.interiorElevation} · finish/material {sheetCounts.finishMaterial} · schedule {sheetCounts.schedule} · unknown {sheetCounts.unknown}
         </div>
       )}
+
+      <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
+        Trace: {traceStatus} · Scale: {scaleStatus} · Geometry: walls {scan.walls.length}, openings {scan.openings.length}, rooms {scan.rooms.length}
+      </div>
+
+      {confidenceBreakdown && (
+        <div style={{ opacity: 0.72, fontSize: 9.2, lineHeight: 1.4, color: 'rgba(170,220,235,0.92)' }}>
+          Confidence points ({confidenceBreakdown.totalPercent}%): source {confidenceBreakdown.items.sourceSetSelected} · classify {confidenceBreakdown.items.sheetsClassified} · floor plan {confidenceBreakdown.items.floorPlanSheetSelected} · scale {confidenceBreakdown.items.scaleDetected} · dimensions {confidenceBreakdown.items.dimensionsDetected} · trace {confidenceBreakdown.items.vectorTraceAvailable} · walls {confidenceBreakdown.items.wallCandidatesFound} · openings {confidenceBreakdown.items.openingsFound} · rooms {confidenceBreakdown.items.roomsValidated} · elevations {confidenceBreakdown.items.elevationsMatched} · electrical {confidenceBreakdown.items.electricalSheetsMatched}
+        </div>
+      )}
+
       {top.map((w, i) => (
         <div key={i} style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.35 }}>
           • {w.message}
@@ -522,7 +556,7 @@ export default function BlueprintVRExperiencePanel({
   }, [availableSets, selectedSourceSetId])
 
   const sourceKey = selectedSourceSet?.id || sourceBlueprint.id || 'active-sheet'
-  const sourceIsInferred = !initialSourceSetId
+  const userPickedSource = !!initialSourceSetId
   const projectNameForCache =
     projectNameProp || selectedSourceSet?.projectName || job.outputManifest?.projectName || sourceBlueprint.name
 
@@ -625,6 +659,21 @@ export default function BlueprintVRExperiencePanel({
     setWallOpacity(0.82)
   }, [firstRoomId])
 
+  // Compute honest scan accuracy classification for the source selector.
+  const scanAccuracy: SourceScanAccuracy = useMemo(() => {
+    const kind = scanResult.scanResultKind || (scanResult.isFallback ? 'fallback' : 'measured-trace')
+    if (kind === 'measured-trace') return fromCache ? 'cached-measured' : 'measured'
+    if (kind === 'fallback') return 'fallback'
+    return fromCache ? 'cached-inferred' : 'inferred'
+  }, [fromCache, scanResult.scanResultKind, scanResult.isFallback])
+
+  const scanSummary = useMemo(() => {
+    const w = Math.round(scanResult.footprint.width)
+    const d = Math.round(scanResult.footprint.height)
+    const rooms = scanResult.rooms.length
+    return `${scanResult.layoutContext.replace(/-/g, ' ')} · ${w}'-0" W × ${d}'-0" D · ${rooms} rooms`
+  }, [scanResult])
+
   // Always show all 4 stages from STAGE_ORDER — no dependency on manifest
   const visibleStages = [...STAGE_ORDER] as VRStage[]
 
@@ -706,16 +755,40 @@ export default function BlueprintVRExperiencePanel({
               fontSize: 10.5,
               fontFamily: 'monospace',
               letterSpacing: 0.6,
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 8,
             }}>
-              VR Source: {selectedSourceSet?.name || sourceBlueprint.name}
-              {selectedSourceSet?.type ? ` · ${selectedSourceSet.type}` : ''}
-              <span style={{ marginLeft: 12, color: 'rgba(0,221,204,0.4)' }}>
+              <span>
+                VR Source: {selectedSourceSet?.name || sourceBlueprint.name}
+                {selectedSourceSet?.type ? ` · ${selectedSourceSet.type}` : ''}
+              </span>
+              <span
+                style={{
+                  padding: '1px 6px',
+                  borderRadius: 3,
+                  background: (scanResult.scanResultKind === 'measured-trace')
+                    ? 'rgba(123,229,216,0.10)'
+                    : 'rgba(255,179,71,0.10)',
+                  border: (scanResult.scanResultKind === 'measured-trace')
+                    ? '1px solid rgba(123,229,216,0.4)'
+                    : '1px solid rgba(255,179,71,0.4)',
+                  color: (scanResult.scanResultKind === 'measured-trace') ? '#9EF0E2' : '#FFD0A0',
+                  fontSize: 9,
+                  letterSpacing: 0.6,
+                  textTransform: 'uppercase',
+                }}
+              >
+                Scan: {scanResult.scanResultKind === 'measured-trace' ? 'Measured Trace' : 'Inferred'} ·{' '}
+                {Math.round((scanResult.confidence || 0) * 100)}%
+              </span>
+              <span style={{ color: 'rgba(0,221,204,0.4)' }}>
                 {visibleStages.length} stages · {totalItems} catalog items
               </span>
               {fromCache && (
                 <span
                   style={{
-                    marginLeft: 10,
                     padding: '1px 6px',
                     borderRadius: 3,
                     background: 'rgba(123,229,216,0.12)',
@@ -833,13 +906,22 @@ export default function BlueprintVRExperiencePanel({
               <BlueprintVRSourceSelector
                 sets={availableSets}
                 selectedSetId={selectedSourceSet?.id || null}
-                inferred={sourceIsInferred}
+                userSelected={userPickedSource}
+                scanAccuracy={scanAccuracy}
+                scanConfidence={scanResult.confidence}
+                scanSummary={scanSummary}
                 onSelect={handleChangeSource}
                 onRegenerate={handleRescan}
               />
             )}
 
-            <ScanStatusBanner scan={scanResult} fullSetScan={fullSetScan} />
+            <ScanStatusBanner
+              scan={scanResult}
+              fullSetScan={fullSetScan}
+              fromCache={fromCache}
+              sourceLabel={selectedSourceSet?.name || sourceBlueprint.name}
+              sourceType={selectedSourceSet?.type}
+            />
 
             {viewMode === 'plan' && (
               <MeasuredPlanViewer

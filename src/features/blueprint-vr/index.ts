@@ -254,6 +254,8 @@ export type {
   BlueprintFullSetScanInput,
   BlueprintFullSetScanResult,
   FullSetSheetClassification,
+  SelectedFloorPlanSheet,
+  ScanConfidenceBreakdown,
   ExtractedProjectHint,
   EquipmentHint,
   FinishHint,
