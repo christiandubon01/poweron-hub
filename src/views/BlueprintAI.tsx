@@ -630,7 +630,7 @@ export default function BlueprintAI() {
         qualityProfile: 'standard',
       })
 
-      // Start the VR generation
+      // Start the VR generation (manifest attached immediately so panel has data on open)
       vrState.startGeneration({
         projectId: selectedItem.projectId,
         projectName: selectedItem.projectName || selectedItem.title,
@@ -641,14 +641,8 @@ export default function BlueprintAI() {
           },
         ],
         stages: STAGE_ORDER,
+        outputManifest: manifest,
       })
-
-      // Set the manifest on the current job after a brief delay to ensure job is created
-      setTimeout(() => {
-        if (vrState.currentJob) {
-          vrState.currentJob.outputManifest = manifest
-        }
-      }, 100)
 
       // Open the VR panel
       setVrPanelOpen(true)

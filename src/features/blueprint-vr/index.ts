@@ -62,3 +62,7 @@ export {
 export {
   createBlueprintVRSceneManifest,
 } from './sceneManifestBuilder'
+
+// Landscape viewer
+export { default as BlueprintVRLandscapeViewer } from './BlueprintVRLandscapeViewer'
+export type { BlueprintVRLandscapeViewerProps } from './BlueprintVRLandscapeViewer'
