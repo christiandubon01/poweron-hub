@@ -3293,7 +3293,7 @@ export default function OperationsBlueprintPdfViewer({
 
             {/* Ã¢â€â‚¬Ã¢â€â‚¬ Annotate: Text Box Ã‚Â· Text Highlight Ã‚Â· Underline Ã‚Â· Note Ã‚Â· Callout Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'annotate' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-nowrap overflow-x-auto bv-tool-bucket'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
                 <button
                   onClick={(e) => { setToolMode('textBox'); setOpenPopover({ tool: 'textBox', anchorEl: e.currentTarget, mode: 'tool' }) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
@@ -3319,7 +3319,7 @@ export default function OperationsBlueprintPdfViewer({
 
             {/* Ã¢â€â‚¬Ã¢â€â‚¬ Draw / Mark: Pen Ã‚Â· Marker Ã‚Â· Eraser Ã‚Â· Shapes Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'draw' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-nowrap overflow-x-auto bv-tool-bucket'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
                 <button
                   onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
@@ -3352,7 +3352,7 @@ export default function OperationsBlueprintPdfViewer({
 
             {/* Ã¢â€â‚¬Ã¢â€â‚¬ View Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'view' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-nowrap overflow-x-auto bv-tool-bucket'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
                 <button
                   onClick={() => { setToolMode('select'); setOpenPopover(null) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'select' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
@@ -3371,7 +3371,7 @@ export default function OperationsBlueprintPdfViewer({
 
             {/* Ã¢â€â‚¬Ã¢â€â‚¬ Measure Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'measure' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : 'flex flex-nowrap overflow-x-auto bv-tool-bucket'} gap-1.5 pt-0.5`}>
+              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
                 {/* Calibration status badge Ã¢â‚¬â€ shows manual / auto / ambiguous / pending / none */}
                 <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/40 px-2 py-1.5`}>
                   <div className="flex items-center justify-between text-[11px]">
