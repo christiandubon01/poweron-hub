@@ -492,6 +492,8 @@ export default function OperationsBlueprintPdfViewer({
   const textBoxSnapshotRef = useRef<BlueprintAnnotation | null>(null)
   const allAnnotationsRef = useRef<BlueprintAnnotation[]>([])
   const inlineTextOriginalRef = useRef<string>('')
+  const inlineTextBoxEditorRef = useRef<HTMLDivElement | null>(null)
+  const cancelTextBoxEditSessionRef = useRef<() => void>(() => {})
   const focusedAnnotationElRef = useRef<HTMLElement | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
@@ -1126,6 +1128,35 @@ export default function OperationsBlueprintPdfViewer({
     }, 20)
   }, [isEditorOpen, richTextEditor])
 
+  useEffect(() => {
+    if (!inlineTextEditId) {
+      inlineTextBoxEditorRef.current = null
+      return
+    }
+    const el = inlineTextBoxEditorRef.current
+    if (el) {
+      const ann = allAnnotationsRef.current.find((item) => item.id === inlineTextEditId)
+      if (ann) el.textContent = ann.text || ''
+      el.focus()
+    }
+    const frame = requestAnimationFrame(() => {
+      const ann = allAnnotationsRef.current.find((item) => item.id === inlineTextEditId)
+      if (!ann || ann.type !== 'textBox') return
+      const anchorEl = overlayRef.current?.querySelector(`[data-annotation-id="${inlineTextEditId}"]`) as HTMLElement | null
+      if (!anchorEl) return
+      focusedAnnotationElRef.current = anchorEl
+      const r = anchorEl.getBoundingClientRect()
+      setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+      setOpenPopover({
+        tool: 'textBox',
+        anchorEl,
+        mode: 'edit',
+        editingAnnotationId: inlineTextEditId,
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [inlineTextEditId])
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ Fullscreen Policy Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // Fullscreen exits ONLY via:
   //   1. Explicit close button in the header (when isFullScreenView === true)
@@ -1205,7 +1236,11 @@ export default function OperationsBlueprintPdfViewer({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
-      const hasOpenState = !!(noteEditor || richTextEditor || draftRect || dragStart || inkDraft || focusedAnnotationId || layoutEditId)
+      if (inlineTextEditId) {
+        cancelTextBoxEditSessionRef.current()
+        return
+      }
+      const hasOpenState = !!(noteEditor || richTextEditor || draftRect || dragStart || inkDraft || focusedAnnotationId || layoutEditId || openPopover)
       if (hasOpenState) {
         // Annotation UI is open: close it first.
         setDraftRect(null)
@@ -1225,7 +1260,7 @@ export default function OperationsBlueprintPdfViewer({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -1325,6 +1360,76 @@ export default function OperationsBlueprintPdfViewer({
       setError(e?.message || 'Failed to save annotation.')
     }
   }, [loadAnnotations, onAnnotationsChanged])
+
+  const clearTextBoxEditSessionState = useCallback(() => {
+    draftTextBoxIdRef.current = null
+    textBoxSnapshotRef.current = null
+    inlineTextOriginalRef.current = ''
+    setInlineTextEditId(null)
+    setOpenPopover(null)
+  }, [])
+
+  const cancelTextBoxEditSession = useCallback(() => {
+    const editingId = inlineTextEditId
+    if (!editingId) return
+    const isDraft = draftTextBoxIdRef.current === editingId
+    if (isDraft) {
+      setAllAnnotations((prev) => prev.filter((ann) => ann.id !== editingId))
+      setFocusedAnnotationId(null)
+    } else {
+      const snap = textBoxSnapshotRef.current
+      if (snap) {
+        setAllAnnotations((prev) => prev.map((ann) => (ann.id === snap.id ? snap : ann)))
+        setFocusedAnnotationId(snap.id)
+      } else {
+        setAllAnnotations((prev) => prev.map((ann) => (
+          ann.id === editingId ? { ...ann, text: inlineTextOriginalRef.current } : ann
+        )))
+        setFocusedAnnotationId(editingId)
+      }
+    }
+    clearTextBoxEditSessionState()
+  }, [inlineTextEditId, clearTextBoxEditSessionState])
+
+  const saveTextBoxEditSession = useCallback(async () => {
+    if (!blueprint || !inlineTextEditId) return
+    const editingId = inlineTextEditId
+    const current = allAnnotationsRef.current.find((ann) => ann.id === editingId)
+    if (!current || current.type !== 'textBox') {
+      clearTextBoxEditSessionState()
+      return
+    }
+    const now = new Date().toISOString()
+    const meta = getAnnotationMeta(current)
+    const rect = clampRectToPage(current.rect || meta.box || DEFAULT_TEXT_BOX)
+    const isDraft = draftTextBoxIdRef.current === editingId
+    const persistedId = isDraft
+      ? `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+      : current.id
+    const payload = withAnnotationMeta(
+      {
+        ...current,
+        id: persistedId,
+        rect,
+        updatedAt: now,
+      },
+      {
+        ...meta,
+        box: rect,
+        anchor: meta.anchor || { x: rect.x, y: rect.y },
+      },
+    ) as BlueprintAnnotation
+    if (isDraft) {
+      setAllAnnotations((prev) => prev.map((ann) => (ann.id === editingId ? payload : ann)))
+    }
+    setFocusedAnnotationId(persistedId)
+    clearTextBoxEditSessionState()
+    await persistAnnotation(payload)
+  }, [blueprint, inlineTextEditId, clearTextBoxEditSessionState, persistAnnotation])
+
+  useEffect(() => {
+    cancelTextBoxEditSessionRef.current = cancelTextBoxEditSession
+  }, [cancelTextBoxEditSession])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement pending commit processor Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // Must live AFTER persistAnnotation is declared to avoid TDZ ReferenceError.
@@ -1538,13 +1643,10 @@ export default function OperationsBlueprintPdfViewer({
 
 
   const openRichTextEditor = useCallback((annotation: BlueprintAnnotation) => {
+    if (annotation.type === 'textBox') return
     const rect = clampRectToPage(annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
     const meta = getAnnotationMeta(annotation)
     const box = clampRectToPage(meta.box || rect)
-    if (annotation.type === 'textBox') {
-      textBoxSnapshotRef.current = { ...annotation }
-      draftTextBoxIdRef.current = annotation.id
-    }
     setFocusedAnnotationId(annotation.id)
     setLayoutEditId(null)
     setRichTextEditor({
@@ -1612,18 +1714,6 @@ export default function OperationsBlueprintPdfViewer({
       questionType: generateQuestionType,
     })
   }, [toolColors, generateQuestionType, blueprint, currentPage])
-
-  useEffect(() => {
-    const id = draftTextBoxIdRef.current
-    if (!richTextEditor || richTextEditor.annotationType !== 'textBox' || !id) return
-    const box = clampRectToPage({ x: richTextEditor.x, y: richTextEditor.y, w: richTextEditor.w, h: richTextEditor.h })
-    const ts = { ...textStyle, fontWeight: Number(textStyle.fontWeight || 400) }
-    const baseMeta = { box, anchor: richTextEditor.anchor || { x: box.x, y: box.y }, textStyle: ts }
-    setAllAnnotations(prev => prev.map(a => {
-      if (a.id !== id) return a
-      return { ...a, text: richTextEditor.text || '', color: richTextEditor.color || a.color, meta: baseMeta, metadata: baseMeta }
-    }))
-  }, [richTextEditor, textStyle])
 
   const saveRichTextEditor = useCallback(async () => {
     if (!blueprint || !richTextEditor) return
@@ -2522,6 +2612,20 @@ export default function OperationsBlueprintPdfViewer({
     void persistAnnotation(updated)
   }
 
+  const updateEditingTextBoxLocally = (patch: Partial<BlueprintAnnotation> & { textStyle?: Record<string, any> }) => {
+    if (!editingAnnotation || editingAnnotation.type !== 'textBox') return
+    const currentMeta = getAnnotationMeta(editingAnnotation)
+    const { textStyle: textStylePatch, ...annotationPatch } = patch
+    const nextMeta = textStylePatch
+      ? { ...currentMeta, textStyle: { ...(currentMeta.textStyle ?? {}), ...textStylePatch } }
+      : currentMeta
+    const nextAnnotation = withAnnotationMeta(
+      { ...editingAnnotation, ...annotationPatch, updatedAt: new Date().toISOString() },
+      nextMeta
+    ) as BlueprintAnnotation
+    setAllAnnotations((prev) => prev.map((ann) => (ann.id === editingAnnotation.id ? nextAnnotation : ann)))
+  }
+
   // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Per-tool popover content Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const FONT_FAMILIES = [
     { label: 'Helvetica', value: 'Helvetica' },
@@ -2628,8 +2732,12 @@ export default function OperationsBlueprintPdfViewer({
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
       const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
       const updateTs = (patch: Partial<typeof textStyle>) => {
-        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...tsMeta, ...patch } })
-        else setTextStyle((p) => ({ ...p, ...patch }))
+        if (isEdit) {
+          const currentStyle = editingAnnotation ? (getAnnotationMeta(editingAnnotation).textStyle ?? {}) : tsMeta
+          updateEditingTextBoxLocally({ textStyle: { ...currentStyle, ...patch } })
+          return
+        }
+        setTextStyle((p) => ({ ...p, ...patch }))
       }
       return {
         title: 'Text Box',
@@ -2639,12 +2747,9 @@ export default function OperationsBlueprintPdfViewer({
             <ColorRow value={ts.color} onChange={(c) => updateTs({ color: c })} />
             <LabeledSelect label="Font" value={ts.fontFamily ?? 'Helvetica'} options={FONT_FAMILIES}
               onChange={(v) => updateTs({ fontFamily: v })} />
-            <LabeledSelect label="Weight" value={String(ts.fontWeight ?? 400)} options={WEIGHT_OPTIONS}
-              onChange={(v) => updateTs({ fontWeight: Number(v) })} />
             <Stepper label="Size" value={ts.fontSize ?? 14} min={6} max={144} step={0.5} unit="pt"
               onChange={(v) => updateTs({ fontSize: v })} />
             <ToggleRow buttons={[
-              { label: <Bold size={11} />, active: !!(ts.bold), onClick: () => updateTs({ bold: !ts.bold }) },
               { label: <Italic size={11} />, active: !!(ts.italic), onClick: () => updateTs({ italic: !ts.italic }) },
               { label: <Underline size={11} />, active: !!(ts.underline), onClick: () => updateTs({ underline: !ts.underline }) },
             ]} />
@@ -2662,6 +2767,24 @@ export default function OperationsBlueprintPdfViewer({
               onChange={(v) => updateTs({ borderWidth: v })} />
             <LabeledSelect label="Alignment" value={ts.align ?? 'left'} options={ALIGN_OPTIONS}
               onChange={(v) => updateTs({ align: v as 'left' | 'center' | 'right' })} />
+            {isEdit && inlineTextEditId === editingAnnotation?.id && (
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => cancelTextBoxEditSession()}
+                  className="inline-flex min-w-[72px] items-center justify-center gap-1 rounded border border-gray-700 px-2 py-1.5 text-[11px] text-gray-300 hover:bg-white/5"
+                >
+                  <X size={10} /> Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveTextBoxEditSession()}
+                  className="inline-flex min-w-[72px] items-center justify-center rounded bg-blue-600 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500"
+                >
+                  Save
+                </button>
+              </div>
+            )}
           </>
         ),
       }
@@ -3397,7 +3520,7 @@ export default function OperationsBlueprintPdfViewer({
             {toolbarBucket === 'annotate' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
                 <button
-                  onClick={() => { setToolMode('textBox'); openCreateRichTextEditor('textBox', clampRectToPage({ x: 0.1, y: 0.1, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })) }}
+                  onClick={() => { setToolMode('textBox'); setOpenPopover(null) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Type size={12} /> Text Box</button>
                 <button
@@ -3876,70 +3999,56 @@ export default function OperationsBlueprintPdfViewer({
                         if (a.type === 'textBox') {
                           const textMeta = meta.textStyle || {}
                           const isInlineEditing = inlineTextEditId === a.id
+                          const boxFill = textMeta.boxFill ?? textMeta.backgroundColor ?? '#ffffff'
+                          const borderColorResolved = textMeta.borderColor ?? color
+                          const borderWidth = Number(textMeta.borderWidth ?? 1)
+                          const textAlign = textMeta.align ?? 'left'
+                          const textSurfaceStyle = {
+                            color: textMeta.color || '#111827',
+                            fontSize: textMeta.fontSize || 14,
+                            fontWeight: textMeta.bold ? 700 : (textMeta.fontWeight || 400),
+                            fontStyle: textMeta.italic ? 'italic' : undefined,
+                            textDecoration: textMeta.underline ? 'underline' : undefined,
+                            fontFamily: textMeta.fontFamily || 'Helvetica',
+                            textAlign,
+                            lineHeight: 1.25,
+                          }
                           return (
-                            <div key={a.id} className="absolute group" style={{ left, top, width, height }}
+                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }}
                               onClick={selectAnnotation}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation()
-                                inlineTextOriginalRef.current = a.text || ''
-                                setInlineTextEditId(a.id)
-                                setFocusedAnnotationId(a.id)
-                              }}
                             >
                               <div
-                                className={`relative h-full w-full overflow-hidden rounded border shadow-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                                className={`relative h-full w-full overflow-hidden rounded shadow-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
                                 style={{
-                                  borderColor: color,
-                                  backgroundColor: textMeta.backgroundColor || '#ffffff',
-                                  color: textMeta.color || '#111827',
-                                  fontSize: textMeta.fontSize || 14,
-                                  fontWeight: textMeta.fontWeight || 400,
-                                  fontStyle: textMeta.italic ? 'italic' : undefined,
-                                  textDecoration: textMeta.underline ? 'underline' : undefined,
-                                  lineHeight: 1.25,
+                                  borderColor: borderColorResolved === 'transparent' ? 'transparent' : borderColorResolved,
+                                  borderWidth,
+                                  borderStyle: 'solid',
+                                  backgroundColor: boxFill === 'transparent' ? 'transparent' : boxFill,
                                 }}
                               >
                                 {isInlineEditing ? (
-                                  <textarea
-                                    autoFocus
-                                    className="absolute inset-0 w-full h-full resize-none bg-transparent outline-none p-2 border-none"
-                                    style={{ font: 'inherit', lineHeight: 'inherit', color: 'inherit' }}
-                                    defaultValue={a.text || ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value
-                                      setAllAnnotations(prev => prev.map(ann => ann.id === a.id ? { ...ann, text: val } : ann))
-                                    }}
-                                    onBlur={async (e) => {
-                                      const val = e.target.value.trim()
-                                      const isDraft = draftTextBoxIdRef.current === a.id
-                                      if (!val && isDraft) {
-                                        setAllAnnotations(prev => prev.filter(ann => ann.id !== a.id))
-                                        draftTextBoxIdRef.current = null
-                                      } else if (val) {
-                                        await persistAnnotation({ ...a, text: val })
-                                        if (isDraft) draftTextBoxIdRef.current = null
-                                      }
-                                      setInlineTextEditId(null)
+                                  <div
+                                    ref={inlineTextBoxEditorRef}
+                                    contentEditable
+                                    suppressContentEditableWarning
+                                    className="h-full w-full overflow-auto bg-transparent p-2 outline-none whitespace-pre-wrap break-words"
+                                    style={textSurfaceStyle}
+                                    onInput={(e) => {
+                                      const val = e.currentTarget.textContent || ''
+                                      setAllAnnotations((prev) => prev.map((ann) => (ann.id === a.id ? { ...ann, text: val } : ann)))
                                     }}
                                     onKeyDown={(e) => {
                                       if (e.key === 'Escape') {
                                         e.preventDefault()
-                                        const isDraft = draftTextBoxIdRef.current === a.id
-                                        if (isDraft) {
-                                          setAllAnnotations(prev => prev.filter(ann => ann.id !== a.id))
-                                          draftTextBoxIdRef.current = null
-                                          setFocusedAnnotationId(null)
-                                        } else {
-                                          setAllAnnotations(prev => prev.map(ann => ann.id === a.id ? { ...ann, text: inlineTextOriginalRef.current } : ann))
-                                        }
-                                        setInlineTextEditId(null)
+                                        e.stopPropagation()
+                                        cancelTextBoxEditSession()
                                       }
                                     }}
                                     onPointerDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
                                   />
                                 ) : (
-                                  <div className="p-2">{a.text}</div>
+                                  <div className="h-full w-full overflow-auto p-2 whitespace-pre-wrap break-words" style={textSurfaceStyle}>{a.text}</div>
                                 )}
                               </div>
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
@@ -4343,7 +4452,7 @@ export default function OperationsBlueprintPdfViewer({
                         </div>
                       )}
 
-                      {richTextEditor && (
+                      {richTextEditor && richTextEditor.annotationType !== 'textBox' && (
                         <div
                           className="absolute z-40 w-80 rounded-lg border border-gray-700 bg-[#121521] p-3 shadow-2xl"
                           style={{
@@ -4646,7 +4755,24 @@ export default function OperationsBlueprintPdfViewer({
             {fCanStyle && (
               <button
                 type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openStylePopoverForAnnotation(focusedAnn, e.currentTarget as HTMLElement) }}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (focusedAnn.type === 'textBox') {
+                    const snapMeta = getAnnotationMeta(focusedAnn)
+                    textBoxSnapshotRef.current = {
+                      ...focusedAnn,
+                      meta: { ...snapMeta, textStyle: snapMeta.textStyle ? { ...snapMeta.textStyle } : {} },
+                      metadata: { ...snapMeta, textStyle: snapMeta.textStyle ? { ...snapMeta.textStyle } : {} },
+                    }
+                    inlineTextOriginalRef.current = focusedAnn.text || ''
+                    setInlineTextEditId(focusedAnn.id)
+                    const anchorEl = focusedAnnotationElRef.current || (e.currentTarget as HTMLElement)
+                    openStylePopoverForAnnotation(focusedAnn, anchorEl)
+                    return
+                  }
+                  openStylePopoverForAnnotation(focusedAnn, e.currentTarget as HTMLElement)
+                }}
                 className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
                 title="Edit style"
               >
