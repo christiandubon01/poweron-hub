@@ -22,3 +22,7 @@ export {
   getAllStages,
   isValidStage,
 } from './stages'
+
+// ── Component Exports ───────────────────────────────────────────────────────
+export { VRStageProgress } from './VRStageProgress'
+export type { VRStageProgressProps, StageStatus } from './VRStageProgress'
