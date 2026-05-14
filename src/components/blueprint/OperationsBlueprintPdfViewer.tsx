@@ -1,5 +1,6 @@
 ﻿// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ArrowUpRight,
   Bold,
@@ -491,6 +492,7 @@ export default function OperationsBlueprintPdfViewer({
   const textBoxSnapshotRef = useRef<BlueprintAnnotation | null>(null)
   const allAnnotationsRef = useRef<BlueprintAnnotation[]>([])
   const inlineTextOriginalRef = useRef<string>('')
+  const focusedAnnotationElRef = useRef<HTMLElement | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
   // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
@@ -720,6 +722,7 @@ export default function OperationsBlueprintPdfViewer({
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
   const [layoutEditId, setLayoutEditId] = useState<string | null>(null)
   const [inlineTextEditId, setInlineTextEditId] = useState<string | null>(null)
+  const [focusedAnnotationRect, setFocusedAnnotationRect] = useState<{ top: number; left: number; right: number; bottom: number; width: number; height: number } | null>(null)
 
   const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
@@ -1778,6 +1781,12 @@ export default function OperationsBlueprintPdfViewer({
     
     // If suppression window is active (e.g., after a drag/pan), skip annotation creation
     if (Date.now() < suppressAnnotationUntilRef.current) return
+    // Deselect any focused annotation on bare canvas click
+    if (focusedAnnotationId) {
+      setFocusedAnnotationId(null)
+      setLayoutEditId(null)
+      setOpenPopover(null)
+    }
     if (!blueprint || isEditorOpen) return
     if (!overlayRef.current || !displaySize.w || !displaySize.h) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -1801,7 +1810,7 @@ export default function OperationsBlueprintPdfViewer({
         { x: n.x, y: n.y }
       )
     }
-  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor])
+  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor, focusedAnnotationId])
 
   const getTouchPoints = useCallback(() => {
     const points = Array.from(activeTouchPointersRef.current.values())
@@ -2455,6 +2464,46 @@ export default function OperationsBlueprintPdfViewer({
   }
 
   // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Edit-mode helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  // ─── Focused annotation rect tracking ────────────────────────────────────────
+  // Clear rect when nothing is selected
+  useEffect(() => {
+    if (!focusedAnnotationId) {
+      focusedAnnotationElRef.current = null
+      setFocusedAnnotationRect(null)
+    }
+  }, [focusedAnnotationId])
+
+  // Refresh rect on scroll so the bar tracks the annotation as the page scrolls
+  useEffect(() => {
+    const scroll = scrollAreaRef.current
+    if (!scroll) return
+    const update = () => {
+      const el = focusedAnnotationElRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+    }
+    scroll.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update, { passive: true })
+    return () => { scroll.removeEventListener('scroll', update); window.removeEventListener('resize', update) }
+  }, [])
+
+  // Refresh rect after annotations update (e.g., after a drag/move commits the new position)
+  useEffect(() => {
+    const el = focusedAnnotationElRef.current
+    if (!el || !focusedAnnotationId) return
+    const r = el.getBoundingClientRect()
+    setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+  }, [allAnnotations, focusedAnnotationId])
+
+  // Opens the ToolPopover anchored to an explicit element — used by the floating action bar
+  const openStylePopoverForAnnotation = useCallback((annotation: BlueprintAnnotation, anchorEl: HTMLElement) => {
+    const toolKey = annotationTypeToToolKey(annotation.type)
+    if (!toolKey) return
+    setFocusedAnnotationId(annotation.id)
+    setOpenPopover({ tool: toolKey as ToolMode, anchorEl, mode: 'edit', editingAnnotationId: annotation.id })
+  }, [])
+
   const editingAnnotation = openPopover?.editingAnnotationId
     ? (allAnnotations.find(a => a.id === openPopover.editingAnnotationId) ?? null)
     : null
@@ -3746,65 +3795,15 @@ export default function OperationsBlueprintPdfViewer({
                             void removeAnnotation(a.id)
                             return
                           }
+                          const el = e.currentTarget as HTMLElement
+                          focusedAnnotationElRef.current = el
+                          const r = el.getBoundingClientRect()
+                          setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
                           setFocusedAnnotationId(a.id)
                           if (a.type === 'note') {
                             openEditNoteEditor(a)
                           }
                         }
-                        // Opens the ToolPopover (style editor) anchored to a given element.
-                        const openStylePopover = (anchorEl: HTMLElement) => {
-                          const toolKey = annotationTypeToToolKey(a.type)
-                          if (!toolKey) return
-                          setFocusedAnnotationId(a.id)
-                          setOpenPopover({
-                            tool: toolKey as ToolMode,
-                            anchorEl,
-                            mode: 'edit',
-                            editingAnnotationId: a.id,
-                          })
-                        }
-                        const canMove = a.type === 'callout' || a.type === 'generate' || a.type === 'textBox' || a.type === 'shape' || a.type === 'highlight' || a.type === 'textHighlight' || a.type === 'underline' || a.type === 'pen' || a.type === 'marker'
-                        const canStyle = a.type === 'highlight' || a.type === 'textHighlight' || a.type === 'underline' || a.type === 'shape' || a.type === 'pen' || a.type === 'marker' || a.type === 'callout' || a.type === 'generate' || a.type === 'textBox'
-                        const canEditText = a.type === 'textBox' || a.type === 'callout' || a.type === 'generate'
-                        const ActionButtons = ({ className = '' }: { className?: string }) => (
-                          <div
-                            className={`absolute -top-8 right-0 z-50 ${isFocused ? 'flex' : 'hidden'} items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg ${className}`}
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {canMove && (
-                              <button
-                                type="button"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFocusedAnnotationId(a.id); setLayoutEditId((prev) => prev === a.id ? null : a.id) }}
-                                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${isLayoutEditing ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-white/10'}`}
-                                title="Move or resize"
-                              >
-                                <Move size={10} /> Move
-                              </button>
-                            )}
-                            {canStyle && (
-                              <button
-                                type="button"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openStylePopover(e.currentTarget as HTMLElement) }}
-                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
-                                title="Edit"
-                              >
-                                <Pencil size={10} /> Edit
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeAnnotation(a.id) }}
-                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-red-200 hover:bg-red-900/40"
-                              title="Delete annotation"
-                            >
-                              <Trash2 size={10} /> Delete
-                            </button>
-                          </div>
-                        )
 
                         if (a.type === 'pen' || a.type === 'marker') {
                           const points = Array.isArray(meta.points) ? meta.points : []
@@ -3816,9 +3815,6 @@ export default function OperationsBlueprintPdfViewer({
                                 <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} />
                                 <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke' }} onClick={selectAnnotation as any} />
                               </svg>
-                              <div className="absolute" style={{ left: `${clampNorm(handle.x) * 100}%`, top: `${clampNorm(handle.y) * 100}%` }}>
-                                <ActionButtons />
-                              </div>
                             </div>
                           )
                         }
@@ -3830,7 +3826,6 @@ export default function OperationsBlueprintPdfViewer({
                                 className={`${isFocused ? 'ring-2 ring-white/80' : ''}`}
                                 style={{ position: 'absolute', left: 0, right: 0, bottom: 0, borderBottom: `${meta.thickness || 3}px solid ${color}`, opacity: meta.opacity ?? 1 }}
                               />
-                              <ActionButtons />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                             </div>
@@ -3856,7 +3851,6 @@ export default function OperationsBlueprintPdfViewer({
                                   </defs>
                                   <line x1="0" y1="0" x2="100%" y2="100%" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} markerEnd={kind === 'arrow' ? `url(#arrow-${a.id})` : undefined} />
                                 </svg>
-                                <ActionButtons />
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                               </div>
@@ -3873,7 +3867,6 @@ export default function OperationsBlueprintPdfViewer({
                                   backgroundSize: hatchPattern === 'dots' ? '8px 8px' : undefined,
                                 }}
                               />
-                              <ActionButtons />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                             </div>
@@ -3949,7 +3942,6 @@ export default function OperationsBlueprintPdfViewer({
                                   <div className="p-2">{a.text}</div>
                                 )}
                               </div>
-                              {!isInlineEditing && <ActionButtons />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                             </div>
@@ -4007,7 +3999,6 @@ export default function OperationsBlueprintPdfViewer({
                                   {a.type === 'generate' && <div className="mb-1 text-[10px] uppercase tracking-wide text-amber-700">{meta.questionType === 'rfi' ? 'RFI' : 'Coordination'}</div>}
                                   {a.text}
                                 </div>
-                                <ActionButtons />
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 z-10 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 z-20 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                               </div>
@@ -4019,7 +4010,6 @@ export default function OperationsBlueprintPdfViewer({
                           return (
                             <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div className={`w-full h-full pointer-events-none ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ border: `1px solid ${color}`, backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.35) }} />
-                              <ActionButtons />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                             </div>
@@ -4034,7 +4024,6 @@ export default function OperationsBlueprintPdfViewer({
                                 className={`w-full h-full pointer-events-none rounded-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
                                 style={{ backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.4) }}
                               />
-                              <ActionButtons />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                             </div>
@@ -4111,9 +4100,6 @@ export default function OperationsBlueprintPdfViewer({
                                 )}
                                 <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke' }} onClick={selectAnnotation as any} />
                               </svg>
-                              <div className="absolute" style={{ left: `${clampNorm(lastPt.x) * 100}%`, top: `${clampNorm(lastPt.y) * 100}%` }}>
-                                <ActionButtons />
-                              </div>
                             </div>
                           )
                         }
@@ -4128,7 +4114,6 @@ export default function OperationsBlueprintPdfViewer({
                             >
                               N
                             </button>
-                            <ActionButtons />
                           </div>
                         )
                       })}
@@ -4627,6 +4612,59 @@ export default function OperationsBlueprintPdfViewer({
           {_popoverContent.primary}
         </ToolPopover>
       )}
+
+      {/* ── Floating action bar — portal to body so it is never clipped by the scroll container ── */}
+      {focusedAnnotationId && focusedAnnotationRect && !inlineTextEditId && (() => {
+        const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
+        if (!focusedAnn) return null
+        const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
+        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker'
+        const fCanStyle = focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'shape' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker' || focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox'
+        const BAR_APPROX_H = 34
+        const GAP = 6
+        const aboveTop = focusedAnnotationRect.top - GAP - BAR_APPROX_H
+        const barTop = aboveTop >= 8 ? aboveTop : focusedAnnotationRect.bottom + GAP
+        const barCenterX = focusedAnnotationRect.left + focusedAnnotationRect.width / 2
+        const barLeft = Math.max(8, Math.min(window.innerWidth - 200, barCenterX - 80))
+        const bar = (
+          <div
+            style={{ position: 'fixed', top: barTop, left: barLeft, zIndex: 9998 }}
+            className="flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {fCanMove && (
+              <button
+                type="button"
+                onClick={() => { setLayoutEditId((prev) => prev === focusedAnn.id ? null : focusedAnn.id) }}
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${isLayoutEditingFocused ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-white/10'}`}
+                title="Move or resize"
+              >
+                <Move size={10} /> Move
+              </button>
+            )}
+            {fCanStyle && (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openStylePopoverForAnnotation(focusedAnn, e.currentTarget as HTMLElement) }}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
+                title="Edit style"
+              >
+                <Pencil size={10} /> Edit
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFocusedAnnotationId(null); void removeAnnotation(focusedAnn.id) }}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-red-200 hover:bg-red-900/40"
+              title="Delete annotation"
+            >
+              <Trash2 size={10} /> Delete
+            </button>
+          </div>
+        )
+        return createPortal(bar, document.body)
+      })()}
     </div>
   )
 }
