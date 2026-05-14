@@ -22,3 +22,6 @@ export {
   getAllStages,
   isValidStage,
 } from './stages'
+
+// ── Component Exports ───────────────────────────────────────────────────────
+export { default as BlueprintVRExperiencePanel } from './BlueprintVRExperiencePanel'
