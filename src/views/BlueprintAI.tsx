@@ -30,6 +30,10 @@ import {
   MAX_DERIVED_SELECTION_PAGES,
 } from '@/services/blueprintDerivedSetService'
 import { exportAnnotatedBlueprintPdf } from '@/services/blueprintAnnotationExportService'
+import BlueprintVRExperiencePanel from '@/features/blueprint-vr/BlueprintVRExperiencePanel'
+import { useBlueprintVRGeneration } from '@/features/blueprint-vr/useBlueprintVRGeneration'
+import { createBlueprintVRSceneManifest } from '@/features/blueprint-vr/sceneManifestBuilder'
+import { STAGE_ORDER } from '@/features/blueprint-vr/stages'
 
 const BLUEPRINT_TYPES: BlueprintLibraryType[] = ['Full Set', 'Electrical Only', 'Plumbing Only', 'Mechanical Only', 'Reference Sheet', 'Other']
 const DISCIPLINES = ['General', 'Architectural', 'Electrical', 'Plumbing', 'Mechanical', 'Fire Alarm', 'Structural', 'Civil', 'Other'] as const
@@ -95,7 +99,10 @@ export default function BlueprintAI() {
   const [derivedPanelOpen, setDerivedPanelOpen] = useState(false)
   const [libraryProjectFilter, setLibraryProjectFilter] = useState<string>('all')
   const [librarySearch, setLibrarySearch] = useState('')
+  const [vrPanelOpen, setVrPanelOpen] = useState(false)
+  const [vrGeneratingError, setVrGeneratingError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const vrState = useBlueprintVRGeneration()
 
   const selectedItem = library.find(x => x.id === selectedId) || null
   const totals = useMemo(() => {
@@ -595,6 +602,61 @@ export default function BlueprintAI() {
     })
   }
 
+  async function handleGenerateVR() {
+    setVrGeneratingError(null)
+    
+    if (!selectedItem) {
+      setVrGeneratingError('Select a blueprint set first.')
+      return
+    }
+
+    try {
+      // Create the scene manifest from selected blueprint
+      const manifest = createBlueprintVRSceneManifest({
+        projectId: selectedItem.projectId || 'unknown',
+        projectName: selectedItem.projectName || selectedItem.title || 'Unknown Project',
+        discipline: 'electrical',
+        stages: STAGE_ORDER,
+        sourceBlueprints: [
+          {
+            id: selectedItem.id,
+            name: selectedItem.title,
+            filePath: selectedItem.storagePath,
+            fileSize: selectedItem.fileSize,
+            uploadedAt: selectedItem.uploadedAt,
+            format: 'pdf',
+          },
+        ],
+        qualityProfile: 'standard',
+      })
+
+      // Start the VR generation
+      vrState.startGeneration({
+        projectId: selectedItem.projectId,
+        projectName: selectedItem.projectName || selectedItem.title,
+        sourceBlueprints: [
+          {
+            id: selectedItem.id,
+            name: selectedItem.title,
+          },
+        ],
+        stages: STAGE_ORDER,
+      })
+
+      // Set the manifest on the current job after a brief delay to ensure job is created
+      setTimeout(() => {
+        if (vrState.currentJob) {
+          vrState.currentJob.outputManifest = manifest
+        }
+      }, 100)
+
+      // Open the VR panel
+      setVrPanelOpen(true)
+    } catch (e: any) {
+      setVrGeneratingError(e?.message || 'Failed to generate VR experience.')
+    }
+  }
+
   return (
     <div className="w-full max-w-none min-w-0 px-6 py-6 flex flex-col gap-5">
       <div className="flex items-center justify-between gap-3">
@@ -730,6 +792,15 @@ export default function BlueprintAI() {
           >
             <p className="text-sm font-semibold">Create Derived Set</p>
             <p className="text-xs text-gray-500 mt-1">{selectedPages.length} selected pages</p>
+          </button>
+
+          <button
+            onClick={handleGenerateVR}
+            disabled={!selectedItem}
+            className={`rounded-xl border px-4 py-3 text-left ${!selectedItem ? 'border-gray-800/50 text-gray-600 cursor-not-allowed' : 'border-cyan-700 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-950/35'}`}
+          >
+            <p className="text-sm font-semibold">Generate VR</p>
+            <p className="text-xs text-gray-500 mt-1">3D construction landscape</p>
           </button>
         </div>
       </div>
@@ -1275,6 +1346,26 @@ export default function BlueprintAI() {
             </div>
           </div>
         </div>
+      )}
+
+      {vrGeneratingError && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm rounded-lg border border-red-800/40 bg-red-900/20 p-3">
+          <p className="text-sm text-red-300">{vrGeneratingError}</p>
+        </div>
+      )}
+
+      {vrPanelOpen && vrState.currentJob && (
+        <BlueprintVRExperiencePanel
+          job={vrState.currentJob}
+          sourceBlueprint={{
+            id: selectedItem?.id || 'unknown',
+            name: selectedItem?.title || 'Unknown',
+          }}
+          onClose={() => {
+            setVrPanelOpen(false)
+            vrState.resetGeneration()
+          }}
+        />
       )}
     </div>
   )
