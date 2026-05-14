@@ -571,6 +571,107 @@ export function buildTracePayloadFromPageSnapshot(
   }
 }
 
+export interface TracePlanUsabilityInput {
+  traceDebug: {
+    rawLines: number
+    mergedWalls: number
+    openings: number
+    roomCandidates: number
+  }
+  inferredDimensions: {
+    widthFt: number
+    depthFt: number
+  }
+  filteredPlanLines: number
+  pageBounds?: { width: number; height: number } | null
+  footprint?: { width: number; height: number } | null
+}
+
+export interface TracePlanUsabilityResult {
+  usable: boolean
+  reason?: string
+}
+
+/**
+ * Decide whether direct PDF trace is good enough to drive the user-facing 2D plan.
+ * Rejects noisy sheet-border traces that do not resemble the AP-01 salon suite.
+ */
+export function isTracePlanUsableForPrimary2D(
+  input: TracePlanUsabilityInput,
+): TracePlanUsabilityResult {
+  const {
+    traceDebug,
+    inferredDimensions,
+    filteredPlanLines,
+    pageBounds,
+    footprint,
+  } = input
+  const { rawLines, mergedWalls, openings, roomCandidates } = traceDebug
+  const { widthFt, depthFt } = inferredDimensions
+
+  const pageBorderLikely =
+  (pageBounds &&
+    footprint &&
+    pageBounds.width > 0 &&
+    pageBounds.height > 0 &&
+    footprint.width / pageBounds.width >= 0.9 &&
+    footprint.height / pageBounds.height >= 0.9) ||
+  depthFt > 65 ||
+  widthFt > 25
+
+  const notEnoughRoomsOrOpenings = roomCandidates < 5 || openings < 2
+
+  if (rawLines <= 0) {
+    return { usable: false, reason: 'Trace rejected: no raw vector lines were extracted.' }
+  }
+  if (filteredPlanLines <= 20) {
+    return {
+      usable: false,
+      reason: 'Trace rejected: filtered plan lines are too sparse for a tenant suite.',
+    }
+  }
+  if (notEnoughRoomsOrOpenings) {
+    return {
+      usable: false,
+      reason:
+        'Trace rejected: detected page/sheet boundary but not enough rooms/openings.',
+    }
+  }
+  if (widthFt < 15 || widthFt > 25) {
+    return {
+      usable: false,
+      reason: `Trace rejected: suite width ${widthFt.toFixed(1)} ft is outside the 15–25 ft salon band.`,
+    }
+  }
+  if (depthFt < 40 || depthFt > 65) {
+    return {
+      usable: false,
+      reason: `Trace rejected: suite depth ${depthFt.toFixed(1)} ft is outside the 40–65 ft salon band.`,
+    }
+  }
+  if (pageBorderLikely) {
+    return {
+      usable: false,
+      reason:
+        'Trace rejected: detected page/sheet boundary but not enough rooms/openings.',
+    }
+  }
+  if (depthFt / Math.max(widthFt, 0.1) < 2) {
+    return {
+      usable: false,
+      reason: 'Trace rejected: extracted geometry does not resemble a long narrow tenant suite.',
+    }
+  }
+  if (mergedWalls < 4) {
+    return {
+      usable: false,
+      reason: 'Trace rejected: wall graph is too weak to form a reliable salon layout.',
+    }
+  }
+
+  return { usable: true }
+}
+
 export function inferScaleFromTraceText(textRuns: PdfTraceTextRun[]): PdfTraceScaleHint | null {
   const combined = (textRuns || []).map((t) => t.text).join(' ')
   const m = combined.match(/(\d+)\s*\/\s*(\d+)\s*"\s*=\s*(\d+)\s*'-?0?"/i)

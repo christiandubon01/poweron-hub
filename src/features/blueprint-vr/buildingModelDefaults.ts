@@ -18,7 +18,11 @@
  */
 
 import type { BlueprintBuildingModel } from './buildingModel'
-import { scanBlueprintPlan, convertPlanScanToBuildingModel } from './blueprintPlanScanner'
+import {
+  buildAp01CalibratedSalonPlanScan,
+  scanBlueprintPlan,
+  convertPlanScanToBuildingModel,
+} from './blueprintPlanScanner'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout Type Detection
@@ -179,7 +183,7 @@ export function createAp01CalibratedSalonBuildingModel(
   title?: string,
   projectName?: string,
 ): BlueprintBuildingModel {
-  const scan = scanBlueprintPlan({
+  const scan = buildAp01CalibratedSalonPlanScan({
     projectName: projectName || 'Beauty Salon',
     blueprintTitle: title || 'AP-01 Proposed Dimensioned Plan',
     sheetIndex: [{ pageNumber: 1, sheetTitle: 'AP-01 Proposed Dimensioned Plan' }],

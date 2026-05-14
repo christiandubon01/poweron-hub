@@ -25,6 +25,8 @@ import type {
   BuildingRoomModel,
   BuildingWallModel,
   BuildingOpeningModel,
+  BuildingElectricalAnchorModel,
+  ElectricalAnchorType,
   Point2D,
   Rectangle,
   Bounds2D,
@@ -50,6 +52,7 @@ import {
   inferOpeningCandidatesFromGaps,
   inferScaleFromTraceText,
   inferWallCandidatesFromTrace,
+  isTracePlanUsableForPrimary2D,
 } from './blueprintTraceAdapter'
 import type { PdfTraceLine, PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
 
@@ -358,6 +361,8 @@ export interface BlueprintPlanScanResult {
   plan2DSourceMode?: BlueprintPlan2DSourceMode
   /** Human-readable note when the calibrated AP-01 model is used. */
   calibratedSourceNote?: string
+  /** Why direct PDF trace was rejected for the primary 2D plan, if applicable. */
+  traceRejectionReason?: string
   /** Trace availability state. */
   traceStatus?: 'missing' | 'provided' | 'extracted'
   /** Whether trace extraction was attempted upstream. */
@@ -1042,6 +1047,178 @@ export function chooseSalonSuiteFallbackFromBlueprintContext(
     default:
       return buildGenericLayoutRaw()
   }
+}
+
+function buildCalibratedSalonScanFromFallback(
+  input: BlueprintPlanScanInput,
+  options?: {
+    traceRejectionReason?: string
+    traceDebugCounts?: BlueprintPlanScanResult['traceDebugCounts']
+    traceAvailable?: boolean
+    traceAttempted?: boolean
+    traceWarnings?: Array<{ code: string; message: string }>
+    activePageNumber?: number
+  },
+): BlueprintPlanScanResult {
+  const layoutContext: BlueprintPlanScanResult['layoutContext'] = 'salon-tenant-suite'
+  const projectHint = projectHintForContext(layoutContext)
+  const fb = buildSalonSuiteLayoutRaw()
+  const rooms: PlanRoomCandidate[] = fb.rooms.map((r) => ({
+    id: r.id,
+    label: r.label,
+    type: r.type,
+    bounds: r.bounds,
+    confidence: 0.72,
+    roleHint: r.role,
+  }))
+  const wallsOpenings = buildWallsAndOpeningsFromRooms(
+    fb.footprint,
+    fb.rooms,
+    projectHint.wallThicknessDefaults,
+  )
+  const hintsBundle = buildHintsForContext(layoutContext, fb.rooms)
+  const doorHints: DoorHint[] = wallsOpenings.openings
+    .filter((op) => op.type === 'door')
+    .map((op) => ({
+      id: `${op.id}_hint`,
+      roomId: op.wallId.split('_wall_')[0],
+      widthFt: op.widthFt,
+      swing: op.swing,
+      swingDegrees: op.swingDegrees,
+      confidence: op.confidence,
+    }))
+  const wallHints: WallHint[] = wallsOpenings.walls.map((w) => ({
+    id: `${w.id}_hint`,
+    start: w.start,
+    end: w.end,
+    thicknessFt: w.thicknessFt,
+    kind: w.kind,
+    confidence: w.confidence,
+  }))
+  const confidence = 0.72
+  const dimensions: PlanDimensionCandidate[] = [
+    {
+      id: 'dim-overall-width',
+      start: { x: fb.footprint.x, y: fb.footprint.y + fb.footprint.height + 2 },
+      end: { x: fb.footprint.x + fb.footprint.width, y: fb.footprint.y + fb.footprint.height + 2 },
+      valueFt: fb.footprint.width,
+      label: `18'-0" SUITE WIDTH`,
+      confidence,
+    },
+    {
+      id: 'dim-overall-depth',
+      start: { x: fb.footprint.x + fb.footprint.width + 2, y: fb.footprint.y },
+      end: { x: fb.footprint.x + fb.footprint.width + 2, y: fb.footprint.y + fb.footprint.height },
+      valueFt: fb.footprint.height,
+      label: `50'-0" SUITE DEPTH`,
+      confidence,
+    },
+  ]
+  const warnings: PlanScanWarning[] = [
+    {
+      code: 'SALON_CONTEXT_DETECTED',
+      message:
+        'Using AP-01 calibrated Beauty Salon suite (18 ft × 50 ft) with reception, styling floor, ' +
+        'hair wash, circulation, treatment/back service, restroom, storage, and utility/panel zones.',
+    },
+    {
+      code: 'NARROW_SUITE_ASSUMED',
+      message: 'Suite shape calibrated to the AP-01 Proposed Dimensioned Plan tenant footprint.',
+    },
+  ]
+  if (options?.traceRejectionReason) {
+    warnings.unshift({
+      code: 'AMBIGUOUS_SUITE_SHAPE',
+      message:
+        `Direct PDF trace available but rejected for primary plan: ${options.traceRejectionReason} ` +
+        'Using AP-01 calibrated model.',
+    })
+  }
+  return {
+    footprint: fb.footprint,
+    walls: wallsOpenings.walls,
+    openings: wallsOpenings.openings,
+    rooms,
+    dimensions,
+    warnings,
+    traceLines: [],
+    isFallback: true,
+    confidence,
+    layoutContext,
+    equipmentHints: hintsBundle.equipment,
+    finishHints: hintsBundle.finishes,
+    electricalHints: hintsBundle.electrical,
+    doorHints,
+    wallHints,
+    projectHint,
+    metadata: {
+      projectName: input.projectName,
+      blueprintTitle: input.blueprintTitle,
+      activePageNumber: options?.activePageNumber || input.activePageNumber,
+      totalPages: input.totalPages,
+      generatedAt: new Date().toISOString(),
+    },
+    scanResultKind: 'ap01-calibrated',
+    plan2DSourceMode: 'ap01-calibrated-model',
+    calibratedSourceNote: options?.traceRejectionReason
+      ? 'Using AP-01 calibrated model.'
+      : 'AP-01 calibrated model — PDF trace unavailable',
+    traceRejectionReason: options?.traceRejectionReason,
+    traceStatus: options?.traceAvailable ? 'provided' : 'missing',
+    traceAttempted: options?.traceAttempted,
+    traceAvailable: options?.traceAvailable,
+    traceWarnings: options?.traceWarnings,
+    traceDebugCounts: options?.traceDebugCounts,
+    scaleStatus: 'default',
+    confidenceBreakdown: {
+      totalPoints: Math.round(confidence * 100),
+      totalPercent: Math.round(confidence * 100),
+      confidenceCapReason: options?.traceRejectionReason
+        ? 'Direct PDF trace rejected; AP-01 calibrated model used for primary 2D plan.'
+        : 'AP-01 calibrated model used for primary 2D plan.',
+      items: {
+        sourceSetSelected: 0,
+        sheetsClassified: 0,
+        floorPlanSheetSelected: 0,
+        scaleDetected: 0,
+        dimensionsDetected: 10,
+        vectorTraceAvailable: options?.traceAvailable ? 5 : 0,
+        wallCandidatesFound: 10,
+        openingsFound: 10,
+        roomsValidated: 10,
+        elevationsMatched: 0,
+        electricalSheetsMatched: 0,
+      },
+      reasons: {
+        sourceSetSelected: 'Calibrated AP-01 salon layout.',
+        sheetsClassified: 'Calibrated AP-01 salon layout.',
+        floorPlanSheetSelected: 'Calibrated AP-01 salon layout.',
+        scaleDetected: 'Calibrated suite dimensions (18 ft × 50 ft).',
+        dimensionsDetected: 'Suite and major room dimensions generated from calibrated layout.',
+        vectorTraceAvailable: options?.traceAvailable
+          ? 'Vector trace present but rejected for primary 2D plan.'
+          : 'No vector trace payload provided.',
+        wallCandidatesFound: `Generated ${wallsOpenings.walls.length} wall candidates.`,
+        openingsFound: `Generated ${wallsOpenings.openings.length} opening candidates.`,
+        roomsValidated: `Generated ${rooms.length} room candidates.`,
+        elevationsMatched: 'Not applicable in calibrated single-sheet scan.',
+        electricalSheetsMatched: 'Not applicable in calibrated single-sheet scan.',
+      },
+    },
+  }
+}
+
+/**
+ * Deterministic AP-01 Beauty Salon calibrated scan for the Proposed Dimensioned Plan.
+ */
+export function buildAp01CalibratedSalonPlanScan(
+  input: BlueprintPlanScanInput = {},
+): BlueprintPlanScanResult {
+  return buildCalibratedSalonScanFromFallback({
+    projectName: input.projectName || 'Beauty Salon',
+    blueprintTitle: input.blueprintTitle || 'AP-01 Proposed Dimensioned Plan',
+    ...input,
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -1738,13 +1915,49 @@ export function scanBlueprintPlan(
   }
 
   // 3. Decide whether the trace path can succeed.
-  const traceUsable =
-    !!inferredFootprint &&
-    inferredFootprint.width > 6 &&
-    inferredFootprint.height > 6 &&
-    inferredWalls.length >= 4 &&
-    inferredRooms.length >= 1
+  const traceDebugCounts = {
+    rawLines: traceLines.length + rawSnapshotLineCount,
+    rawRects: rawRectCount,
+    rawPolylines: rawPolylineCount,
+    rawTextRuns: rawTextRunCount,
+    runtimeProviderStatus,
+    operatorListStatus,
+    textContentStatus,
+    mergedWalls: inferredWalls.length,
+    openings: inferredOpenings.length,
+    roomCandidates: inferredRooms.length,
+  }
+  const traceGate = isTracePlanUsableForPrimary2D({
+    traceDebug: traceDebugCounts,
+    inferredDimensions: {
+      widthFt: inferredFootprint?.width ?? 0,
+      depthFt: inferredFootprint?.height ?? 0,
+    },
+    filteredPlanLines: traceLines.length,
+    pageBounds: mergedTracePayload?.pageBounds,
+    footprint: inferredFootprint
+      ? { width: inferredFootprint.width, height: inferredFootprint.height }
+      : null,
+  })
+  const traceUsable = traceGate.usable
   const traceAvailable = traceLines.length > 0
+  const useAp01CalibratedPrimary =
+    layoutContext === 'salon-tenant-suite' &&
+    (!traceUsable || !traceAvailable)
+
+  if (useAp01CalibratedPrimary && traceAvailable && traceGate.reason) {
+    return buildCalibratedSalonScanFromFallback(input, {
+      traceRejectionReason: traceGate.reason,
+      traceDebugCounts: {
+        ...traceDebugCounts,
+        confidenceCapReason: traceGate.reason,
+      },
+      traceAvailable,
+      traceAttempted,
+      traceWarnings,
+      activePageNumber,
+    })
+  }
 
   // 4. If trace not usable, fall back to context layout.
   let footprint: Rectangle
@@ -1844,11 +2057,15 @@ export function scanBlueprintPlan(
     }))
 
     isFallback = true
-    confidence = 0.35
+    confidence = layoutContext === 'salon-tenant-suite' ? 0.72 : 0.35
     if (layoutContext === 'salon-tenant-suite') {
       plan2DSourceMode = 'ap01-calibrated-model'
       scanResultKind = 'ap01-calibrated'
-      calibratedSourceNote = 'AP-01 calibrated model — PDF trace unavailable'
+      calibratedSourceNote = traceAvailable
+        ? traceGate.reason
+          ? 'Using AP-01 calibrated model.'
+          : 'AP-01 calibrated model — PDF trace unavailable'
+        : 'AP-01 calibrated model — PDF trace unavailable'
     } else {
       scanResultKind = 'fallback'
     }
@@ -1965,21 +2182,13 @@ export function scanBlueprintPlan(
     scanResultKind: isFallback ? scanResultKind : 'measured-trace',
     plan2DSourceMode,
     calibratedSourceNote,
+    traceRejectionReason: traceAvailable && !traceUsable ? traceGate.reason : undefined,
     traceStatus: traceAvailable ? (isFallback ? 'provided' : 'extracted') : 'missing',
     traceAttempted,
     traceAvailable,
     traceWarnings,
     traceDebugCounts: {
-      rawLines: traceLines.length + rawSnapshotLineCount,
-      rawRects: rawRectCount,
-      rawPolylines: rawPolylineCount,
-      rawTextRuns: rawTextRunCount,
-      runtimeProviderStatus,
-      operatorListStatus,
-      textContentStatus,
-      mergedWalls: inferredWalls.length,
-      openings: inferredOpenings.length,
-      roomCandidates: inferredRooms.length,
+      ...traceDebugCounts,
       confidenceCapReason,
     },
     scaleStatus: inferredScaleFromText ? 'detected' : isFallback ? 'default' : 'detected',
@@ -2052,6 +2261,54 @@ function openingModelFromCandidate(opening: PlanOpeningCandidate): BuildingOpeni
     subtype: opening.subtype,
     metadata: {
       sourceTag: 'scanner',
+    },
+  }
+}
+
+function electricalAnchorTypeFromHint(
+  kind: ElectricalDeviceHint['kind'],
+): ElectricalAnchorType {
+  switch (kind) {
+    case 'panel':
+      return 'panel'
+    case 'disconnect':
+      return 'disconnect'
+    case 'light':
+      return 'fixture'
+    case 'receptacle':
+    case 'gfci':
+      return 'outlet'
+    default:
+      return 'other'
+  }
+}
+
+function electricalAnchorFromHint(
+  hint: ElectricalDeviceHint,
+  roomById: Map<string, PlanRoomCandidate>,
+): BuildingElectricalAnchorModel | null {
+  const room = hint.roomId ? roomById.get(hint.roomId) : undefined
+  if (!room) return null
+  const nx = hint.positionNormalized?.x ?? 0.5
+  const ny = hint.positionNormalized?.y ?? 0.5
+  const width = room.bounds.max.x - room.bounds.min.x
+  const depth = room.bounds.max.y - room.bounds.min.y
+  const position: Point2D = {
+    x: room.bounds.min.x + nx * width,
+    y: room.bounds.min.y + ny * depth,
+  }
+  return {
+    id: hint.id,
+    type: electricalAnchorTypeFromHint(hint.kind),
+    position,
+    roomId: hint.roomId,
+    roomLabel: room.label,
+    heightAboveFloor: hint.heightInches
+      ? createMeasurement(hint.heightInches, 'in', 'scanner', hint.confidence)
+      : undefined,
+    visible: true,
+    metadata: {
+      notes: hint.sourceTag,
     },
   }
 }
@@ -2141,6 +2398,11 @@ export function convertPlanScanToBuildingModel(
     equipmentByRoom.set(hint.roomId, list)
   }
 
+  const roomById = new Map(scan.rooms.map((room) => [room.id, room]))
+  const electricalAnchors = (scan.electricalHints || [])
+    .map((hint) => electricalAnchorFromHint(hint, roomById))
+    .filter((anchor): anchor is BuildingElectricalAnchorModel => Boolean(anchor))
+
   // Build rooms. Each room owns the 4 walls that form its perimeter plus any
   // standalone divider walls that the scanner attributed to it.
   const rooms: BuildingRoomModel[] = scan.rooms.map((room) => {
@@ -2202,6 +2464,7 @@ export function convertPlanScanToBuildingModel(
     wallHeight,
     ceilingHeight,
     slabThickness,
+    electricalAnchors,
     scale: {
       pixelsPerUnit: 1,
       unit: 'ft',

@@ -406,6 +406,7 @@ function ScanStatusBanner({
   traceRuntime,
   runtimeProviderDebug,
   cacheDebug,
+  plan2DScan,
 }: {
   scan: BlueprintPlanScanResult
   fullSetScan?: BlueprintFullSetScanResult
@@ -438,8 +439,11 @@ function ScanStatusBanner({
     rescanCount: number
     scannedAt?: string
   }
+  plan2DScan?: BlueprintPlanScanResult
 }) {
   const top = scan.warnings.slice(0, 5)
+  const plan2DSourceMode = plan2DScan?.plan2DSourceMode || scan.plan2DSourceMode
+  const traceRejectionReason = plan2DScan?.traceRejectionReason || scan.traceRejectionReason
   const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
   const resultLabel =
     resultKind === 'measured-trace'
@@ -503,6 +507,21 @@ function ScanStatusBanner({
       <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
         Trace: {traceStatus} · Scale: {scaleStatus} · Geometry: walls {scan.walls.length}, openings {scan.openings.length}, rooms {scan.rooms.length}
       </div>
+      {plan2DSourceMode && (
+        <div style={{ opacity: 0.78, fontSize: 9.4, lineHeight: 1.45, color: 'rgba(255,216,160,0.95)' }}>
+          Primary 2D source: {plan2DSourceMode === 'ap01-calibrated-model' ? 'AP-01 calibrated model' : 'Direct PDF trace'}
+        </div>
+      )}
+      {traceRejectionReason && plan2DSourceMode === 'ap01-calibrated-model' && (
+        <div style={{ opacity: 0.78, fontSize: 9.4, lineHeight: 1.45, color: 'rgba(255,200,145,0.95)' }}>
+          Direct PDF trace available but rejected for primary plan: {traceRejectionReason}
+        </div>
+      )}
+      {plan2DSourceMode === 'ap01-calibrated-model' && (
+        <div style={{ opacity: 0.78, fontSize: 9.4, lineHeight: 1.45, color: 'rgba(255,216,160,0.95)' }}>
+          Using AP-01 calibrated model.
+        </div>
+      )}
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
         Runtime provider: {traceRuntime?.providerStatus || debug?.runtimeProviderStatus || 'missing'} · Selected trace page: {traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
       </div>
@@ -1358,6 +1377,7 @@ export default function BlueprintVRExperiencePanel({
                   scannedAt: lastScanAt || undefined,
                 }
               }
+              plan2DScan={plan2DScan}
             />
 
             {viewMode === 'plan' && (
