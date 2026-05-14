@@ -267,6 +267,21 @@ export {
   hasUsableTracePayload,
 } from './pdfVectorTraceExtractor'
 
+export type {
+  BlueprintPdfRuntimeProvider,
+  BlueprintPdfRuntimeLookup,
+  RuntimeTraceForSheetInput,
+  RuntimeTraceForSheetResult,
+} from './blueprintPdfTraceRuntimeBridge'
+export {
+  buildBlueprintPdfRuntimeProviderKey,
+  registerBlueprintPdfRuntimeProvider,
+  unregisterBlueprintPdfRuntimeProvider,
+  getBlueprintPdfRuntimeProvider,
+  getActivePdfTracePageProvider,
+  extractTraceForBlueprintSheet,
+} from './blueprintPdfTraceRuntimeBridge'
+
 // Blueprint plan scanner — deterministic floor-plan scan + fallback
 export type {
   BlueprintPlanScanInput,

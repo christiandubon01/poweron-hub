@@ -43,8 +43,8 @@ import type {
   BlueprintVRSourceSet,
   BlueprintFullSetScanResult,
 } from './blueprintPlanScanner'
-import { extractPdfVectorTraceFromPage } from './pdfVectorTraceExtractor'
 import type { PdfTracePayload } from './pdfTraceTypes'
+import { extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
 import {
   getCachedProjectModel,
   setCachedProjectModel,
@@ -385,12 +385,19 @@ function ScanStatusBanner({
   fromCache,
   sourceLabel,
   sourceType,
+  traceRuntime,
 }: {
   scan: BlueprintPlanScanResult
   fullSetScan?: BlueprintFullSetScanResult
   fromCache?: boolean
   sourceLabel?: string
   sourceType?: string
+  traceRuntime?: {
+    providerStatus: 'available' | 'missing' | 'error'
+    selectedPageNumber: number | null
+    operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
+    textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
+  }
 }) {
   const top = scan.warnings.slice(0, 5)
   const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
@@ -409,6 +416,12 @@ function ScanStatusBanner({
   const selectedFloorPlan = scan.selectedFloorPlanSheet || fullSetScan?.bestFloorPlanSheet || null
   const traceStatus = scan.traceStatus || 'missing'
   const scaleStatus = scan.scaleStatus || 'default'
+  const debug = scan.traceDebugCounts || null
+  const confidenceCapReason =
+    debug?.confidenceCapReason ||
+    confidenceBreakdown?.confidenceCapReason ||
+    confidenceBreakdown?.reasons?.vectorTraceAvailable ||
+    'No cap reason recorded.'
 
   return (
     <div
@@ -449,6 +462,21 @@ function ScanStatusBanner({
 
       <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
         Trace: {traceStatus} · Scale: {scaleStatus} · Geometry: walls {scan.walls.length}, openings {scan.openings.length}, rooms {scan.rooms.length}
+      </div>
+      <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
+        Runtime provider: {traceRuntime?.providerStatus || debug?.runtimeProviderStatus || 'missing'} · Selected trace page: {traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
+      </div>
+      <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
+        Operator list: {traceRuntime?.operatorListStatus || debug?.operatorListStatus || 'unknown'} · Text content: {traceRuntime?.textContentStatus || debug?.textContentStatus || 'unknown'}
+      </div>
+      <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
+        Raw lines {debug?.rawLines ?? 0} · Rectangles {debug?.rawRects ?? 0} · Polylines {debug?.rawPolylines ?? 0} · Text runs {debug?.rawTextRuns ?? 0}
+      </div>
+      <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
+        Wall candidates {debug?.mergedWalls ?? scan.walls.length} · Room candidates {debug?.roomCandidates ?? scan.rooms.length}
+      </div>
+      <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(255,200,145,0.95)' }}>
+        Confidence cap reason: {confidenceCapReason}
       </div>
       {scan.traceAttempted && !scan.traceAvailable && (
         <div style={{ opacity: 0.72, fontSize: 9.4, color: 'rgba(255,180,140,0.95)' }}>
@@ -558,12 +586,18 @@ export default function BlueprintVRExperiencePanel({
     payload: PdfTracePayload | null
     attempted: boolean
     available: boolean
+    providerStatus: 'available' | 'missing' | 'error'
+    operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
+    textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
     warnings: Array<{ code: string; message: string }>
   }>({
     selectedPageNumber: null,
     payload: null,
     attempted: false,
     available: false,
+    providerStatus: 'missing',
+    operatorListStatus: 'unknown',
+    textContentStatus: 'unknown',
     warnings: [],
   })
 
@@ -584,6 +618,9 @@ export default function BlueprintVRExperiencePanel({
         payload: null,
         attempted: false,
         available: false,
+        providerStatus: 'missing',
+        operatorListStatus: 'unknown',
+        textContentStatus: 'unknown',
         warnings: [],
       })
       return
@@ -598,31 +635,39 @@ export default function BlueprintVRExperiencePanel({
         payload: null,
         attempted: false,
         available: false,
+        providerStatus: 'missing',
+        operatorListStatus: 'unknown',
+        textContentStatus: 'unknown',
         warnings: [{ code: 'NO_FLOOR_PLAN_SHEET', message: 'No canonical floor-plan sheet selected for trace extraction.' }],
       })
       return
     }
     void (async () => {
-      const result = await extractPdfVectorTraceFromPage({
+      const runtimeTrace = await extractTraceForBlueprintSheet({
+        projectId: selectedSourceSet.projectId || projectId,
+        sourceSetId: selectedSourceSet.id,
+        blueprintId: selectedSourceSet.id,
         pageNumber: best.pageNumber,
         sheetNumber: best.sheetNumber,
         sheetTitle: best.sheetTitle,
         existingPayload: bestSourceSheet.tracePayload || null,
-        expectedAdapterFields: ['page.getOperatorList', 'page.getTextContent', 'page.getViewport'],
       })
       if (disposed) return
       setTraceExtraction({
-        selectedPageNumber: best.pageNumber,
-        payload: result.payload,
+        selectedPageNumber: runtimeTrace.selectedPageNumber,
+        payload: runtimeTrace.result.payload,
         attempted: true,
-        available: Boolean(result.success),
-        warnings: result.warnings,
+        available: Boolean(runtimeTrace.result.success),
+        providerStatus: runtimeTrace.providerStatus,
+        operatorListStatus: runtimeTrace.operatorListStatus,
+        textContentStatus: runtimeTrace.textContentStatus,
+        warnings: runtimeTrace.result.warnings,
       })
     })()
     return () => {
       disposed = true
     }
-  }, [selectedSourceSet, rescanToken])
+  }, [selectedSourceSet, rescanToken, projectId])
 
   const traceCacheSuffix = traceExtraction.selectedPageNumber
     ? `trace-${traceExtraction.selectedPageNumber}-${traceExtraction.available ? 'ok' : 'none'}`
@@ -1010,6 +1055,12 @@ export default function BlueprintVRExperiencePanel({
               fromCache={fromCache}
               sourceLabel={selectedSourceSet?.name || sourceBlueprint.name}
               sourceType={selectedSourceSet?.type}
+              traceRuntime={{
+                providerStatus: traceExtraction.providerStatus,
+                selectedPageNumber: traceExtraction.selectedPageNumber,
+                operatorListStatus: traceExtraction.operatorListStatus,
+                textContentStatus: traceExtraction.textContentStatus,
+              }}
             />
 
             {viewMode === 'plan' && (

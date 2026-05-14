@@ -344,9 +344,16 @@ export interface BlueprintPlanScanResult {
   /** Lightweight debug counts for trace diagnostics. */
   traceDebugCounts?: {
     rawLines: number
+    rawRects?: number
+    rawPolylines?: number
+    rawTextRuns?: number
+    runtimeProviderStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'
     mergedWalls: number
     openings: number
     roomCandidates: number
+    confidenceCapReason?: string
   }
   /** Selected floor-plan sheet metadata when full-set scan is used. */
   selectedFloorPlanSheet?: SelectedFloorPlanSheet | null
@@ -355,6 +362,7 @@ export interface BlueprintPlanScanResult {
 export interface ScanConfidenceBreakdown {
   totalPoints: number
   totalPercent: number
+  confidenceCapReason?: string
   items: {
     sourceSetSelected: number
     sheetsClassified: number
@@ -1633,6 +1641,13 @@ export function scanBlueprintPlan(
   const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(input.tracePayload)
   const traceLines = adapted.lines
   const traceTextRuns: PdfTraceTextRun[] = input.tracePayload?.textRuns || []
+  const runtimeProviderStatus =
+    input.tracePayload?.runtime?.providerStatus || (traceAttempted ? 'missing' : 'unknown')
+  const operatorListStatus = input.tracePayload?.runtime?.operatorListStatus || 'unknown'
+  const textContentStatus = input.tracePayload?.runtime?.textContentStatus || 'unknown'
+  const rawRectCount = Array.isArray(input.tracePayload?.rects) ? input.tracePayload!.rects.length : 0
+  const rawPolylineCount = Array.isArray(input.tracePayload?.polylines) ? input.tracePayload!.polylines.length : 0
+  const rawTextRunCount = traceTextRuns.length
 
   // 2. When real trace lines exist, try to infer geometry from them.
   let inferredFootprint = inferBuildingFootprintFromTraceLines(traceLines)
@@ -1682,6 +1697,7 @@ export function scanBlueprintPlan(
   let rooms: PlanRoomCandidate[]
   let isFallback: boolean
   let confidence: number
+  let confidenceCapReason = 'No confidence cap applied.'
 
   const projectHint = projectHintForContext(layoutContext)
   let rawRooms: RawRoom[] = []
@@ -1701,6 +1717,7 @@ export function scanBlueprintPlan(
       0.82,
       Math.max(0.4, walls.reduce((acc, w) => acc + w.confidence, 0) / Math.max(1, walls.length)),
     )
+    confidenceCapReason = 'Trace geometry validated with walls + openings + rooms.'
   } else {
     if (!traceAvailable) {
       warnings.push({
@@ -1767,6 +1784,15 @@ export function scanBlueprintPlan(
 
     isFallback = true
     confidence = 0.35
+    if (runtimeProviderStatus !== 'available') {
+      confidenceCapReason = 'Runtime PDF provider missing; cap remains below 60%.'
+    } else if (!traceAvailable && rawTextRunCount > 0) {
+      confidenceCapReason = 'Text content available but no vector primitives; cap remains below 65%.'
+    } else if (!traceAvailable) {
+      confidenceCapReason = 'Runtime provider available but vector primitives unavailable; cap remains below 65%.'
+    } else {
+      confidenceCapReason = 'Vector primitives found but wall/room graph is not validated; cap remains below 75%.'
+    }
 
     if (layoutContext === 'salon-tenant-suite') {
       warnings.push({
@@ -1875,14 +1901,22 @@ export function scanBlueprintPlan(
     traceWarnings,
     traceDebugCounts: {
       rawLines: traceLines.length,
+      rawRects: rawRectCount,
+      rawPolylines: rawPolylineCount,
+      rawTextRuns: rawTextRunCount,
+      runtimeProviderStatus,
+      operatorListStatus,
+      textContentStatus,
       mergedWalls: inferredWalls.length,
       openings: inferredOpenings.length,
       roomCandidates: inferredRooms.length,
+      confidenceCapReason,
     },
     scaleStatus: inferredScaleFromText ? 'detected' : isFallback ? 'default' : 'detected',
     confidenceBreakdown: {
       totalPoints: Math.round(confidence * 100),
       totalPercent: Math.round(confidence * 100),
+      confidenceCapReason,
       items: {
         sourceSetSelected: 0,
         sheetsClassified: 0,
@@ -2690,6 +2724,8 @@ function buildConfidenceBreakdown(params: {
   roleCounts: BlueprintFullSetScanResult['sheetRoleCounts']
   bestElectricalSheets: BlueprintVRSourceSheet[]
 }): ScanConfidenceBreakdown {
+  const runtimeProviderStatus = params.planScan.traceDebugCounts?.runtimeProviderStatus || 'missing'
+  const rawTextRuns = params.planScan.traceDebugCounts?.rawTextRuns || 0
   const hasVectorTrace = (params.planScan.traceLines || []).length > 0 && !params.planScan.isFallback
   const hasWallsFromTrace = hasVectorTrace && params.planScan.walls.length >= 8
   const hasRoomsFromTrace = hasVectorTrace && params.planScan.rooms.length >= 2
@@ -2741,14 +2777,42 @@ function buildConfidenceBreakdown(params: {
   }
 
   let totalPoints = 35 + Object.values(items).reduce((sum, value) => sum + value, 0)
-  if (!params.floorPlanSheet) totalPoints = Math.min(totalPoints, 55)
-  if (!hasScaleSignal || !hasDimensionSignal) totalPoints = Math.min(totalPoints, 65)
-  if (!hasVectorTrace || !hasWallsFromTrace) totalPoints = Math.min(totalPoints, 75)
-  if (!hasValidatedFootprint || !hasRoomsFromTrace || !hasOpeningsFromTrace) totalPoints = Math.min(totalPoints, 79)
+  let confidenceCapReason = 'No cap applied.'
+  if (!params.floorPlanSheet) {
+    totalPoints = Math.min(totalPoints, 55)
+    confidenceCapReason = 'No canonical floor-plan sheet selected; confidence capped below 60%.'
+  }
+  if (runtimeProviderStatus !== 'available') {
+    totalPoints = Math.min(totalPoints, 59)
+    confidenceCapReason = 'Runtime PDF provider missing; confidence capped below 60%.'
+  } else if (!hasVectorTrace) {
+    totalPoints = Math.min(totalPoints, 64)
+    confidenceCapReason =
+      rawTextRuns > 0
+        ? 'Text-only trace extraction; confidence capped below 65%.'
+        : 'Runtime provider available but vector primitives unavailable; confidence capped below 65%.'
+  } else if (!hasWallsFromTrace || !hasValidatedFootprint || !hasRoomsFromTrace) {
+    totalPoints = Math.min(totalPoints, 74)
+    confidenceCapReason = 'Vector primitives available but wall graph/rooms not fully validated; confidence capped below 75%.'
+  } else {
+    totalPoints = Math.max(totalPoints, 80)
+    confidenceCapReason = 'Trace geometry validated with walls + footprint + rooms; 80% confidence unlocked.'
+  }
+  if ((!hasScaleSignal || !hasDimensionSignal) && !hasVectorTrace) {
+    totalPoints = Math.min(totalPoints, 65)
+    if (confidenceCapReason === 'No cap applied.') {
+      confidenceCapReason = 'Scale/dimension signal missing; confidence capped below 65%.'
+    }
+  }
+  if (!hasOpeningsFromTrace && totalPoints > 79) {
+    totalPoints = 79
+    confidenceCapReason = 'Openings are not trace-validated yet; confidence capped below 80%.'
+  }
   totalPoints = Math.max(35, Math.min(95, totalPoints))
   return {
     totalPoints,
     totalPercent: totalPoints,
+    confidenceCapReason,
     items,
     reasons,
   }
@@ -3014,7 +3078,17 @@ export function scanBlueprintFullSet(
     traceAttempted: planScan.traceAttempted,
     traceAvailable: planScan.traceAvailable,
     traceWarnings: planScan.traceWarnings,
-    traceDebugCounts: planScan.traceDebugCounts,
+    traceDebugCounts: {
+      ...(planScan.traceDebugCounts || {
+        rawLines: 0,
+        mergedWalls: planScan.walls.length,
+        openings: planScan.openings.length,
+        roomCandidates: planScan.rooms.length,
+      }),
+      confidenceCapReason:
+        confidenceBreakdown.confidenceCapReason ||
+        planScan.traceDebugCounts?.confidenceCapReason,
+    },
     scaleStatus: confidenceBreakdown.items.scaleDetected > 0 ? 'detected' : 'default',
     scanResultKind:
       confidenceBreakdown.items.vectorTraceAvailable > 0
