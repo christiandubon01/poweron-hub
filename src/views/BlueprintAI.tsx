@@ -31,6 +31,7 @@ import {
 } from '@/services/blueprintDerivedSetService'
 import { exportAnnotatedBlueprintPdf } from '@/services/blueprintAnnotationExportService'
 import BlueprintVRExperiencePanel from '@/features/blueprint-vr/BlueprintVRExperiencePanel'
+import type { BlueprintActivePageScanSnapshot } from '@/features/blueprint-vr/blueprintPlanScanner'
 import { useBlueprintVRGeneration } from '@/features/blueprint-vr/useBlueprintVRGeneration'
 import { createBlueprintVRSceneManifest } from '@/features/blueprint-vr/sceneManifestBuilder'
 import { STAGE_ORDER } from '@/features/blueprint-vr/stages'
@@ -71,6 +72,7 @@ export default function BlueprintAI() {
   const [derivedType, setDerivedType] = useState<BlueprintLibraryType>('Electrical Only')
   const [creatingDerived, setCreatingDerived] = useState(false)
   const [currentViewerPage, setCurrentViewerPage] = useState(1)
+  const [activePageScanSnapshot, setActivePageScanSnapshot] = useState<BlueprintActivePageScanSnapshot | null>(null)
   const [viewerJumpPage, setViewerJumpPage] = useState<number | null>(null)
   const [sheetSearch, setSheetSearch] = useState('')
   const [sheetEditorOpen, setSheetEditorOpen] = useState(false)
@@ -1002,6 +1004,7 @@ export default function BlueprintAI() {
             setCurrentViewerPage(page)
             if (viewerJumpPage === page) setViewerJumpPage(null)
           }}
+          onActivePageScanSnapshotChange={setActivePageScanSnapshot}
           selectedPageNumbers={selectedPages}
           onSelectedPagesChange={(pages) => {
             const clean = Array.isArray(pages)
@@ -1442,6 +1445,7 @@ export default function BlueprintAI() {
           availableSourceSets={projectVRSourceSets}
           initialSourceSetId={currentVRSourceSetId}
           runtimeSourceIdentity={runtimeSourceIdentity}
+          activePageScanSnapshot={activePageScanSnapshot}
           onSelectSourceSet={(setId) => {
             if (!selectedItem?.projectId) return
             setVrSourceSetIdByProject((prev) => ({

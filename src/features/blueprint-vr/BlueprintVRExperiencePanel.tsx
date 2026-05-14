@@ -42,6 +42,7 @@ import type {
   BlueprintPlanScanResult,
   BlueprintVRSourceSet,
   BlueprintFullSetScanResult,
+  BlueprintActivePageScanSnapshot,
 } from './blueprintPlanScanner'
 import type { PdfTracePayload } from './pdfTraceTypes'
 import { buildBlueprintPdfRuntimeKey, extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
@@ -92,6 +93,8 @@ interface BlueprintVRExperiencePanelProps {
     currentPageNumber?: number
     pageCount?: number
   }
+  /** Serializable active-page scan snapshot from the Blueprint PDF viewer. */
+  activePageScanSnapshot?: BlueprintActivePageScanSnapshot | null
 }
 
 function controlButtonStyle(active: boolean): React.CSSProperties {
@@ -647,6 +650,7 @@ export default function BlueprintVRExperiencePanel({
   initialSourceSetId,
   onSelectSourceSet,
   runtimeSourceIdentity,
+  activePageScanSnapshot = null,
 }: BlueprintVRExperiencePanelProps) {
   const [activeStage, setActiveStage] = useState<VRStage>(STAGE_ORDER[0])
   const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room'>('dollhouse')
@@ -961,6 +965,54 @@ export default function BlueprintVRExperiencePanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKeyParts, traceExtraction, sourceCacheIdentity, rescanCount])
+
+  const plan2DScan = useMemo<BlueprintPlanScanResult>(() => {
+    const sheetIndex = (selectedSourceSet?.sheets || []).map((sheet) => ({
+      pageNumber: sheet.pageNumber,
+      sheetNumber: sheet.sheetNumber,
+      sheetTitle: sheet.sheetTitle,
+      sheetLabel: sheet.sheetLabel,
+      discipline: sheet.discipline,
+    }))
+    return scanBlueprintPlan({
+      projectName: projectNameForCache,
+      blueprintTitle: selectedSourceSet?.name || sourceBlueprint.name,
+      fileName: selectedSourceSet?.filePath || sourceBlueprint.filePath,
+      activePageNumber:
+        traceExtraction.selectedPageNumber ||
+        activePageScanSnapshot?.currentPageNumber ||
+        runtimeSourceIdentity?.currentPageNumber,
+      totalPages: selectedSourceSet?.totalPages || runtimeSourceIdentity?.pageCount,
+      extractedText: job.outputManifest?.metadata?.description,
+      sheetIndex,
+      pageSnapshot: activePageScanSnapshot,
+      tracePayload: traceExtraction.payload,
+      traceAttempted: traceExtraction.attempted,
+      traceWarnings: [
+        ...traceExtraction.warnings,
+        ...((activePageScanSnapshot?.extractionWarnings || []).map((warning) => ({
+          code: warning.code,
+          message: warning.message,
+        }))),
+      ],
+    })
+  }, [
+    activePageScanSnapshot,
+    job.outputManifest?.metadata?.description,
+    projectNameForCache,
+    rescanToken,
+    runtimeSourceIdentity?.currentPageNumber,
+    runtimeSourceIdentity?.pageCount,
+    selectedSourceSet,
+    sourceBlueprint.filePath,
+    sourceBlueprint.name,
+    traceExtraction,
+  ])
+
+  const plan2DBuildingModel = useMemo(
+    () => convertPlanScanToBuildingModel(plan2DScan),
+    [plan2DScan],
+  )
 
   const handleChangeSource = useCallback(
     (setId: string) => {
@@ -1310,7 +1362,7 @@ export default function BlueprintVRExperiencePanel({
 
             {viewMode === 'plan' && (
               <MeasuredPlanViewer
-                model={buildingModel}
+                model={plan2DBuildingModel}
                 width={760}
                 height={430}
                 selectedRoomId={selectedRoomId}
@@ -1320,7 +1372,9 @@ export default function BlueprintVRExperiencePanel({
                 showRoomLabels={showLabels}
                 showAreaLabels={showLabels}
                 showElectrical={showElectrical}
-                traceDebug={scanResult.traceDebugCounts || null}
+                plan2DSourceMode={plan2DScan.plan2DSourceMode}
+                calibratedSourceNote={plan2DScan.calibratedSourceNote}
+                traceDebug={plan2DScan.traceDebugCounts || null}
               />
             )}
 

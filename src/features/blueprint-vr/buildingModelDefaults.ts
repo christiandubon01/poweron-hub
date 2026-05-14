@@ -170,3 +170,22 @@ export function createAutoDetectedDefaultModel(
   const layoutType = detectLayoutType(title, projectName, discipline)
   return createDefaultBuildingModel(layoutType, title, projectName)
 }
+
+/**
+ * Deterministic AP-01 Beauty Salon calibrated plan used when direct PDF trace
+ * is unavailable for the Proposed Dimensioned Plan sheet.
+ */
+export function createAp01CalibratedSalonBuildingModel(
+  title?: string,
+  projectName?: string,
+): BlueprintBuildingModel {
+  const scan = scanBlueprintPlan({
+    projectName: projectName || 'Beauty Salon',
+    blueprintTitle: title || 'AP-01 Proposed Dimensioned Plan',
+    sheetIndex: [{ pageNumber: 1, sheetTitle: 'AP-01 Proposed Dimensioned Plan' }],
+  })
+  const model = convertPlanScanToBuildingModel(scan)
+  model.name = title ? `${title} (AP-01 Calibrated)` : 'AP-01 Calibrated Beauty Salon Suite'
+  model.metadata.displayLabel = `${projectName || 'Project'} – AP-01 Calibrated Suite`
+  return model
+}

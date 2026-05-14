@@ -25,6 +25,7 @@ import type {
   BuildingWallModel,
   BuildingOpeningModel,
 } from './buildingModel'
+import type { BlueprintPlan2DSourceMode } from './blueprintPlanScanner'
 import type { VRStage } from './types'
 
 export interface MeasuredPlanViewerProps {
@@ -40,6 +41,8 @@ export interface MeasuredPlanViewerProps {
   onRoomSelect?: (roomId: string) => void
   activeStage?: VRStage
   showElectrical?: boolean
+  plan2DSourceMode?: BlueprintPlan2DSourceMode
+  calibratedSourceNote?: string
   traceDebug?: {
     rawLines: number
     mergedWalls: number
@@ -372,6 +375,8 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   onRoomSelect,
   activeStage = 'roughIn',
   showElectrical = true,
+  plan2DSourceMode,
+  calibratedSourceNote,
   traceDebug = null,
   className,
 }) => {
@@ -420,7 +425,11 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
 
   const accent = STAGE_PLAN_ACCENT[activeStage]
-  const isFallback = model.metadata.source === 'fallback'
+  const resolvedPlan2DSourceMode =
+    plan2DSourceMode ||
+    (model.metadata.source === 'calibrated' ? 'ap01-calibrated-model' : model.metadata.source === 'extraction' ? 'direct-pdf-trace' : undefined)
+  const isCalibratedSource = resolvedPlan2DSourceMode === 'ap01-calibrated-model'
+  const isDirectTraceSource = resolvedPlan2DSourceMode === 'direct-pdf-trace'
 
   // De-duplicate walls by canonical key so partition walls shared between two
   // rooms render once. Use endpoints as key.
@@ -675,30 +684,51 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
         >
           <div
             style={{
-              backgroundColor: 'rgba(42,63,95,0.95)',
-              color: '#a0d8ff',
+              backgroundColor: isCalibratedSource ? 'rgba(74,58,26,0.95)' : isDirectTraceSource ? 'rgba(26,74,42,0.95)' : 'rgba(42,63,95,0.95)',
+              color: isCalibratedSource ? '#ffd8a0' : isDirectTraceSource ? '#a0ffa0' : '#a0d8ff',
               padding: '3px 7px',
               borderRadius: 4,
               fontSize: 10,
-              border: '1px solid #4a90e2',
+              border: isCalibratedSource ? '1px solid #d4a24a' : isDirectTraceSource ? '1px solid #4aff4a' : '1px solid #4a90e2',
               fontFamily: 'monospace',
             }}
           >
-            Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
+            {isDirectTraceSource
+              ? '2D SOURCE: DIRECT PDF TRACE'
+              : isCalibratedSource
+                ? '2D SOURCE: AP-01 CALIBRATED MODEL'
+                : '2D SOURCE: UNRESOLVED'}
           </div>
-          <div
-            style={{
-              backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
-              color: isFallback ? '#ffd0a0' : '#a0ffa0',
-              padding: '3px 7px',
-              borderRadius: 4,
-              fontSize: 10,
-              border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
-              fontFamily: 'monospace',
-            }}
-          >
-            {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
-          </div>
+          {isCalibratedSource && calibratedSourceNote && (
+            <div
+              style={{
+                backgroundColor: 'rgba(74,58,26,0.95)',
+                color: '#ffd8a0',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: '1px solid #d4a24a',
+                fontFamily: 'monospace',
+              }}
+            >
+              {calibratedSourceNote}
+            </div>
+          )}
+          {isDirectTraceSource && (
+            <div
+              style={{
+                backgroundColor: 'rgba(42,95,42,0.95)',
+                color: '#a0ffa0',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: '1px solid #4aff4a',
+                fontFamily: 'monospace',
+              }}
+            >
+              MEASURED · {Math.round((model.confidence ?? 0) * 100)}%
+            </div>
+          )}
           {traceDebug && (
             <div
               style={{
@@ -711,7 +741,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
                 fontFamily: 'monospace',
               }}
             >
-              TRACE DEBUG · raw {traceDebug.rawLines} · walls {traceDebug.mergedWalls} · openings {traceDebug.openings} · rooms {traceDebug.roomCandidates}
+              TRACE DEBUG: raw {traceDebug.rawLines} · walls {traceDebug.mergedWalls} · openings {traceDebug.openings} · rooms {traceDebug.roomCandidates}
             </div>
           )}
         </div>

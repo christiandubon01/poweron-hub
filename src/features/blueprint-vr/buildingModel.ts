@@ -351,7 +351,7 @@ export interface BlueprintBuildingModel {
   metadata: {
     createdAt: string
     updatedAt: string
-    source: 'user' | 'extraction' | 'fallback' | 'ai'
+    source: 'user' | 'extraction' | 'fallback' | 'calibrated' | 'ai'
     sourceBlueprint?: string
     sourceProject?: string
     sourceSheet?: string

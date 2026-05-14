@@ -25,6 +25,7 @@ import type {
   PdfTraceTextRun,
   WorldPoint2D,
 } from './pdfTraceTypes'
+import { hasUsableTracePayload } from './pdfVectorTraceExtractor'
 
 // ---------------------------------------------------------------------------
 // Candidate types emitted by the adapter
@@ -433,6 +434,141 @@ export function inferDimensionCandidatesFromText(
     }
   }
   return out
+}
+
+function luminance(r: number, g: number, b: number): number {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/**
+ * Extract orthogonal line hints from a rasterized plan page. This is a
+ * conservative seam for when vector operators are unavailable.
+ */
+export function extractRasterLinesFromImageData(
+  imageData: ImageData,
+  options?: { darkThreshold?: number; minRunPx?: number; sampleStep?: number },
+): PdfTraceLine[] {
+  const darkThreshold = options?.darkThreshold ?? 72
+  const minRunPx = options?.minRunPx ?? 18
+  const sampleStep = Math.max(2, options?.sampleStep ?? 4)
+  const { width, height, data } = imageData
+  if (!width || !height || !data?.length) return []
+
+  const isDark = (x: number, y: number): boolean => {
+    const idx = (y * width + x) * 4
+    const lum = luminance(data[idx], data[idx + 1], data[idx + 2])
+    return lum <= darkThreshold
+  }
+
+  const lines: PdfTraceLine[] = []
+  let lineId = 0
+
+  for (let y = 0; y < height; y += sampleStep) {
+    let runStart = -1
+    for (let x = 0; x < width; x += 1) {
+      if (isDark(x, y)) {
+        if (runStart < 0) runStart = x
+      } else if (runStart >= 0) {
+        if (x - runStart >= minRunPx) {
+          lines.push({
+            id: `raster-h-${lineId++}`,
+            start: { x: runStart, y },
+            end: { x, y },
+            role: 'unknown',
+            confidence: 0.35,
+          })
+        }
+        runStart = -1
+      }
+    }
+    if (runStart >= 0 && width - runStart >= minRunPx) {
+      lines.push({
+        id: `raster-h-${lineId++}`,
+        start: { x: runStart, y },
+        end: { x: width, y },
+        role: 'unknown',
+        confidence: 0.35,
+      })
+    }
+  }
+
+  for (let x = 0; x < width; x += sampleStep) {
+    let runStart = -1
+    for (let y = 0; y < height; y += 1) {
+      if (isDark(x, y)) {
+        if (runStart < 0) runStart = y
+      } else if (runStart >= 0) {
+        if (y - runStart >= minRunPx) {
+          lines.push({
+            id: `raster-v-${lineId++}`,
+            start: { x, y: runStart },
+            end: { x, y },
+            role: 'unknown',
+            confidence: 0.35,
+          })
+        }
+        runStart = -1
+      }
+    }
+    if (runStart >= 0 && height - runStart >= minRunPx) {
+      lines.push({
+        id: `raster-v-${lineId++}`,
+        start: { x, y: runStart },
+        end: { x, y: height },
+        role: 'unknown',
+        confidence: 0.35,
+      })
+    }
+  }
+
+  return lines
+}
+
+export function buildTracePayloadFromPageSnapshot(
+  snapshot: {
+    currentPageNumber: number
+    pageCount?: number
+    sheetTitle?: string
+    pageImageBounds?: { width: number; height: number }
+    textRuns?: PdfTraceTextRun[]
+    rawLines?: PdfTraceLine[]
+    extractionWarnings?: Array<{ code: string; message: string }>
+  },
+  existingPayload?: PdfTracePayload | null,
+): PdfTracePayload | null {
+  const lines = Array.isArray(snapshot.rawLines) ? snapshot.rawLines : []
+  const textRuns = Array.isArray(snapshot.textRuns) ? snapshot.textRuns : []
+  const bounds = snapshot.pageImageBounds || { width: 0, height: 0 }
+  if (!hasUsableTracePayload(existingPayload) && lines.length === 0 && textRuns.length === 0) {
+    return null
+  }
+
+  const warnings = (snapshot.extractionWarnings || []).map((w) => ({
+    code: 'EXTRACTION_ERROR' as const,
+    message: w.message || w.code,
+  }))
+
+  return {
+    pageNumber: Math.max(1, Math.floor(Number(snapshot.currentPageNumber) || 1)),
+    sheetTitle: snapshot.sheetTitle,
+    coordinateSpace: 'viewer-pixels',
+    pageBounds: bounds,
+    lines: hasUsableTracePayload(existingPayload) ? existingPayload!.lines : lines,
+    rects: existingPayload?.rects || [],
+    polylines: existingPayload?.polylines || [],
+    arcs: existingPayload?.arcs || [],
+    textRuns: textRuns.length > 0 ? textRuns : existingPayload?.textRuns || [],
+    scaleHints:
+      existingPayload?.scaleHints ||
+      (inferScaleFromTraceText(textRuns) ? [inferScaleFromTraceText(textRuns)!] : []),
+    runtime: {
+      ...(existingPayload?.runtime || {}),
+      providerStatus: existingPayload?.runtime?.providerStatus || 'missing',
+      selectedPageNumber: Math.max(1, Math.floor(Number(snapshot.currentPageNumber) || 1)),
+      opsSource: lines.length > 0 && !hasUsableTracePayload(existingPayload) ? 'dynamic-import' : existingPayload?.runtime?.opsSource,
+    },
+    warnings: [...(existingPayload?.warnings || []), ...warnings],
+  }
 }
 
 export function inferScaleFromTraceText(textRuns: PdfTraceTextRun[]): PdfTraceScaleHint | null {

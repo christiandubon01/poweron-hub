@@ -42,6 +42,7 @@ import type {
 } from './blueprintTraceAdapter'
 import {
   adaptPdfTraceToPlanLines,
+  buildTracePayloadFromPageSnapshot,
   detectOuterFootprint,
   inferDimensionCandidatesFromText,
   inferDoorCandidatesFromArcs,
@@ -50,7 +51,7 @@ import {
   inferScaleFromTraceText,
   inferWallCandidatesFromTrace,
 } from './blueprintTraceAdapter'
-import type { PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
+import type { PdfTraceLine, PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
 
 // ---------------------------------------------------------------------------
 // Scanner input / output contracts
@@ -66,6 +67,26 @@ export interface BlueprintPlanScanSheetHint {
   sheetLabel?: string
   discipline?: string
 }
+
+/**
+ * Serializable active-page scan snapshot from the Blueprint PDF viewer.
+ * Used by the 2D plan scanner without passing live PDF handles through React.
+ */
+export interface BlueprintActivePageScanSnapshot {
+  sourceName?: string
+  sourceSetName?: string
+  blueprintId?: string
+  fileName?: string
+  currentPageNumber: number
+  pageCount?: number
+  sheetTitle?: string
+  pageImageBounds?: { width: number; height: number }
+  textRuns?: PdfTraceTextRun[]
+  rawLines?: PdfTraceLine[]
+  extractionWarnings?: Array<{ code: string; message: string }>
+}
+
+export type BlueprintPlan2DSourceMode = 'direct-pdf-trace' | 'ap01-calibrated-model'
 
 /**
  * Input shape consumed by scanBlueprintPlan().
@@ -89,6 +110,8 @@ export interface BlueprintPlanScanInput {
   annotationsSummary?: string
   /** Sheet index rows associated with this set. */
   sheetIndex?: BlueprintPlanScanSheetHint[]
+  /** Active viewer page snapshot for direct 2D scan priority. */
+  pageSnapshot?: BlueprintActivePageScanSnapshot | null
   /** Vector trace payload for the active page, if available. */
   tracePayload?: PdfTracePayload | null
   /** Whether vector trace extraction was attempted for this page. */
@@ -330,7 +353,11 @@ export interface BlueprintPlanScanResult {
   /** Point-by-point confidence explanation for scanner status panel. */
   confidenceBreakdown?: ScanConfidenceBreakdown
   /** Honest scan result status for UI labels. */
-  scanResultKind?: 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace'
+  scanResultKind?: 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace' | 'ap01-calibrated'
+  /** Explicit 2D plan source mode for the measured plan viewer. */
+  plan2DSourceMode?: BlueprintPlan2DSourceMode
+  /** Human-readable note when the calibrated AP-01 model is used. */
+  calibratedSourceNote?: string
   /** Trace availability state. */
   traceStatus?: 'missing' | 'provided' | 'extracted'
   /** Whether trace extraction was attempted upstream. */
@@ -576,7 +603,12 @@ function detectLayoutContext(
     combined.includes('spa') ||
     combined.includes('beauty') ||
     combined.includes('barber') ||
-    combined.includes('nail')
+    combined.includes('nail') ||
+    combined.includes('ap-01') ||
+    combined.includes('ap01') ||
+    combined.includes('ap100') ||
+    combined.includes('proposed dimensioned plan') ||
+    combined.includes('dimensioned plan')
   ) {
     return 'salon-tenant-suite'
   }
@@ -1625,11 +1657,34 @@ export function scanBlueprintPlan(
   const warnings: PlanScanWarning[] = []
   const layoutContext = detectLayoutContext(input)
   const generatedAt = new Date().toISOString()
-  const traceAttempted = Boolean(input.traceAttempted || input.tracePayload)
-  const traceWarnings = (input.traceWarnings || []).map((w) => ({
-    code: String(w.code || 'TRACE_ADAPTER'),
-    message: String(w.message || ''),
-  }))
+  const ap01Target = selectAp01FloorPlanTarget({
+    visiblePageNumber: input.pageSnapshot?.currentPageNumber || input.activePageNumber,
+    visibleSheetTitle: input.pageSnapshot?.sheetTitle,
+    sourceSetName: input.pageSnapshot?.sourceSetName || input.blueprintTitle,
+    pageCount: input.pageSnapshot?.pageCount || input.totalPages,
+    sheetIndex: input.sheetIndex,
+  })
+  const activePageNumber =
+    ap01Target?.pageNumber ||
+    input.pageSnapshot?.currentPageNumber ||
+    input.activePageNumber
+  const snapshotPayload = input.pageSnapshot
+    ? buildTracePayloadFromPageSnapshot(input.pageSnapshot, input.tracePayload)
+    : null
+  const mergedTracePayload = snapshotPayload || input.tracePayload || null
+  const traceAttempted = Boolean(
+    input.traceAttempted || mergedTracePayload || input.pageSnapshot?.rawLines?.length,
+  )
+  const traceWarnings = [
+    ...(input.traceWarnings || []).map((w) => ({
+      code: String(w.code || 'TRACE_ADAPTER'),
+      message: String(w.message || ''),
+    })),
+    ...(input.pageSnapshot?.extractionWarnings || []).map((w) => ({
+      code: String(w.code || 'PAGE_SNAPSHOT'),
+      message: String(w.message || ''),
+    })),
+  ]
   for (const tw of traceWarnings) {
     warnings.push({
       code: 'NO_TRACE_INPUT',
@@ -1638,16 +1693,17 @@ export function scanBlueprintPlan(
   }
 
   // 1. Adapt any upstream trace data.
-  const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(input.tracePayload)
+  const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(mergedTracePayload)
   const traceLines = adapted.lines
-  const traceTextRuns: PdfTraceTextRun[] = input.tracePayload?.textRuns || []
+  const traceTextRuns: PdfTraceTextRun[] = mergedTracePayload?.textRuns || []
   const runtimeProviderStatus =
-    input.tracePayload?.runtime?.providerStatus || (traceAttempted ? 'missing' : 'unknown')
-  const operatorListStatus = input.tracePayload?.runtime?.operatorListStatus || 'unknown'
-  const textContentStatus = input.tracePayload?.runtime?.textContentStatus || 'unknown'
-  const rawRectCount = Array.isArray(input.tracePayload?.rects) ? input.tracePayload!.rects.length : 0
-  const rawPolylineCount = Array.isArray(input.tracePayload?.polylines) ? input.tracePayload!.polylines.length : 0
+    mergedTracePayload?.runtime?.providerStatus || (traceAttempted ? 'missing' : 'unknown')
+  const operatorListStatus = mergedTracePayload?.runtime?.operatorListStatus || 'unknown'
+  const textContentStatus = mergedTracePayload?.runtime?.textContentStatus || 'unknown'
+  const rawRectCount = Array.isArray(mergedTracePayload?.rects) ? mergedTracePayload!.rects.length : 0
+  const rawPolylineCount = Array.isArray(mergedTracePayload?.polylines) ? mergedTracePayload!.polylines.length : 0
   const rawTextRunCount = traceTextRuns.length
+  const rawSnapshotLineCount = input.pageSnapshot?.rawLines?.length || 0
 
   // 2. When real trace lines exist, try to infer geometry from them.
   let inferredFootprint = inferBuildingFootprintFromTraceLines(traceLines)
@@ -1663,7 +1719,7 @@ export function scanBlueprintPlan(
   let inferredWalls = inferWallsFromOrthogonalLines(traceLines)
   let inferredOpenings = inferOpeningsFromGaps(inferredWalls, traceLines)
   let inferredRooms = inferRoomsFromEnclosedOrGridLayout(inferredWalls, inferredFootprint)
-  const inferredDoorArcs = inferDoorCandidatesFromArcs(input.tracePayload?.arcs || [], traceTextRuns)
+  const inferredDoorArcs = inferDoorCandidatesFromArcs(mergedTracePayload?.arcs || [], traceTextRuns)
   const inferredStorefront = inferGlassStorefrontCandidates(traceLines, traceTextRuns)
   const inferredDimensionText = inferDimensionCandidatesFromText(traceTextRuns)
   const inferredScaleFromText = inferScaleFromTraceText(traceTextRuns)
@@ -1698,6 +1754,9 @@ export function scanBlueprintPlan(
   let isFallback: boolean
   let confidence: number
   let confidenceCapReason = 'No confidence cap applied.'
+  let plan2DSourceMode: BlueprintPlan2DSourceMode = 'ap01-calibrated-model'
+  let calibratedSourceNote: string | undefined
+  let scanResultKind: BlueprintPlanScanResult['scanResultKind'] = 'fallback'
 
   const projectHint = projectHintForContext(layoutContext)
   let rawRooms: RawRoom[] = []
@@ -1713,6 +1772,8 @@ export function scanBlueprintPlan(
     openings = inferredOpenings
     rooms = inferredRooms
     isFallback = false
+    plan2DSourceMode = 'direct-pdf-trace'
+    scanResultKind = 'measured-trace'
     confidence = Math.min(
       0.82,
       Math.max(0.4, walls.reduce((acc, w) => acc + w.confidence, 0) / Math.max(1, walls.length)),
@@ -1784,6 +1845,13 @@ export function scanBlueprintPlan(
 
     isFallback = true
     confidence = 0.35
+    if (layoutContext === 'salon-tenant-suite') {
+      plan2DSourceMode = 'ap01-calibrated-model'
+      scanResultKind = 'ap01-calibrated'
+      calibratedSourceNote = 'AP-01 calibrated model — PDF trace unavailable'
+    } else {
+      scanResultKind = 'fallback'
+    }
     if (runtimeProviderStatus !== 'available') {
       confidenceCapReason = 'Runtime PDF provider missing; cap remains below 60%.'
     } else if (!traceAvailable && rawTextRunCount > 0) {
@@ -1890,17 +1958,19 @@ export function scanBlueprintPlan(
     metadata: {
       projectName: input.projectName,
       blueprintTitle: input.blueprintTitle,
-      activePageNumber: input.activePageNumber,
+      activePageNumber,
       totalPages: input.totalPages,
       generatedAt,
     },
-    scanResultKind: isFallback ? 'fallback' : 'measured-trace',
+    scanResultKind: isFallback ? scanResultKind : 'measured-trace',
+    plan2DSourceMode,
+    calibratedSourceNote,
     traceStatus: traceAvailable ? (isFallback ? 'provided' : 'extracted') : 'missing',
     traceAttempted,
     traceAvailable,
     traceWarnings,
     traceDebugCounts: {
-      rawLines: traceLines.length,
+      rawLines: traceLines.length + rawSnapshotLineCount,
       rawRects: rawRectCount,
       rawPolylines: rawPolylineCount,
       rawTextRuns: rawTextRunCount,
@@ -2141,14 +2211,21 @@ export function convertPlanScanToBuildingModel(
     metadata: {
       createdAt: now,
       updatedAt: now,
-      source: scan.isFallback ? 'fallback' : 'extraction',
+      source:
+        scan.scanResultKind === 'ap01-calibrated'
+          ? 'calibrated'
+          : scan.isFallback
+            ? 'fallback'
+            : 'extraction',
       sourceBlueprint: scan.metadata.blueprintTitle,
       sourceProject: scan.metadata.projectName,
       sourcePage: scan.metadata.activePageNumber,
       notes:
-        scan.isFallback
-          ? `Scan-ready fallback: ${scan.layoutContext}. ${scan.warnings.length} warning(s).`
-          : `Scanned floor plan: ${scan.layoutContext}. Confidence ${(scan.confidence * 100).toFixed(0)}%.`,
+        scan.scanResultKind === 'ap01-calibrated'
+          ? scan.calibratedSourceNote || 'AP-01 calibrated model — PDF trace unavailable'
+          : scan.isFallback
+            ? `Scan-ready fallback: ${scan.layoutContext}. ${scan.warnings.length} warning(s).`
+            : `Scanned floor plan: ${scan.layoutContext}. Confidence ${(scan.confidence * 100).toFixed(0)}%.`,
       displayLabel,
     },
   }
@@ -2610,6 +2687,90 @@ function classifyAllSheets(
   })
 }
 
+function ap01TitleSignal(text: string): boolean {
+  const normalized = normalizeText([text])
+  return (
+    normalized.includes('ap-01') ||
+    normalized.includes('ap01') ||
+    normalized.includes('ap100') ||
+    normalized.includes('proposed dimensioned plan') ||
+    normalized.includes('dimensioned plan') ||
+    normalized.includes('floor plan')
+  )
+}
+
+export function selectAp01FloorPlanTarget(params: {
+  visiblePageNumber?: number
+  visibleSheetTitle?: string
+  sourceSetName?: string
+  pageCount?: number
+  sheetIndex?: BlueprintPlanScanSheetHint[]
+}): { pageNumber: number; sheetTitle?: string; reason: string } | null {
+  const visiblePage = Math.max(1, Math.floor(Number(params.visiblePageNumber) || 1))
+  const visibleTitle = String(params.visibleSheetTitle || '')
+  if (ap01TitleSignal(visibleTitle)) {
+    return {
+      pageNumber: visiblePage,
+      sheetTitle: visibleTitle || undefined,
+      reason: 'Visible page title matches AP-01 / Proposed Dimensioned Plan.',
+    }
+  }
+
+  const sheets = params.sheetIndex || []
+  let best: { pageNumber: number; sheetTitle?: string; score: number; reason: string } | null = null
+  for (const sheet of sheets) {
+    const text = [sheet.sheetNumber, sheet.sheetTitle, sheet.sheetLabel, sheet.discipline].join(' ')
+    const normalized = normalizeText([text])
+    let score = 0
+    const reasons: string[] = []
+    if (normalized.includes('ap-01') || normalized.includes('ap01')) {
+      score += 1.4
+      reasons.push('matches AP-01')
+    }
+    if (/\bap[\s\-]?100(?:\.\d+)?\b/i.test(text)) {
+      score += 1.1
+      reasons.push('matches AP100')
+    }
+    if (normalized.includes('proposed dimensioned plan')) {
+      score += 1.2
+      reasons.push('contains Proposed Dimensioned Plan')
+    } else if (normalized.includes('dimensioned plan')) {
+      score += 0.8
+      reasons.push('contains Dimensioned Plan')
+    } else if (normalized.includes('floor plan')) {
+      score += 0.55
+      reasons.push('contains Floor Plan')
+    }
+    if (!best || score > best.score) {
+      best = {
+        pageNumber: sheet.pageNumber,
+        sheetTitle: sheet.sheetTitle,
+        score,
+        reason: reasons.length > 0 ? reasons.join('; ') : 'Best AP-01 candidate from sheet metadata.',
+      }
+    }
+  }
+  if (best && best.score >= 0.55) {
+    return {
+      pageNumber: best.pageNumber,
+      sheetTitle: best.sheetTitle,
+      reason: best.reason,
+    }
+  }
+
+  const sourceSetName = normalizeText([params.sourceSetName])
+  const pageCount = Number(params.pageCount || 0)
+  if (visiblePage === 1 && pageCount >= 60 && sourceSetName.includes('full set')) {
+    return {
+      pageNumber: visiblePage,
+      sheetTitle: visibleTitle || 'AP-01 candidate (page 1 / Full Set)',
+      reason: 'Page identification weak; using visible page 1 of Full Set as AP-01 candidate.',
+    }
+  }
+
+  return null
+}
+
 /**
  * Pick the best floor plan sheet from a classified set. Preference order:
  * sheets explicitly tagged floor_plan, then architectural discipline + plan,
@@ -2636,6 +2797,10 @@ export function chooseBestFloorPlanSheet(
     } else if (text.includes('proposed plan') || text.includes('floor plan')) {
       score += 0.55
       reasons.push('contains floor-plan title keyword')
+    }
+    if (text.includes('ap-01') || text.includes('ap01')) {
+      score += 1.35
+      reasons.push('matches AP-01 floor-plan numbering')
     }
     if (/\bap[\s\-]?100(?:\.\d+)?\b/i.test(text)) {
       score += 1.1

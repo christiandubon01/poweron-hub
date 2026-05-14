@@ -56,6 +56,8 @@ import {
   registerBlueprintPdfRuntimeProvider,
   unregisterBlueprintPdfRuntimeProvider,
 } from '@/features/blueprint-vr/blueprintPdfTraceRuntimeBridge'
+import { extractRasterLinesFromImageData } from '@/features/blueprint-vr/blueprintTraceAdapter'
+import type { BlueprintActivePageScanSnapshot } from '@/features/blueprint-vr/blueprintPlanScanner'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -210,6 +212,7 @@ interface OperationsBlueprintPdfViewerProps {
   onSelectedPagesChange?: (pages: number[]) => void
   externalPage?: number | null
   onPageChange?: (page: number) => void
+  onActivePageScanSnapshotChange?: (snapshot: BlueprintActivePageScanSnapshot | null) => void
   onGenerateQuestion?: (payload: {
     annotation: BlueprintAnnotation
     questionType: GenerateQuestionType
@@ -488,6 +491,7 @@ export default function OperationsBlueprintPdfViewer({
   onSelectedPagesChange,
   externalPage = null,
   onPageChange,
+  onActivePageScanSnapshotChange,
   onGenerateQuestion,
 }: OperationsBlueprintPdfViewerProps) {
   const { profile } = useAuth()
@@ -1221,6 +1225,121 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
   }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll, containerReady])
+
+  useEffect(() => {
+    if (!onActivePageScanSnapshotChange || !pdfDoc || !blueprint?.id) {
+      onActivePageScanSnapshotChange?.(null)
+      return
+    }
+    let disposed = false
+    const publish = async () => {
+      try {
+        const page = await pdfDoc.getPage(Math.max(1, Math.min(numPages || 1, currentPage)))
+        const textContent = typeof page?.getTextContent === 'function' ? await page.getTextContent() : null
+        const textRuns = (textContent?.items || [])
+          .map((item: any, index: number) => {
+            const text = String(item?.str || '').trim()
+            if (!text) return null
+            const tx = Array.isArray(item?.transform) ? Number(item.transform[4]) || 0 : 0
+            const ty = Array.isArray(item?.transform) ? Number(item.transform[5]) || 0 : 0
+            const width = Number(item?.width) || 0
+            const height = Number(item?.height) || 0
+            return {
+              id: `viewer-text-${currentPage}-${index}`,
+              text,
+              origin: { x: tx, y: ty },
+              bounds: {
+                min: { x: tx, y: ty - height },
+                max: { x: tx + width, y: ty },
+              },
+              confidence: 0.65,
+            }
+          })
+          .filter(Boolean)
+        const combinedText = textRuns.map((run: any) => run.text).join(' ')
+        const sheetTitle =
+          combinedText.match(/AP[\s\-]?0?1[^\n]{0,80}/i)?.[0] ||
+          combinedText.match(/Proposed Dimensioned Plan/i)?.[0] ||
+          combinedText.match(/Dimensioned Plan/i)?.[0] ||
+          undefined
+        const canvas = canvasRef.current
+        const pageImageBounds = canvas
+          ? { width: canvas.width, height: canvas.height }
+          : undefined
+        let rawLines: BlueprintActivePageScanSnapshot['rawLines'] = []
+        const extractionWarnings: BlueprintActivePageScanSnapshot['extractionWarnings'] = []
+        if (canvas && pageImageBounds?.width && pageImageBounds?.height) {
+          const context = canvas.getContext('2d', { willReadFrequently: true })
+          if (context) {
+            const imageData = context.getImageData(0, 0, pageImageBounds.width, pageImageBounds.height)
+            rawLines = extractRasterLinesFromImageData(imageData)
+            if (!rawLines.length) {
+              extractionWarnings.push({
+                code: 'EMPTY_TRACE_GEOMETRY',
+                message: 'Raster line extraction found no usable plan linework on the active page.',
+              })
+            }
+          } else {
+            extractionWarnings.push({
+              code: 'EXTRACTION_ERROR',
+              message: 'Could not read raster pixels from the active page canvas.',
+            })
+          }
+        } else {
+          extractionWarnings.push({
+            code: 'MISSING_VIEWPORT',
+            message: 'Active page image bounds are unavailable for raster extraction.',
+          })
+        }
+        if (!disposed) {
+          onActivePageScanSnapshotChange({
+            sourceName: blueprint.title || blueprint.fileName,
+            sourceSetName: blueprint.title || blueprint.fileName,
+            blueprintId: blueprint.id,
+            fileName: blueprint.fileName || blueprint.storagePath || blueprint.title,
+            currentPageNumber: currentPage,
+            pageCount: Number(numPages || blueprint.pageCount || 0) || undefined,
+            sheetTitle,
+            pageImageBounds,
+            textRuns,
+            rawLines,
+            extractionWarnings,
+          })
+        }
+      } catch (error: any) {
+        if (!disposed) {
+          onActivePageScanSnapshotChange({
+            sourceName: blueprint.title || blueprint.fileName,
+            sourceSetName: blueprint.title || blueprint.fileName,
+            blueprintId: blueprint.id,
+            fileName: blueprint.fileName || blueprint.storagePath || blueprint.title,
+            currentPageNumber: currentPage,
+            pageCount: Number(numPages || blueprint.pageCount || 0) || undefined,
+            extractionWarnings: [{
+              code: 'EXTRACTION_ERROR',
+              message: error?.message || 'Failed to publish active page scan snapshot.',
+            }],
+          })
+        }
+      }
+    }
+    void publish()
+    return () => {
+      disposed = true
+    }
+  }, [
+    blueprint?.id,
+    blueprint?.title,
+    blueprint?.fileName,
+    blueprint?.storagePath,
+    blueprint?.pageCount,
+    currentPage,
+    displaySize.w,
+    displaySize.h,
+    numPages,
+    onActivePageScanSnapshotChange,
+    pdfDoc,
+  ])
 
   useEffect(() => {
     if (!isEditorOpen) return
