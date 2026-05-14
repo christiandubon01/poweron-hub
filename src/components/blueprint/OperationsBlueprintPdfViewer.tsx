@@ -399,7 +399,7 @@ function estimateTextBoxSize(
 }
 
 function annotationLabel(annotation: BlueprintAnnotation) {
-  if (annotation.type === 'textBox') return 'Text Box'
+  if (annotation.type === 'textBox') return 'Insert Text'
   if (annotation.type === 'callout') return 'Callout'
   if (annotation.type === 'generate') return getAnnotationMeta(annotation).questionType === 'rfi' ? 'RFI Question' : 'Coordination Question'
   if (annotation.type === 'pen') return 'Pen'
@@ -1147,12 +1147,6 @@ export default function OperationsBlueprintPdfViewer({
       focusedAnnotationElRef.current = anchorEl
       const r = anchorEl.getBoundingClientRect()
       setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
-      setOpenPopover({
-        tool: 'textBox',
-        anchorEl,
-        mode: 'edit',
-        editingAnnotationId: inlineTextEditId,
-      })
     })
     return () => cancelAnimationFrame(frame)
   }, [inlineTextEditId])
@@ -1403,6 +1397,12 @@ export default function OperationsBlueprintPdfViewer({
     const meta = getAnnotationMeta(current)
     const rect = clampRectToPage(current.rect || meta.box || DEFAULT_TEXT_BOX)
     const isDraft = draftTextBoxIdRef.current === editingId
+    if (isDraft && !(current.text || '').trim()) {
+      setAllAnnotations((prev) => prev.filter((ann) => ann.id !== editingId))
+      setFocusedAnnotationId(null)
+      clearTextBoxEditSessionState()
+      return
+    }
     const persistedId = isDraft
       ? `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
       : current.id
@@ -2742,7 +2742,7 @@ export default function OperationsBlueprintPdfViewer({
         setTextStyle((p) => ({ ...p, ...patch }))
       }
       return {
-        title: 'Text Box',
+        title: 'Insert Text',
         primary: (
           <>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Text Color</div>
@@ -2752,41 +2752,12 @@ export default function OperationsBlueprintPdfViewer({
             <Stepper label="Size" value={ts.fontSize ?? 14} min={6} max={144} step={0.5} unit="pt"
               onChange={(v) => updateTs({ fontSize: v })} />
             <ToggleRow buttons={[
+              { label: <Bold size={11} />, active: !!(ts.bold), onClick: () => updateTs({ bold: !ts.bold }) },
               { label: <Italic size={11} />, active: !!(ts.italic), onClick: () => updateTs({ italic: !ts.italic }) },
               { label: <Underline size={11} />, active: !!(ts.underline), onClick: () => updateTs({ underline: !ts.underline }) },
             ]} />
-          </>
-        ),
-        additional: (
-          <>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Box Fill</div>
-            <ColorRow value={ts.boxFill ?? 'transparent'} allowTransparent
-              onChange={(c) => updateTs({ boxFill: c })} />
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4, marginTop: 4 }}>Border Color</div>
-            <ColorRow value={ts.borderColor ?? 'transparent'} allowTransparent
-              onChange={(c) => updateTs({ borderColor: c })} />
-            <Stepper label="Border Width" value={ts.borderWidth ?? 1} min={0.5} max={20} step={0.5} unit="px"
-              onChange={(v) => updateTs({ borderWidth: v })} />
             <LabeledSelect label="Alignment" value={ts.align ?? 'left'} options={ALIGN_OPTIONS}
               onChange={(v) => updateTs({ align: v as 'left' | 'center' | 'right' })} />
-            {isEdit && inlineTextEditId === editingAnnotation?.id && (
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => cancelTextBoxEditSession()}
-                  className="inline-flex min-w-[72px] items-center justify-center gap-1 rounded border border-gray-700 px-2 py-1.5 text-[11px] text-gray-300 hover:bg-white/5"
-                >
-                  <X size={10} /> Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveTextBoxEditSession()}
-                  className="inline-flex min-w-[72px] items-center justify-center rounded bg-blue-600 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500"
-                >
-                  Save
-                </button>
-              </div>
-            )}
           </>
         ),
       }
@@ -3524,7 +3495,7 @@ export default function OperationsBlueprintPdfViewer({
                 <button
                   onClick={() => { setToolMode('textBox'); setOpenPopover(null) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Type size={12} /> Text Box</button>
+                ><Type size={12} /> Insert Text</button>
                 <button
                   onClick={(e) => { setToolMode('textHighlight'); setOpenPopover({ tool: 'textHighlight', anchorEl: e.currentTarget, mode: 'tool' }) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textHighlight' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
@@ -4001,9 +3972,6 @@ export default function OperationsBlueprintPdfViewer({
                         if (a.type === 'textBox') {
                           const textMeta = meta.textStyle || {}
                           const isInlineEditing = inlineTextEditId === a.id
-                          const boxFill = textMeta.boxFill ?? textMeta.backgroundColor ?? '#ffffff'
-                          const borderColorResolved = textMeta.borderColor ?? color
-                          const borderWidth = Number(textMeta.borderWidth ?? 1)
                           const textAlign = textMeta.align ?? 'left'
                           const textSurfaceStyle = {
                             color: textMeta.color || '#111827',
@@ -4018,15 +3986,19 @@ export default function OperationsBlueprintPdfViewer({
                           return (
                             <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }}
                               onClick={selectAnnotation}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation()
+                                if (isInlineEditing) return
+                                const snapMeta = getAnnotationMeta(a)
+                                textBoxSnapshotRef.current = { ...a, meta: { ...snapMeta }, metadata: { ...snapMeta } }
+                                inlineTextOriginalRef.current = a.text || ''
+                                setInlineTextEditId(a.id)
+                                setFocusedAnnotationId(a.id)
+                              }}
                             >
                               <div
-                                className={`relative h-full w-full overflow-hidden rounded shadow-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
-                                style={{
-                                  borderColor: borderColorResolved === 'transparent' ? 'transparent' : borderColorResolved,
-                                  borderWidth,
-                                  borderStyle: 'solid',
-                                  backgroundColor: boxFill === 'transparent' ? 'transparent' : boxFill,
-                                }}
+                                className={`relative h-full w-full overflow-hidden ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                                style={{ background: 'transparent', border: 'none' }}
                               >
                                 {isInlineEditing ? (
                                   <div
@@ -4039,6 +4011,7 @@ export default function OperationsBlueprintPdfViewer({
                                       const val = e.currentTarget.textContent || ''
                                       setAllAnnotations((prev) => prev.map((ann) => (ann.id === a.id ? { ...ann, text: val } : ann)))
                                     }}
+                                    onBlur={() => { void saveTextBoxEditSession() }}
                                     onKeyDown={(e) => {
                                       if (e.key === 'Escape') {
                                         e.preventDefault()
@@ -4761,14 +4734,6 @@ export default function OperationsBlueprintPdfViewer({
                   e.preventDefault()
                   e.stopPropagation()
                   if (focusedAnn.type === 'textBox') {
-                    const snapMeta = getAnnotationMeta(focusedAnn)
-                    textBoxSnapshotRef.current = {
-                      ...focusedAnn,
-                      meta: { ...snapMeta, textStyle: snapMeta.textStyle ? { ...snapMeta.textStyle } : {} },
-                      metadata: { ...snapMeta, textStyle: snapMeta.textStyle ? { ...snapMeta.textStyle } : {} },
-                    }
-                    inlineTextOriginalRef.current = focusedAnn.text || ''
-                    setInlineTextEditId(focusedAnn.id)
                     const anchorEl = focusedAnnotationElRef.current || (e.currentTarget as HTMLElement)
                     openStylePopoverForAnnotation(focusedAnn, anchorEl)
                     return
