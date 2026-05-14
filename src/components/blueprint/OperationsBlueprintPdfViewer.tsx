@@ -1148,7 +1148,8 @@ export default function OperationsBlueprintPdfViewer({
     const frame = requestAnimationFrame(() => {
       const ann = allAnnotationsRef.current.find((item) => item.id === inlineTextEditId)
       if (!ann || ann.type !== 'textBox') return
-      const anchorEl = overlayRef.current?.querySelector(`[data-annotation-id="${inlineTextEditId}"]`) as HTMLElement | null
+      const anchorEl = (overlayRef.current?.querySelector(`[data-annotation-anchor-id="${inlineTextEditId}"]`) as HTMLElement | null)
+        || (overlayRef.current?.querySelector(`[data-annotation-id="${inlineTextEditId}"]`) as HTMLElement | null)
       if (!anchorEl) return
       focusedAnnotationElRef.current = anchorEl
       const r = anchorEl.getBoundingClientRect()
@@ -1158,6 +1159,22 @@ export default function OperationsBlueprintPdfViewer({
   }, [inlineTextEditId])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Fullscreen Policy Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  // Sync focusedAnnotationRect whenever the focused annotation changes.
+  // Handles sidebar-initiated selections (which only call setFocusedAnnotationId)
+  // so the floating action bar always has a valid anchor rect.
+  useEffect(() => {
+    if (!focusedAnnotationId) return
+    const rafId = requestAnimationFrame(() => {
+      const el = (overlayRef.current?.querySelector(`[data-annotation-anchor-id="${focusedAnnotationId}"]`) as HTMLElement | null)
+        || (overlayRef.current?.querySelector(`[data-annotation-id="${focusedAnnotationId}"]`) as HTMLElement | null)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      focusedAnnotationElRef.current = el
+      setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [focusedAnnotationId])
+
   // Fullscreen exits ONLY via:
   //   1. Explicit close button in the header (when isFullScreenView === true)
   //   2. Escape key (when no annotation UI is open)
@@ -1408,7 +1425,23 @@ export default function OperationsBlueprintPdfViewer({
       }
       const now = new Date().toISOString()
       const meta = getAnnotationMeta(current)
-      const rect = clampRectToPage(current.rect || meta.box || DEFAULT_TEXT_BOX)
+      let rect = clampRectToPage(current.rect || meta.box || DEFAULT_TEXT_BOX)
+      // Measure tight rect from anchor DOM element if available
+      const overlayEl = overlayRef.current
+      const anchorDomEl = (overlayEl?.querySelector(`[data-annotation-anchor-id="${editingId}"]`) as HTMLElement | null)
+        || (overlayEl?.querySelector(`[data-annotation-id="${editingId}"]`) as HTMLElement | null)
+      if (anchorDomEl && overlayEl) {
+        const oRect = overlayEl.getBoundingClientRect()
+        const aRect = anchorDomEl.getBoundingClientRect()
+        if (aRect.width > 4 && aRect.height > 4 && oRect.width > 0 && oRect.height > 0) {
+          rect = clampRectToPage({
+            x: (aRect.left - oRect.left) / oRect.width,
+            y: (aRect.top - oRect.top) / oRect.height,
+            w: Math.max(aRect.width / oRect.width, 0.01),
+            h: Math.max(aRect.height / oRect.height, 0.01),
+          })
+        }
+      }
       const isDraft = draftTextBoxIdRef.current === editingId
       if (isDraft && !(current.text || '').trim()) {
         setAllAnnotations((prev) => prev.filter((ann) => ann.id !== editingId))
@@ -1440,7 +1473,8 @@ export default function OperationsBlueprintPdfViewer({
       setToolMode('select')
       const fId = persistedId
       requestAnimationFrame(() => {
-        const el = overlayRef.current?.querySelector(`[data-annotation-id="${fId}"]`) as HTMLElement | null
+        const el = (overlayRef.current?.querySelector(`[data-annotation-anchor-id="${fId}"]`) as HTMLElement | null)
+          || (overlayRef.current?.querySelector(`[data-annotation-id="${fId}"]`) as HTMLElement | null)
         if (el) {
           focusedAnnotationElRef.current = el
           const r = el.getBoundingClientRect()
@@ -1584,8 +1618,8 @@ export default function OperationsBlueprintPdfViewer({
         const backup = getBackupData()
         if (!backup) return
         await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
-        // Storage confirmed the delete — guard no longer needed.
-        locallyDeletedIdsRef.current.delete(annotationId)
+        // Keep ID in locallyDeletedIdsRef so any concurrent loadAnnotations
+        // triggered by onAnnotationsChanged cannot re-surface a deleted item.
         onAnnotationsChanged?.()
       } catch (e: any) {
         locallyDeletedIdsRef.current.delete(annotationId)
@@ -2121,7 +2155,7 @@ export default function OperationsBlueprintPdfViewer({
       !lockView
     ) {
       const targetEl = e.target as HTMLElement | null
-      if (targetEl?.closest('button, textarea, input, select, a')) {
+      if (targetEl?.closest('button, textarea, input, select, a, [data-annotation-id]')) {
         return
       }
       mousePanRef.current = {
@@ -2157,18 +2191,22 @@ export default function OperationsBlueprintPdfViewer({
         return
       }
 
-      // One-finger pan only in Select/Pan mode.
+      // One-finger pan only in Select/Pan mode, and only when the touch is NOT
+      // on an annotation element (annotation taps must fire click → selectAnnotation).
       if (activeTouchPointersRef.current.size === 1 && effectiveTool === 'select' && !isEditorOpen && !lockView) {
-        touchPanRef.current = {
-          active: true,
-          pointerId: e.pointerId,
-          lastX: e.clientX,
-          lastY: e.clientY,
-          moved: false,
+        const touchTargetEl = e.target as HTMLElement | null
+        if (!touchTargetEl?.closest('[data-annotation-id]')) {
+          touchPanRef.current = {
+            active: true,
+            pointerId: e.pointerId,
+            lastX: e.clientX,
+            lastY: e.clientY,
+            moved: false,
+          }
+          e.preventDefault()
+          e.stopPropagation()
+          return
         }
-        e.preventDefault()
-        e.stopPropagation()
-        return
       }
     }
     if (Date.now() < suppressAnnotationUntilRef.current) return
@@ -2526,9 +2564,17 @@ export default function OperationsBlueprintPdfViewer({
       createdAt: now,
       updatedAt: now,
     } as BlueprintAnnotation
-    await persistAnnotation(ann)
-    setFocusedAnnotationId(ann.id)
-    setToolMode('select')
+    if (effectiveTool === 'shape') {
+      // Immediate local render — shape appears on release without waiting for Supabase
+      setAllAnnotations((prev) => [...prev, ann])
+      setFocusedAnnotationId(ann.id)
+      setToolMode('select')
+      void persistAnnotation(ann)
+    } else {
+      await persistAnnotation(ann)
+      setFocusedAnnotationId(ann.id)
+      setToolMode('select')
+    }
   }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -3935,9 +3981,6 @@ export default function OperationsBlueprintPdfViewer({
                           const r = el.getBoundingClientRect()
                           setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
                           setFocusedAnnotationId(a.id)
-                          if (a.type === 'note') {
-                            openEditNoteEditor(a)
-                          }
                         }
 
                         if (a.type === 'pen' || a.type === 'marker') {
@@ -3945,7 +3988,7 @@ export default function OperationsBlueprintPdfViewer({
                           const svgPoints = points.map((p: any) => `${clampNorm(p.x) * displaySize.w},${clampNorm(p.y) * displaySize.h}`).join(' ')
                           const handle = points[points.length - 1] || { x: rect.x + rect.w, y: rect.y + rect.h }
                           return (
-                            <div key={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+                            <div key={a.id} data-annotation-id={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
                               <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
                                 <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} style={{ pointerEvents: 'none' }} />
                                 <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onClick={selectAnnotation as any} />
@@ -3956,7 +3999,7 @@ export default function OperationsBlueprintPdfViewer({
 
                         if (a.type === 'underline') {
                           return (
-                            <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
                                 className={`${isFocused ? 'ring-2 ring-white/80' : ''}`}
                                 style={{ position: 'absolute', left: 0, right: 0, bottom: 0, borderBottom: `${meta.thickness || 3}px solid ${color}`, opacity: meta.opacity ?? 1 }}
@@ -3977,7 +4020,7 @@ export default function OperationsBlueprintPdfViewer({
                           const hatchPattern = meta.hatchPattern || 'none'
                           if (kind === 'line' || kind === 'arrow') {
                             return (
-                              <div key={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" preserveAspectRatio="none">
                                   <defs>
                                     <marker id={`arrow-${a.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
@@ -3992,7 +4035,7 @@ export default function OperationsBlueprintPdfViewer({
                             )
                           }
                           return (
-                            <div key={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
                                 className="w-full h-full pointer-events-none"
                                 style={{
@@ -4024,7 +4067,11 @@ export default function OperationsBlueprintPdfViewer({
                             lineHeight: 1.25,
                           }
                           return (
-                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }}
+                            <div
+                              key={a.id}
+                              data-annotation-id={a.id}
+                              className="absolute group cursor-pointer"
+                              style={isInlineEditing ? { left, top, width, height } : { left, top }}
                               onClick={selectAnnotation}
                               onDoubleClick={(e) => {
                                 e.stopPropagation()
@@ -4036,13 +4083,11 @@ export default function OperationsBlueprintPdfViewer({
                                 setFocusedAnnotationId(a.id)
                               }}
                             >
-                              <div
-                                className="relative h-full w-full overflow-hidden"
-                                style={{ background: 'transparent', border: 'none' }}
-                              >
-                                {isInlineEditing ? (
+                              {isInlineEditing ? (
+                                <div className="relative h-full w-full overflow-hidden" style={{ background: 'transparent', border: 'none' }}>
                                   <div
                                     ref={inlineTextBoxEditorRef}
+                                    data-annotation-anchor-id={a.id}
                                     contentEditable
                                     suppressContentEditableWarning
                                     className="h-full w-full overflow-auto bg-transparent p-2 outline-none whitespace-pre-wrap break-words"
@@ -4066,10 +4111,16 @@ export default function OperationsBlueprintPdfViewer({
                                     onPointerDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
                                   />
-                                ) : (
-                                  <div className="h-full w-full overflow-auto p-2 whitespace-pre-wrap break-words" style={textSurfaceStyle}>{a.text}</div>
-                                )}
-                              </div>
+                                </div>
+                              ) : (
+                                <div
+                                  data-annotation-anchor-id={a.id}
+                                  className="whitespace-pre-wrap break-words p-2"
+                                  style={textSurfaceStyle}
+                                >
+                                  {a.text}
+                                </div>
+                              )}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                             </div>
@@ -4106,6 +4157,7 @@ export default function OperationsBlueprintPdfViewer({
                                 <circle cx={anchorPxX} cy={anchorPxY} r="4" fill={color} opacity="0.95" />
                               </svg>
                               <div
+                                data-annotation-id={a.id}
                                 className="pointer-events-auto absolute group"
                                 style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, minHeight: `${box.h * 100}%` }}
                                 onClick={selectAnnotation}
@@ -4136,7 +4188,7 @@ export default function OperationsBlueprintPdfViewer({
 
                         if (a.type === 'highlight') {
                           return (
-                            <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div className={`w-full h-full pointer-events-none ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ border: `1px solid ${color}`, backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.35) }} />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -4147,7 +4199,7 @@ export default function OperationsBlueprintPdfViewer({
                         if (a.type === 'textHighlight') {
                           // Text Highlighter: no border, pure fill Ã¢â‚¬â€ looks like a text marker pen.
                           return (
-                            <div key={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
                                 className={`w-full h-full pointer-events-none rounded-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
                                 style={{ backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.4) }}
@@ -4233,9 +4285,9 @@ export default function OperationsBlueprintPdfViewer({
                         }
 
                         return (
-                          <div key={a.id} className="absolute group" style={{ left, top }} onClick={selectAnnotation}>
+                          <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top }} onClick={selectAnnotation}>
                             <button
-                              onClick={(e) => { e.stopPropagation(); if (effectiveTool === 'eraser') void removeAnnotation(a.id); else openEditNoteEditor(a) }}
+                              onClick={selectAnnotation}
                               className={`w-5 h-5 rounded-full border text-white text-[10px] font-bold ${isFocused ? 'ring-2 ring-white/80' : ''}`}
                               style={{ backgroundColor: color }}
                               title={a.text || 'Note'}
@@ -4746,7 +4798,7 @@ export default function OperationsBlueprintPdfViewer({
         const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
         if (!focusedAnn) return null
         const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
-        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline'
+        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'note'
         const fCanStyle = focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'shape' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker' || focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox'
         const BAR_APPROX_H = 34
         const GAP = 6
@@ -4765,10 +4817,20 @@ export default function OperationsBlueprintPdfViewer({
               <button
                 type="button"
                 onClick={() => { setLayoutEditId((prev) => prev === focusedAnn.id ? null : focusedAnn.id) }}
-                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${isLayoutEditingFocused ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-white/10'}`}
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${isLayoutEditingFocused ? 'bg-blue-600 text-white' : 'text-white hover:bg-white/10'}`}
                 title="Move or resize"
               >
                 <Move size={10} /> Move
+              </button>
+            )}
+            {focusedAnn.type === 'note' && (
+              <button
+                type="button"
+                onClick={() => openEditNoteEditor(focusedAnn)}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-white hover:bg-white/10"
+                title="Edit note"
+              >
+                <Pencil size={10} /> Edit
               </button>
             )}
             {fCanStyle && (
@@ -4784,7 +4846,7 @@ export default function OperationsBlueprintPdfViewer({
                   }
                   openStylePopoverForAnnotation(focusedAnn, e.currentTarget as HTMLElement)
                 }}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-white hover:bg-white/10"
                 title="Edit style"
               >
                 <Pencil size={10} /> Edit
@@ -4792,8 +4854,28 @@ export default function OperationsBlueprintPdfViewer({
             )}
             <button
               type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFocusedAnnotationId(null); void removeAnnotation(focusedAnn.id) }}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-red-200 hover:bg-red-900/40"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const cx = focusedAnnotationRect.left + focusedAnnotationRect.width / 2
+                const cy = focusedAnnotationRect.top + focusedAnnotationRect.height / 2
+                void removeAnnotation(focusedAnn.id)
+                requestAnimationFrame(() => {
+                  const els = document.elementsFromPoint(cx, cy)
+                  const nextEl = els.find((el) => {
+                    const id = (el as HTMLElement).dataset?.annotationId
+                    return id && !locallyDeletedIdsRef.current.has(id)
+                  }) as HTMLElement | undefined
+                  if (nextEl?.dataset?.annotationId) {
+                    const nextId = nextEl.dataset.annotationId
+                    focusedAnnotationElRef.current = nextEl
+                    const r = nextEl.getBoundingClientRect()
+                    setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+                    setFocusedAnnotationId(nextId)
+                  }
+                })
+              }}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-900/40"
               title="Delete annotation"
             >
               <Trash2 size={10} /> Delete
