@@ -134,6 +134,12 @@ export interface PlanRoomCandidate {
         'storage' | 'service' | 'office' | 'living' | 'bedroom' | 'kitchen' |
         'garage' | 'other'
   confidence: number
+  /**
+   * Optional role override surfaced by the fallback layout (e.g.
+   * 'wash-station' on top of a 'service' type). Lets the building-model
+   * conversion preserve specialised room roles for the 3D / interior views.
+   */
+  roleHint?: RoomRole
 }
 
 /**
@@ -518,11 +524,15 @@ interface RawRoom {
 
 /**
  * Beauty Salon fallback: 18 ft × 50 ft long-narrow tenant suite tuned to the
- * known project context. Includes:
- *   - reception at the front with storefront glass
- *   - styling floor with thin station-divider walls
- *   - back-of-house split into restroom, utility/panel, storage, service room
- *   - explicit door swing directions and a circulation hallway
+ * actual project floor plan and interior elevation references. Includes:
+ *   - storefront / reception at the front with glass entry
+ *   - a wide reception → styling pass-through flanked by thin divider columns
+ *     so the render's gold/black trim reads as a finish detail, not a wall
+ *   - styling floor with hair-station dividers along both side walls
+ *   - dedicated hair-wash sub-zone at the back of styling (shampoo bowls)
+ *   - back-of-house split into treatment room, restroom, utility/panel,
+ *     storage, and a circulation hallway connecting them
+ *   - explicit door swing directions
  */
 function buildSalonSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } {
   const W = 18
@@ -531,25 +541,46 @@ function buildSalonSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } 
 
   // ── Station divider walls (thin partitions) inside the styling room.
   // They mark the visual separators between styling stations along each side.
+  // The numbers mirror the elevation sheet's HAIR STATION #1 / #2 placement.
   const stationDividers: RawRoom['dividers'] = []
-  // Left-side stations at y = 14, 20, 26 (each 4 ft deep stub)
-  ;[14, 20, 26].forEach((yPos, i) => {
+  ;[13.5, 19.5, 25.5].forEach((yPos, i) => {
     stationDividers.push({
       id: `styling_divider_l_${i}`,
       start: { x: 0, y: yPos },
-      end: { x: 3.2, y: yPos },
+      end: { x: 3.6, y: yPos },
       thicknessFt: 0.18,
     })
   })
-  // Right-side stations mirrored
-  ;[14, 20, 26].forEach((yPos, i) => {
+  ;[13.5, 19.5, 25.5].forEach((yPos, i) => {
     stationDividers.push({
       id: `styling_divider_r_${i}`,
-      start: { x: W - 3.2, y: yPos },
+      start: { x: W - 3.6, y: yPos },
       end: { x: W, y: yPos },
       thicknessFt: 0.18,
     })
   })
+
+  // ── Reception / styling transition. The actual floor plan shows a wide,
+  //    nearly-full-width opening between reception and the styling floor.
+  //    The gold/black render elements are an accent finish, not a wall.
+  //    We model the transition as a wide 14 ft pass-through plus two short
+  //    column-style divider stubs (vertical, perpendicular to the partition).
+  const transitionDividers: RawRoom['dividers'] = [
+    // Left column stub (vertical) at the inside edge of the exterior wall
+    {
+      id: 'reception_styling_col_l',
+      start: { x: 1.8, y: 8.4 },
+      end: { x: 1.8, y: 9.6 },
+      thicknessFt: 0.5,
+    },
+    // Right column stub mirroring the left
+    {
+      id: 'reception_styling_col_r',
+      start: { x: W - 1.8, y: 8.4 },
+      end: { x: W - 1.8, y: 9.6 },
+      thicknessFt: 0.5,
+    },
+  ]
 
   const rooms: RawRoom[] = [
     {
@@ -559,31 +590,51 @@ function buildSalonSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } 
       role: 'reception',
       bounds: { min: { x: 0, y: 0 }, max: { x: W, y: 9 } },
       doorPlan: [
-        // Front storefront entry — sliding/glass
+        // Front storefront entry — large glass facade with a centered door
         {
           side: 'n',
           positionFraction: 0.5,
-          widthFt: 6,
+          widthFt: 10,
           swing: 'fixed',
           subtype: 'window-storefront',
         },
-        // Reception → styling pass-through
+        // Reception → styling open transition (wide). The flanking
+        // transitionDividers (placed on the styling room) sit at the corners
+        // so the opening reads as a wide pass instead of a doorway.
         {
           side: 's',
           positionFraction: 0.5,
-          widthFt: 5,
+          widthFt: 14,
           swing: 'fixed',
           subtype: 'pass-through',
         },
       ],
+      dividers: transitionDividers,
     },
     {
       id: 'styling',
       label: 'Styling Floor',
       type: 'styling',
       role: 'styling',
-      bounds: { min: { x: 0, y: 9 }, max: { x: W, y: 32 } },
+      bounds: { min: { x: 0, y: 9 }, max: { x: W, y: 27 } },
       dividers: stationDividers,
+    },
+    {
+      id: 'wash',
+      label: 'Hair Wash',
+      type: 'service',
+      role: 'wash-station',
+      bounds: { min: { x: 0, y: 27 }, max: { x: W, y: 32 } },
+      doorPlan: [
+        // Styling → wash open transition
+        {
+          side: 'n',
+          positionFraction: 0.5,
+          widthFt: 12,
+          swing: 'fixed',
+          subtype: 'pass-through',
+        },
+      ],
     },
     {
       id: 'hallway',
@@ -592,7 +643,7 @@ function buildSalonSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } 
       role: 'hallway',
       bounds: { min: { x: 6, y: 32 }, max: { x: 12, y: 50 } },
       doorPlan: [
-        // Styling → hallway opening
+        // Wash → hallway opening (smaller, more architectural)
         {
           side: 'n',
           positionFraction: 0.5,
@@ -604,7 +655,7 @@ function buildSalonSuiteLayoutRaw(): { footprint: Rectangle; rooms: RawRoom[] } 
     },
     {
       id: 'service',
-      label: 'Back Service Room',
+      label: 'Treatment Room',
       type: 'service',
       role: 'service',
       bounds: { min: { x: 0, y: 32 }, max: { x: 6, y: 44 } },
@@ -981,25 +1032,23 @@ function buildSalonHints(
         confidence: 0.5,
       })
     } else if (role === 'styling') {
-      // Stations along left and right walls
-      const leftStations = [0.18, 0.36, 0.54, 0.72]
-      const rightStations = [0.18, 0.36, 0.54, 0.72]
+      // Stations along left and right walls. Three stations per side mirrors
+      // the elevation sheet's HAIR STATION #1 / #2 spacing.
+      const leftStations = [0.22, 0.5, 0.78]
+      const rightStations = [0.22, 0.5, 0.78]
       leftStations.forEach((y) => {
-        pushHint(equipment, room.id, 'styling-mirror', 'Mirror', 0.08, y, 0.55)
-        pushHint(equipment, room.id, 'styling-chair', 'Styling Chair', 0.18, y, 0.55)
-        pushHint(equipment, room.id, 'vanity-counter', 'Station Vanity', 0.13, y + 0.04, 0.5)
+        pushHint(equipment, room.id, 'styling-mirror', 'Mirror', 0.07, y, 0.6)
+        pushHint(equipment, room.id, 'styling-chair', 'Styling Chair', 0.2, y, 0.6)
+        pushHint(equipment, room.id, 'vanity-counter', 'Station Vanity', 0.13, y + 0.04, 0.55)
         pushElec(electrical, room.id, 'receptacle', 0.08, y, 42)
       })
       rightStations.forEach((y) => {
-        pushHint(equipment, room.id, 'styling-mirror', 'Mirror', 0.92, y, 0.55)
-        pushHint(equipment, room.id, 'styling-chair', 'Styling Chair', 0.82, y, 0.55)
-        pushHint(equipment, room.id, 'vanity-counter', 'Station Vanity', 0.87, y + 0.04, 0.5)
+        pushHint(equipment, room.id, 'styling-mirror', 'Mirror', 0.93, y, 0.6)
+        pushHint(equipment, room.id, 'styling-chair', 'Styling Chair', 0.8, y, 0.6)
+        pushHint(equipment, room.id, 'vanity-counter', 'Station Vanity', 0.87, y + 0.04, 0.55)
         pushElec(electrical, room.id, 'receptacle', 0.92, y, 42)
       })
-      // Central wash station
-      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.45, 0.92, 0.45)
-      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.55, 0.92, 0.45)
-      // Track lights along ceiling
+      // Track lights along the centerline
       pushHint(equipment, room.id, 'track-light', 'Track Lighting', 0.5, 0.25, 0.5, 'lighting')
       pushHint(equipment, room.id, 'track-light', 'Track Lighting', 0.5, 0.55, 0.5, 'lighting')
       pushHint(equipment, room.id, 'track-light', 'Track Lighting', 0.5, 0.85, 0.5, 'lighting')
@@ -1012,6 +1061,25 @@ function buildSalonHints(
         roomId: room.id,
         surface: 'floor',
         finish: 'Polished concrete · light grey',
+        confidence: 0.5,
+      })
+    } else if (role === 'wash-station') {
+      // Hair-wash bowls in a row. Mirrors the salon's shampoo wall.
+      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.25, 0.5, 0.55)
+      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.45, 0.5, 0.55)
+      pushHint(equipment, room.id, 'shampoo-bowl', 'Shampoo Bowl', 0.65, 0.5, 0.55)
+      pushHint(equipment, room.id, 'vanity-counter', 'Wash Counter', 0.85, 0.5, 0.5)
+      pushHint(equipment, room.id, 'overhead-light', 'Recessed Light', 0.5, 0.3, 0.5, 'lighting')
+      pushHint(equipment, room.id, 'overhead-light', 'Recessed Light', 0.5, 0.7, 0.5, 'lighting')
+      pushElec(electrical, room.id, 'gfci', 0.15, 0.5, 42)
+      pushElec(electrical, room.id, 'gfci', 0.95, 0.5, 42)
+      pushElec(electrical, room.id, 'light', 0.5, 0.3)
+      pushElec(electrical, room.id, 'light', 0.5, 0.7)
+      finishes.push({
+        id: `${room.id}_floor_finish`,
+        roomId: room.id,
+        surface: 'floor',
+        finish: 'Porcelain tile · slip-resistant',
         confidence: 0.5,
       })
     } else if (role === 'bath') {
@@ -1057,11 +1125,15 @@ function buildSalonHints(
         confidence: 0.45,
       })
     } else if (role === 'service') {
-      pushHint(equipment, room.id, 'wash-sink', 'Wash Sink', 0.25, 0.3, 0.5)
-      pushHint(equipment, room.id, 'vanity-counter', 'Work Counter', 0.5, 0.7, 0.45)
-      pushHint(equipment, room.id, 'service-equipment', 'Service Equipment', 0.85, 0.5, 0.4)
-      pushHint(equipment, room.id, 'overhead-light', 'Service Light', 0.5, 0.5, 0.45, 'lighting')
-      pushElec(electrical, room.id, 'receptacle', 0.5, 0.6, 18)
+      // Treatment room — single chair, mirror, side counter, soft lighting.
+      pushHint(equipment, room.id, 'styling-chair', 'Treatment Chair', 0.5, 0.45, 0.55)
+      pushHint(equipment, room.id, 'styling-mirror', 'Treatment Mirror', 0.5, 0.18, 0.5)
+      pushHint(equipment, room.id, 'wash-sink', 'Treatment Sink', 0.18, 0.78, 0.5)
+      pushHint(equipment, room.id, 'vanity-counter', 'Work Counter', 0.65, 0.8, 0.5)
+      pushHint(equipment, room.id, 'overhead-light', 'Treatment Light', 0.5, 0.5, 0.5, 'lighting')
+      pushElec(electrical, room.id, 'gfci', 0.18, 0.7, 42)
+      pushElec(electrical, room.id, 'receptacle', 0.65, 0.7, 18)
+      pushElec(electrical, room.id, 'switch', 0.92, 0.05, 48)
       pushElec(electrical, room.id, 'light', 0.5, 0.5)
       finishes.push({
         id: `${room.id}_floor_finish`,
@@ -1343,6 +1415,47 @@ function buildWallsAndOpeningsFromRooms(
     })
   })
 
+  // ── 3.5 Mirror openings onto the matching wall of the adjacent room so
+  //         shared partition walls read as a single opening from both sides.
+  //         Without this, one room's wall is solid while the other has the
+  //         opening, which produces the "reversed wall / opening" artifact
+  //         that previously made the entrance → styling transition look wrong.
+  const wallByEndpoints = new Map<string, PlanWallCandidate[]>()
+  for (const w of walls) {
+    const a = `${w.start.x.toFixed(2)},${w.start.y.toFixed(2)}`
+    const b = `${w.end.x.toFixed(2)},${w.end.y.toFixed(2)}`
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    const list = wallByEndpoints.get(key) || []
+    list.push(w)
+    wallByEndpoints.set(key, list)
+  }
+  const seedOpenings = [...openings]
+  for (const op of seedOpenings) {
+    const sourceWall = walls.find((x) => x.id === op.wallId)
+    if (!sourceWall) continue
+    const a = `${sourceWall.start.x.toFixed(2)},${sourceWall.start.y.toFixed(2)}`
+    const b = `${sourceWall.end.x.toFixed(2)},${sourceWall.end.y.toFixed(2)}`
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    const siblings = (wallByEndpoints.get(key) || []).filter((p) => p.id !== sourceWall.id)
+    for (const sib of siblings) {
+      const exists = openings.some(
+        (o) => o.wallId === sib.id && Math.abs(o.positionFt - op.positionFt) < 0.25,
+      )
+      if (exists) continue
+      openings.push({
+        ...op,
+        id: `${op.id}_mirror_${sib.id}`,
+        wallId: sib.id,
+      })
+      if (op.subtype === 'window-storefront') sib.kind = 'glass'
+      if (op.subtype === 'pass-through') {
+        // Pass-through marks both walls as "open"; downstream renderers can
+        // skip drawing solid wall mass at that gap.
+        sib.kind = sib.kind === 'exterior' ? sib.kind : 'partition'
+      }
+    }
+  }
+
   // ── 4. Default front storefront if no glass-storefront opening was
   //       explicitly described in the layout's doorPlan.
   const alreadyHasStorefront = openings.some(
@@ -1466,6 +1579,7 @@ export function scanBlueprintPlan(
       type: r.type,
       bounds: r.bounds,
       confidence: 0.4,
+      roleHint: r.role,
     }))
     const wallsOpenings = buildWallsAndOpeningsFromRooms(
       fb.footprint,
@@ -1755,8 +1869,8 @@ export function convertPlanScanToBuildingModel(
       metadata: {
         type: toModelType(room.type),
         floor: 0,
-        notes: `Scanner role: ${room.type}`,
-        role: roleFromPlanType(room.type),
+        notes: `Scanner role: ${room.roleHint || room.type}`,
+        role: room.roleHint || roleFromPlanType(room.type),
       },
     }
   })
