@@ -80,8 +80,11 @@ export type {
   Unit,
   MeasurementValue,
   Point2D,
+  Point3D,
   Rectangle,
   Bounds,
+  Bounds2D,
+  Size2D,
   DimensionLine,
 } from './measurementTypes'
 
@@ -103,6 +106,65 @@ export {
   getRoomArea,
   getFootprintArea,
 } from './dimensionModel'
+
+// Building model — source-of-truth for Planner5D-style scene
+export type {
+  BlueprintBuildingModel,
+  BuildingLevelModel,
+  BuildingRoomModel,
+  BuildingWallModel,
+  BuildingOpeningModel,
+  BuildingDimensionModel,
+  ElectricalAnchorType,
+  BuildingElectricalAnchorModel,
+} from './buildingModel'
+
+export {
+  createEmptyBuildingModel,
+} from './buildingModel'
+
+// Blueprint-to-building-model adapter — dimension extraction and conversion
+export type {
+  BlueprintToBuildingModelInput,
+  BlueprintToBuildingModelResult,
+} from './blueprintToBuildingModel'
+
+export {
+  convertBlueprintToModel,
+  blueprintToModel,
+} from './blueprintToBuildingModel'
+
+// Building model defaults — fallback layouts
+export type {
+  DefaultLayoutType,
+} from './buildingModelDefaults'
+
+export {
+  detectLayoutType,
+  createDefaultBuildingModel,
+  createAutoDetectedDefaultModel,
+} from './buildingModelDefaults'
+
+// Building model validation
+export type {
+  ValidationSeverity,
+  ValidationMessage,
+  ValidationResult,
+} from './buildingModelValidation'
+
+export {
+  validateBuildingModel,
+  validateRoomsInsideFootprint,
+  validateWallHeights,
+  validateDimensionsNonZero,
+  validateElectricalAnchors,
+  isModelValid,
+  getValidationSummary,
+} from './buildingModelValidation'
+
+// Measured plan viewer component
+export { default as MeasuredPlanViewer } from './MeasuredPlanViewer'
+export type { MeasuredPlanViewerProps } from './MeasuredPlanViewer'
 
 // Dimension extraction adapter — BVR12
 export type {

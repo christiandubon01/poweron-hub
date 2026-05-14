@@ -36,6 +36,12 @@ export interface Point2D {
   y: number
 }
 
+export interface Point3D {
+  x: number
+  y: number
+  z: number
+}
+
 export interface Rectangle {
   x: number
   y: number
@@ -46,6 +52,20 @@ export interface Rectangle {
 export interface Bounds {
   min: Point2D
   max: Point2D
+}
+
+/**
+ * Alias for Bounds — 2D bounding box with min/max corners.
+ * Used in newer models for clarity.
+ */
+export type Bounds2D = Bounds
+
+/**
+ * 2D size with width and height.
+ */
+export interface Size2D {
+  width: number
+  height: number
 }
 
 // ---------------------------------------------------------------------------
