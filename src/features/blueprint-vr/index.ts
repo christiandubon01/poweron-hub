@@ -1,11 +1,11 @@
-/**
+﻿/**
  * src/features/blueprint-vr/index.ts
  *
  * Barrel export for the Blueprint VR feature.
  * Provides the public API for VR generation, stage management, and related utilities.
  */
 
-// ── Type Exports ────────────────────────────────────────────────────────────
+// Type exports
 export type {
   VRStage,
   Discipline,
@@ -24,7 +24,15 @@ export type {
   DisciplineHint,
 } from './blueprintExtractionAdapter'
 
-// ── Stage Exports ───────────────────────────────────────────────────────────
+export type {
+  QualityProfile,
+  AssetPlaceholder,
+  LayoutZone,
+  BlueprintVRSceneManifest,
+  CreateManifestInput,
+} from './sceneManifestBuilder'
+
+// Stage exports
 export {
   STAGE_ORDER,
   STAGE_LABELS,
@@ -39,7 +47,7 @@ export {
   isValidStage,
 } from './stages'
 
-// ── Adapter Exports ─────────────────────────────────────────────────────────
+// Adapter exports
 export {
   normalizeBlueprint,
   extractVRInputs,
@@ -49,3 +57,8 @@ export {
   isElectricalBlueprint,
   getRecommendedActivePage,
 } from './blueprintExtractionAdapter'
+
+// Scene manifest builder exports
+export {
+  createBlueprintVRSceneManifest,
+} from './sceneManifestBuilder'
