@@ -2856,18 +2856,101 @@ export default function OperationsBlueprintPdfViewer({
       `}</style>
 
       {!isFullScreenView && !isTabletImmersiveFullscreen && !useDesktopThreePaneLayout && (
-        <div className="px-3 sm:px-4 py-1.5 border-b border-gray-800 flex items-center justify-between gap-2 sm:gap-3 flex-shrink-0">
-          <div className="min-w-0">
-            <p className="text-xs sm:text-sm text-gray-100 font-semibold truncate">{blueprint.title}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500 truncate hidden sm:block">{blueprint.projectName} Ã¢â‚¬Â¢ {blueprint.fileName}</p>
-          </div>
+        <div className="px-3 py-1.5 border-b border-gray-800 bg-[#0d0e14] flex-shrink-0 flex items-center gap-2 overflow-x-auto">
+          {/* Enter fullscreen */}
           <button
-            onClick={() => void loadPdf()}
-            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white flex-shrink-0"
+            onClick={() => {
+              handleFullscreenToggle(
+                false,
+                isTabletDevice(),
+                viewerRootRef.current,
+                setIsFullScreenView,
+                setIsTabletImmersiveFullscreen,
+              )
+            }}
+            className="shrink-0 inline-flex items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+            title="Enter fullscreen"
           >
-            <RefreshCw size={12} />
-            <span className="hidden sm:inline">Link</span>
+            <Maximize2 size={14} />
           </button>
+          {/* Page Navigation */}
+          <div className="shrink-0 inline-flex items-center gap-1 bg-gray-900/40 rounded-md border border-gray-700/50 px-1.5 py-0.5">
+            <button
+              disabled={!canRender || currentPage <= 1 || isRendering}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+              title="Previous page"
+            >
+              <ChevronLeft size={12} />
+            </button>
+            <input
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
+              className="w-8 rounded-sm border border-gray-600 bg-gray-900/60 text-gray-100 text-xs px-1 py-0.5 text-center font-medium"
+              placeholder="1"
+              title="Page number"
+            />
+            <span className="text-xs text-gray-500 px-0.5">/{numPages || 1}</span>
+            <button
+              disabled={!canRender || currentPage >= numPages || isRendering}
+              onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+              className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+              title="Next page"
+            >
+              <ChevronRight size={12} />
+            </button>
+          </div>
+          {/* Zoom */}
+          <div className="shrink-0 inline-flex items-center gap-1 bg-gray-900/40 rounded-md border border-gray-700/50 px-1.5 py-0.5">
+            <button
+              disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
+              onClick={() => applyRelativeZoomDelta(-0.1)}
+              className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+              title="Zoom out"
+            >
+              <ZoomOut size={12} />
+            </button>
+            <span className="text-xs text-gray-400 w-7 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+            <button
+              disabled={!canRender || relativeZoom >= maxRelativeZoom}
+              onClick={() => applyRelativeZoomDelta(0.1)}
+              className="inline-flex items-center justify-center text-xs px-1 py-1 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
+              title="Zoom in"
+            >
+              <ZoomIn size={12} />
+            </button>
+          </div>
+          {/* Fit + Lock */}
+          <div className="shrink-0 inline-flex items-center gap-1">
+            <button
+              disabled={!canRender}
+              onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
+              className="inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 disabled:opacity-40 transition-colors"
+              title="Fit page to view"
+            >
+              <ArrowUpRight size={12} />
+            </button>
+            <button
+              disabled={!canRender}
+              onClick={() => setLockView((v) => !v)}
+              className={`inline-flex items-center justify-center text-xs px-1.5 py-1 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'} disabled:opacity-40`}
+              title={lockView ? 'Unlock view' : 'Lock view'}
+            >
+              {lockView ? <Lock size={12} /> : <Unlock size={12} />}
+            </button>
+          </div>
+          {/* Title strip */}
+          <div className="min-w-0 flex-1 ml-1 flex items-center gap-2">
+            <p className="text-xs text-gray-300 font-semibold truncate">{blueprint.title}</p>
+            <button
+              onClick={() => void loadPdf()}
+              className="shrink-0 inline-flex items-center justify-center text-xs px-1 py-1 rounded-sm border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600"
+              title="Refresh PDF link"
+            >
+              <RefreshCw size={11} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -3091,7 +3174,7 @@ export default function OperationsBlueprintPdfViewer({
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-3 sm:px-4 py-1.5 border-b border-gray-800 space-y-1.5'}
+              : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1'}
           >
             {/* â”€â”€â”€â”€ Tablet: Compact single-row segmented bucket selector â”€â”€â”€â”€ */}
             {!useDesktopThreePaneLayout && (
@@ -3165,12 +3248,6 @@ export default function OperationsBlueprintPdfViewer({
               </>
             )}
 
-            {/* â”€â”€â”€â”€ Tablet: Compact active tool label â”€â”€â”€â”€ */}
-            {!useDesktopThreePaneLayout && (
-              <div className="text-[10px] text-gray-600 px-0.5 leading-none">
-                <span className="text-gray-400">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' Â· editing' : ''}
-              </div>
-            )}
 
 
             {/* Ã¢â€â‚¬Ã¢â€â‚¬ Annotate: Text Box Ã‚Â· Text Highlight Ã‚Â· Underline Ã‚Â· Note Ã‚Â· Callout Ã¢â€â‚¬Ã¢â€â‚¬ */}
@@ -3342,11 +3419,8 @@ export default function OperationsBlueprintPdfViewer({
             )}
           </div>
 
-          <div
-            className={useDesktopThreePaneLayout
-              ? 'col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3'
-              : 'px-3 py-1.5 border-b border-gray-800 space-y-1.5'}
-          >
+          {useDesktopThreePaneLayout && (
+          <div className="col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
             {/* Page Navigation Group */}
             <div className="flex items-center gap-2">
               {/* Prev/Next */}
@@ -3473,6 +3547,7 @@ export default function OperationsBlueprintPdfViewer({
               </button>
             </div>
           </div>
+          )}
 
           {(isLoading || isRendering) && (
             <div className={useDesktopThreePaneLayout ? 'col-start-3 row-start-1 self-start text-xs text-blue-300 flex items-center gap-2' : 'px-4 py-2 text-xs text-blue-300 flex items-center gap-2'}>
