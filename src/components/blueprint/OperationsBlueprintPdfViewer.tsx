@@ -1498,6 +1498,7 @@ export default function OperationsBlueprintPdfViewer({
     } as BlueprintAnnotation
     void persistAnnotation(ann)
     setFocusedAnnotationId(ann.id)
+    setToolMode('select')
   }, [measurePendingCommit, blueprint, persistAnnotation, savedCalibrations, detectedScales, toolColors, measurementStyle])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Persist manual calibrations to localStorage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -1621,6 +1622,7 @@ export default function OperationsBlueprintPdfViewer({
       }
       await persistAnnotation(ann)
       setFocusedAnnotationId(ann.id)
+      setToolMode('select')
       setNoteEditor(null)
       return
     }
@@ -1764,6 +1766,7 @@ export default function OperationsBlueprintPdfViewer({
       await persistAnnotation(ann)
       draftTextBoxIdRef.current = null
       setFocusedAnnotationId(ann.id)
+      setToolMode('select')
       setRichTextEditor(null)
       if (richTextEditor.annotationType === 'generate') {
         onGenerateQuestion?.({
@@ -2090,9 +2093,6 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     if (e.pointerType === 'touch') {
-      if (lockView) {
-        return
-      }
       const rect = scrollAreaRef.current?.getBoundingClientRect()
       if (rect) {
         activeTouchPointersRef.current.set(e.pointerId, {
@@ -2387,6 +2387,7 @@ export default function OperationsBlueprintPdfViewer({
       } as BlueprintAnnotation
       await persistAnnotation(ann)
       setFocusedAnnotationId(ann.id)
+      setToolMode('select')
       return
     }
 
@@ -2486,6 +2487,7 @@ export default function OperationsBlueprintPdfViewer({
     } as BlueprintAnnotation
     await persistAnnotation(ann)
     setFocusedAnnotationId(ann.id)
+    setToolMode('select')
   }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -3933,10 +3935,10 @@ export default function OperationsBlueprintPdfViewer({
                           const svgPoints = points.map((p: any) => `${clampNorm(p.x) * displaySize.w},${clampNorm(p.y) * displaySize.h}`).join(' ')
                           const handle = points[points.length - 1] || { x: rect.x + rect.w, y: rect.y + rect.h }
                           return (
-                            <div key={a.id} className="absolute inset-0 group" onClick={selectAnnotation}>
-                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h} style={{ pointerEvents: 'none' }}>
-                                <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} />
-                                <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke' }} onClick={selectAnnotation as any} />
+                            <div key={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
+                                <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} style={{ pointerEvents: 'none' }} />
+                                <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onClick={selectAnnotation as any} />
                               </svg>
                             </div>
                           )
@@ -4182,8 +4184,8 @@ export default function OperationsBlueprintPdfViewer({
                           const arrowMarkEnd   = endStyle === 'arrow' ? `url(#me-${a.id})` : undefined
 
                           return (
-                            <div key={a.id} className="absolute inset-0 group" onClick={selectAnnotation}>
-                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h} style={{ pointerEvents: 'none' }}>
+                            <div key={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
                                 <defs>
                                   {usePattern && getMeasurePatternDef(patId, fillPat, fillCol, fillOp)}
                                   {endStyle === 'arrow' && (
@@ -4194,20 +4196,20 @@ export default function OperationsBlueprintPdfViewer({
                                   )}
                                 </defs>
                                 {a.type === 'measure-distance' ? (
-                                  <line x1={pxPts[0].px} y1={pxPts[0].py} x2={pxPts[1].px} y2={pxPts[1].py} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinecap="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} />
+                                  <line x1={pxPts[0].px} y1={pxPts[0].py} x2={pxPts[1].px} y2={pxPts[1].py} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinecap="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} style={{ pointerEvents: 'none' }} />
                                 ) : a.type === 'measure-perimeter' ? (
-                                  <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} />
+                                  <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} style={{ pointerEvents: 'none' }} />
                                 ) : (
-                                  <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill={areaFill} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" />
+                                  <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill={areaFill} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
                                 )}
                                 {renderEndpoints()}
                                 {lbl && (
                                   <>
-                                    <rect x={midPx.px - 2} y={midPx.py - 10} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} />
-                                    <text x={midPx.px + 3} y={midPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start">{lbl}</text>
+                                    <rect x={midPx.px - 2} y={midPx.py - 10} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
+                                    <text x={midPx.px + 3} y={midPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start" style={{ pointerEvents: 'none' }}>{lbl}</text>
                                   </>
                                 )}
-                                <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke' }} onClick={selectAnnotation as any} />
+                                <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onClick={selectAnnotation as any} />
                               </svg>
                             </div>
                           )
@@ -4727,7 +4729,7 @@ export default function OperationsBlueprintPdfViewer({
         const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
         if (!focusedAnn) return null
         const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
-        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker'
+        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline'
         const fCanStyle = focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'shape' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker' || focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox'
         const BAR_APPROX_H = 34
         const GAP = 6
