@@ -1,20 +1,24 @@
 /**
  * src/features/blueprint-vr/buildingModelDefaults.ts
  *
- * Deterministic fallback building models for different layout types.
- * Used when exact blueprint dimensions are unavailable but we need a sensible default model.
+ * Deterministic fallback building models for the different blueprint suite
+ * shapes the Generate VR experience can encounter.
  *
- * Supports:
- * - Residential layout (living/bedroom/kitchen/bath)
- * - Commercial suite layout (main/offices/conference/break)
- * - Salon / tenant improvement layout (service areas + reception)
- * - Multi-room utility/electrical layout
- * - Utility/electrical room with panel placement
+ * Implementation note (W3.7):
+ * This module now delegates layout generation to the Blueprint plan scanner so
+ * that the 2D plan, the 3D dollhouse, and the fallback always share the same
+ * non-overlapping geometry. The scanner provides a long/narrow Beauty Salon
+ * suite (18 ft × 50 ft), a commercial tenant suite, a residential layout, an
+ * electrical-only room, and a generic fallback.
+ *
+ * The functions here remain backward-compatible: existing callers asking for a
+ * `salon` / `commercial` / `electrical` / `residential` model still get a
+ * complete BlueprintBuildingModel, only now it is generated through the
+ * scanner contract and therefore stays consistent across views.
  */
 
-import type { BlueprintBuildingModel, BuildingRoomModel, BuildingLevelModel, BuildingWallModel, BuildingOpeningModel } from './buildingModel'
-import type { MeasurementValue, Rectangle, Bounds2D } from './measurementTypes'
-import { createMeasurement } from './dimensionModel'
+import type { BlueprintBuildingModel } from './buildingModel'
+import { scanBlueprintPlan, convertPlanScanToBuildingModel } from './blueprintPlanScanner'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout Type Detection
@@ -38,27 +42,25 @@ export function detectLayoutType(
 ): DefaultLayoutType {
   const combined = `${title || ''} ${projectName || ''} ${discipline || ''}`.toLowerCase()
 
-  // Salon / tenant improvement
   if (
     combined.includes('salon') ||
     combined.includes('spa') ||
     combined.includes('beauty') ||
+    combined.includes('barber') ||
+    combined.includes('nail') ||
     combined.includes('tenant')
   ) {
     return 'salon'
   }
 
-  // Electrical / utility
   if (
-    combined.includes('electrical') ||
-    combined.includes('panel') ||
-    combined.includes('utility') ||
+    combined.includes('panel room') ||
+    combined.includes('electrical room') ||
     combined.includes('mep')
   ) {
     return 'electrical'
   }
 
-  // Commercial
   if (
     combined.includes('office') ||
     combined.includes('commercial') ||
@@ -68,7 +70,6 @@ export function detectLayoutType(
     return 'commercial'
   }
 
-  // Residential
   if (
     combined.includes('residential') ||
     combined.includes('house') ||
@@ -82,277 +83,80 @@ export function detectLayoutType(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Room creation helpers
+// Layout → scanner-context bridge
 // ─────────────────────────────────────────────────────────────────────────────
 
-function createRoom(
-  id: string,
-  label: string,
-  bounds: Bounds2D,
-  wallHeight: MeasurementValue,
-  type: 'living' | 'bedroom' | 'kitchen' | 'bath' | 'utility' | 'garage' | 'other',
-): BuildingRoomModel {
-  const { min, max } = bounds
-  const width = max.x - min.x
-  const height = max.y - min.y
-  const area = width * height
+type ScannerLayoutContext = Parameters<typeof scanBlueprintPlan>[0]
 
-  return {
-    id,
-    label,
-    bounds,
-    area,
-    height: wallHeight,
-    walls: createWallsForBounds(id, bounds, wallHeight),
-    electricalAnchors: [],
-    visible: true,
-    metadata: {
-      type,
-      floor: 0,
-    },
+function layoutTypeToScannerHint(
+  layoutType: DefaultLayoutType,
+  title?: string,
+  projectName?: string,
+): ScannerLayoutContext {
+  const seed: ScannerLayoutContext = {
+    projectName,
+    blueprintTitle: title,
+  }
+  switch (layoutType) {
+    case 'salon':
+      seed.projectName = projectName || 'Beauty Salon'
+      seed.blueprintTitle = title || `${seed.projectName} Tenant Improvement`
+      return seed
+    case 'commercial':
+      seed.projectName = projectName || 'Commercial Suite'
+      seed.blueprintTitle = title || `${seed.projectName} Office Tenant`
+      return seed
+    case 'electrical':
+    case 'utility':
+      seed.projectName = projectName || 'Electrical Room'
+      seed.blueprintTitle = title || `${seed.projectName} Panel Layout`
+      return seed
+    case 'residential':
+      seed.projectName = projectName || 'Residential'
+      seed.blueprintTitle = title || `${seed.projectName} Home Plan`
+      return seed
+    case 'generic':
+    default:
+      seed.projectName = projectName || 'Project'
+      seed.blueprintTitle = title || `${seed.projectName} Generic Plan`
+      return seed
   }
 }
 
-function opening(
-  id: string,
-  type: 'door' | 'window',
-  position: number,
-  width: number,
-  height: number,
-): BuildingOpeningModel {
-  return {
-    id,
-    type,
-    positionAlongWall: createMeasurement(position, 'ft', 'default', 0.5),
-    width: createMeasurement(width, 'ft', 'default', 0.5),
-    height: createMeasurement(height, 'ft', 'default', 0.5),
-    visible: true,
-  }
-}
-
-function createWallsForBounds(id: string, bounds: Bounds2D, wallHeight: MeasurementValue): BuildingWallModel[] {
-  const { min, max } = bounds
-  const thickness = createMeasurement(0.5, 'ft', 'default', 1)
-  const width = max.x - min.x
-  const height = max.y - min.y
-
-  return [
-    {
-      id: `${id}_wall_n`,
-      start: { x: min.x, y: max.y },
-      end: { x: max.x, y: max.y },
-      thickness,
-      height: wallHeight,
-      openings: [
-        opening(`${id}_window_n`, 'window', Math.max(2, width * 0.55), 3, 4),
-      ],
-    },
-    {
-      id: `${id}_wall_s`,
-      start: { x: min.x, y: min.y },
-      end: { x: max.x, y: min.y },
-      thickness,
-      height: wallHeight,
-      openings: [
-        opening(`${id}_door_s`, 'door', Math.max(1.5, width * 0.42), 3, 7),
-      ],
-    },
-    { id: `${id}_wall_e`, start: { x: max.x, y: min.y }, end: { x: max.x, y: max.y }, thickness, height: wallHeight, openings: [] },
-    {
-      id: `${id}_wall_w`,
-      start: { x: min.x, y: min.y },
-      end: { x: min.x, y: max.y },
-      thickness,
-      height: wallHeight,
-      openings: [
-        opening(`${id}_door_w`, 'door', Math.max(1.5, height * 0.48), 2.8, 7),
-      ],
-    },
-  ]
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Layout definitions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Residential layout: 40 ft × 30 ft
- * - Main living area
- * - Kitchen
- * - Bedroom
- * - Bathroom
- * - Utility/Electrical
- */
-function createResidentialLayout(wallHeight: MeasurementValue): BuildingRoomModel[] {
-  const w = 40
-  const h = 30
-
-  return [
-    createRoom('main', 'Living Room', { min: { x: 0, y: 0 }, max: { x: w * 0.6, y: h * 0.67 } }, wallHeight, 'living'),
-    createRoom('kitchen', 'Kitchen', { min: { x: w * 0.6, y: 0 }, max: { x: w, y: h * 0.53 } }, wallHeight, 'kitchen'),
-    createRoom('bedroom', 'Bedroom', { min: { x: 0, y: h * 0.67 }, max: { x: w * 0.5, y: h } }, wallHeight, 'bedroom'),
-    createRoom('bath', 'Bathroom', { min: { x: w * 0.5, y: h * 0.67 }, max: { x: w * 0.8, y: h } }, wallHeight, 'bath'),
-    createRoom('utility', 'Utility/Panel', { min: { x: w * 0.8, y: 0 }, max: { x: w, y: h } }, wallHeight, 'utility'),
-  ]
-}
-
-/**
- * Commercial suite layout: 50 ft × 40 ft
- * - Main reception/lobby
- * - Conference room
- * - Office areas
- * - Break room
- * - Utility
- */
-function createCommercialLayout(wallHeight: MeasurementValue): BuildingRoomModel[] {
-  const w = 50
-  const h = 40
-
-  return [
-    createRoom('reception', 'Reception', { min: { x: 0, y: 0 }, max: { x: w * 0.3, y: h * 0.6 } }, wallHeight, 'other'),
-    createRoom('conference', 'Conference', { min: { x: w * 0.3, y: 0 }, max: { x: w * 0.7, y: h * 0.6 } }, wallHeight, 'other'),
-    createRoom('office', 'Office', { min: { x: w * 0.7, y: 0 }, max: { x: w, y: h * 0.6 } }, wallHeight, 'other'),
-    createRoom('break', 'Break Room', { min: { x: 0, y: h * 0.6 }, max: { x: w * 0.5, y: h } }, wallHeight, 'kitchen'),
-    createRoom('utility', 'Utility/Panel', { min: { x: w * 0.5, y: h * 0.6 }, max: { x: w, y: h } }, wallHeight, 'utility'),
-  ]
-}
-
-/**
- * Salon / tenant improvement layout: 35 ft × 25 ft
- * - Service area 1 (hair/nails/massage station)
- * - Service area 2
- * - Waiting/reception
- * - Bathroom
- * - Utility/Panel (electrical for styling stations)
- */
-function createSalonLayout(wallHeight: MeasurementValue): BuildingRoomModel[] {
-  const w = 35
-  const h = 25
-
-  return [
-    createRoom('service1', 'Service Area 1', { min: { x: 0, y: 0 }, max: { x: w * 0.5, y: h * 0.65 } }, wallHeight, 'other'),
-    createRoom('service2', 'Service Area 2', { min: { x: w * 0.5, y: 0 }, max: { x: w * 0.82, y: h * 0.65 } }, wallHeight, 'other'),
-    createRoom('utility', 'Utility/Panel', { min: { x: w * 0.82, y: 0 }, max: { x: w, y: h * 0.65 } }, wallHeight, 'utility'),
-    createRoom('waiting', 'Waiting/Reception', { min: { x: 0, y: h * 0.65 }, max: { x: w * 0.65, y: h } }, wallHeight, 'living'),
-    createRoom('bath', 'Bathroom', { min: { x: w * 0.65, y: h * 0.65 }, max: { x: w, y: h } }, wallHeight, 'bath'),
-  ]
-}
-
-/**
- * Utility / electrical room layout: 30 ft × 20 ft
- * Single large room with electrical panel, disconnect, subpanels
- */
-function createUtilityLayout(wallHeight: MeasurementValue): BuildingRoomModel[] {
-  const w = 30
-  const h = 20
-
-  return [
-    createRoom('electrical', 'Electrical Panel Room', { min: { x: 0, y: 0 }, max: { x: w, y: h } }, wallHeight, 'utility'),
-  ]
-}
-
-/**
- * Generic fallback layout: 40 ft × 30 ft
- * Simple rectangular space with one utility room
- */
-function createGenericLayout(wallHeight: MeasurementValue): BuildingRoomModel[] {
-  const w = 40
-  const h = 30
-
-  return [
-    createRoom('main', 'Main Space', { min: { x: 0, y: 0 }, max: { x: w * 0.85, y: h } }, wallHeight, 'living'),
-    createRoom('utility', 'Utility/Panel', { min: { x: w * 0.85, y: 0 }, max: { x: w, y: h } }, wallHeight, 'utility'),
-  ]
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Default model factory
+// Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Create a default building model for the given layout type.
  *
- * @param layoutType The layout type to use
- * @param title Blueprint or project title (for naming)
- * @param projectName Project name (for display)
- * @returns A complete BlueprintBuildingModel with default dimensions
+ * The model is now generated by running the deterministic scanner with the
+ * appropriate context so it stays in lock-step with the rest of the Generate
+ * VR pipeline.
  */
 export function createDefaultBuildingModel(
   layoutType: DefaultLayoutType = 'generic',
   title?: string,
   projectName?: string,
 ): BlueprintBuildingModel {
-  const wallHeight = createMeasurement(9, 'ft', 'default', 0.5)
-  const ceilingHeight = createMeasurement(9, 'ft', 'default', 0.5)
-  const slabThickness = createMeasurement(4, 'in', 'default', 0.5)
+  const hint = layoutTypeToScannerHint(layoutType, title, projectName)
+  const scan = scanBlueprintPlan(hint)
+  const model = convertPlanScanToBuildingModel(scan)
 
-  let rooms: BuildingRoomModel[]
-  let footprint: Rectangle
-  let name: string
-
-  switch (layoutType) {
-    case 'residential':
-      rooms = createResidentialLayout(wallHeight)
-      footprint = { x: 0, y: 0, width: 40, height: 30 }
-      name = 'Residential Layout'
-      break
-    case 'commercial':
-      rooms = createCommercialLayout(wallHeight)
-      footprint = { x: 0, y: 0, width: 50, height: 40 }
-      name = 'Commercial Suite'
-      break
-    case 'salon':
-      rooms = createSalonLayout(wallHeight)
-      footprint = { x: 0, y: 0, width: 35, height: 25 }
-      name = 'Salon / Tenant Improvement'
-      break
-    case 'electrical':
-    case 'utility':
-      rooms = createUtilityLayout(wallHeight)
-      footprint = { x: 0, y: 0, width: 30, height: 20 }
-      name = 'Electrical Panel Room'
-      break
-    case 'generic':
-    default:
-      rooms = createGenericLayout(wallHeight)
-      footprint = { x: 0, y: 0, width: 40, height: 30 }
-      name = 'Generic Layout'
+  // Preserve project / title display so the dollhouse and plan viewers can use
+  // them. createDefaultBuildingModel callers historically built their own
+  // display labels, so we patch the model name to mirror the prior behaviour.
+  if (title || projectName) {
+    const layoutDisplay =
+      layoutType === 'salon' ? 'Beauty Salon Suite' :
+      layoutType === 'commercial' ? 'Commercial Suite' :
+      layoutType === 'residential' ? 'Residential Layout' :
+      layoutType === 'electrical' || layoutType === 'utility' ? 'Electrical Panel Room' :
+      'Suite Layout'
+    model.name = title ? `${title} (${layoutDisplay})` : layoutDisplay
+    model.metadata.displayLabel = `${projectName || 'Project'} – ${layoutDisplay}`
   }
-
-  const level: BuildingLevelModel = {
-    levelNumber: 0,
-    label: 'Ground Floor',
-    rooms,
-    footprint,
-    visible: true,
-  }
-
-  const now = new Date().toISOString()
-
-  return {
-    id: `default-${layoutType}-${Date.now()}`,
-    name: title ? `${title} (${name})` : name,
-    footprint,
-    levels: [level],
-    wallHeight,
-    ceilingHeight,
-    slabThickness,
-    scale: {
-      pixelsPerUnit: 1,
-      unit: 'ft',
-      source: 'default',
-    },
-    confidence: 0.2, // Low confidence since it's just a template
-    metadata: {
-      createdAt: now,
-      updatedAt: now,
-      source: 'fallback',
-      sourceProject: projectName,
-      sourceBlueprint: title,
-      notes: `Default ${layoutType} layout – replace with actual blueprint dimensions`,
-      displayLabel: `${projectName || 'Project'} – Default Layout`,
-    },
-  }
+  return model
 }
 
 /**

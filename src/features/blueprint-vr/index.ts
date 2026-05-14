@@ -211,3 +211,45 @@ export {
   createFallbackMeasuredSpace,
   extractBlueprintDimensions,
 } from './blueprintDimensionExtractor'
+
+// PDF trace types — future vector input shape
+export type {
+  PdfTracePoint,
+  WorldPoint2D,
+  PdfTraceScale,
+  PdfTraceLineRole,
+  PdfTraceLine,
+  PdfTracePolyline,
+  PdfTraceTextNote,
+  PdfTracePagePayload,
+} from './pdfTraceTypes'
+
+// Trace adapter — converts upstream vector trace into world plan candidates
+export type {
+  PlanTraceLine,
+  AdaptedTrace,
+} from './blueprintTraceAdapter'
+export { adaptPdfTraceToPlanLines } from './blueprintTraceAdapter'
+
+// Blueprint plan scanner — deterministic floor-plan scan + fallback
+export type {
+  BlueprintPlanScanInput,
+  BlueprintPlanScanResult,
+  BlueprintPlanScanSheetHint,
+  PlanWallCandidate,
+  PlanOpeningCandidate,
+  PlanRoomCandidate,
+  PlanDimensionCandidate,
+  PlanScanWarning,
+  PlanScanWarningCode,
+} from './blueprintPlanScanner'
+
+export {
+  scanBlueprintPlan,
+  convertPlanScanToBuildingModel,
+  inferBuildingFootprintFromTraceLines,
+  inferWallsFromOrthogonalLines,
+  inferOpeningsFromGaps,
+  inferRoomsFromEnclosedOrGridLayout,
+  chooseSalonSuiteFallbackFromBlueprintContext,
+} from './blueprintPlanScanner'
