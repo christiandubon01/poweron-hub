@@ -1939,7 +1939,6 @@ export default function OperationsBlueprintPdfViewer({
 
     if (e.pointerType === 'touch') {
       if (lockView) {
-        e.preventDefault()
         return
       }
       const rect = scrollAreaRef.current?.getBoundingClientRect()
