@@ -39,6 +39,8 @@ export interface BlueprintVRProjectCacheEntry {
   scan: BlueprintPlanScanResult
   /** Optional full-set scan result when available. */
   fullSetScan?: BlueprintFullSetScanResult
+  /** How this model was derived for scanner transparency. */
+  modelDerivation?: 'fallback-derived' | 'inferred-derived' | 'trace-derived'
   /** Display label (e.g. "Full Set", or set title). */
   sourceSetLabel?: string
   /** When the cache entry was created (ISO timestamp). */
@@ -102,6 +104,12 @@ export function setCachedProjectModel(
     model: entry.model,
     scan: entry.scan,
     fullSetScan: entry.fullSetScan,
+    modelDerivation:
+      entry.scan.scanResultKind === 'measured-trace'
+        ? 'trace-derived'
+        : entry.scan.scanResultKind === 'fallback'
+        ? 'fallback-derived'
+        : 'inferred-derived',
   }
   cache.set(key, stored)
   return stored

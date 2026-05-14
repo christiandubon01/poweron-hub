@@ -222,19 +222,50 @@ export type {
   PdfTracePoint,
   WorldPoint2D,
   PdfTraceScale,
+  PdfTraceScaleHint,
   PdfTraceLineRole,
   PdfTraceLine,
+  PdfTraceRect,
   PdfTracePolyline,
+  PdfTraceArc,
   PdfTraceTextNote,
+  PdfTraceTextRun,
+  PdfTracePageBounds,
+  PdfTraceViewport,
+  PdfTracePayload,
+  PdfTraceExtractionWarning,
+  PdfTraceExtractionResult,
   PdfTracePagePayload,
 } from './pdfTraceTypes'
 
 // Trace adapter — converts upstream vector trace into world plan candidates
 export type {
   PlanTraceLine,
+  LineOrientation,
   AdaptedTrace,
 } from './blueprintTraceAdapter'
-export { adaptPdfTraceToPlanLines } from './blueprintTraceAdapter'
+export {
+  adaptPdfTraceToPlanLines,
+  normalizeTraceLines,
+  filterNoiseLines,
+  classifyLineOrientation,
+  mergeCollinearSegments,
+  detectDoubleLineWalls,
+  detectOuterFootprint,
+  inferWallCandidatesFromTrace,
+  inferOpeningCandidatesFromGaps,
+  inferDoorCandidatesFromArcs,
+  inferGlassStorefrontCandidates,
+  inferDimensionCandidatesFromText,
+  inferScaleFromTraceText,
+} from './blueprintTraceAdapter'
+
+export type { PdfVectorTraceExtractorInput } from './pdfVectorTraceExtractor'
+export {
+  extractPdfVectorTraceFromPage,
+  normalizePdfTracePayload,
+  hasUsableTracePayload,
+} from './pdfVectorTraceExtractor'
 
 // Blueprint plan scanner — deterministic floor-plan scan + fallback
 export type {
@@ -271,6 +302,8 @@ export {
   inferWallsFromOrthogonalLines,
   inferOpeningsFromGaps,
   inferRoomsFromEnclosedOrGridLayout,
+  validateRoomCandidates,
+  convertRoomCandidatesToBuildingModel,
   chooseSalonSuiteFallbackFromBlueprintContext,
   // Full-set scan functions
   scanBlueprintFullSet,

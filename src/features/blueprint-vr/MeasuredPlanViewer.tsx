@@ -40,6 +40,12 @@ export interface MeasuredPlanViewerProps {
   onRoomSelect?: (roomId: string) => void
   activeStage?: VRStage
   showElectrical?: boolean
+  traceDebug?: {
+    rawLines: number
+    mergedWalls: number
+    openings: number
+    roomCandidates: number
+  } | null
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -366,6 +372,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   onRoomSelect,
   activeStage = 'roughIn',
   showElectrical = true,
+  traceDebug = null,
   className,
 }) => {
   const canvasSize = useMemo(
@@ -692,6 +699,21 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           >
             {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
           </div>
+          {traceDebug && (
+            <div
+              style={{
+                backgroundColor: 'rgba(20,28,38,0.95)',
+                color: '#9ec7f9',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: '1px solid rgba(158,199,249,0.45)',
+                fontFamily: 'monospace',
+              }}
+            >
+              TRACE DEBUG · raw {traceDebug.rawLines} · walls {traceDebug.mergedWalls} · openings {traceDebug.openings} · rooms {traceDebug.roomCandidates}
+            </div>
+          )}
         </div>
       )}
     </div>
