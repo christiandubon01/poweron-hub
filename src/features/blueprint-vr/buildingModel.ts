@@ -39,6 +39,28 @@ export type {
 // Openings: Doors and Windows
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Door swing / opening direction hint used for plan + 3D rendering.
+ *  - 'left' / 'right' — single-leaf door, swing direction along the wall.
+ *  - 'double' — pair of doors meeting in the centre.
+ *  - 'sliding' — sliding / pocket door (no swing arc).
+ *  - 'fixed' — non-operable opening (e.g. storefront window, pass-through).
+ */
+export type DoorSwingDirection = 'left' | 'right' | 'double' | 'sliding' | 'fixed'
+
+/**
+ * Subtype for openings, used by the plan viewer / 3D viewer to render the
+ * right primitive.
+ */
+export type OpeningSubtype =
+  | 'door-swing'
+  | 'door-sliding'
+  | 'door-pocket'
+  | 'window-standard'
+  | 'window-storefront'
+  | 'window-clerestory'
+  | 'pass-through'
+
 export interface BuildingOpeningModel {
   /** Unique identifier within the wall */
   id: string
@@ -52,17 +74,42 @@ export interface BuildingOpeningModel {
   height: MeasurementValue
   /** Whether opening is currently visible/active */
   visible?: boolean
+  /** Optional structured subtype (storefront, sliding, etc.). */
+  subtype?: OpeningSubtype
+  /** Optional swing direction for doors. */
+  swing?: DoorSwingDirection
+  /** Optional swing arc in degrees (0–180). Used for plan rendering. */
+  swingDegrees?: number
   /** Metadata */
   metadata?: {
     material?: string
     swing?: 'left' | 'right' | 'double'
     notes?: string
+    /** Source / confidence tag, e.g. 'inferred', 'scanner', 'measured'. */
+    sourceTag?: string
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Walls
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Wall kind used by the plan + 3D renderers to pick thickness, color, and
+ * primitive geometry.
+ *
+ *  - 'exterior' — building shell wall (default thicker, e.g. 6 in)
+ *  - 'partition' — interior room divider (default 4 in)
+ *  - 'divider' — thin salon station / display divider (default 2 in)
+ *  - 'glass' — storefront / window wall (transparent in 3D)
+ *  - 'pony' — half-height / counter-height wall
+ */
+export type WallKind =
+  | 'exterior'
+  | 'partition'
+  | 'divider'
+  | 'glass'
+  | 'pony'
 
 export interface BuildingWallModel {
   /** Unique identifier within the room/building */
@@ -79,6 +126,10 @@ export interface BuildingWallModel {
   openings: BuildingOpeningModel[]
   /** Whether wall is visible/active */
   visible?: boolean
+  /** Optional wall classification (exterior/partition/divider/glass/pony). */
+  kind?: WallKind
+  /** Optional confidence in this wall, 0–1. */
+  confidence?: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +176,73 @@ export interface BuildingElectricalAnchorModel {
 // Rooms / Zones
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * High-level role classification for rooms. Used by furniture / fixture
+ * hint selection in the 3D viewer and the room interior view.
+ */
+export type RoomRole =
+  | 'reception'
+  | 'waiting'
+  | 'styling'
+  | 'salon-station'
+  | 'wash-station'
+  | 'hallway'
+  | 'bath'
+  | 'utility'
+  | 'storage'
+  | 'service'
+  | 'office'
+  | 'conference'
+  | 'living'
+  | 'bedroom'
+  | 'kitchen'
+  | 'garage'
+  | 'other'
+
+/**
+ * Lightweight equipment / furniture / fixture hint attached to a room so the
+ * 3D and room-interior views can render proxies that match the project type.
+ */
+export interface RoomEquipmentHint {
+  id: string
+  kind:
+    | 'reception-counter'
+    | 'waiting-chair'
+    | 'waiting-couch'
+    | 'side-table'
+    | 'styling-chair'
+    | 'styling-mirror'
+    | 'vanity-counter'
+    | 'wash-sink'
+    | 'shampoo-bowl'
+    | 'restroom-sink'
+    | 'toilet'
+    | 'utility-panel'
+    | 'service-equipment'
+    | 'storage-shelving'
+    | 'storefront-sign'
+    | 'decor-wall'
+    | 'overhead-light'
+    | 'track-light'
+    | 'chandelier'
+    | 'receptacle'
+    | 'switch'
+    | 'gfci'
+    | 'other'
+  /** Label for UI display. */
+  label: string
+  /** Optional normalized 0..1 position within the room (x, y). */
+  positionNormalized?: { x: number; y: number }
+  /** Optional approximate world position in feet. */
+  positionWorld?: Point2D
+  /** Optional footprint width / depth in feet for proxy rendering. */
+  sizeFt?: { width: number; depth: number; height?: number }
+  /** Hint confidence, 0–1. */
+  confidence?: number
+  /** Source tag (e.g. "inferred", "schedule", "render"). */
+  sourceTag?: string
+}
+
 export interface BuildingRoomModel {
   /** Unique identifier */
   id: string
@@ -142,12 +260,19 @@ export interface BuildingRoomModel {
   electricalAnchors?: BuildingElectricalAnchorModel[]
   /** Whether room is visible/active */
   visible?: boolean
+  /**
+   * Equipment / furniture / fixture hints derived from the project context
+   * or full-set scan. Used by the 3D dollhouse and room interior view.
+   */
+  equipmentHints?: RoomEquipmentHint[]
   /** Metadata */
   metadata?: {
     type?: 'living' | 'bedroom' | 'kitchen' | 'bath' | 'utility' | 'garage' | 'other'
     floor?: number
     finishType?: string
     notes?: string
+    /** Optional role classification beyond the basic type. */
+    role?: RoomRole
   }
 }
 

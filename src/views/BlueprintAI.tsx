@@ -34,6 +34,7 @@ import BlueprintVRExperiencePanel from '@/features/blueprint-vr/BlueprintVRExper
 import { useBlueprintVRGeneration } from '@/features/blueprint-vr/useBlueprintVRGeneration'
 import { createBlueprintVRSceneManifest } from '@/features/blueprint-vr/sceneManifestBuilder'
 import { STAGE_ORDER } from '@/features/blueprint-vr/stages'
+import type { BlueprintVRSourceSet } from '@/features/blueprint-vr/blueprintPlanScanner'
 
 const BLUEPRINT_TYPES: BlueprintLibraryType[] = ['Full Set', 'Electrical Only', 'Plumbing Only', 'Mechanical Only', 'Reference Sheet', 'Other']
 const DISCIPLINES = ['General', 'Architectural', 'Electrical', 'Plumbing', 'Mechanical', 'Fire Alarm', 'Structural', 'Civil', 'Other'] as const
@@ -101,6 +102,7 @@ export default function BlueprintAI() {
   const [librarySearch, setLibrarySearch] = useState('')
   const [vrPanelOpen, setVrPanelOpen] = useState(false)
   const [vrGeneratingError, setVrGeneratingError] = useState<string | null>(null)
+  const [vrSourceSetIdByProject, setVrSourceSetIdByProject] = useState<Record<string, string>>({})
   const fileRef = useRef<HTMLInputElement>(null)
   const vrState = useBlueprintVRGeneration()
 
@@ -138,6 +140,47 @@ export default function BlueprintAI() {
     if (!selectedItem?.projectId) return 0
     return library.filter((item) => item.projectId === selectedItem.projectId).length
   }, [library, selectedItem?.projectId])
+
+  // Build a BlueprintVRSourceSet[] for the currently-selected project so the
+  // Generate VR experience can offer source-set selection.
+  const projectVRSourceSets = useMemo<BlueprintVRSourceSet[]>(() => {
+    if (!selectedItem?.projectId) return []
+    const projectItems = library.filter(
+      (item) => item.projectId === selectedItem.projectId && item.status !== 'archived',
+    )
+    return projectItems.map((item) => {
+      const sheetIndex = getBlueprintSheetIndex(item) || []
+      return {
+        id: item.id,
+        name: item.title || item.fileName || 'Untitled Set',
+        type: item.type,
+        projectId: item.projectId,
+        projectName: item.projectName,
+        filePath: item.storagePath || item.fileName,
+        totalPages: Number(item.pageCount || 0),
+        sheets: sheetIndex.map((row: any) => ({
+          pageNumber: Number(row.pageNumber || 0),
+          sheetNumber: row.sheetNumber,
+          sheetTitle: row.sheetTitle,
+          sheetLabel: row.sheetLabel,
+          discipline: row.discipline,
+          fileName: item.fileName,
+        })),
+      }
+    })
+  }, [library, selectedItem?.projectId])
+
+  // Determine the current VR source set id: explicit user choice for this
+  // project → otherwise auto-pick a Full Set when available.
+  const currentVRSourceSetId = useMemo<string | null>(() => {
+    if (!selectedItem?.projectId) return null
+    const explicit = vrSourceSetIdByProject[selectedItem.projectId]
+    if (explicit && projectVRSourceSets.some((s) => s.id === explicit)) return explicit
+    const fullSet = projectVRSourceSets.find((s) =>
+      (s.type || '').toLowerCase().includes('full set'),
+    )
+    return fullSet?.id || projectVRSourceSets[0]?.id || null
+  }, [projectVRSourceSets, vrSourceSetIdByProject, selectedItem?.projectId])
 
   const filteredLibraryItems = useMemo(() => {
     const q = librarySearch.trim().toLowerCase()
@@ -794,7 +837,17 @@ export default function BlueprintAI() {
             className={`rounded-xl border px-4 py-3 text-left ${!selectedItem ? 'border-gray-800/50 text-gray-600 cursor-not-allowed' : 'border-cyan-700 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-950/35'}`}
           >
             <p className="text-sm font-semibold">Generate VR</p>
-            <p className="text-xs text-gray-500 mt-1">3D construction landscape</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {(() => {
+                const sourceSet = projectVRSourceSets.find((s) => s.id === currentVRSourceSetId)
+                if (sourceSet) {
+                  const tag = sourceSet.type || 'Set'
+                  return `Source: ${tag} · ${sourceSet.name}`
+                }
+                if (selectedItem) return 'Source: current set (inferred)'
+                return '3D construction landscape'
+              })()}
+            </p>
           </button>
         </div>
       </div>
@@ -1354,6 +1407,17 @@ export default function BlueprintAI() {
           sourceBlueprint={{
             id: selectedItem?.id || 'unknown',
             name: selectedItem?.title || 'Unknown',
+          }}
+          projectId={selectedItem?.projectId}
+          projectName={selectedItem?.projectName}
+          availableSourceSets={projectVRSourceSets}
+          initialSourceSetId={currentVRSourceSetId}
+          onSelectSourceSet={(setId) => {
+            if (!selectedItem?.projectId) return
+            setVrSourceSetIdByProject((prev) => ({
+              ...prev,
+              [selectedItem.projectId as string]: setId,
+            }))
           }}
           onClose={() => {
             setVrPanelOpen(false)

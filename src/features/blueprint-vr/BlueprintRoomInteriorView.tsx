@@ -49,75 +49,229 @@ interface FurnitureItem {
   stroke?: string
 }
 
+// Canonical room interior canvas dimensions used by furniture coordinates.
+const CANVAS_W = 360
+const CANVAS_H = 270
+// The floor "footprint" inside the canvas is the trapezoid bounded by these
+// values, so we keep furniture coordinates within them.
+const FLOOR_LEFT = 58
+const FLOOR_RIGHT = 300
+const FLOOR_TOP = 92
+const FLOOR_BOTTOM = 232
+
+function roleOf(room: BuildingRoomModel): string {
+  const explicit = (room.metadata?.role || '').toString().toLowerCase()
+  if (explicit) return explicit
+  return `${room.metadata?.type || ''} ${room.label}`.toLowerCase()
+}
+
 function pickFurniture(room: BuildingRoomModel): FurnitureItem[] {
-  const kind = `${room.metadata?.type || ''} ${room.label}`.toLowerCase()
+  const kind = roleOf(room)
 
   if (kind.includes('reception') || kind.includes('entrance')) {
     return [
-      { x: 50, y: 190, w: 200, h: 36, label: 'Reception Counter', fill: '#1d2230', stroke: '#c4a873' },
-      { x: 60, y: 158, w: 36, h: 24, label: 'Waiting', fill: '#26303f', stroke: '#9a8d80' },
-      { x: 110, y: 158, w: 36, h: 24, label: 'Waiting', fill: '#26303f', stroke: '#9a8d80' },
-      { x: 160, y: 158, w: 36, h: 24, label: 'Waiting', fill: '#26303f', stroke: '#9a8d80' },
-      { x: 268, y: 198, w: 28, h: 22, label: 'Tablet', fill: '#0a1018', stroke: '#86efac' },
+      { x: 80, y: 195, w: 200, h: 30, label: 'Reception Counter', fill: '#231a12', stroke: '#c4a873' },
+      { x: 90, y: 155, w: 40, h: 24, label: 'Sofa', fill: '#26303f', stroke: '#9a8d80' },
+      { x: 140, y: 155, w: 28, h: 24, label: 'Chair', fill: '#26303f', stroke: '#9a8d80' },
+      { x: 200, y: 155, w: 28, h: 24, label: 'Chair', fill: '#26303f', stroke: '#9a8d80' },
+      { x: 244, y: 155, w: 36, h: 24, label: 'Side Tbl', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 270, y: 200, w: 22, h: 22, label: 'POS', fill: '#0a1018', stroke: '#86efac' },
     ]
   }
   if (kind.includes('waiting')) {
     return [
-      { x: 60, y: 158, w: 44, h: 26, label: 'Bench', fill: '#1f2735', stroke: '#9a8d80' },
-      { x: 130, y: 158, w: 44, h: 26, label: 'Bench', fill: '#1f2735', stroke: '#9a8d80' },
-      { x: 200, y: 158, w: 44, h: 26, label: 'Bench', fill: '#1f2735', stroke: '#9a8d80' },
-      { x: 130, y: 200, w: 100, h: 18, label: 'Mag Rack', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 70, y: 150, w: 60, h: 30, label: 'Sofa', fill: '#1f2735', stroke: '#9a8d80' },
+      { x: 150, y: 150, w: 40, h: 26, label: 'Chair', fill: '#1f2735', stroke: '#9a8d80' },
+      { x: 210, y: 150, w: 40, h: 26, label: 'Chair', fill: '#1f2735', stroke: '#9a8d80' },
+      { x: 110, y: 200, w: 100, h: 18, label: 'Side Tbl', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 240, y: 200, w: 50, h: 18, label: 'Mag Rack', fill: '#3a2e1f', stroke: '#c4a873' },
     ]
   }
-  if (kind.includes('styling') || kind.includes('salon') || kind.includes('service area')) {
+  if (
+    kind.includes('styling') ||
+    kind.includes('salon') ||
+    kind === 'salon-station' ||
+    kind.includes('service area')
+  ) {
     return [
-      { x: 30, y: 100, w: 28, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
-      { x: 30, y: 150, w: 28, h: 26, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
-      { x: 30, y: 195, w: 28, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
-      { x: 80, y: 150, w: 90, h: 26, label: 'Vanity Bench', fill: '#3a2e1f', stroke: '#c4a873' },
-      { x: 200, y: 100, w: 28, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
-      { x: 200, y: 150, w: 28, h: 26, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
-      { x: 200, y: 195, w: 28, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      // Left stations
+      { x: 70, y: 105, w: 24, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      { x: 70, y: 145, w: 24, h: 24, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 100, y: 145, w: 38, h: 24, label: 'Vanity', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 70, y: 188, w: 24, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      { x: 70, y: 222, w: 24, h: 8, label: 'Drawer', fill: '#3a2e1f', stroke: '#c4a873' },
+      // Right stations
+      { x: 264, y: 105, w: 24, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      { x: 264, y: 145, w: 24, h: 24, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 220, y: 145, w: 38, h: 24, label: 'Vanity', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 264, y: 188, w: 24, h: 30, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      // Central wash bowls
+      { x: 156, y: 180, w: 22, h: 22, label: 'Bowl', fill: '#d7e2ef', stroke: '#86a8c4' },
+      { x: 184, y: 180, w: 22, h: 22, label: 'Bowl', fill: '#d7e2ef', stroke: '#86a8c4' },
     ]
   }
   if (kind.includes('bath') || kind.includes('restroom')) {
     return [
-      { x: 60, y: 150, w: 48, h: 30, label: 'Sink', fill: '#d7e2ef', stroke: '#86a8c4' },
-      { x: 220, y: 158, w: 46, h: 60, label: 'Toilet', fill: '#eef3f8', stroke: '#86a8c4' },
-      { x: 130, y: 198, w: 80, h: 26, label: 'Vanity', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 80, y: 152, w: 52, h: 28, label: 'Sink', fill: '#d7e2ef', stroke: '#86a8c4' },
+      { x: 84, y: 110, w: 44, h: 26, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      { x: 222, y: 152, w: 50, h: 64, label: 'Toilet', fill: '#eef3f8', stroke: '#86a8c4' },
+      { x: 130, y: 195, w: 100, h: 22, label: 'Vanity', fill: '#3a2e1f', stroke: '#c4a873' },
     ]
   }
   if (kind.includes('utility') || kind.includes('panel')) {
     return [
-      { x: 50, y: 130, w: 80, h: 110, label: 'Panel 200A', fill: '#101820', stroke: '#eab308' },
-      { x: 160, y: 170, w: 86, h: 56, label: 'Equipment Rack', fill: '#1d2230', stroke: '#c4a873' },
-      { x: 260, y: 200, w: 48, h: 24, label: 'Disconnect', fill: '#101820', stroke: '#eab308' },
+      { x: 70, y: 110, w: 70, h: 96, label: 'Panel 200A', fill: '#101820', stroke: '#eab308' },
+      { x: 160, y: 160, w: 80, h: 56, label: 'HVAC / WH', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 252, y: 160, w: 36, h: 22, label: 'Disconn.', fill: '#101820', stroke: '#eab308' },
+      { x: 252, y: 195, w: 36, h: 22, label: 'Sub-Pnl', fill: '#101820', stroke: '#eab308' },
     ]
   }
   if (kind.includes('storage')) {
     return [
-      { x: 36, y: 130, w: 22, h: 110, label: 'Shelves', fill: '#2b313c', stroke: '#9a8d80' },
-      { x: 90, y: 130, w: 22, h: 110, label: 'Shelves', fill: '#2b313c', stroke: '#9a8d80' },
-      { x: 260, y: 130, w: 22, h: 110, label: 'Shelves', fill: '#2b313c', stroke: '#9a8d80' },
+      { x: 70, y: 105, w: 24, h: 120, label: 'Shelves', fill: '#2b313c', stroke: '#9a8d80' },
+      { x: 110, y: 105, w: 24, h: 120, label: 'Shelves', fill: '#2b313c', stroke: '#9a8d80' },
+      { x: 260, y: 105, w: 24, h: 120, label: 'Shelves', fill: '#2b313c', stroke: '#9a8d80' },
+      { x: 160, y: 160, w: 80, h: 28, label: 'Workbench', fill: '#3a2e1f', stroke: '#c4a873' },
     ]
   }
   if (kind.includes('hallway') || kind.includes('circulation')) {
     return [
-      { x: 30, y: 130, w: 296, h: 8, label: 'Runner', fill: '#3a2e1f', stroke: '#c4a873' },
-      { x: 30, y: 230, w: 296, h: 8, label: 'Runner', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 90, y: 138, w: 180, h: 12, label: 'Runner', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 90, y: 220, w: 180, h: 12, label: 'Runner', fill: '#3a2e1f', stroke: '#c4a873' },
+    ]
+  }
+  if (kind === 'wash-station' || kind.includes('shampoo')) {
+    return [
+      { x: 80, y: 150, w: 48, h: 36, label: 'Bowl', fill: '#d7e2ef', stroke: '#86a8c4' },
+      { x: 140, y: 150, w: 48, h: 36, label: 'Bowl', fill: '#d7e2ef', stroke: '#86a8c4' },
+      { x: 80, y: 195, w: 108, h: 26, label: 'Wash Counter', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 220, y: 160, w: 64, h: 60, label: 'Equipment', fill: '#1d2230', stroke: '#c4a873' },
     ]
   }
   if (kind.includes('back') || kind.includes('service')) {
     return [
-      { x: 40, y: 150, w: 60, h: 60, label: 'Wash Bay', fill: '#2a3140', stroke: '#86a8c4' },
-      { x: 130, y: 160, w: 90, h: 30, label: 'Work Counter', fill: '#3a2e1f', stroke: '#c4a873' },
-      { x: 240, y: 160, w: 60, h: 60, label: 'Equipment', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 80, y: 150, w: 56, h: 56, label: 'Wash Bay', fill: '#2a3140', stroke: '#86a8c4' },
+      { x: 150, y: 160, w: 100, h: 28, label: 'Work Counter', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 150, y: 200, w: 100, h: 18, label: 'Drawer', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 260, y: 160, w: 30, h: 60, label: 'Equip.', fill: '#1d2230', stroke: '#c4a873' },
+    ]
+  }
+  if (kind === 'office') {
+    return [
+      { x: 90, y: 160, w: 120, h: 40, label: 'Desk', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 130, y: 205, w: 32, h: 20, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 230, y: 130, w: 60, h: 92, label: 'Bookshelf', fill: '#2b313c', stroke: '#9a8d80' },
+    ]
+  }
+  if (kind === 'conference') {
+    return [
+      { x: 90, y: 150, w: 180, h: 60, label: 'Conf Table', fill: '#3a2e1f', stroke: '#c4a873' },
+      { x: 90, y: 130, w: 30, h: 18, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 130, y: 130, w: 30, h: 18, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 170, y: 130, w: 30, h: 18, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 210, y: 130, w: 30, h: 18, label: 'Chair', fill: '#1d2230', stroke: '#c4a873' },
     ]
   }
   return [
-    { x: 48, y: 200, w: 96, h: 34, label: 'Counter', fill: '#1d2230', stroke: '#c4a873' },
-    { x: 172, y: 200, w: 96, h: 34, label: 'Seating', fill: '#26303f', stroke: '#c4a873' },
+    { x: 80, y: 200, w: 100, h: 30, label: 'Counter', fill: '#1d2230', stroke: '#c4a873' },
+    { x: 200, y: 200, w: 100, h: 30, label: 'Seating', fill: '#26303f', stroke: '#c4a873' },
   ]
+}
+
+interface CeilingFixture {
+  cx: number
+  cy: number
+  kind: 'downlight' | 'track' | 'chandelier'
+}
+
+function ceilingFixturesFor(room: BuildingRoomModel): CeilingFixture[] {
+  const kind = roleOf(room)
+  if (kind.includes('reception') || kind.includes('entrance')) {
+    return [{ cx: 180, cy: 60, kind: 'chandelier' }]
+  }
+  if (kind.includes('styling') || kind.includes('salon')) {
+    return [
+      { cx: 110, cy: 56, kind: 'track' },
+      { cx: 180, cy: 56, kind: 'track' },
+      { cx: 250, cy: 56, kind: 'track' },
+    ]
+  }
+  if (kind.includes('bath') || kind.includes('restroom')) {
+    return [{ cx: 180, cy: 56, kind: 'downlight' }]
+  }
+  if (kind.includes('utility') || kind.includes('panel')) {
+    return [
+      { cx: 130, cy: 56, kind: 'downlight' },
+      { cx: 230, cy: 56, kind: 'downlight' },
+    ]
+  }
+  if (kind.includes('hallway') || kind.includes('circulation')) {
+    return [
+      { cx: 130, cy: 56, kind: 'downlight' },
+      { cx: 230, cy: 56, kind: 'downlight' },
+    ]
+  }
+  return [{ cx: 180, cy: 56, kind: 'downlight' }]
+}
+
+interface WallDeviceCue {
+  x: number
+  y: number
+  label: string
+  color: string
+}
+
+function wallDevicesFor(room: BuildingRoomModel): WallDeviceCue[] {
+  const kind = roleOf(room)
+  if (kind.includes('reception') || kind.includes('entrance')) {
+    return [
+      { x: 80, y: 178, label: 'RCP', color: '#22C55E' },
+      { x: 286, y: 178, label: 'RCP', color: '#22C55E' },
+      { x: 286, y: 115, label: 'SW', color: '#4ADE80' },
+    ]
+  }
+  if (kind.includes('styling') || kind.includes('salon')) {
+    return [
+      { x: 62, y: 130, label: 'RCP', color: '#22C55E' },
+      { x: 62, y: 180, label: 'RCP', color: '#22C55E' },
+      { x: 296, y: 130, label: 'RCP', color: '#22C55E' },
+      { x: 296, y: 180, label: 'RCP', color: '#22C55E' },
+      { x: 62, y: 110, label: 'SW', color: '#4ADE80' },
+    ]
+  }
+  if (kind.includes('bath') || kind.includes('restroom')) {
+    return [
+      { x: 82, y: 130, label: 'GFCI', color: '#22C55E' },
+      { x: 286, y: 115, label: 'SW', color: '#4ADE80' },
+    ]
+  }
+  if (kind.includes('utility') || kind.includes('panel')) {
+    return [
+      { x: 62, y: 115, label: 'SW', color: '#4ADE80' },
+      { x: 286, y: 180, label: 'RCP', color: '#22C55E' },
+    ]
+  }
+  return [
+    { x: 62, y: 180, label: 'RCP', color: '#22C55E' },
+    { x: 286, y: 180, label: 'RCP', color: '#22C55E' },
+  ]
+}
+
+function floorTextureForRoom(room: BuildingRoomModel): string {
+  const kind = roleOf(room)
+  if (kind.includes('reception') || kind.includes('entrance')) return 'url(#floor-marble)'
+  if (kind.includes('bath') || kind.includes('restroom')) return 'url(#floor-tile)'
+  if (kind.includes('utility') || kind.includes('panel') || kind.includes('storage'))
+    return 'url(#floor-concrete)'
+  if (kind.includes('hallway') || kind.includes('circulation')) return 'url(#floor-marble)'
+  return 'url(#floor-marble)'
+}
+
+function wallFinishForRoom(room: BuildingRoomModel): string {
+  const kind = roleOf(room)
+  if (kind.includes('reception') || kind.includes('entrance')) return 'url(#wall-feature)'
+  if (kind.includes('bath') || kind.includes('restroom')) return 'url(#wall-tile)'
+  return 'url(#wall-polish)'
 }
 
 function stageOverlayLabel(stage: VRStage): string {
@@ -172,9 +326,13 @@ export default function BlueprintRoomInteriorView({
   const roomWidth = Math.max(8, room.bounds.max.x - room.bounds.min.x)
   const roomDepth = Math.max(8, room.bounds.max.y - room.bounds.min.y)
   const approxArea = room.area || roomWidth * roomDepth
-  const wallFinish = 'url(#wall-polish)'
-  const floorFinish = 'url(#floor-marble)'
+  const wallFinish = wallFinishForRoom(room)
+  const floorFinish = floorTextureForRoom(room)
   const furniture = pickFurniture(room)
+  const ceilingFixtures = ceilingFixturesFor(room)
+  const wallDevices = wallDevicesFor(room)
+  const kind = roleOf(room)
+  const showStorefront = kind.includes('reception') || kind.includes('entrance')
 
   return (
     <div
@@ -191,9 +349,25 @@ export default function BlueprintRoomInteriorView({
             <stop offset="0%" stopColor={`rgba(245,240,235,${wallOpacity})`} />
             <stop offset="100%" stopColor={`rgba(223,218,210,${wallOpacity})`} />
           </linearGradient>
+          <linearGradient id="wall-feature" x1="0" x2="1">
+            <stop offset="0%" stopColor={`rgba(60,40,30,${wallOpacity})`} />
+            <stop offset="100%" stopColor={`rgba(110,75,55,${wallOpacity})`} />
+          </linearGradient>
+          <pattern id="wall-tile" width="20" height="20" patternUnits="userSpaceOnUse">
+            <rect width="20" height="20" fill={`rgba(220,230,238,${wallOpacity})`} />
+            <path d="M0 10 L20 10 M10 0 L10 20" stroke="rgba(150,170,190,0.6)" strokeWidth="0.6" />
+          </pattern>
           <pattern id="floor-marble" width="18" height="18" patternUnits="userSpaceOnUse">
             <rect width="18" height="18" fill="#ece7e1" />
             <path d="M0 6 C5 5, 8 8, 18 6 M0 13 C7 11, 12 15, 18 12" stroke="#d7d0c7" strokeWidth="0.7" fill="none" />
+          </pattern>
+          <pattern id="floor-tile" width="22" height="22" patternUnits="userSpaceOnUse">
+            <rect width="22" height="22" fill="#e2e8ec" />
+            <rect x="0.5" y="0.5" width="21" height="21" fill="none" stroke="#bcc5cf" strokeWidth="0.7" />
+          </pattern>
+          <pattern id="floor-concrete" width="22" height="22" patternUnits="userSpaceOnUse">
+            <rect width="22" height="22" fill="#7e8593" />
+            <path d="M0 6 L22 8 M2 18 L20 16" stroke="#65707d" strokeWidth="0.7" fill="none" />
           </pattern>
           <linearGradient id="ceiling-tone" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="rgba(232,224,210,0.95)" />
@@ -214,15 +388,95 @@ export default function BlueprintRoomInteriorView({
         {/* Floor */}
         <polygon points="58,232 300,232 328,204 30,204" fill={floorFinish} stroke="#c0b6aa" />
 
-        {/* Door cue on back wall */}
-        <rect x="170" y="108" width="22" height="120" fill="rgba(15,18,25,0.85)" stroke="#c4a873" />
-        {/* Window / storefront cue */}
-        <rect x="92" y="92" width="64" height="32" fill="rgba(180,210,255,0.18)" stroke="#9ec7f9" />
+        {/* Door cue on back wall — only for non-reception rooms */}
+        {!showStorefront && (
+          <g>
+            <rect x="170" y="120" width="22" height="108" fill="rgba(15,18,25,0.85)" stroke="#c4a873" />
+            <path
+              d="M 170 228 Q 178 200 192 192"
+              fill="none"
+              stroke="#c4a873"
+              strokeWidth="1"
+              strokeDasharray="3 2"
+              opacity={0.6}
+            />
+          </g>
+        )}
 
-        {/* Track / fixture lights on ceiling */}
-        <circle cx="178" cy="54" r="9" fill="#f2dfb0" stroke="#d6b16a" />
-        <line x1="178" y1="64" x2="178" y2="84" stroke="#c9ae78" />
-        <line x1="100" y1="74" x2="258" y2="74" stroke="#d7c084" strokeWidth="3" />
+        {/* Storefront glass / sign for entry-style rooms */}
+        {showStorefront && (
+          <g>
+            <rect x="78" y="96" width="204" height="42" fill="rgba(180,210,255,0.22)" stroke="#9ec7f9" />
+            <line x1="180" y1="96" x2="180" y2="138" stroke="#9ec7f9" strokeDasharray="2 2" />
+            <text
+              x="180"
+              y="86"
+              textAnchor="middle"
+              fill="rgba(245,235,220,0.65)"
+              fontFamily="monospace"
+              fontSize="9"
+              letterSpacing="2"
+            >
+              SALON SIGN
+            </text>
+          </g>
+        )}
+
+        {/* Wall device cues (receptacles / switches / gfci) */}
+        {wallDevices.map((d, i) => (
+          <g key={`wd-${i}`}>
+            <rect
+              x={d.x}
+              y={d.y}
+              width={9}
+              height={11}
+              fill="rgba(15,20,28,0.85)"
+              stroke={d.color}
+              strokeWidth={1.1}
+              rx={1}
+            />
+            {showLabels && (
+              <text
+                x={d.x + 4.5}
+                y={d.y + 18}
+                textAnchor="middle"
+                fontFamily="monospace"
+                fontSize="6.5"
+                fill="rgba(255,255,255,0.55)"
+              >
+                {d.label}
+              </text>
+            )}
+          </g>
+        ))}
+
+        {/* Ceiling fixtures derived per room type */}
+        {ceilingFixtures.map((fx, i) => {
+          if (fx.kind === 'chandelier') {
+            return (
+              <g key={`fx-${i}`}>
+                <line x1={fx.cx} y1={42} x2={fx.cx} y2={fx.cy} stroke="#c9ae78" />
+                <circle cx={fx.cx} cy={fx.cy} r={11} fill="#f2dfb0" stroke="#d6b16a" />
+                <circle cx={fx.cx} cy={fx.cy} r={5} fill="#fff2cc" />
+              </g>
+            )
+          }
+          if (fx.kind === 'track') {
+            return (
+              <g key={`fx-${i}`}>
+                <line x1={fx.cx - 18} y1={fx.cy} x2={fx.cx + 18} y2={fx.cy} stroke="#d7c084" strokeWidth={3} />
+                <circle cx={fx.cx - 12} cy={fx.cy + 4} r={2.5} fill="#f2dfb0" />
+                <circle cx={fx.cx} cy={fx.cy + 4} r={2.5} fill="#f2dfb0" />
+                <circle cx={fx.cx + 12} cy={fx.cy + 4} r={2.5} fill="#f2dfb0" />
+              </g>
+            )
+          }
+          return (
+            <g key={`fx-${i}`}>
+              <circle cx={fx.cx} cy={fx.cy} r={6} fill="#f2dfb0" stroke="#d6b16a" />
+            </g>
+          )
+        })}
 
         {/* Furniture */}
         {furniture.map((item, idx) => (

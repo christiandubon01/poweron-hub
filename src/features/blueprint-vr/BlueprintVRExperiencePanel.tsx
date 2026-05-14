@@ -28,9 +28,24 @@ import type { ElectricalCatalogItem } from './electricalCatalog'
 import Blueprint3DSpaceViewer from './Blueprint3DSpaceViewer'
 import MeasuredPlanViewer from './MeasuredPlanViewer'
 import BlueprintRoomInteriorView from './BlueprintRoomInteriorView'
+import BlueprintVRSourceSelector from './BlueprintVRSourceSelector'
 import type { BlueprintBuildingModel } from './buildingModel'
-import { scanBlueprintPlan, convertPlanScanToBuildingModel } from './blueprintPlanScanner'
-import type { BlueprintPlanScanResult } from './blueprintPlanScanner'
+import {
+  scanBlueprintPlan,
+  convertPlanScanToBuildingModel,
+  scanBlueprintFullSet,
+  mergeFullSetScanIntoBuildingModel,
+} from './blueprintPlanScanner'
+import type {
+  BlueprintPlanScanResult,
+  BlueprintVRSourceSet,
+  BlueprintFullSetScanResult,
+} from './blueprintPlanScanner'
+import {
+  getCachedProjectModel,
+  setCachedProjectModel,
+  clearCachedProjectModel,
+} from './blueprintVRProjectModelCache'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -38,6 +53,26 @@ interface BlueprintVRExperiencePanelProps {
   job: VRGenerationJob
   sourceBlueprint: BlueprintSource
   onClose: () => void
+  /** Project id used to key the model cache. */
+  projectId?: string
+  /** Project name used in the cache key when no id is available. */
+  projectName?: string
+  /**
+   * Available blueprint sets for this project. When provided, the panel
+   * surfaces a source-set selector and uses the full-set scanner to drive
+   * the model.
+   */
+  availableSourceSets?: BlueprintVRSourceSet[]
+  /**
+   * Pre-selected source set id (e.g. the user's last choice). When omitted
+   * the panel auto-picks a Full Set if available.
+   */
+  initialSourceSetId?: string | null
+  /**
+   * Notified when the user picks a different source set. Allows the parent
+   * (e.g. BlueprintAI) to persist the choice for the project.
+   */
+  onSelectSourceSet?: (setId: string) => void
 }
 
 function controlButtonStyle(active: boolean): React.CSSProperties {
@@ -340,10 +375,22 @@ function StageItemList({ stage }: { stage: VRStage }) {
 
 // ── Subcomponent: Scan Status Banner ─────────────────────────────────
 
-function ScanStatusBanner({ scan }: { scan: BlueprintPlanScanResult }) {
+function ScanStatusBanner({
+  scan,
+  fullSetScan,
+}: {
+  scan: BlueprintPlanScanResult
+  fullSetScan?: BlueprintFullSetScanResult
+}) {
   const top = scan.warnings.slice(0, 3)
   const accent = scan.isFallback ? '#FFB347' : '#7BE5D8'
   const labelText = scan.isFallback ? 'SCAN · INFERRED' : 'SCAN · MEASURED'
+  const sheetSummary = fullSetScan
+    ? `${fullSetScan.classifications.length} sheets · ` +
+      `${fullSetScan.bestFloorPlanSheet ? 'floor plan ✓' : 'no floor-plan sheet'} · ` +
+      `${fullSetScan.bestElectricalSheets.length} electrical · ` +
+      `${fullSetScan.bestRenderingSheets.length} render`
+    : null
   return (
     <div
       style={{
@@ -368,6 +415,11 @@ function ScanStatusBanner({ scan }: { scan: BlueprintPlanScanResult }) {
           {Math.round(scan.footprint.width)}'-0" W × {Math.round(scan.footprint.height)}'-0" D · {scan.rooms.length} rooms
         </span>
       </div>
+      {sheetSummary && (
+        <div style={{ opacity: 0.65, fontSize: 9.5, color: 'rgba(170,220,235,0.85)' }}>
+          Full-set scan: {sheetSummary}
+        </div>
+      )}
       {top.map((w, i) => (
         <div key={i} style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.35 }}>
           • {w.message}
@@ -428,6 +480,11 @@ export default function BlueprintVRExperiencePanel({
   job,
   sourceBlueprint,
   onClose,
+  projectId,
+  projectName: projectNameProp,
+  availableSourceSets,
+  initialSourceSetId,
+  onSelectSourceSet,
 }: BlueprintVRExperiencePanelProps) {
   const [activeStage, setActiveStage] = useState<VRStage>(STAGE_ORDER[0])
   const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room'>('dollhouse')
@@ -438,22 +495,105 @@ export default function BlueprintVRExperiencePanel({
   const [wallOpacity, setWallOpacity] = useState(0.82)
   const [cameraPreset, setCameraPreset] = useState<'top' | 'iso' | 'room'>('iso')
 
-  const scanResult = useMemo<BlueprintPlanScanResult>(() => {
-    const projectName = job.outputManifest?.projectName || sourceBlueprint.name
-    const blueprintTitle = sourceBlueprint.name
-    const manifestDescription = job.outputManifest?.metadata?.description
-    return scanBlueprintPlan({
-      projectName,
-      blueprintTitle,
-      fileName: sourceBlueprint.filePath,
-      extractedText: manifestDescription,
-    })
-  }, [job.outputManifest, sourceBlueprint.name, sourceBlueprint.filePath])
+  // ── Source-set state (project-level) ──────────────────────────────────
+  const availableSets = availableSourceSets || []
+  const projectKey = projectId || projectNameProp || job.outputManifest?.projectName || 'project'
 
-  const buildingModel = useMemo<BlueprintBuildingModel>(
-    () => convertPlanScanToBuildingModel(scanResult),
-    [scanResult],
+  // Auto-pick: prefer a Full Set; fall back to the initial / first set.
+  const autoPickedSetId = useMemo(() => {
+    if (initialSourceSetId && availableSets.some((s) => s.id === initialSourceSetId)) {
+      return initialSourceSetId
+    }
+    const fullSet = availableSets.find((s) => (s.type || '').toLowerCase().includes('full set'))
+    if (fullSet) return fullSet.id
+    return availableSets[0]?.id || null
+  }, [availableSets, initialSourceSetId])
+
+  const [selectedSourceSetId, setSelectedSourceSetId] = useState<string | null>(autoPickedSetId)
+  const [rescanToken, setRescanToken] = useState(0)
+
+  useEffect(() => {
+    setSelectedSourceSetId(autoPickedSetId)
+  }, [autoPickedSetId])
+
+  const selectedSourceSet = useMemo<BlueprintVRSourceSet | null>(() => {
+    if (!availableSets.length) return null
+    return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
+  }, [availableSets, selectedSourceSetId])
+
+  const sourceKey = selectedSourceSet?.id || sourceBlueprint.id || 'active-sheet'
+  const sourceIsInferred = !initialSourceSetId
+  const projectNameForCache =
+    projectNameProp || selectedSourceSet?.projectName || job.outputManifest?.projectName || sourceBlueprint.name
+
+  // ── Cached model lookup. Recomputes only when key / rescan token changes ──
+  const cacheKeyParts = `${projectKey}::${sourceKey}::${rescanToken}`
+
+  const { scanResult, fullSetScan, buildingModel, fromCache } = useMemo(() => {
+    const cached = rescanToken === 0
+      ? getCachedProjectModel(projectKey, sourceKey)
+      : undefined
+    if (cached) {
+      return {
+        scanResult: cached.scan,
+        fullSetScan: cached.fullSetScan,
+        buildingModel: cached.model,
+        fromCache: true,
+      }
+    }
+
+    let scan: BlueprintPlanScanResult
+    let fullScan: BlueprintFullSetScanResult | undefined
+    let model: BlueprintBuildingModel
+
+    if (selectedSourceSet) {
+      fullScan = scanBlueprintFullSet({
+        projectName: projectNameForCache,
+        sourceSet: selectedSourceSet,
+        extractedText: job.outputManifest?.metadata?.description,
+      })
+      scan = fullScan.planScan
+      const base = convertPlanScanToBuildingModel(scan)
+      model = mergeFullSetScanIntoBuildingModel(fullScan, base)
+    } else {
+      scan = scanBlueprintPlan({
+        projectName: projectNameForCache,
+        blueprintTitle: sourceBlueprint.name,
+        fileName: sourceBlueprint.filePath,
+        extractedText: job.outputManifest?.metadata?.description,
+      })
+      model = convertPlanScanToBuildingModel(scan)
+    }
+
+    const stored = setCachedProjectModel(projectKey, sourceKey, {
+      model,
+      scan,
+      fullSetScan: fullScan,
+      sourceSetLabel: selectedSourceSet?.name,
+    })
+    return {
+      scanResult: stored.scan,
+      fullSetScan: stored.fullSetScan,
+      buildingModel: stored.model,
+      fromCache: false,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKeyParts])
+
+  const handleChangeSource = useCallback(
+    (setId: string) => {
+      setSelectedSourceSetId(setId)
+      setSelectedRoomId(null)
+      setRescanToken(0)
+      onSelectSourceSet?.(setId)
+    },
+    [onSelectSourceSet],
   )
+
+  const handleRescan = useCallback(() => {
+    clearCachedProjectModel(projectKey, sourceKey)
+    setRescanToken((t) => t + 1)
+  }, [projectKey, sourceKey])
 
   const handleBackdropClick = useCallback(() => { onClose() }, [onClose])
   const firstRoomId = buildingModel.levels[0]?.rooms[0]?.id || null
@@ -567,10 +707,27 @@ export default function BlueprintVRExperiencePanel({
               fontFamily: 'monospace',
               letterSpacing: 0.6,
             }}>
-              Source: {sourceBlueprint.name}
+              VR Source: {selectedSourceSet?.name || sourceBlueprint.name}
+              {selectedSourceSet?.type ? ` · ${selectedSourceSet.type}` : ''}
               <span style={{ marginLeft: 12, color: 'rgba(0,221,204,0.4)' }}>
                 {visibleStages.length} stages · {totalItems} catalog items
               </span>
+              {fromCache && (
+                <span
+                  style={{
+                    marginLeft: 10,
+                    padding: '1px 6px',
+                    borderRadius: 3,
+                    background: 'rgba(123,229,216,0.12)',
+                    border: '1px solid rgba(123,229,216,0.3)',
+                    color: 'rgba(123,229,216,0.9)',
+                    fontSize: 9,
+                    letterSpacing: 0.4,
+                  }}
+                >
+                  CACHED MODEL
+                </span>
+              )}
             </div>
           </div>
 
@@ -672,7 +829,17 @@ export default function BlueprintVRExperiencePanel({
               <button onClick={() => setCameraPreset('room')} style={controlButtonStyle(cameraPreset === 'room')}>Room</button>
             </div>
 
-            <ScanStatusBanner scan={scanResult} />
+            {availableSets.length > 0 && (
+              <BlueprintVRSourceSelector
+                sets={availableSets}
+                selectedSetId={selectedSourceSet?.id || null}
+                inferred={sourceIsInferred}
+                onSelect={handleChangeSource}
+                onRegenerate={handleRescan}
+              />
+            )}
+
+            <ScanStatusBanner scan={scanResult} fullSetScan={fullSetScan} />
 
             {viewMode === 'plan' && (
               <MeasuredPlanViewer

@@ -117,6 +117,11 @@ export type {
   BuildingDimensionModel,
   ElectricalAnchorType,
   BuildingElectricalAnchorModel,
+  WallKind,
+  DoorSwingDirection,
+  OpeningSubtype,
+  RoomRole,
+  RoomEquipmentHint,
 } from './buildingModel'
 
 export {
@@ -242,6 +247,19 @@ export type {
   PlanDimensionCandidate,
   PlanScanWarning,
   PlanScanWarningCode,
+  // Full-set scan types
+  SheetRole,
+  BlueprintVRSourceSet,
+  BlueprintVRSourceSheet,
+  BlueprintFullSetScanInput,
+  BlueprintFullSetScanResult,
+  FullSetSheetClassification,
+  ExtractedProjectHint,
+  EquipmentHint,
+  FinishHint,
+  ElectricalDeviceHint,
+  DoorHint,
+  WallHint,
 } from './blueprintPlanScanner'
 
 export {
@@ -252,4 +270,31 @@ export {
   inferOpeningsFromGaps,
   inferRoomsFromEnclosedOrGridLayout,
   chooseSalonSuiteFallbackFromBlueprintContext,
+  // Full-set scan functions
+  scanBlueprintFullSet,
+  classifySheetRole,
+  chooseBestFloorPlanSheet,
+  chooseBestElectricalSheets,
+  chooseBestRenderingSheets,
+  extractProjectStyleHints,
+  extractEquipmentHints,
+  extractDoorAndOpeningHints,
+  extractWallThicknessHints,
+  mergeFullSetScanIntoBuildingModel,
 } from './blueprintPlanScanner'
+
+// Project model cache — keep generated models stable across page changes
+export type { BlueprintVRProjectCacheEntry } from './blueprintVRProjectModelCache'
+export {
+  getBlueprintVRCacheKey,
+  getCachedProjectModel,
+  setCachedProjectModel,
+  clearCachedProjectModel,
+  clearProjectCache,
+  clearAllProjectModelCache,
+  listCachedProjectModels,
+} from './blueprintVRProjectModelCache'
+
+// VR source selector component
+export { default as BlueprintVRSourceSelector } from './BlueprintVRSourceSelector'
+export type { BlueprintVRSourceSelectorProps } from './BlueprintVRSourceSelector'

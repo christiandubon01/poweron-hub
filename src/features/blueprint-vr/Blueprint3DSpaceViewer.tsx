@@ -84,12 +84,92 @@ interface FurnitureSpec {
   label?: string
 }
 
+/**
+ * Map an equipment-hint kind to a furniture spec (color / size). Used when the
+ * scanner attaches hints to a room via room.equipmentHints.
+ */
+function hintToFurniture(
+  kind: BuildingRoomModel['equipmentHints'] extends Array<infer T> | undefined
+    ? T extends { kind: infer K }
+      ? K
+      : never
+    : never,
+): { color: number; width: number; depth: number; height: number } | null {
+  switch (kind) {
+    case 'reception-counter':
+      return { color: 0x2a2118, width: 6, depth: 2, height: 3.4 }
+    case 'waiting-chair':
+      return { color: 0x1d2230, width: 1.8, depth: 1.8, height: 1.5 }
+    case 'waiting-couch':
+      return { color: 0x26303f, width: 4.5, depth: 2, height: 1.6 }
+    case 'side-table':
+      return { color: 0x3a2e1f, width: 1.4, depth: 1.4, height: 1.4 }
+    case 'styling-chair':
+      return { color: 0x2a2118, width: 2, depth: 2, height: 3.5 }
+    case 'styling-mirror':
+      return { color: 0x0a1018, width: 0.4, depth: 2.6, height: 4.8 }
+    case 'vanity-counter':
+      return { color: 0x3a2e1f, width: 2.6, depth: 1.4, height: 3 }
+    case 'wash-sink':
+    case 'shampoo-bowl':
+      return { color: 0xd7e2ef, width: 2.2, depth: 2.6, height: 3.2 }
+    case 'restroom-sink':
+      return { color: 0xd7e2ef, width: 1.6, depth: 1.4, height: 2.8 }
+    case 'toilet':
+      return { color: 0xeef3f8, width: 1.4, depth: 2, height: 1.4 }
+    case 'utility-panel':
+      return { color: 0x101820, width: 1.6, depth: 0.4, height: 3 }
+    case 'service-equipment':
+      return { color: 0x1d2230, width: 2, depth: 1.8, height: 4 }
+    case 'storage-shelving':
+      return { color: 0x2b313c, width: 1.2, depth: 5, height: 6 }
+    case 'storefront-sign':
+      return { color: 0x6b4a26, width: 4, depth: 0.2, height: 1.2 }
+    case 'decor-wall':
+      return { color: 0x6b4a26, width: 4, depth: 0.4, height: 4 }
+    case 'overhead-light':
+    case 'track-light':
+    case 'chandelier':
+      return { color: 0xf2dfb0, width: 1, depth: 1, height: 0.4 }
+    case 'receptacle':
+    case 'switch':
+    case 'gfci':
+      // Electrical anchors are rendered by the stage engine, skip in furniture
+      return null
+    default:
+      return null
+  }
+}
+
 function buildRoomFurniture(room: BuildingRoomModel): FurnitureSpec[] {
   const label = room.label.toLowerCase()
   const w = room.bounds.max.x - room.bounds.min.x
   const d = room.bounds.max.y - room.bounds.min.y
   const out: FurnitureSpec[] = []
 
+  // 1) Equipment hints from the scanner take priority — render every hint that
+  //    maps to a furniture spec at its normalized position.
+  const hints = room.equipmentHints || []
+  let usedHints = false
+  for (const hint of hints) {
+    const spec = hintToFurniture(hint.kind)
+    if (!spec) continue
+    usedHints = true
+    const nx = hint.positionNormalized?.x ?? 0.5
+    const ny = hint.positionNormalized?.y ?? 0.5
+    out.push({
+      cx: Math.max(0.5, Math.min(w - 0.5, nx * w)),
+      cz: Math.max(0.5, Math.min(d - 0.5, ny * d)),
+      width: Math.min(w - 1, spec.width),
+      depth: Math.min(d - 1, spec.depth),
+      height: spec.height,
+      color: spec.color,
+      label: hint.label,
+    })
+  }
+  if (usedHints) return out
+
+  // 2) Otherwise fall back to label-driven proxies.
   if (label.includes('reception') || label.includes('entrance')) {
     out.push({ cx: w / 2, cz: d * 0.7, width: w * 0.6, depth: 2, height: 3.2, color: 0x2a2118, label: 'Reception Counter' })
     out.push({ cx: w * 0.2, cz: d * 0.35, width: 1.6, depth: 1.6, height: 1.6, color: 0x1d2230 })
@@ -100,18 +180,14 @@ function buildRoomFurniture(room: BuildingRoomModel): FurnitureSpec[] {
     out.push({ cx: w * 0.5, cz: d / 2, width: 2.2, depth: 1.8, height: 1.6, color: 0x1d2230 })
     out.push({ cx: w * 0.75, cz: d / 2, width: 2.2, depth: 1.8, height: 1.6, color: 0x1d2230 })
   } else if (label.includes('styling') || label.includes('salon') || label.includes('service')) {
-    // Styling stations down both sides of the run
     const stations = Math.max(3, Math.floor(d / 5))
     for (let i = 0; i < stations; i++) {
       const cz = (d / (stations + 1)) * (i + 1)
-      // Left side station (wall + chair)
       out.push({ cx: 1.4, cz, width: 1.2, depth: 2.4, height: 4.5, color: 0x1d2230, label: 'Mirror' })
       out.push({ cx: 3, cz, width: 1.6, depth: 1.6, height: 1.6, color: 0x2a2118, label: 'Chair' })
-      // Right side station (mirrored)
       out.push({ cx: w - 1.4, cz, width: 1.2, depth: 2.4, height: 4.5, color: 0x1d2230 })
       out.push({ cx: w - 3, cz, width: 1.6, depth: 1.6, height: 1.6, color: 0x2a2118 })
     }
-    // Center vanity bench down the spine
     out.push({ cx: w / 2, cz: d / 2, width: w * 0.35, depth: 2, height: 1.2, color: 0x3a2e1f, label: 'Vanity' })
   } else if (label.includes('bath') || label.includes('restroom')) {
     out.push({ cx: w * 0.3, cz: d * 0.3, width: 1.4, depth: 1.4, height: 1.4, color: 0xd7e2ef, label: 'Sink' })
@@ -165,6 +241,8 @@ function createSlabMesh(model: BlueprintBuildingModel): THREE.Mesh {
   return mesh
 }
 
+type WallKindString = 'exterior' | 'partition' | 'divider' | 'glass' | 'pony'
+
 function createWallMesh(
   startX: number,
   startZ: number,
@@ -174,24 +252,40 @@ function createWallMesh(
   thickness: number,
   exterior: boolean,
   opacity: number,
+  kind: WallKindString = exterior ? 'exterior' : 'partition',
 ): THREE.Mesh {
   const length = Math.hypot(endX - startX, endZ - startZ)
-  const geom = new THREE.BoxGeometry(length, height, thickness)
-  const color = exterior ? 0xece5d8 : 0xd7cebb
+  // Pony walls are half-height (about 3 ft) for counter-style partitions.
+  const wallHeight = kind === 'pony' ? Math.min(height, 3.2) : height
+  const geom = new THREE.BoxGeometry(length, wallHeight, thickness)
+  let color = exterior ? 0xece5d8 : 0xd7cebb
+  let matOpacity = Math.min(1, Math.max(0.2, opacity))
+  let transparent = opacity < 0.999
+  if (kind === 'glass') {
+    color = 0x9ec7f9
+    matOpacity = 0.32
+    transparent = true
+  } else if (kind === 'divider') {
+    color = 0x847766
+    matOpacity = Math.max(0.7, matOpacity)
+    transparent = true
+  } else if (kind === 'pony') {
+    color = 0xa89c80
+  }
   const mat = new THREE.MeshStandardMaterial({
     color,
-    roughness: 0.9,
-    metalness: 0.02,
-    transparent: opacity < 0.999,
-    opacity: Math.min(1, Math.max(0.2, opacity)),
+    roughness: kind === 'glass' ? 0.15 : 0.9,
+    metalness: kind === 'glass' ? 0.4 : 0.02,
+    transparent,
+    opacity: matOpacity,
   })
   const mesh = new THREE.Mesh(geom, mat)
   const midX = (startX + endX) / 2
   const midZ = (startZ + endZ) / 2
-  mesh.position.set(midX, height / 2, midZ)
+  mesh.position.set(midX, wallHeight / 2, midZ)
   const angle = Math.atan2(endZ - startZ, endX - startX)
   mesh.rotation.y = -angle
-  mesh.userData.kind = 'wall'
+  mesh.userData.kind = kind
   mesh.userData.exterior = exterior
   return mesh
 }
@@ -530,15 +624,21 @@ export default function Blueprint3DSpaceViewer({
           wall.thickness.unit === 'ft'
             ? wall.thickness.value
             : wall.thickness.value / 12
+        const wallKind: WallKindString =
+          (wall.kind as WallKindString | undefined) ||
+          (exterior ? 'exterior' : 'partition')
+        // Divider walls render their actual thin thickness without a floor of 0.3.
+        const minThickness = wallKind === 'divider' ? 0.12 : 0.3
         const wallMesh = createWallMesh(
           wall.start.x,
           wall.start.y,
           wall.end.x,
           wall.end.y,
           wallHeight,
-          Math.max(0.3, thickness),
+          Math.max(minThickness, thickness),
           exterior,
           wallOpacity,
+          wallKind,
         )
         buildingGroup.add(wallMesh)
 

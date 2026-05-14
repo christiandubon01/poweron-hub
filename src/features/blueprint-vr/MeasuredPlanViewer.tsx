@@ -1,96 +1,225 @@
 /**
  * src/features/blueprint-vr/MeasuredPlanViewer.tsx
  *
- * CAD-style 2D measured plan viewer for Planner5D-style Generate VR.
+ * CAD-style 2D measured plan viewer for the Generate VR experience.
  *
  * Renders:
- * - Rooms, walls, dimensions
- * - Room labels and area labels
- * - Scale badge, confidence badge, fallback indicator
- * - Blueprint AI visual style (dark theme)
- * - Empty states only when completely unavailable
+ *  - Building footprint outline (exterior wall mass)
+ *  - Interior partitions and thin station divider walls with kind-aware
+ *    thickness and color
+ *  - Doors with swing arcs, sliding hatches, and storefront / pass-through
+ *    openings rendered as transparent glass bands
+ *  - Room fills, labels, area labels, dimension annotations
+ *  - Source / confidence badges including a clear "Inferred Source" mark
+ *  - Selected room highlight and click → enter Room View
+ *
+ * The viewer is auto-sizing — it fills the parent width but locks the modal-
+ * friendly aspect ratio so the long Beauty Salon plan does not leave wide
+ * empty space.
  */
 
 import React, { useMemo } from 'react'
-import type { BlueprintBuildingModel, BuildingRoomModel } from './buildingModel'
+import type {
+  BlueprintBuildingModel,
+  BuildingRoomModel,
+  BuildingWallModel,
+  BuildingOpeningModel,
+} from './buildingModel'
 import type { VRStage } from './types'
 
 export interface MeasuredPlanViewerProps {
-  /** Building model to display */
   model?: BlueprintBuildingModel | null
-  /** Canvas size (will use aspect ratio to fill parent) */
   width?: number
   height?: number
-  /** Show dimension annotations on walls */
   showDimensions?: boolean
-  /** Show room labels */
   showRoomLabels?: boolean
-  /** Show area labels */
   showAreaLabels?: boolean
-  /** Show confidence/scale badges */
   showBadges?: boolean
-  /** Custom CSS class */
   className?: string
-  /** Currently selected room id */
   selectedRoomId?: string | null
-  /** Called when a room is clicked */
   onRoomSelect?: (roomId: string) => void
-  /** Current stage for plan tinting */
   activeStage?: VRStage
-  /** Show electrical anchors on plan */
   showElectrical?: boolean
 }
 
-/**
- * Calculate appropriate scale (SVG units per foot) based on model footprint.
- */
+// ─── helpers ─────────────────────────────────────────────────────────────
+
 function calculateCanvasScale(
   modelWidth: number,
   modelHeight: number,
   canvasWidth: number,
   canvasHeight: number,
 ): { scalePerFoot: number; offsetX: number; offsetY: number } {
-  const padding = 40
+  const padding = 32
   const availableWidth = canvasWidth - padding * 2
   const availableHeight = canvasHeight - padding * 2
-
   const scaleX = availableWidth / modelWidth
   const scaleY = availableHeight / modelHeight
   const scalePerFoot = Math.min(scaleX, scaleY)
-
   const scaledWidth = modelWidth * scalePerFoot
   const scaledHeight = modelHeight * scalePerFoot
   const offsetX = padding + (availableWidth - scaledWidth) / 2
   const offsetY = padding + (availableHeight - scaledHeight) / 2
-
   return { scalePerFoot, offsetX, offsetY }
 }
 
-/**
- * Format a measurement value for display on dimension lines.
- */
-function formatMeasurement(value: number, unit: string): string {
-  if (unit === 'ft') {
-    const ft = Math.floor(value)
-    const inches = Math.round((value - ft) * 12)
-    if (inches === 0) return `${ft}'`
-    return `${ft}' ${inches}"`
-  }
-  if (unit === 'in') {
-    return `${Math.round(value)}"`
-  }
-  return `${value.toFixed(1)} ${unit}`
+function formatFt(value: number): string {
+  const ft = Math.floor(value)
+  const inches = Math.round((value - ft) * 12)
+  if (inches === 0) return `${ft}'-0"`
+  return `${ft}'-${inches}"`
 }
 
-/**
- * Render a single room as SVG.
- */
 const STAGE_PLAN_ACCENT: Record<VRStage, string> = {
   underground: '#E07020',
   roughIn: '#3B82F6',
   trim: '#22C55E',
   finished: '#06B6D4',
 }
+
+interface WallStyle {
+  stroke: string
+  strokeWidth: number
+  fill?: string
+  dash?: string
+}
+
+function styleForWall(wall: BuildingWallModel, selected: boolean): WallStyle {
+  const kind = wall.kind || 'partition'
+  if (kind === 'exterior') {
+    return { stroke: selected ? '#fff' : '#e0e6ed', strokeWidth: 4 }
+  }
+  if (kind === 'partition') {
+    return { stroke: selected ? '#dde7f3' : '#b6c0cc', strokeWidth: 2.4 }
+  }
+  if (kind === 'divider') {
+    return { stroke: '#9aa5b2', strokeWidth: 1.2, dash: '4 2' }
+  }
+  if (kind === 'glass') {
+    return { stroke: '#9ec7f9', strokeWidth: 2.4, dash: '6 2' }
+  }
+  if (kind === 'pony') {
+    return { stroke: '#a89c80', strokeWidth: 1.4, dash: '2 2' }
+  }
+  return { stroke: '#b6c0cc', strokeWidth: 2 }
+}
+
+// ─── opening rendering ───────────────────────────────────────────────────
+
+function renderOpening(
+  opening: BuildingOpeningModel,
+  wall: BuildingWallModel,
+  scalePerFoot: number,
+  offsetX: number,
+  offsetY: number,
+  accent: string,
+): JSX.Element | null {
+  const ws = wall.start
+  const we = wall.end
+  const wallLen = Math.hypot(we.x - ws.x, we.y - ws.y)
+  if (wallLen < 0.5) return null
+  const posFt =
+    opening.positionAlongWall.unit === 'ft'
+      ? opening.positionAlongWall.value
+      : opening.positionAlongWall.value / 12
+  const t = Math.max(0, Math.min(1, posFt / wallLen))
+  const cx = offsetX + (ws.x + (we.x - ws.x) * t) * scalePerFoot
+  const cy = offsetY + (ws.y + (we.y - ws.y) * t) * scalePerFoot
+  const widthFt =
+    opening.width.unit === 'ft' ? opening.width.value : opening.width.value / 12
+  const halfPx = (widthFt / 2) * scalePerFoot
+  const dirX = (we.x - ws.x) / wallLen
+  const dirY = (we.y - ws.y) / wallLen
+  const nx = -dirY
+  const ny = dirX
+  const subtype = opening.subtype
+  const isStorefront = subtype === 'window-storefront'
+  const isPassThrough = subtype === 'pass-through'
+  const isSliding = subtype === 'door-sliding' || subtype === 'door-pocket' || opening.swing === 'sliding'
+  const isWindow = opening.type === 'window'
+
+  // Cut the wall line beneath the opening with a contrasting fill.
+  const ax = cx - dirX * halfPx
+  const ay = cy - dirY * halfPx
+  const bx = cx + dirX * halfPx
+  const by = cy + dirY * halfPx
+
+  if (isStorefront || (isWindow && !isPassThrough)) {
+    return (
+      <g key={opening.id}>
+        <rect
+          x={cx - halfPx}
+          y={cy - 5}
+          width={halfPx * 2}
+          height={10}
+          transform={`rotate(${(Math.atan2(dirY, dirX) * 180) / Math.PI}, ${cx}, ${cy})`}
+          fill={isStorefront ? 'rgba(158,200,255,0.32)' : 'rgba(158,200,255,0.18)'}
+          stroke="#9ec7f9"
+          strokeWidth={1}
+        />
+      </g>
+    )
+  }
+
+  if (isPassThrough) {
+    return (
+      <g key={opening.id}>
+        <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#0c1118" strokeWidth={6} />
+        <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#cdd6e2" strokeWidth={2} strokeDasharray="3 3" />
+      </g>
+    )
+  }
+
+  if (isSliding) {
+    return (
+      <g key={opening.id}>
+        <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#0c1118" strokeWidth={5} />
+        <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#c4a873" strokeWidth={1.5} strokeDasharray="2 1" />
+        <polygon
+          points={`${cx + dirX * 4},${cy + dirY * 4 - 4} ${cx + dirX * 4 + 4},${cy + dirY * 4} ${cx + dirX * 4},${cy + dirY * 4 + 4}`}
+          fill="#c4a873"
+        />
+      </g>
+    )
+  }
+
+  // Hinged door — draw the leaf line plus the swing arc
+  const swing = opening.swing || 'right'
+  const swingDeg = opening.swingDegrees ?? 90
+  // Hinge is at one end of the opening (chosen by swing dir).
+  const hingeAtStart = swing === 'left' || swing === 'double'
+  const hx = hingeAtStart ? ax : bx
+  const hy = hingeAtStart ? ay : by
+  const leafLen = halfPx * 2
+  // Outward normal direction (interior side of wall) — pick whichever side the
+  // arc visually lives in. The plan view uses the +n direction.
+  const outwardSign = swing === 'left' ? 1 : swing === 'double' ? 1 : -1
+  const radius = leafLen
+  const leafEndX = hx + (dirX * leafLen * Math.cos((swingDeg * Math.PI) / 180) + nx * outwardSign * radius * Math.sin((swingDeg * Math.PI) / 180))
+  const leafEndY = hy + (dirY * leafLen * Math.cos((swingDeg * Math.PI) / 180) + ny * outwardSign * radius * Math.sin((swingDeg * Math.PI) / 180))
+  const arcEndX = hx + nx * outwardSign * radius
+  const arcEndY = hy + ny * outwardSign * radius
+
+  return (
+    <g key={opening.id}>
+      {/* Door opening hole — paint over the wall in dark to show a gap */}
+      <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#0c1118" strokeWidth={5} />
+      {/* Door leaf */}
+      <line x1={hx} y1={hy} x2={leafEndX} y2={leafEndY} stroke="#c4a873" strokeWidth={2} />
+      {/* Swing arc */}
+      <path
+        d={`M ${hx} ${hy} L ${leafEndX} ${leafEndY} A ${radius} ${radius} 0 0 ${outwardSign > 0 ? 0 : 1} ${arcEndX} ${arcEndY}`}
+        fill="none"
+        stroke={accent}
+        strokeWidth={0.9}
+        strokeDasharray="2 2"
+        opacity={0.85}
+      />
+    </g>
+  )
+}
+
+// ─── room ───────────────────────────────────────────────────────────────
 
 function RoomElement({
   room,
@@ -100,7 +229,6 @@ function RoomElement({
   isSelected,
   showRoomLabels,
   showAreaLabels,
-  showDimensions,
   onRoomSelect,
   accent,
 }: {
@@ -111,104 +239,66 @@ function RoomElement({
   isSelected: boolean
   showRoomLabels: boolean
   showAreaLabels: boolean
-  showDimensions: boolean
   onRoomSelect?: (roomId: string) => void
   accent: string
 }): JSX.Element {
-  const { bounds, walls, label, area } = room
+  const { bounds, area, label } = room
   const { min, max } = bounds
-
   const x1 = offsetX + min.x * scalePerFoot
   const y1 = offsetY + min.y * scalePerFoot
   const width = (max.x - min.x) * scalePerFoot
   const height = (max.y - min.y) * scalePerFoot
 
   return (
-    <g key={room.id}>
-      {/* Room fill */}
+    <g>
       <rect
         x={x1}
         y={y1}
         width={width}
         height={height}
-        fill={isSelected ? `${accent}55` : '#2a3f5f'}
-        fillOpacity={isSelected ? 0.38 : 0.25}
-        stroke={isSelected ? accent : '#4a90e2'}
-        strokeWidth={isSelected ? 3 : 1.8}
-        rx={4}
+        fill={isSelected ? `${accent}33` : 'rgba(42,63,95,0.42)'}
+        fillOpacity={isSelected ? 0.55 : 0.45}
+        stroke={isSelected ? accent : 'rgba(74,144,226,0.55)'}
+        strokeWidth={isSelected ? 2.6 : 1.4}
+        rx={3}
         style={{ cursor: 'pointer' }}
         onClick={() => onRoomSelect?.(room.id)}
       />
-
-      {/* Room label */}
       {showRoomLabels && (
         <text
           x={x1 + width / 2}
-          y={y1 + height / 2 - 8}
+          y={y1 + height / 2 - 5}
           textAnchor="middle"
-          fill="#e0e6ed"
-          fontSize={12}
+          fill={isSelected ? '#fff' : '#e0e6ed'}
+          fontSize={Math.max(9, Math.min(13, width / 16))}
           fontWeight="bold"
+          style={{ pointerEvents: 'none' }}
         >
           {label}
         </text>
       )}
-
-      {/* Area label */}
-      {showAreaLabels && area && (
+      {showAreaLabels && area && height > 24 && (
         <text
           x={x1 + width / 2}
-          y={y1 + height / 2 + 12}
+          y={y1 + height / 2 + 10}
           textAnchor="middle"
-          fill="#a0a8b8"
-          fontSize={10}
+          fill="rgba(160,168,184,0.85)"
+          fontSize={9}
+          style={{ pointerEvents: 'none' }}
         >
           {Math.round(area)} sq ft
         </text>
       )}
-
-      {/* Walls with dimension annotations */}
-      {walls.map((wall) => {
-        const wx1 = offsetX + wall.start.x * scalePerFoot
-        const wy1 = offsetY + wall.start.y * scalePerFoot
-        const wx2 = offsetX + wall.end.x * scalePerFoot
-        const wy2 = offsetY + wall.end.y * scalePerFoot
-
-        const length = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2)
-        const lengthFt = formatMeasurement(length, wall.height.unit)
-
-        return (
-          <g key={wall.id}>
-            {/* Wall line */}
-            <line x1={wx1} y1={wy1} x2={wx2} y2={wy2} stroke={isSelected ? '#f5f8ff' : '#e0e6ed'} strokeWidth={2} />
-
-            {/* Wall dimension label (offset above/below) */}
-            {showDimensions && (
-              <text
-                x={(wx1 + wx2) / 2}
-                y={(wy1 + wy2) / 2 - 8}
-                textAnchor="middle"
-                fill="#90b0d0"
-                fontSize={9}
-                opacity={0.8}
-              >
-                {lengthFt}
-              </text>
-            )}
-          </g>
-        )
-      })}
     </g>
   )
 }
 
-/**
- * Measured Plan Viewer Component
- */
+// ─── component ───────────────────────────────────────────────────────────
+
 export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   model,
-  width = 800,
-  height = 600,
+  width = 760,
+  height = 430,
   showDimensions = true,
   showRoomLabels = true,
   showAreaLabels = true,
@@ -220,14 +310,10 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   className,
 }) => {
   const canvasSize = useMemo(
-    () => ({
-      width: width || 800,
-      height: height || 600,
-    }),
+    () => ({ width: width || 760, height: height || 430 }),
     [width, height],
   )
 
-  // If no model or empty footprint, show empty state
   if (!model || model.footprint.width === 0 || model.footprint.height === 0) {
     return (
       <div
@@ -239,17 +325,17 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: '#1a1f2e',
-          borderRadius: '8px',
+          borderRadius: 8,
           color: '#a0a8b8',
-          fontSize: '14px',
+          fontSize: 13,
           textAlign: 'center',
-          padding: '20px',
+          padding: 20,
         }}
       >
         <div>
           <p style={{ margin: '0 0 8px' }}>No building model available</p>
-          <p style={{ margin: 0, fontSize: '12px', opacity: 0.7 }}>
-            Extract or provide blueprint dimensions to display the measured plan
+          <p style={{ margin: 0, fontSize: 12, opacity: 0.7 }}>
+            Pick a VR Source Set to drive the measured plan
           </p>
         </div>
       </div>
@@ -263,34 +349,50 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     canvasSize.height,
   )
 
-  // Collect all rooms from all levels
-  const allRooms: BuildingRoomModel[] = model.levels.flatMap((level) => level.rooms)
+  const allRooms: BuildingRoomModel[] = model.levels.flatMap((l) => l.rooms)
+  const allWalls: Array<{ wall: BuildingWallModel; room: BuildingRoomModel }> =
+    allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
+
+  const accent = STAGE_PLAN_ACCENT[activeStage]
+  const isFallback = model.metadata.source === 'fallback'
+
+  // De-duplicate walls by canonical key so partition walls shared between two
+  // rooms render once. Use endpoints as key.
+  const dedupedWalls = new Map<string, { wall: BuildingWallModel; room: BuildingRoomModel; selected: boolean }>()
+  for (const { wall, room } of allWalls) {
+    const a = `${wall.start.x.toFixed(2)},${wall.start.y.toFixed(2)}`
+    const b = `${wall.end.x.toFixed(2)},${wall.end.y.toFixed(2)}`
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    const current = dedupedWalls.get(key)
+    if (!current) {
+      dedupedWalls.set(key, { wall, room, selected: room.id === selectedRoomId })
+    } else if (room.id === selectedRoomId) {
+      dedupedWalls.set(key, { wall, room, selected: true })
+    }
+  }
 
   return (
-    <div className={className} style={{ position: 'relative', display: 'inline-block' }}>
-      {/* SVG Canvas */}
+    <div className={className} style={{ position: 'relative', display: 'block', width: '100%' }}>
       <svg
-        width={canvasSize.width}
+        width="100%"
         height={canvasSize.height}
-        style={{
-          backgroundColor: '#1a1f2e',
-          borderRadius: '8px',
-          border: '1px solid #4a90e2',
-        }}
+        viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ backgroundColor: '#0d121b', borderRadius: 8, border: '1px solid rgba(0,229,204,0.18)', display: 'block' }}
       >
-        {/* Building footprint outline */}
+        {/* Footprint border (exterior mass) */}
         <rect
-          x={offsetX}
-          y={offsetY}
-          width={model.footprint.width * scalePerFoot}
-          height={model.footprint.height * scalePerFoot}
-          fill="none"
+          x={offsetX - 2}
+          y={offsetY - 2}
+          width={model.footprint.width * scalePerFoot + 4}
+          height={model.footprint.height * scalePerFoot + 4}
+          fill="rgba(74,90,114,0.22)"
           stroke="#e0e6ed"
-          strokeWidth={3}
-          opacity={0.5}
+          strokeWidth={4}
+          rx={3}
         />
 
-        {/* Rooms */}
+        {/* Room fills */}
         {allRooms.map((room) => (
           <RoomElement
             key={room.id}
@@ -301,66 +403,168 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
             isSelected={selectedRoomId === room.id}
             showRoomLabels={showRoomLabels}
             showAreaLabels={showAreaLabels}
-            showDimensions={showDimensions}
             onRoomSelect={onRoomSelect}
-            accent={STAGE_PLAN_ACCENT[activeStage]}
+            accent={accent}
           />
         ))}
 
-        {showElectrical && model.electricalAnchors?.map((anchor) => {
-          const x = offsetX + anchor.position.x * scalePerFoot
-          const y = offsetY + anchor.position.y * scalePerFoot
+        {/* Walls with kind-aware style */}
+        {Array.from(dedupedWalls.values()).map(({ wall, selected }) => {
+          const wx1 = offsetX + wall.start.x * scalePerFoot
+          const wy1 = offsetY + wall.start.y * scalePerFoot
+          const wx2 = offsetX + wall.end.x * scalePerFoot
+          const wy2 = offsetY + wall.end.y * scalePerFoot
+          const style = styleForWall(wall, selected)
           return (
-            <g key={anchor.id}>
-              <circle cx={x} cy={y} r={4} fill={STAGE_PLAN_ACCENT[activeStage]} opacity={0.85} />
-              {showRoomLabels && (
-                <text x={x + 6} y={y - 6} fill="rgba(255,255,255,0.65)" fontSize={8} fontFamily="monospace">
-                  {anchor.type}
-                </text>
-              )}
+            <g key={wall.id}>
+              <line
+                x1={wx1}
+                y1={wy1}
+                x2={wx2}
+                y2={wy2}
+                stroke={style.stroke}
+                strokeWidth={style.strokeWidth}
+                strokeDasharray={style.dash}
+                strokeLinecap="round"
+              />
             </g>
           )
         })}
+
+        {/* Openings on top of walls so they cut visually */}
+        {allWalls.map(({ wall }) =>
+          wall.openings.map((opening) =>
+            renderOpening(opening, wall, scalePerFoot, offsetX, offsetY, accent),
+          ),
+        )}
+
+        {/* Wall thickness / kind annotation for the selected room */}
+        {showDimensions && selectedRoomId &&
+          allWalls
+            .filter(({ room }) => room.id === selectedRoomId)
+            .slice(0, 4)
+            .map(({ wall }, idx) => {
+              const mx = offsetX + ((wall.start.x + wall.end.x) / 2) * scalePerFoot
+              const my = offsetY + ((wall.start.y + wall.end.y) / 2) * scalePerFoot
+              const tFt =
+                wall.thickness.unit === 'ft'
+                  ? wall.thickness.value
+                  : wall.thickness.value / 12
+              return (
+                <text
+                  key={`tk-${wall.id}-${idx}`}
+                  x={mx}
+                  y={my - 4}
+                  textAnchor="middle"
+                  fill="rgba(170,220,235,0.85)"
+                  fontSize={8}
+                  fontFamily="monospace"
+                >
+                  {wall.kind || 'partition'} · {(tFt * 12).toFixed(0)}"
+                </text>
+              )
+            })}
+
+        {/* Suite dimension lines */}
+        {showDimensions && (
+          <g>
+            {/* Width */}
+            <line
+              x1={offsetX}
+              y1={offsetY + model.footprint.height * scalePerFoot + 14}
+              x2={offsetX + model.footprint.width * scalePerFoot}
+              y2={offsetY + model.footprint.height * scalePerFoot + 14}
+              stroke={accent}
+              strokeWidth={1.2}
+            />
+            <text
+              x={offsetX + (model.footprint.width * scalePerFoot) / 2}
+              y={offsetY + model.footprint.height * scalePerFoot + 26}
+              textAnchor="middle"
+              fill={accent}
+              fontSize={10}
+              fontFamily="monospace"
+            >
+              {formatFt(model.footprint.width)} SUITE WIDTH
+            </text>
+            {/* Depth */}
+            <line
+              x1={offsetX + model.footprint.width * scalePerFoot + 14}
+              y1={offsetY}
+              x2={offsetX + model.footprint.width * scalePerFoot + 14}
+              y2={offsetY + model.footprint.height * scalePerFoot}
+              stroke={accent}
+              strokeWidth={1.2}
+            />
+            <text
+              x={offsetX + model.footprint.width * scalePerFoot + 22}
+              y={offsetY + (model.footprint.height * scalePerFoot) / 2}
+              textAnchor="start"
+              transform={`rotate(90, ${offsetX + model.footprint.width * scalePerFoot + 22}, ${offsetY + (model.footprint.height * scalePerFoot) / 2})`}
+              fill={accent}
+              fontSize={10}
+              fontFamily="monospace"
+            >
+              {formatFt(model.footprint.height)} SUITE DEPTH
+            </text>
+          </g>
+        )}
+
+        {/* Electrical anchor markers */}
+        {showElectrical &&
+          model.electricalAnchors?.map((anchor) => {
+            const x = offsetX + anchor.position.x * scalePerFoot
+            const y = offsetY + anchor.position.y * scalePerFoot
+            return (
+              <g key={anchor.id}>
+                <circle cx={x} cy={y} r={4} fill={accent} opacity={0.85} />
+                {showRoomLabels && (
+                  <text x={x + 6} y={y - 5} fill="rgba(255,255,255,0.65)" fontSize={8} fontFamily="monospace">
+                    {anchor.type}
+                  </text>
+                )}
+              </g>
+            )
+          })}
       </svg>
 
-      {/* Badges */}
       {showBadges && (
         <div
           style={{
             position: 'absolute',
-            bottom: 12,
-            left: 12,
+            bottom: 10,
+            left: 10,
             display: 'flex',
-            gap: '8px',
+            gap: 8,
             flexWrap: 'wrap',
+            pointerEvents: 'none',
           }}
         >
-          {/* Scale badge */}
           <div
             style={{
-              backgroundColor: '#2a3f5f',
+              backgroundColor: 'rgba(42,63,95,0.95)',
               color: '#a0d8ff',
-              padding: '4px 8px',
-              borderRadius: '4px',
-              fontSize: '11px',
+              padding: '3px 7px',
+              borderRadius: 4,
+              fontSize: 10,
               border: '1px solid #4a90e2',
+              fontFamily: 'monospace',
             }}
           >
-            Scale: {model.scale.pixelsPerUnit} px/ft
+            Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
           </div>
-
-          {/* Confidence badge */}
           <div
             style={{
-              backgroundColor: model.confidence >= 0.5 ? '#2a5f2a' : '#5f4a2a',
-              color: model.confidence >= 0.5 ? '#a0ffa0' : '#ffd0a0',
-              padding: '4px 8px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              border: `1px solid ${model.confidence >= 0.5 ? '#4aff4a' : '#ff8a4a'}`,
+              backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
+              color: isFallback ? '#ffd0a0' : '#a0ffa0',
+              padding: '3px 7px',
+              borderRadius: 4,
+              fontSize: 10,
+              border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
+              fontFamily: 'monospace',
             }}
           >
-            {model.metadata.source === 'fallback' ? 'Fallback Model' : `Confidence: ${(model.confidence * 100).toFixed(0)}%`}
+            {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
           </div>
         </div>
       )}
