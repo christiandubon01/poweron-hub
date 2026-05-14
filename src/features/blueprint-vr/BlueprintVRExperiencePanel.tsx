@@ -36,12 +36,15 @@ import {
   convertPlanScanToBuildingModel,
   scanBlueprintFullSet,
   mergeFullSetScanIntoBuildingModel,
+  chooseBestFloorPlanSheet,
 } from './blueprintPlanScanner'
 import type {
   BlueprintPlanScanResult,
   BlueprintVRSourceSet,
   BlueprintFullSetScanResult,
 } from './blueprintPlanScanner'
+import { extractPdfVectorTraceFromPage } from './pdfVectorTraceExtractor'
+import type { PdfTracePayload } from './pdfTraceTypes'
 import {
   getCachedProjectModel,
   setCachedProjectModel,
@@ -447,6 +450,11 @@ function ScanStatusBanner({
       <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
         Trace: {traceStatus} · Scale: {scaleStatus} · Geometry: walls {scan.walls.length}, openings {scan.openings.length}, rooms {scan.rooms.length}
       </div>
+      {scan.traceAttempted && !scan.traceAvailable && (
+        <div style={{ opacity: 0.72, fontSize: 9.4, color: 'rgba(255,180,140,0.95)' }}>
+          Vector trace unavailable from current viewer context.
+        </div>
+      )}
 
       {confidenceBreakdown && (
         <div style={{ opacity: 0.72, fontSize: 9.2, lineHeight: 1.4, color: 'rgba(170,220,235,0.92)' }}>
@@ -545,6 +553,19 @@ export default function BlueprintVRExperiencePanel({
 
   const [selectedSourceSetId, setSelectedSourceSetId] = useState<string | null>(autoPickedSetId)
   const [rescanToken, setRescanToken] = useState(0)
+  const [traceExtraction, setTraceExtraction] = useState<{
+    selectedPageNumber: number | null
+    payload: PdfTracePayload | null
+    attempted: boolean
+    available: boolean
+    warnings: Array<{ code: string; message: string }>
+  }>({
+    selectedPageNumber: null,
+    payload: null,
+    attempted: false,
+    available: false,
+    warnings: [],
+  })
 
   useEffect(() => {
     setSelectedSourceSetId(autoPickedSetId)
@@ -555,7 +576,58 @@ export default function BlueprintVRExperiencePanel({
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
   }, [availableSets, selectedSourceSetId])
 
-  const sourceKey = selectedSourceSet?.id || sourceBlueprint.id || 'active-sheet'
+  useEffect(() => {
+    let disposed = false
+    if (!selectedSourceSet) {
+      setTraceExtraction({
+        selectedPageNumber: null,
+        payload: null,
+        attempted: false,
+        available: false,
+        warnings: [],
+      })
+      return
+    }
+    const best = chooseBestFloorPlanSheet(selectedSourceSet.sheets || [])
+    const bestSourceSheet = best
+      ? selectedSourceSet.sheets.find((s) => s.pageNumber === best.pageNumber) || null
+      : null
+    if (!best || !bestSourceSheet) {
+      setTraceExtraction({
+        selectedPageNumber: null,
+        payload: null,
+        attempted: false,
+        available: false,
+        warnings: [{ code: 'NO_FLOOR_PLAN_SHEET', message: 'No canonical floor-plan sheet selected for trace extraction.' }],
+      })
+      return
+    }
+    void (async () => {
+      const result = await extractPdfVectorTraceFromPage({
+        pageNumber: best.pageNumber,
+        sheetNumber: best.sheetNumber,
+        sheetTitle: best.sheetTitle,
+        existingPayload: bestSourceSheet.tracePayload || null,
+        expectedAdapterFields: ['page.getOperatorList', 'page.getTextContent', 'page.getViewport'],
+      })
+      if (disposed) return
+      setTraceExtraction({
+        selectedPageNumber: best.pageNumber,
+        payload: result.payload,
+        attempted: true,
+        available: Boolean(result.success),
+        warnings: result.warnings,
+      })
+    })()
+    return () => {
+      disposed = true
+    }
+  }, [selectedSourceSet, rescanToken])
+
+  const traceCacheSuffix = traceExtraction.selectedPageNumber
+    ? `trace-${traceExtraction.selectedPageNumber}-${traceExtraction.available ? 'ok' : 'none'}`
+    : 'trace-na'
+  const sourceKey = `${selectedSourceSet?.id || sourceBlueprint.id || 'active-sheet'}::${traceCacheSuffix}`
   const userPickedSource = !!initialSourceSetId
   const projectNameForCache =
     projectNameProp || selectedSourceSet?.projectName || job.outputManifest?.projectName || sourceBlueprint.name
@@ -580,10 +652,27 @@ export default function BlueprintVRExperiencePanel({
     let fullScan: BlueprintFullSetScanResult | undefined
     let model: BlueprintBuildingModel
 
-    if (selectedSourceSet) {
+    const sourceSetForScan = selectedSourceSet
+      ? {
+          ...selectedSourceSet,
+          sheets: selectedSourceSet.sheets.map((sheet) =>
+            traceExtraction.selectedPageNumber &&
+            sheet.pageNumber === traceExtraction.selectedPageNumber
+              ? {
+                  ...sheet,
+                  tracePayload: traceExtraction.payload,
+                  traceAttempted: traceExtraction.attempted,
+                  traceWarnings: traceExtraction.warnings,
+                }
+              : sheet,
+          ),
+        }
+      : null
+
+    if (sourceSetForScan) {
       fullScan = scanBlueprintFullSet({
         projectName: projectNameForCache,
-        sourceSet: selectedSourceSet,
+        sourceSet: sourceSetForScan,
         extractedText: job.outputManifest?.metadata?.description,
       })
       scan = fullScan.planScan
@@ -612,7 +701,7 @@ export default function BlueprintVRExperiencePanel({
       fromCache: false,
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKeyParts])
+  }, [cacheKeyParts, traceExtraction])
 
   const handleChangeSource = useCallback(
     (setId: string) => {
@@ -935,6 +1024,7 @@ export default function BlueprintVRExperiencePanel({
                 showRoomLabels={showLabels}
                 showAreaLabels={showLabels}
                 showElectrical={showElectrical}
+                traceDebug={scanResult.traceDebugCounts || null}
               />
             )}
 

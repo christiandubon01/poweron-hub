@@ -40,8 +40,17 @@ import type {
   AdaptedTrace,
   PlanTraceLine,
 } from './blueprintTraceAdapter'
-import { adaptPdfTraceToPlanLines } from './blueprintTraceAdapter'
-import type { PdfTracePagePayload } from './pdfTraceTypes'
+import {
+  adaptPdfTraceToPlanLines,
+  detectOuterFootprint,
+  inferDimensionCandidatesFromText,
+  inferDoorCandidatesFromArcs,
+  inferGlassStorefrontCandidates,
+  inferOpeningCandidatesFromGaps,
+  inferScaleFromTraceText,
+  inferWallCandidatesFromTrace,
+} from './blueprintTraceAdapter'
+import type { PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
 
 // ---------------------------------------------------------------------------
 // Scanner input / output contracts
@@ -81,7 +90,11 @@ export interface BlueprintPlanScanInput {
   /** Sheet index rows associated with this set. */
   sheetIndex?: BlueprintPlanScanSheetHint[]
   /** Vector trace payload for the active page, if available. */
-  tracePayload?: PdfTracePagePayload | null
+  tracePayload?: PdfTracePayload | null
+  /** Whether vector trace extraction was attempted for this page. */
+  traceAttempted?: boolean
+  /** Warnings emitted by the vector extractor seam. */
+  traceWarnings?: Array<{ code: string; message: string }>
   /** Any known dimension strings already parsed elsewhere. */
   knownDimensionsFt?: { width?: number; depth?: number }
 }
@@ -320,8 +333,21 @@ export interface BlueprintPlanScanResult {
   scanResultKind?: 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace'
   /** Trace availability state. */
   traceStatus?: 'missing' | 'provided' | 'extracted'
+  /** Whether trace extraction was attempted upstream. */
+  traceAttempted?: boolean
+  /** Whether usable trace geometry was available. */
+  traceAvailable?: boolean
+  /** Warnings emitted by vector extraction seam. */
+  traceWarnings?: Array<{ code: string; message: string }>
   /** Scale extraction state. */
   scaleStatus?: 'missing' | 'default' | 'detected'
+  /** Lightweight debug counts for trace diagnostics. */
+  traceDebugCounts?: {
+    rawLines: number
+    mergedWalls: number
+    openings: number
+    roomCandidates: number
+  }
   /** Selected floor-plan sheet metadata when full-set scan is used. */
   selectedFloorPlanSheet?: SelectedFloorPlanSheet | null
 }
@@ -378,15 +404,16 @@ export function inferWallsFromOrthogonalLines(
   minLengthFt = 3,
 ): PlanWallCandidate[] {
   if (!lines || lines.length === 0) return []
-  return lines
+  return inferWallCandidatesFromTrace(lines)
     .filter((l) => l.orthogonal && l.lengthFt >= minLengthFt)
     .map((l, i) => ({
       id: `wall-trace-${i}`,
       start: l.start,
       end: l.end,
-      thicknessFt: 0.5,
+      thicknessFt: l.role === 'exterior-wall' ? 0.5 : 0.34,
       exterior: l.role === 'exterior-wall',
       confidence: l.confidence ?? 0.5,
+      kind: l.role === 'exterior-wall' ? 'exterior' : 'partition',
     }))
 }
 
@@ -401,48 +428,43 @@ export function inferOpeningsFromGaps(
   lines: PlanTraceLine[],
 ): PlanOpeningCandidate[] {
   if (!walls.length || !lines.length) return []
-  const openings: PlanOpeningCandidate[] = []
-  let id = 0
-  for (const line of lines) {
-    if (line.role !== 'door' && line.role !== 'window') continue
-    // Find the closest wall this opening belongs to.
-    let best: PlanWallCandidate | null = null
-    let bestDist = Infinity
-    for (const wall of walls) {
-      const dx = (wall.start.x + wall.end.x) / 2 - (line.start.x + line.end.x) / 2
-      const dy = (wall.start.y + wall.end.y) / 2 - (line.start.y + line.end.y) / 2
-      const d = Math.hypot(dx, dy)
-      if (d < bestDist) {
-        best = wall
-        bestDist = d
-      }
+  const wallTraceLines: PlanTraceLine[] = walls.map((w) => ({
+    id: w.id,
+    start: w.start,
+    end: w.end,
+    lengthFt: Math.hypot(w.end.x - w.start.x, w.end.y - w.start.y),
+    angleDeg: 0,
+    orthogonal: true,
+    role: w.exterior ? 'exterior-wall' : 'interior-wall',
+    confidence: w.confidence,
+  }))
+  return inferOpeningCandidatesFromGaps(wallTraceLines, lines).map((o, i) => {
+    const wall = walls.find((w) => w.id === o.wallId)
+    const wallLen = wall ? Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y) : o.widthFt
+    const positionFt = wall
+      ? Math.max(
+          0,
+          Math.min(
+            wallLen,
+            ((o.center.x - wall.start.x) * (wall.end.x - wall.start.x) +
+              (o.center.y - wall.start.y) * (wall.end.y - wall.start.y)) /
+              Math.max(1e-6, wallLen),
+          ),
+        )
+      : 0
+    return {
+      id: `opening-trace-${i}`,
+      wallId: o.wallId,
+      type: o.type,
+      positionFt,
+      widthFt: o.widthFt,
+      heightFt: o.type === 'window' ? 6 : 7,
+      confidence: o.confidence,
+      swing: o.type === 'door' ? 'right' : 'fixed',
+      swingDegrees: o.type === 'door' ? 90 : 0,
+      subtype: o.type === 'window' ? 'window-standard' : 'door-swing',
     }
-    if (!best) continue
-    const wallLen = Math.hypot(best.end.x - best.start.x, best.end.y - best.start.y) || 1
-    const mid = {
-      x: (line.start.x + line.end.x) / 2,
-      y: (line.start.y + line.end.y) / 2,
-    }
-    const t = Math.max(
-      0,
-      Math.min(
-        1,
-        ((mid.x - best.start.x) * (best.end.x - best.start.x) +
-          (mid.y - best.start.y) * (best.end.y - best.start.y)) /
-          (wallLen * wallLen),
-      ),
-    )
-    openings.push({
-      id: `opening-trace-${id++}`,
-      wallId: best.id,
-      type: line.role === 'window' ? 'window' : 'door',
-      positionFt: t * wallLen,
-      widthFt: Math.min(4, Math.max(2, line.lengthFt)),
-      heightFt: line.role === 'window' ? 4 : 7,
-      confidence: line.confidence ?? 0.4,
-    })
-  }
-  return openings
+  })
 }
 
 /**
@@ -456,10 +478,68 @@ export function inferRoomsFromEnclosedOrGridLayout(
   footprint: Rectangle | null,
 ): PlanRoomCandidate[] {
   if (!walls.length || !footprint) return []
-  // The deterministic "trace path" room solver is intentionally stubbed for
-  // now. Returning an empty array signals to scanBlueprintPlan() that it should
-  // hand off to the context fallback.
-  return []
+  const minX = footprint.x
+  const minY = footprint.y
+  const maxX = footprint.x + footprint.width
+  const maxY = footprint.y + footprint.height
+  const verticalCuts = new Set<number>([minX, maxX])
+  const horizontalCuts = new Set<number>([minY, maxY])
+  for (const wall of walls) {
+    const dx = Math.abs(wall.end.x - wall.start.x)
+    const dy = Math.abs(wall.end.y - wall.start.y)
+    if (dx < 0.2 && dy > footprint.height * 0.28) {
+      verticalCuts.add(Number(((wall.start.x + wall.end.x) / 2).toFixed(2)))
+    } else if (dy < 0.2 && dx > footprint.width * 0.28) {
+      horizontalCuts.add(Number(((wall.start.y + wall.end.y) / 2).toFixed(2)))
+    }
+  }
+  const xs = Array.from(verticalCuts).sort((a, b) => a - b)
+  const ys = Array.from(horizontalCuts).sort((a, b) => a - b)
+  const rooms: PlanRoomCandidate[] = []
+  let idx = 0
+  for (let yi = 0; yi < ys.length - 1; yi += 1) {
+    for (let xi = 0; xi < xs.length - 1; xi += 1) {
+      const rx1 = xs[xi]
+      const ry1 = ys[yi]
+      const rx2 = xs[xi + 1]
+      const ry2 = ys[yi + 1]
+      const w = rx2 - rx1
+      const h = ry2 - ry1
+      if (w < 3 || h < 3) continue
+      rooms.push({
+        id: `trace-room-${idx + 1}`,
+        label: `Room ${idx + 1}`,
+        type: w * h > 180 ? 'other' : 'service',
+        bounds: { min: { x: rx1, y: ry1 }, max: { x: rx2, y: ry2 } },
+        confidence: 0.58,
+      })
+      idx += 1
+    }
+  }
+  return validateRoomCandidates(rooms, footprint)
+}
+
+export function validateRoomCandidates(
+  rooms: PlanRoomCandidate[],
+  footprint: Rectangle,
+): PlanRoomCandidate[] {
+  const validated: PlanRoomCandidate[] = []
+  for (const room of rooms) {
+    const within =
+      room.bounds.min.x >= footprint.x &&
+      room.bounds.min.y >= footprint.y &&
+      room.bounds.max.x <= footprint.x + footprint.width &&
+      room.bounds.max.y <= footprint.y + footprint.height
+    if (!within) continue
+    const overlap = validated.some((existing) => {
+      const ox = Math.max(0, Math.min(room.bounds.max.x, existing.bounds.max.x) - Math.max(room.bounds.min.x, existing.bounds.min.x))
+      const oy = Math.max(0, Math.min(room.bounds.max.y, existing.bounds.max.y) - Math.max(room.bounds.min.y, existing.bounds.min.y))
+      return ox * oy > 1
+    })
+    if (overlap) continue
+    validated.push(room)
+  }
+  return validated
 }
 
 // ---------------------------------------------------------------------------
@@ -1537,16 +1617,54 @@ export function scanBlueprintPlan(
   const warnings: PlanScanWarning[] = []
   const layoutContext = detectLayoutContext(input)
   const generatedAt = new Date().toISOString()
+  const traceAttempted = Boolean(input.traceAttempted || input.tracePayload)
+  const traceWarnings = (input.traceWarnings || []).map((w) => ({
+    code: String(w.code || 'TRACE_ADAPTER'),
+    message: String(w.message || ''),
+  }))
+  for (const tw of traceWarnings) {
+    warnings.push({
+      code: 'NO_TRACE_INPUT',
+      message: tw.message,
+    })
+  }
 
   // 1. Adapt any upstream trace data.
   const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(input.tracePayload)
   const traceLines = adapted.lines
+  const traceTextRuns: PdfTraceTextRun[] = input.tracePayload?.textRuns || []
 
   // 2. When real trace lines exist, try to infer geometry from them.
   let inferredFootprint = inferBuildingFootprintFromTraceLines(traceLines)
+  const outerFootprint = detectOuterFootprint(traceLines)
+  if (outerFootprint) {
+    inferredFootprint = {
+      x: outerFootprint.minX,
+      y: outerFootprint.minY,
+      width: outerFootprint.maxX - outerFootprint.minX,
+      height: outerFootprint.maxY - outerFootprint.minY,
+    }
+  }
   let inferredWalls = inferWallsFromOrthogonalLines(traceLines)
   let inferredOpenings = inferOpeningsFromGaps(inferredWalls, traceLines)
   let inferredRooms = inferRoomsFromEnclosedOrGridLayout(inferredWalls, inferredFootprint)
+  const inferredDoorArcs = inferDoorCandidatesFromArcs(input.tracePayload?.arcs || [], traceTextRuns)
+  const inferredStorefront = inferGlassStorefrontCandidates(traceLines, traceTextRuns)
+  const inferredDimensionText = inferDimensionCandidatesFromText(traceTextRuns)
+  const inferredScaleFromText = inferScaleFromTraceText(traceTextRuns)
+  if (inferredStorefront.length > 0) {
+    for (const storefront of inferredStorefront) {
+      const wall = inferredWalls.find((w) => w.id === storefront.lineId || w.id.endsWith(storefront.lineId))
+      if (wall) wall.kind = 'glass'
+    }
+  }
+  if (inferredDoorArcs.length > 0 && inferredOpenings.length > 0) {
+    inferredOpenings = inferredOpenings.map((o) =>
+      o.type === 'door'
+        ? { ...o, swing: 'right', swingDegrees: 90, subtype: 'door-swing', confidence: Math.max(o.confidence, 0.6) }
+        : o,
+    )
+  }
 
   // 3. Decide whether the trace path can succeed.
   const traceUsable =
@@ -1555,6 +1673,7 @@ export function scanBlueprintPlan(
     inferredFootprint.height > 6 &&
     inferredWalls.length >= 4 &&
     inferredRooms.length >= 1
+  const traceAvailable = traceLines.length > 0
 
   // 4. If trace not usable, fall back to context layout.
   let footprint: Rectangle
@@ -1579,11 +1698,11 @@ export function scanBlueprintPlan(
     rooms = inferredRooms
     isFallback = false
     confidence = Math.min(
-      0.85,
+      0.82,
       Math.max(0.4, walls.reduce((acc, w) => acc + w.confidence, 0) / Math.max(1, walls.length)),
     )
   } else {
-    if (traceLines.length === 0) {
+    if (!traceAvailable) {
       warnings.push({
         code: 'NO_TRACE_INPUT',
         message:
@@ -1715,6 +1834,14 @@ export function scanBlueprintPlan(
       label: `${Math.round(footprint.height)}'-0" SUITE DEPTH`,
       confidence,
     },
+    ...inferredDimensionText.slice(0, 4).map((d, i) => ({
+      id: `dim-trace-${i + 1}`,
+      start: { x: footprint.x, y: footprint.y + footprint.height + 4 + i },
+      end: { x: footprint.x + Math.min(footprint.width, d.feet), y: footprint.y + footprint.height + 4 + i },
+      valueFt: d.feet,
+      label: d.text,
+      confidence: d.confidence,
+    })),
   ]
 
   return {
@@ -1742,8 +1869,17 @@ export function scanBlueprintPlan(
       generatedAt,
     },
     scanResultKind: isFallback ? 'fallback' : 'measured-trace',
-    traceStatus: traceLines.length > 0 ? (isFallback ? 'provided' : 'extracted') : 'missing',
-    scaleStatus: isFallback ? 'default' : 'detected',
+    traceStatus: traceAvailable ? (isFallback ? 'provided' : 'extracted') : 'missing',
+    traceAttempted,
+    traceAvailable,
+    traceWarnings,
+    traceDebugCounts: {
+      rawLines: traceLines.length,
+      mergedWalls: inferredWalls.length,
+      openings: inferredOpenings.length,
+      roomCandidates: inferredRooms.length,
+    },
+    scaleStatus: inferredScaleFromText ? 'detected' : isFallback ? 'default' : 'detected',
     confidenceBreakdown: {
       totalPoints: Math.round(confidence * 100),
       totalPercent: Math.round(confidence * 100),
@@ -1984,6 +2120,49 @@ export function convertPlanScanToBuildingModel(
   }
 }
 
+/**
+ * Convenience converter when callers have room candidates but still want the
+ * canonical BlueprintBuildingModel shape.
+ */
+export function convertRoomCandidatesToBuildingModel(params: {
+  footprint: Rectangle
+  rooms: PlanRoomCandidate[]
+  walls: PlanWallCandidate[]
+  openings?: PlanOpeningCandidate[]
+  layoutContext?: BlueprintPlanScanResult['layoutContext']
+  confidence?: number
+  projectName?: string
+  blueprintTitle?: string
+}): BlueprintBuildingModel {
+  const scan: BlueprintPlanScanResult = {
+    footprint: params.footprint,
+    walls: params.walls,
+    openings: params.openings || [],
+    rooms: params.rooms,
+    dimensions: [],
+    warnings: [],
+    traceLines: [],
+    isFallback: false,
+    confidence: params.confidence ?? 0.6,
+    layoutContext: params.layoutContext || 'commercial-suite',
+    equipmentHints: [],
+    finishHints: [],
+    electricalHints: [],
+    doorHints: [],
+    wallHints: [],
+    projectHint: projectHintForContext(params.layoutContext || 'commercial-suite'),
+    metadata: {
+      projectName: params.projectName,
+      blueprintTitle: params.blueprintTitle,
+      generatedAt: new Date().toISOString(),
+    },
+    scanResultKind: 'inferred',
+    traceStatus: 'missing',
+    scaleStatus: 'default',
+  }
+  return convertPlanScanToBuildingModel(scan)
+}
+
 // ---------------------------------------------------------------------------
 // Full-set scanner — multi-sheet classification + merged hints
 // ---------------------------------------------------------------------------
@@ -2035,7 +2214,11 @@ export interface BlueprintVRSourceSheet {
   /** Optional originating blueprint title/name. */
   blueprintTitle?: string
   /** Optional structured payload for future vector extraction. */
-  tracePayload?: PdfTracePagePayload | null
+  tracePayload?: PdfTracePayload | null
+  /** True when vector extraction was attempted for this sheet. */
+  traceAttempted?: boolean
+  /** Extraction warnings for this sheet. */
+  traceWarnings?: Array<{ code: string; message: string }>
 }
 
 /**
@@ -2508,9 +2691,10 @@ function buildConfidenceBreakdown(params: {
   bestElectricalSheets: BlueprintVRSourceSheet[]
 }): ScanConfidenceBreakdown {
   const hasVectorTrace = (params.planScan.traceLines || []).length > 0 && !params.planScan.isFallback
-  const hasWallsFromTrace = hasVectorTrace && params.planScan.walls.length >= 4
-  const hasRoomsFromTrace = hasVectorTrace && params.planScan.rooms.length >= 1
+  const hasWallsFromTrace = hasVectorTrace && params.planScan.walls.length >= 8
+  const hasRoomsFromTrace = hasVectorTrace && params.planScan.rooms.length >= 2
   const hasOpeningsFromTrace = hasVectorTrace && params.planScan.openings.length >= 1
+  const hasValidatedFootprint = hasVectorTrace && params.planScan.footprint.width >= 10 && params.planScan.footprint.height >= 10
   const hasScaleSignal =
     params.floorPlanSheet?.sheetTitle?.toLowerCase().includes('dimension') ||
     params.floorPlanSheet?.reason.toLowerCase().includes('dimensioned') ||
@@ -2518,15 +2702,15 @@ function buildConfidenceBreakdown(params: {
   const hasDimensionSignal = (params.planScan.dimensions || []).length > 0 && hasScaleSignal
 
   const items: ScanConfidenceBreakdown['items'] = {
-    sourceSetSelected: params.sourceSetSelected ? 10 : 0,
+    sourceSetSelected: params.sourceSetSelected ? 8 : 0,
     sheetsClassified: params.classifiedKnownSheets > 0 ? 10 : 0,
-    floorPlanSheetSelected: params.floorPlanSheet ? 10 : 0,
+    floorPlanSheetSelected: params.floorPlanSheet ? 12 : 0,
     scaleDetected: hasScaleSignal ? 10 : 0,
-    dimensionsDetected: hasDimensionSignal ? 10 : 0,
+    dimensionsDetected: hasDimensionSignal ? 8 : 0,
     vectorTraceAvailable: hasVectorTrace ? 10 : 0,
     wallCandidatesFound: hasWallsFromTrace ? 10 : 0,
-    openingsFound: hasOpeningsFromTrace ? 5 : 0,
-    roomsValidated: hasRoomsFromTrace ? 5 : 0,
+    openingsFound: hasOpeningsFromTrace ? 7 : 0,
+    roomsValidated: hasRoomsFromTrace && hasValidatedFootprint ? 10 : 0,
     elevationsMatched: params.roleCounts.interiorElevation > 0 || params.roleCounts.rendering > 0 ? 5 : 0,
     electricalSheetsMatched: params.bestElectricalSheets.length > 0 ? 5 : 0,
   }
@@ -2557,8 +2741,10 @@ function buildConfidenceBreakdown(params: {
   }
 
   let totalPoints = 35 + Object.values(items).reduce((sum, value) => sum + value, 0)
-  if (!hasVectorTrace) totalPoints = Math.min(totalPoints, 55)
-  if (!hasWallsFromTrace) totalPoints = Math.min(totalPoints, 65)
+  if (!params.floorPlanSheet) totalPoints = Math.min(totalPoints, 55)
+  if (!hasScaleSignal || !hasDimensionSignal) totalPoints = Math.min(totalPoints, 65)
+  if (!hasVectorTrace || !hasWallsFromTrace) totalPoints = Math.min(totalPoints, 75)
+  if (!hasValidatedFootprint || !hasRoomsFromTrace || !hasOpeningsFromTrace) totalPoints = Math.min(totalPoints, 79)
   totalPoints = Math.max(35, Math.min(95, totalPoints))
   return {
     totalPoints,
@@ -2808,6 +2994,8 @@ export function scanBlueprintFullSet(
     annotationsSummary: input.annotationsSummary,
     sheetIndex,
     tracePayload: bestFloorPlanSourceSheet?.tracePayload ?? null,
+    traceAttempted: Boolean(bestFloorPlanSourceSheet?.traceAttempted || bestFloorPlanSourceSheet?.tracePayload),
+    traceWarnings: bestFloorPlanSourceSheet?.traceWarnings || [],
   })
   const confidenceBreakdown = buildConfidenceBreakdown({
     sourceSetSelected: Boolean(input.sourceSet?.id),
@@ -2822,12 +3010,11 @@ export function scanBlueprintFullSet(
     confidence: Math.max(0.35, Math.min(0.95, confidenceBreakdown.totalPercent / 100)),
     confidenceBreakdown,
     selectedFloorPlanSheet: bestFloorPlanSheet,
-    traceStatus:
-      (bestFloorPlanSourceSheet?.tracePayload && planScan.traceLines.length > 0)
-        ? 'extracted'
-        : bestFloorPlanSourceSheet?.tracePayload
-        ? 'provided'
-        : 'missing',
+    traceStatus: planScan.traceStatus,
+    traceAttempted: planScan.traceAttempted,
+    traceAvailable: planScan.traceAvailable,
+    traceWarnings: planScan.traceWarnings,
+    traceDebugCounts: planScan.traceDebugCounts,
     scaleStatus: confidenceBreakdown.items.scaleDetected > 0 ? 'detected' : 'default',
     scanResultKind:
       confidenceBreakdown.items.vectorTraceAvailable > 0
