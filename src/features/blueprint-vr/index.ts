@@ -166,6 +166,28 @@ export {
 export { default as MeasuredPlanViewer } from './MeasuredPlanViewer'
 export type { MeasuredPlanViewerProps } from './MeasuredPlanViewer'
 
+// Electrical 3D placement engine — BVR-W3-ELECTRICAL-STAGES
+export type {
+  ElectricalComponent,
+  ElectricalPlacementGroup,
+  ElectricalPlacementHints,
+} from './electrical3DPlacement'
+
+export {
+  placeUndergroundStage,
+  placeRoughInStage,
+  placeTrimStage,
+  placeFinishedStage,
+  placeElectricalComponentsInModel,
+  getAllStageComponentsByType,
+  getComponentCountsByStage,
+  getLegendEntriesByStage,
+} from './electrical3DPlacement'
+
+// Blueprint VR Legend — component display and counts
+export { default as BlueprintVRLegend } from './BlueprintVRLegend'
+export type { BlueprintVRLegendProps } from './BlueprintVRLegend'
+
 // Dimension extraction adapter — BVR12
 export type {
   ExtractedDimensionText,

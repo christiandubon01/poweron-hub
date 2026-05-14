@@ -27,6 +27,12 @@ import {
   type GeoText,
   type GeoDim,
 } from './spaceGeometry'
+import {
+  placeElectricalComponentsInModel,
+  getLegendEntriesByStage,
+  getComponentCountsByStage,
+  type ElectricalComponent,
+} from './electrical3DPlacement'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -138,6 +144,29 @@ function Shape({ s }: { s: GeoShape }) {
     case 'circle': return <RenderCircle s={s} />
     case 'text':   return <RenderText   s={s} />
   }
+}
+
+// ─── Electrical Component Renderer ────────────────────────────────────────────
+
+function ElectricalComponentDot({ comp }: { comp: ElectricalComponent }) {
+  return (
+    <g key={comp.id}>
+      {/* Component dot */}
+      <circle
+        cx={comp.screenPos.sx.toFixed(1)}
+        cy={comp.screenPos.sy.toFixed(1)}
+        r={comp.size}
+        fill={comp.color}
+        stroke="rgba(255,255,255,0.3)"
+        strokeWidth={0.8}
+        opacity={0.85}
+        style={{ filter: `drop-shadow(0 0 2px ${comp.color}40)` }}
+      />
+      
+      {/* Label on hover */}
+      <title>{comp.label}</title>
+    </g>
+  )
 }
 
 // ─── Dimension Renderer ───────────────────────────────────────────────────────
@@ -293,14 +322,31 @@ export default function Blueprint3DSpaceViewer({
     return buildSpaceGeometry(buildingSpace)
   }, [buildingSpace, buildingModel])
 
+  // Electrical components by stage
+  const electricalByStage = useMemo(() => {
+    if (!buildingModel) return { underground: [], roughIn: [], trim: [], finished: [] }
+    
+    const result = {
+      underground: placeElectricalComponentsInModel(buildingModel, 'underground'),
+      roughIn: placeElectricalComponentsInModel(buildingModel, 'roughIn'),
+      trim: placeElectricalComponentsInModel(buildingModel, 'trim'),
+      finished: placeElectricalComponentsInModel(buildingModel, 'finished'),
+    }
+    return result
+  }, [buildingModel])
+
   const { vw, vh, baseShapes, compsByStage, dims, badges, bldg, isInferred } = geo
   const theme = STAGE_THEME[activeStage]
-  const legend = STAGE_LEGEND[activeStage]
+  // Use legend from placement engine if available, fall back to hardcoded legend
+  const dynamicLegend = buildingModel ? getLegendEntriesByStage(activeStage) : STAGE_LEGEND[activeStage]
+  const legend = dynamicLegend
 
   // Separate out text labels from base shapes for toggle support
   const nonLabelBase = baseShapes.filter(s => !(s.kind === 'text' && s.id.startsWith('rl-')))
   const labelBase    = baseShapes.filter(s =>   s.kind === 'text' && s.id.startsWith('rl-'))
 
+  // Use electrical components from placement engine
+  const stageElecComps = buildingModel ? electricalByStage[activeStage] : []
   const stageComps = compsByStage[activeStage]
 
   return (
@@ -352,7 +398,10 @@ export default function Blueprint3DSpaceViewer({
         {/* ── Electrical components (toggle) ─── */}
         {showElec && (
           <g id="electrical">
+            {/* Legacy shape components */}
             {stageComps.map((s, i) => <Shape key={`ec-${s.id}-${i}`} s={s} />)}
+            {/* New placement engine components */}
+            {stageElecComps.map((comp, i) => <ElectricalComponentDot key={`comp-${comp.id}-${i}`} comp={comp} />)}
           </g>
         )}
 
