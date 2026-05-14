@@ -4719,11 +4719,11 @@ export default function OperationsBlueprintPdfViewer({
               >
                 {/* ── Annotations panel header ── */}
                 <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-200">Annotations</span>
+                  <span className="text-sm font-semibold text-gray-100">Annotations</span>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setIndexModalOpen(true)}
-                      className="text-[10px] px-2 py-0.5 rounded bg-gray-700/70 text-gray-300 hover:bg-gray-600 transition-colors"
+                      className="text-[10px] px-2 py-0.5 rounded bg-gray-700/50 border border-gray-700/80 text-gray-300 hover:bg-gray-700 transition-colors"
                       title="All pages annotation index"
                     >
                       Index
@@ -4740,10 +4740,11 @@ export default function OperationsBlueprintPdfViewer({
                   </div>
                 </div>
 
-                {/* ── Current page label ── */}
+                {/* ── Current Page Annotations block ── */}
                 {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && (
-                  <div className="px-3 pt-2 pb-1 text-[10px] text-gray-500 uppercase tracking-wider border-b border-gray-800/50">
-                    Page {currentPage} · {pageAnnotations.length} {pageAnnotations.length === 1 ? 'annotation' : 'annotations'}
+                  <div className="px-3 pt-2.5 pb-2 border-b border-gray-800">
+                    <div className="text-[11px] font-semibold text-gray-300">Current Page Annotations</div>
+                    <div className="text-[10px] text-gray-500 mt-0.5">Page {currentPage} · {pageAnnotations.length} {pageAnnotations.length === 1 ? 'annotation' : 'annotations'}</div>
                   </div>
                 )}
 
@@ -4837,7 +4838,7 @@ export default function OperationsBlueprintPdfViewer({
                             className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/35 transition-colors whitespace-nowrap"
                             title="Generate RFI from this entry"
                           >
-                            RFI
+                            Generate RFI
                           </button>
                           <button
                             onClick={() => {
@@ -4847,7 +4848,7 @@ export default function OperationsBlueprintPdfViewer({
                             className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/35 transition-colors whitespace-nowrap"
                             title="Generate Coordination Question from this entry"
                           >
-                            Cord. Q
+                            Cord. Question
                           </button>
                           <div className="flex-1" />
                           <button
@@ -4868,11 +4869,11 @@ export default function OperationsBlueprintPdfViewer({
                       <div>
                         <button
                           onClick={() => toggleGroup(groupKey)}
-                          className="w-full flex items-center gap-1 pl-4 pr-3 py-1 text-[10px] text-gray-500 hover:text-gray-400 hover:bg-white/3"
+                          className="w-full flex items-center gap-1 pl-4 pr-3 py-1 text-[10px] text-gray-400 hover:text-gray-300 hover:bg-white/3"
                         >
                           {isCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
-                          <span className="uppercase tracking-wide">{title}</span>
-                          <span className="ml-auto text-gray-600">{items.length}</span>
+                          <span>{title}</span>
+                          <span className="ml-auto text-gray-500">{items.length}</span>
                         </button>
                         {!isCollapsed && items.length === 0 && (
                           <div className="pl-6 pr-3 py-1 text-[10px] text-gray-600 italic">None</div>
@@ -4888,7 +4889,7 @@ export default function OperationsBlueprintPdfViewer({
                       <div className="border-b border-gray-800/60">
                         <button
                           onClick={() => toggleGroup(groupKey)}
-                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-gray-300 hover:bg-white/4"
+                          className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-white/5"
                         >
                           {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
                           <span>{title}</span>
