@@ -7,6 +7,7 @@
 
 // ── Type Exports ────────────────────────────────────────────────────────────
 export type { VRStage, Discipline, BlueprintSource, VRJobStatus, StageItem, VRSceneManifest, VRGenerationJob } from './types'
+export type { QualityProfile, AssetPlaceholder, LayoutZone, BlueprintVRSceneManifest, CreateManifestInput } from './sceneManifestBuilder'
 
 // ── Stage Exports ───────────────────────────────────────────────────────────
 export {
@@ -22,3 +23,6 @@ export {
   getAllStages,
   isValidStage,
 } from './stages'
+
+// ── Scene Manifest Builder Exports ──────────────────────────────────────────
+export { createBlueprintVRSceneManifest } from './sceneManifestBuilder'
