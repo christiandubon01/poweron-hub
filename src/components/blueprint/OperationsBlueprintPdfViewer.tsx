@@ -497,6 +497,9 @@ export default function OperationsBlueprintPdfViewer({
   const focusedAnnotationElRef = useRef<HTMLElement | null>(null)
   const isSavingTextBoxRef = useRef(false)
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // Track annotation IDs that have been locally deleted but may not yet be flushed to storage.
+  // loadAnnotations filters these out so a quick reload never re-surfaces a deleted item.
+  const locallyDeletedIdsRef = useRef<Set<string>>(new Set())
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
   // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
@@ -897,7 +900,8 @@ export default function OperationsBlueprintPdfViewer({
     try {
       const backup = getBackupData()
       const items = getOperationsBlueprintAnnotations(backup || {}, blueprint.id)
-      setAllAnnotations(Array.isArray(items) ? items : [])
+      const pending = locallyDeletedIdsRef.current
+      setAllAnnotations((Array.isArray(items) ? items : []).filter(item => !pending.has(item.id)))
     } catch {
       setAllAnnotations([])
     }
@@ -1570,6 +1574,8 @@ export default function OperationsBlueprintPdfViewer({
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
     if (!blueprint?.id) return
+    // Guard loadAnnotations from re-surfacing this ID before storage commits the delete.
+    locallyDeletedIdsRef.current.add(annotationId)
     setAllAnnotations((prev) => prev.filter((a) => a.id !== annotationId))
     setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
     const bpId = blueprint.id
@@ -1578,8 +1584,11 @@ export default function OperationsBlueprintPdfViewer({
         const backup = getBackupData()
         if (!backup) return
         await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
+        // Storage confirmed the delete — guard no longer needed.
+        locallyDeletedIdsRef.current.delete(annotationId)
         onAnnotationsChanged?.()
       } catch (e: any) {
+        locallyDeletedIdsRef.current.delete(annotationId)
         setError(e?.message || 'Failed to delete annotation.')
         loadAnnotations()
       }
@@ -1919,6 +1928,16 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
+    if (effectiveTool === 'textBox') {
+      // Guard: isSavingTextBoxRef is true during the blur→save flow, so the click
+      // that triggered the blur does not immediately open a new text box.
+      if (isSavingTextBoxRef.current) return
+      const bx = clampNorm(n.x, 0, 1 - DEFAULT_TEXT_BOX.w)
+      const by = clampNorm(n.y, 0, 1 - DEFAULT_TEXT_BOX.h)
+      openCreateRichTextEditor('textBox', { x: bx, y: by, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h }, { x: n.x, y: n.y })
+      return
+    }
+
     if (effectiveTool === 'callout' || effectiveTool === 'generate') {
       const boxW = effectiveTool === 'generate' ? 0.28 : DEFAULT_CALLOUT_BOX.w
       const boxH = effectiveTool === 'generate' ? 0.12 : DEFAULT_CALLOUT_BOX.h
@@ -2213,7 +2232,7 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
-    if (effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
+    if (effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
       dragStartRef.current = { x, y }
       setDragStart({ x, y })
       // Reset DOM draft elements (visual state only Ã¢â‚¬â€ no setDraftRect needed)
@@ -2316,7 +2335,7 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     const activeDragStart = dragStartRef.current || dragStart
-    if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape' || effectiveTool === 'eraser' || effectiveTool === 'callout' || effectiveTool === 'generate') || !activeDragStart) return
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'shape' || effectiveTool === 'eraser' || effectiveTool === 'callout' || effectiveTool === 'generate') || !activeDragStart) return
 
     const left = Math.min(activeDragStart.x, x)
     const top = Math.min(activeDragStart.y, y)
@@ -2461,7 +2480,7 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
-    if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'textBox' || effectiveTool === 'shape') || !activeDragStart) return
+    if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'shape') || !activeDragStart) return
 
     const rawNorm = normRectFromDrag(activeDragStart, { x, y }, rect.width, rect.height)
     const underlineY = toNorm(0, activeDragStart.y, rect.width, rect.height).y
@@ -2484,11 +2503,6 @@ export default function OperationsBlueprintPdfViewer({
       const minUnderlineWidth = 2 / Math.max(1, rect.width)
       if (norm.w < minUnderlineWidth) return
     } else if (norm.w < MIN_HIGHLIGHT_NORM || norm.h < MIN_HIGHLIGHT_NORM) return
-
-    if (effectiveTool === 'textBox') {
-      openCreateRichTextEditor('textBox', { ...norm, w: Math.max(norm.w, DEFAULT_TEXT_BOX.w), h: Math.max(norm.h, DEFAULT_TEXT_BOX.h) })
-      return
-    }
 
     const now = new Date().toISOString()
     const type = effectiveTool === 'underline' ? 'underline' : effectiveTool === 'shape' ? 'shape' : effectiveTool === 'textHighlight' ? 'textHighlight' : 'highlight'
@@ -2783,8 +2797,6 @@ export default function OperationsBlueprintPdfViewer({
               { label: <Italic size={11} />, active: !!(ts.italic), onClick: () => updateTs({ italic: !ts.italic }) },
               { label: <Underline size={11} />, active: !!(ts.underline), onClick: () => updateTs({ underline: !ts.underline }) },
             ]} />
-            <LabeledSelect label="Alignment" value={ts.align ?? 'left'} options={ALIGN_OPTIONS}
-              onChange={(v) => updateTs({ align: v as 'left' | 'center' | 'right' })} />
           </>
         ),
       }
@@ -4025,7 +4037,7 @@ export default function OperationsBlueprintPdfViewer({
                               }}
                             >
                               <div
-                                className={`relative h-full w-full overflow-hidden ${isFocused ? 'ring-2 ring-white/80' : ''}`}
+                                className="relative h-full w-full overflow-hidden"
                                 style={{ background: 'transparent', border: 'none' }}
                               >
                                 {isInlineEditing ? (
