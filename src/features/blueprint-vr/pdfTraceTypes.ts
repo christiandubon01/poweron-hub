@@ -112,6 +112,10 @@ export interface PdfTracePayload {
   runtime?: {
     providerStatus?: 'available' | 'missing' | 'error' | 'unknown'
     providerKey?: string
+    providerRequestedKey?: string
+    providerRegisteredKeys?: string[]
+    providerMatchReason?: string
+    providerMetadata?: Record<string, any>
     selectedPageNumber?: number
     operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'

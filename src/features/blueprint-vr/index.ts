@@ -274,11 +274,14 @@ export type {
   RuntimeTraceForSheetResult,
 } from './blueprintPdfTraceRuntimeBridge'
 export {
+  buildBlueprintPdfRuntimeKey,
   buildBlueprintPdfRuntimeProviderKey,
   registerBlueprintPdfRuntimeProvider,
   unregisterBlueprintPdfRuntimeProvider,
   getBlueprintPdfRuntimeProvider,
   getActivePdfTracePageProvider,
+  listBlueprintPdfRuntimeProviderKeys,
+  getBlueprintPdfRuntimeProviderDebug,
   extractTraceForBlueprintSheet,
 } from './blueprintPdfTraceRuntimeBridge'
 
@@ -334,9 +337,10 @@ export {
 } from './blueprintPlanScanner'
 
 // Project model cache — keep generated models stable across page changes
-export type { BlueprintVRProjectCacheEntry } from './blueprintVRProjectModelCache'
+export type { BlueprintVRProjectCacheEntry, BlueprintVRCacheIdentity } from './blueprintVRProjectModelCache'
 export {
   getBlueprintVRCacheKey,
+  buildBlueprintVRCacheIdentityKey,
   getCachedProjectModel,
   setCachedProjectModel,
   clearCachedProjectModel,

@@ -11,8 +11,11 @@ import type {
 export type BlueprintPdfRuntimeProvider = {
   projectId?: string
   sourceSetId?: string
+  sourceSetName?: string
   blueprintId?: string
+  fileName?: string
   pageCount?: number
+  metadata?: Record<string, any>
   getPage?: (pageNumber: number) => Promise<any>
   getCurrentPage?: () => Promise<any>
   getTextContent?: (pageNumber: number) => Promise<any>
@@ -22,7 +25,10 @@ export type BlueprintPdfRuntimeProvider = {
 export interface BlueprintPdfRuntimeLookup {
   projectId?: string
   sourceSetId?: string
+  sourceSetName?: string
   blueprintId?: string
+  fileName?: string
+  pageCount?: number
 }
 
 export interface RuntimeTraceForSheetInput extends BlueprintPdfRuntimeLookup {
@@ -35,6 +41,10 @@ export interface RuntimeTraceForSheetInput extends BlueprintPdfRuntimeLookup {
 export interface RuntimeTraceForSheetResult {
   providerStatus: 'available' | 'missing' | 'error'
   providerKey?: string
+  providerRequestedKey?: string
+  providerRegisteredKeys?: string[]
+  providerMatchReason?: string
+  providerMetadata?: Record<string, any>
   selectedPageNumber: number
   operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
   textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
@@ -54,13 +64,37 @@ function safePart(value?: string): string {
   return raw || 'na'
 }
 
-export function buildBlueprintPdfRuntimeProviderKey(input: BlueprintPdfRuntimeLookup): string {
+function safeCount(value?: number): string {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 'na'
+  return String(Math.floor(parsed))
+}
+
+function normalizeLookup(input: BlueprintPdfRuntimeLookup): Required<BlueprintPdfRuntimeLookup> {
+  return {
+    projectId: safePart(input.projectId),
+    sourceSetId: safePart(input.sourceSetId),
+    sourceSetName: safePart(input.sourceSetName),
+    blueprintId: safePart(input.blueprintId),
+    fileName: safePart(input.fileName),
+    pageCount: Number(safeCount(input.pageCount)),
+  }
+}
+
+export function buildBlueprintPdfRuntimeKey(input: BlueprintPdfRuntimeLookup): string {
+  const normalized = normalizeLookup(input)
   return [
-    safePart(input.projectId),
-    safePart(input.sourceSetId),
-    safePart(input.blueprintId),
+    normalized.projectId,
+    normalized.blueprintId,
+    normalized.sourceSetId,
+    normalized.sourceSetName,
+    normalized.fileName,
+    safeCount(normalized.pageCount),
   ].join('::')
 }
+
+// Backward-compatible alias from W3.10C.
+export const buildBlueprintPdfRuntimeProviderKey = buildBlueprintPdfRuntimeKey
 
 function addWarning(
   warnings: PdfTraceExtractionWarning[],
@@ -96,44 +130,143 @@ export function getBlueprintPdfRuntimeProvider(key: string): BlueprintPdfRuntime
   return runtimeProviders.get(normalized)?.provider || null
 }
 
+function scoreProviderMatch(
+  request: BlueprintPdfRuntimeLookup,
+  provider: BlueprintPdfRuntimeProvider,
+): { score: number; reason: string } {
+  const req = normalizeLookup(request)
+  const p = normalizeLookup({
+    projectId: provider.projectId,
+    sourceSetId: provider.sourceSetId,
+    sourceSetName: provider.sourceSetName,
+    blueprintId: provider.blueprintId,
+    fileName: provider.fileName,
+    pageCount: provider.pageCount,
+  })
+  const fields: Array<{
+    name: string
+    req: string | number
+    provider: string | number
+    weight: number
+  }> = [
+    { name: 'projectId', req: req.projectId, provider: p.projectId, weight: 4 },
+    { name: 'blueprintId', req: req.blueprintId, provider: p.blueprintId, weight: 6 },
+    { name: 'sourceSetId', req: req.sourceSetId, provider: p.sourceSetId, weight: 6 },
+    { name: 'sourceSetName', req: req.sourceSetName, provider: p.sourceSetName, weight: 2 },
+    { name: 'fileName', req: req.fileName, provider: p.fileName, weight: 3 },
+    { name: 'pageCount', req: safeCount(req.pageCount), provider: safeCount(p.pageCount), weight: 2 },
+  ]
+  let score = 0
+  let matched = 0
+  const mismatches: string[] = []
+  for (const field of fields) {
+    const reqValue = String(field.req)
+    const providerValue = String(field.provider)
+    if (reqValue === 'na' || providerValue === 'na') continue
+    if (reqValue === providerValue) {
+      score += field.weight
+      matched += 1
+    } else {
+      mismatches.push(field.name)
+    }
+  }
+  const reason =
+    matched > 0
+      ? mismatches.length
+        ? `best_partial_match;mismatched=${mismatches.join(',')}`
+        : 'best_partial_match;all_available_fields_matched'
+      : 'no_shared_identity_fields'
+  return { score, reason }
+}
+
+export function listBlueprintPdfRuntimeProviderKeys(): string[] {
+  return Array.from(runtimeProviders.keys())
+}
+
+export function getBlueprintPdfRuntimeProviderDebug(
+  request: BlueprintPdfRuntimeLookup,
+): {
+  requestedKey: string
+  registeredKeys: string[]
+  matched: boolean
+  matchReason: string
+  matchedKey?: string
+  providerMetadata?: Record<string, any>
+} {
+  const requestedKey = buildBlueprintPdfRuntimeKey(request)
+  const exact = runtimeProviders.get(requestedKey)
+  if (exact) {
+    return {
+      requestedKey,
+      registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+      matched: true,
+      matchReason: 'exact_key_match',
+      matchedKey: exact.key,
+      providerMetadata: exact.provider.metadata || {
+        projectId: exact.provider.projectId,
+        blueprintId: exact.provider.blueprintId,
+        sourceSetId: exact.provider.sourceSetId,
+        sourceSetName: exact.provider.sourceSetName,
+        fileName: exact.provider.fileName,
+        pageCount: exact.provider.pageCount,
+      },
+    }
+  }
+
+  let best: RuntimeRegistryEntry | null = null
+  let bestReason = 'no_runtime_provider_registered'
+  let bestScore = -1
+  for (const entry of runtimeProviders.values()) {
+    const scored = scoreProviderMatch(request, entry.provider)
+    if (scored.score > bestScore || (scored.score === bestScore && !!best && entry.registeredAt > best.registeredAt)) {
+      best = entry
+      bestScore = scored.score
+      bestReason = scored.reason
+    }
+  }
+  if (!best || bestScore < 1) {
+    return {
+      requestedKey,
+      registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+      matched: false,
+      matchReason: bestReason,
+    }
+  }
+  return {
+    requestedKey,
+    registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+    matched: true,
+    matchReason: bestReason,
+    matchedKey: best.key,
+    providerMetadata: best.provider.metadata || {
+      projectId: best.provider.projectId,
+      blueprintId: best.provider.blueprintId,
+      sourceSetId: best.provider.sourceSetId,
+      sourceSetName: best.provider.sourceSetName,
+      fileName: best.provider.fileName,
+      pageCount: best.provider.pageCount,
+    },
+  }
+}
+
 export function getActivePdfTracePageProvider(
   lookup: BlueprintPdfRuntimeLookup,
 ): { key: string; provider: BlueprintPdfRuntimeProvider } | null {
-  const exactKey = buildBlueprintPdfRuntimeProviderKey(lookup)
-  const exact = runtimeProviders.get(exactKey)
-  if (exact) return { key: exact.key, provider: exact.provider }
-
-  let best: RuntimeRegistryEntry | null = null
-  let bestScore = -1
-  for (const entry of runtimeProviders.values()) {
-    const provider = entry.provider
-    if (lookup.sourceSetId && provider.sourceSetId && provider.sourceSetId !== lookup.sourceSetId) {
-      continue
-    }
-    if (lookup.blueprintId && provider.blueprintId && provider.blueprintId !== lookup.blueprintId) {
-      continue
-    }
-    if (lookup.projectId && provider.projectId && provider.projectId !== lookup.projectId) {
-      continue
-    }
-    let score = 0
-    if (lookup.projectId && provider.projectId === lookup.projectId) score += 3
-    if (lookup.sourceSetId && provider.sourceSetId === lookup.sourceSetId) score += 4
-    if (lookup.blueprintId && provider.blueprintId === lookup.blueprintId) score += 5
-    if (score > bestScore || (score === bestScore && !!best && entry.registeredAt > best.registeredAt)) {
-      best = entry
-      bestScore = score
-    }
-  }
-  if (!best || bestScore < 1) return null
-  return { key: best.key, provider: best.provider }
+  const debug = getBlueprintPdfRuntimeProviderDebug(lookup)
+  if (!debug.matched || !debug.matchedKey) return null
+  const entry = runtimeProviders.get(debug.matchedKey)
+  if (!entry) return null
+  return { key: entry.key, provider: entry.provider }
 }
 
 export async function extractTraceForBlueprintSheet(
   input: RuntimeTraceForSheetInput,
 ): Promise<RuntimeTraceForSheetResult> {
   const pageNumber = Math.max(1, Math.floor(Number(input.pageNumber) || 1))
-  const runtimeMatch = getActivePdfTracePageProvider(input)
+  const runtimeDebug = getBlueprintPdfRuntimeProviderDebug(input)
+  const runtimeMatch = runtimeDebug.matchedKey
+    ? getActivePdfTracePageProvider(input)
+    : null
   const existingPayload = input.existingPayload || null
 
   if (!runtimeMatch) {
@@ -155,6 +288,9 @@ export async function extractTraceForBlueprintSheet(
           ...fallback.payload,
           runtime: {
             providerStatus: 'missing',
+            providerRequestedKey: runtimeDebug.requestedKey,
+            providerRegisteredKeys: runtimeDebug.registeredKeys,
+            providerMatchReason: runtimeDebug.matchReason,
             selectedPageNumber: pageNumber,
             operatorListStatus: 'unknown',
             textContentStatus: 'unknown',
@@ -164,6 +300,10 @@ export async function extractTraceForBlueprintSheet(
       : null
     return {
       providerStatus: 'missing',
+      providerRequestedKey: runtimeDebug.requestedKey,
+      providerRegisteredKeys: runtimeDebug.registeredKeys,
+      providerMatchReason: runtimeDebug.matchReason,
+      providerMetadata: runtimeDebug.providerMetadata,
       selectedPageNumber: pageNumber,
       operatorListStatus: 'unknown',
       textContentStatus: 'unknown',
@@ -236,6 +376,10 @@ export async function extractTraceForBlueprintSheet(
           runtime: {
             providerStatus,
             providerKey: key,
+            providerRequestedKey: runtimeDebug.requestedKey,
+            providerRegisteredKeys: runtimeDebug.registeredKeys,
+            providerMatchReason: runtimeDebug.matchReason,
+            providerMetadata: runtimeDebug.providerMetadata,
             selectedPageNumber: pageNumber,
             operatorListStatus,
             textContentStatus,
@@ -247,6 +391,10 @@ export async function extractTraceForBlueprintSheet(
     return {
       providerStatus,
       providerKey: key,
+      providerRequestedKey: runtimeDebug.requestedKey,
+      providerRegisteredKeys: runtimeDebug.registeredKeys,
+      providerMatchReason: runtimeDebug.matchReason,
+      providerMetadata: runtimeDebug.providerMetadata,
       selectedPageNumber: pageNumber,
       operatorListStatus,
       textContentStatus,
@@ -278,6 +426,10 @@ export async function extractTraceForBlueprintSheet(
           runtime: {
             providerStatus,
             providerKey: key,
+            providerRequestedKey: runtimeDebug.requestedKey,
+            providerRegisteredKeys: runtimeDebug.registeredKeys,
+            providerMatchReason: runtimeDebug.matchReason,
+            providerMetadata: runtimeDebug.providerMetadata,
             selectedPageNumber: pageNumber,
             operatorListStatus,
             textContentStatus,
@@ -289,6 +441,10 @@ export async function extractTraceForBlueprintSheet(
     return {
       providerStatus,
       providerKey: key,
+      providerRequestedKey: runtimeDebug.requestedKey,
+      providerRegisteredKeys: runtimeDebug.registeredKeys,
+      providerMatchReason: runtimeDebug.matchReason,
+      providerMetadata: runtimeDebug.providerMetadata,
       selectedPageNumber: pageNumber,
       operatorListStatus,
       textContentStatus,

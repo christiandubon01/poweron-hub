@@ -52,7 +52,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { createRFI } from '@/agents/blueprint/rfiManager'
 import { createCoordinationItem } from '@/agents/blueprint/coordinationTracker'
 import {
-  buildBlueprintPdfRuntimeProviderKey,
+  buildBlueprintPdfRuntimeKey,
   registerBlueprintPdfRuntimeProvider,
   unregisterBlueprintPdfRuntimeProvider,
 } from '@/features/blueprint-vr/blueprintPdfTraceRuntimeBridge'
@@ -621,17 +621,35 @@ export default function OperationsBlueprintPdfViewer({
 
   useEffect(() => {
     if (!blueprint?.id || !pdfDoc) return
-    const runtimeKey = buildBlueprintPdfRuntimeProviderKey({
+    const resolvedPageCount = Number(numPages || pdfDoc?.numPages || blueprint?.pageCount || 0)
+    const sourceSetName = blueprint.title || blueprint.fileName
+    const fileName = blueprint.fileName || blueprint.storagePath || blueprint.title
+    const runtimeIdentity = {
       projectId: blueprint.projectId,
-      sourceSetId: blueprint.id,
       blueprintId: blueprint.id,
-    })
+      sourceSetId: blueprint.id,
+      sourceSetName,
+      fileName,
+      pageCount: resolvedPageCount,
+    }
+    const runtimeKey = buildBlueprintPdfRuntimeKey(runtimeIdentity)
     if (!runtimeKey) return
+    const missingFields = Object.entries(runtimeIdentity)
+      .filter(([, value]) => value === null || value === undefined || String(value).trim() === '' || String(value).trim() === '0')
+      .map(([key]) => key)
     registerBlueprintPdfRuntimeProvider(runtimeKey, {
       projectId: blueprint.projectId,
-      sourceSetId: blueprint.id,
       blueprintId: blueprint.id,
-      pageCount: Number(numPages || pdfDoc?.numPages || 0),
+      sourceSetId: blueprint.id,
+      sourceSetName,
+      fileName,
+      pageCount: resolvedPageCount,
+      metadata: {
+        ...runtimeIdentity,
+        runtimeKey,
+        registeredAt: new Date().toISOString(),
+        missingFields,
+      },
       getPage: async (pageNumber: number) => {
         const doc = pdfDocRef.current
         if (!doc || typeof doc.getPage !== 'function') {
@@ -673,7 +691,7 @@ export default function OperationsBlueprintPdfViewer({
     return () => {
       unregisterBlueprintPdfRuntimeProvider(runtimeKey)
     }
-  }, [blueprint?.id, blueprint?.projectId, pdfDoc, numPages])
+  }, [blueprint?.id, blueprint?.projectId, blueprint?.title, blueprint?.fileName, blueprint?.storagePath, blueprint?.pageCount, pdfDoc, numPages])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Pane resize state Ã¢â‚¬â€ persisted across hard reloads Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [leftPaneWidth, setLeftPaneWidth] = useState(() => {

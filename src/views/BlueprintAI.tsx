@@ -185,6 +185,10 @@ export default function BlueprintAI() {
     )
     return fullSet?.id || projectVRSourceSets[0]?.id || null
   }, [projectVRSourceSets, vrSourceSetIdByProject, selectedItem?.projectId])
+  const currentVRSourceSet = useMemo(
+    () => projectVRSourceSets.find((s) => s.id === currentVRSourceSetId) || null,
+    [projectVRSourceSets, currentVRSourceSetId],
+  )
 
   const filteredLibraryItems = useMemo(() => {
     const q = librarySearch.trim().toLowerCase()
@@ -1416,6 +1420,15 @@ export default function BlueprintAI() {
           projectName={selectedItem?.projectName}
           availableSourceSets={projectVRSourceSets}
           initialSourceSetId={currentVRSourceSetId}
+          runtimeSourceIdentity={{
+            projectId: selectedItem?.projectId,
+            sourceSetId: currentVRSourceSet?.id || selectedItem?.id,
+            sourceSetName: currentVRSourceSet?.name || selectedItem?.title,
+            blueprintId: selectedItem?.id,
+            fileName: selectedItem?.fileName || selectedItem?.storagePath,
+            currentPageNumber: currentViewerPage,
+            pageCount: Number(selectedItem?.pageCount || currentVRSourceSet?.totalPages || 0) || undefined,
+          }}
           onSelectSourceSet={(setId) => {
             if (!selectedItem?.projectId) return
             setVrSourceSetIdByProject((prev) => ({

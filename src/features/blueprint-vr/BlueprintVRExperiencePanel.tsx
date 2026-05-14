@@ -44,8 +44,10 @@ import type {
   BlueprintFullSetScanResult,
 } from './blueprintPlanScanner'
 import type { PdfTracePayload } from './pdfTraceTypes'
-import { extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
+import { buildBlueprintPdfRuntimeKey, extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
 import {
+  type BlueprintVRCacheIdentity,
+  buildBlueprintVRCacheIdentityKey,
   getCachedProjectModel,
   setCachedProjectModel,
   clearCachedProjectModel,
@@ -77,6 +79,19 @@ interface BlueprintVRExperiencePanelProps {
    * (e.g. BlueprintAI) to persist the choice for the project.
    */
   onSelectSourceSet?: (setId: string) => void
+  /**
+   * Runtime identity from the currently open Blueprint viewer.
+   * Used to align provider lookups and scanner cache identity.
+   */
+  runtimeSourceIdentity?: {
+    projectId?: string
+    sourceSetId?: string
+    sourceSetName?: string
+    blueprintId?: string
+    fileName?: string
+    currentPageNumber?: number
+    pageCount?: number
+  }
 }
 
 function controlButtonStyle(active: boolean): React.CSSProperties {
@@ -386,6 +401,8 @@ function ScanStatusBanner({
   sourceLabel,
   sourceType,
   traceRuntime,
+  runtimeProviderDebug,
+  cacheDebug,
 }: {
   scan: BlueprintPlanScanResult
   fullSetScan?: BlueprintFullSetScanResult
@@ -397,6 +414,19 @@ function ScanStatusBanner({
     selectedPageNumber: number | null
     operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
+  }
+  runtimeProviderDebug?: {
+    requestedKey?: string
+    registeredKeys?: string[]
+    matchReason?: string
+  }
+  cacheDebug?: {
+    mode: 'hit' | 'miss'
+    key: string
+    keyHash: string
+    sourceIdentity: BlueprintVRCacheIdentity
+    rescanCount: number
+    scannedAt?: string
   }
 }) {
   const top = scan.warnings.slice(0, 5)
@@ -478,6 +508,37 @@ function ScanStatusBanner({
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(255,200,145,0.95)' }}>
         Confidence cap reason: {confidenceCapReason}
       </div>
+      {cacheDebug && (
+        <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
+          Cache {cacheDebug.mode.toUpperCase()} · key {cacheDebug.keyHash} · rescan #{cacheDebug.rescanCount}
+          {cacheDebug.scannedAt ? ` · ${new Date(cacheDebug.scannedAt).toLocaleTimeString()}` : ''}
+        </div>
+      )}
+      {cacheDebug && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,210,225,0.9)' }}>
+          Source identity: {cacheDebug.sourceIdentity.projectId || 'na'} · {cacheDebug.sourceIdentity.sourceSetId || cacheDebug.sourceIdentity.sourceSetName || 'na'} · {cacheDebug.sourceIdentity.blueprintId || 'na'} · page {cacheDebug.sourceIdentity.selectedFloorPlanPage || 'na'} / {cacheDebug.sourceIdentity.pageCount || 'na'} · {cacheDebug.sourceIdentity.scannerVersion || 'na'}
+        </div>
+      )}
+      {runtimeProviderDebug?.requestedKey && (
+        <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
+          Requested provider key: {runtimeProviderDebug.requestedKey}
+        </div>
+      )}
+      {runtimeProviderDebug?.registeredKeys && runtimeProviderDebug.registeredKeys.length > 0 && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,210,225,0.9)' }}>
+          Registered provider keys: {runtimeProviderDebug.registeredKeys.join(' | ')}
+        </div>
+      )}
+      {runtimeProviderDebug?.requestedKey && (!runtimeProviderDebug.registeredKeys || runtimeProviderDebug.registeredKeys.length === 0) && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(255,190,145,0.92)' }}>
+          Registered provider keys: none
+        </div>
+      )}
+      {runtimeProviderDebug?.matchReason && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(255,190,145,0.92)' }}>
+          Provider match reason: {runtimeProviderDebug.matchReason}
+        </div>
+      )}
       {scan.traceAttempted && !scan.traceAvailable && (
         <div style={{ opacity: 0.72, fontSize: 9.4, color: 'rgba(255,180,140,0.95)' }}>
           Vector trace unavailable from current viewer context.
@@ -555,6 +616,7 @@ export default function BlueprintVRExperiencePanel({
   availableSourceSets,
   initialSourceSetId,
   onSelectSourceSet,
+  runtimeSourceIdentity,
 }: BlueprintVRExperiencePanelProps) {
   const [activeStage, setActiveStage] = useState<VRStage>(STAGE_ORDER[0])
   const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room'>('dollhouse')
@@ -567,7 +629,6 @@ export default function BlueprintVRExperiencePanel({
 
   // ── Source-set state (project-level) ──────────────────────────────────
   const availableSets = availableSourceSets || []
-  const projectKey = projectId || projectNameProp || job.outputManifest?.projectName || 'project'
 
   // Auto-pick: prefer a Full Set; fall back to the initial / first set.
   const autoPickedSetId = useMemo(() => {
@@ -581,6 +642,8 @@ export default function BlueprintVRExperiencePanel({
 
   const [selectedSourceSetId, setSelectedSourceSetId] = useState<string | null>(autoPickedSetId)
   const [rescanToken, setRescanToken] = useState(0)
+  const [rescanCount, setRescanCount] = useState(0)
+  const [lastScanAt, setLastScanAt] = useState<string | null>(null)
   const [traceExtraction, setTraceExtraction] = useState<{
     selectedPageNumber: number | null
     payload: PdfTracePayload | null
@@ -589,6 +652,10 @@ export default function BlueprintVRExperiencePanel({
     providerStatus: 'available' | 'missing' | 'error'
     operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
+    requestedKey?: string
+    registeredKeys?: string[]
+    matchReason?: string
+    providerMetadata?: Record<string, any>
     warnings: Array<{ code: string; message: string }>
   }>({
     selectedPageNumber: null,
@@ -598,6 +665,10 @@ export default function BlueprintVRExperiencePanel({
     providerStatus: 'missing',
     operatorListStatus: 'unknown',
     textContentStatus: 'unknown',
+    requestedKey: undefined,
+    registeredKeys: [],
+    matchReason: undefined,
+    providerMetadata: undefined,
     warnings: [],
   })
 
@@ -610,6 +681,8 @@ export default function BlueprintVRExperiencePanel({
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
   }, [availableSets, selectedSourceSetId])
 
+  const scannerVersion = 'W3.10D'
+
   useEffect(() => {
     let disposed = false
     if (!selectedSourceSet) {
@@ -621,6 +694,10 @@ export default function BlueprintVRExperiencePanel({
         providerStatus: 'missing',
         operatorListStatus: 'unknown',
         textContentStatus: 'unknown',
+        requestedKey: undefined,
+        registeredKeys: [],
+        matchReason: undefined,
+        providerMetadata: undefined,
         warnings: [],
       })
       return
@@ -638,15 +715,36 @@ export default function BlueprintVRExperiencePanel({
         providerStatus: 'missing',
         operatorListStatus: 'unknown',
         textContentStatus: 'unknown',
+        requestedKey: undefined,
+        registeredKeys: [],
+        matchReason: undefined,
+        providerMetadata: undefined,
         warnings: [{ code: 'NO_FLOOR_PLAN_SHEET', message: 'No canonical floor-plan sheet selected for trace extraction.' }],
       })
       return
     }
+    const runtimeRequestIdentity = {
+      projectId: selectedSourceSet.projectId || projectId || runtimeSourceIdentity?.projectId,
+      sourceSetId: selectedSourceSet.id || runtimeSourceIdentity?.sourceSetId,
+      sourceSetName: selectedSourceSet.name || runtimeSourceIdentity?.sourceSetName,
+      blueprintId: selectedSourceSet.id || runtimeSourceIdentity?.blueprintId || sourceBlueprint.id,
+      fileName: selectedSourceSet.filePath || bestSourceSheet.fileName || runtimeSourceIdentity?.fileName,
+      pageCount: selectedSourceSet.totalPages || runtimeSourceIdentity?.pageCount,
+    }
+    const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
+    setLastScanAt(new Date().toISOString())
+    setTraceExtraction((prev) => ({
+      ...prev,
+      attempted: false,
+      requestedKey: requestedRuntimeKey,
+      registeredKeys: prev.registeredKeys || [],
+      matchReason: prev.matchReason,
+      providerMetadata: prev.providerMetadata,
+      selectedPageNumber: best.pageNumber,
+    }))
     void (async () => {
       const runtimeTrace = await extractTraceForBlueprintSheet({
-        projectId: selectedSourceSet.projectId || projectId,
-        sourceSetId: selectedSourceSet.id,
-        blueprintId: selectedSourceSet.id,
+        ...runtimeRequestIdentity,
         pageNumber: best.pageNumber,
         sheetNumber: best.sheetNumber,
         sheetTitle: best.sheetTitle,
@@ -661,28 +759,71 @@ export default function BlueprintVRExperiencePanel({
         providerStatus: runtimeTrace.providerStatus,
         operatorListStatus: runtimeTrace.operatorListStatus,
         textContentStatus: runtimeTrace.textContentStatus,
+        requestedKey: runtimeTrace.providerRequestedKey || requestedRuntimeKey,
+        registeredKeys: runtimeTrace.providerRegisteredKeys || [],
+        matchReason: runtimeTrace.providerMatchReason,
+        providerMetadata: runtimeTrace.providerMetadata,
         warnings: runtimeTrace.result.warnings,
       })
     })()
     return () => {
       disposed = true
     }
-  }, [selectedSourceSet, rescanToken, projectId])
+  }, [selectedSourceSet, rescanToken, projectId, runtimeSourceIdentity, sourceBlueprint.id, sourceBlueprint.filePath])
 
-  const traceCacheSuffix = traceExtraction.selectedPageNumber
-    ? `trace-${traceExtraction.selectedPageNumber}-${traceExtraction.available ? 'ok' : 'none'}`
-    : 'trace-na'
-  const sourceKey = `${selectedSourceSet?.id || sourceBlueprint.id || 'active-sheet'}::${traceCacheSuffix}`
+  const sourceCacheIdentity = useMemo<BlueprintVRCacheIdentity>(
+    () => ({
+      projectId:
+        selectedSourceSet?.projectId ||
+        projectId ||
+        runtimeSourceIdentity?.projectId ||
+        projectNameProp ||
+        job.outputManifest?.projectName ||
+        'unknown-project',
+      sourceSetId: selectedSourceSet?.id || runtimeSourceIdentity?.sourceSetId || null,
+      sourceSetName: selectedSourceSet?.name || runtimeSourceIdentity?.sourceSetName || sourceBlueprint.name || null,
+      blueprintId: selectedSourceSet?.id || runtimeSourceIdentity?.blueprintId || sourceBlueprint.id || null,
+      fileName:
+        selectedSourceSet?.filePath ||
+        runtimeSourceIdentity?.fileName ||
+        sourceBlueprint.filePath ||
+        sourceBlueprint.name ||
+        null,
+      selectedFloorPlanPage:
+        traceExtraction.selectedPageNumber ||
+        runtimeSourceIdentity?.currentPageNumber ||
+        null,
+      pageCount:
+        selectedSourceSet?.totalPages ||
+        runtimeSourceIdentity?.pageCount ||
+        null,
+      scannerVersion,
+    }),
+    [
+      selectedSourceSet,
+      projectId,
+      runtimeSourceIdentity,
+      projectNameProp,
+      job.outputManifest?.projectName,
+      sourceBlueprint.name,
+      sourceBlueprint.id,
+      sourceBlueprint.filePath,
+      traceExtraction.selectedPageNumber,
+      scannerVersion,
+    ],
+  )
+
+  const sourceKey = buildBlueprintVRCacheIdentityKey(sourceCacheIdentity)
   const userPickedSource = !!initialSourceSetId
   const projectNameForCache =
     projectNameProp || selectedSourceSet?.projectName || job.outputManifest?.projectName || sourceBlueprint.name
 
   // ── Cached model lookup. Recomputes only when key / rescan token changes ──
-  const cacheKeyParts = `${projectKey}::${sourceKey}::${rescanToken}`
+  const cacheKeyParts = `${sourceKey}::${rescanToken}`
 
-  const { scanResult, fullSetScan, buildingModel, fromCache } = useMemo(() => {
+  const { scanResult, fullSetScan, buildingModel, fromCache, cacheDebug } = useMemo(() => {
     const cached = rescanToken === 0
-      ? getCachedProjectModel(projectKey, sourceKey)
+      ? getCachedProjectModel(sourceCacheIdentity)
       : undefined
     if (cached) {
       return {
@@ -690,6 +831,14 @@ export default function BlueprintVRExperiencePanel({
         fullSetScan: cached.fullSetScan,
         buildingModel: cached.model,
         fromCache: true,
+        cacheDebug: {
+          mode: 'hit' as const,
+          key: cached.key,
+          keyHash: cached.keyHash,
+          sourceIdentity: cached.sourceIdentity,
+          rescanCount,
+          scannedAt: cached.generatedAt,
+        },
       }
     }
 
@@ -733,7 +882,7 @@ export default function BlueprintVRExperiencePanel({
       model = convertPlanScanToBuildingModel(scan)
     }
 
-    const stored = setCachedProjectModel(projectKey, sourceKey, {
+    const stored = setCachedProjectModel(sourceCacheIdentity, {
       model,
       scan,
       fullSetScan: fullScan,
@@ -744,24 +893,41 @@ export default function BlueprintVRExperiencePanel({
       fullSetScan: stored.fullSetScan,
       buildingModel: stored.model,
       fromCache: false,
+      cacheDebug: {
+        mode: 'miss' as const,
+        key: stored.key,
+        keyHash: stored.keyHash,
+        sourceIdentity: stored.sourceIdentity,
+        rescanCount,
+        scannedAt: stored.generatedAt,
+      },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKeyParts, traceExtraction])
+  }, [cacheKeyParts, traceExtraction, sourceCacheIdentity, rescanCount])
 
   const handleChangeSource = useCallback(
     (setId: string) => {
       setSelectedSourceSetId(setId)
       setSelectedRoomId(null)
       setRescanToken(0)
+      setLastScanAt(new Date().toISOString())
       onSelectSourceSet?.(setId)
     },
     [onSelectSourceSet],
   )
 
   const handleRescan = useCallback(() => {
-    clearCachedProjectModel(projectKey, sourceKey)
+    clearCachedProjectModel(sourceCacheIdentity)
+    setLastScanAt(new Date().toISOString())
+    setRescanCount((n) => n + 1)
+    setTraceExtraction((prev) => ({
+      ...prev,
+      attempted: false,
+      available: false,
+      providerStatus: 'missing',
+    }))
     setRescanToken((t) => t + 1)
-  }, [projectKey, sourceKey])
+  }, [sourceCacheIdentity])
 
   const handleBackdropClick = useCallback(() => { onClose() }, [onClose])
   const firstRoomId = buildingModel.levels[0]?.rooms[0]?.id || null
@@ -1061,6 +1227,21 @@ export default function BlueprintVRExperiencePanel({
                 operatorListStatus: traceExtraction.operatorListStatus,
                 textContentStatus: traceExtraction.textContentStatus,
               }}
+              runtimeProviderDebug={{
+                requestedKey: traceExtraction.requestedKey,
+                registeredKeys: traceExtraction.registeredKeys,
+                matchReason: traceExtraction.matchReason,
+              }}
+              cacheDebug={
+                cacheDebug || {
+                  mode: fromCache ? 'hit' : 'miss',
+                  key: sourceKey,
+                  keyHash: sourceKey.slice(0, 8),
+                  sourceIdentity: sourceCacheIdentity,
+                  rescanCount,
+                  scannedAt: lastScanAt || undefined,
+                }
+              }
             />
 
             {viewMode === 'plan' && (
