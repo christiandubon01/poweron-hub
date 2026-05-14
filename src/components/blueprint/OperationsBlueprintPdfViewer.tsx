@@ -1182,6 +1182,15 @@ export default function OperationsBlueprintPdfViewer({
       body.style.position = originalBodyPosition
     }
   }, [isFullScreenView, isTabletImmersiveFullscreen])
+
+  // Notify V15rLayout to hide sidebar/header during tablet immersive fullscreen.
+  // iOS Safari z-index stacking inside -webkit-overflow-scrolling containers is unreliable,
+  // so we hide the shell elements via custom event rather than relying on z-index alone.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('poweron:blueprint-immersive', { detail: isTabletImmersiveFullscreen }))
+    return () => { window.dispatchEvent(new CustomEvent('poweron:blueprint-immersive', { detail: false })) }
+  }, [isTabletImmersiveFullscreen])
+
   // Escape key handler: closes UI state first, then exits fullscreen if no UI open.
   // This ensures Escape closes annotation editors, measurements, etc. before exiting fullscreen.
   // Fullscreen exit only happens when all annotation UI is closed.

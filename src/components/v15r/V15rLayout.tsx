@@ -104,6 +104,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1920)
+  const [blueprintImmersive, setBlueprintImmersive] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window === 'undefined') return true
     const saved = localStorage.getItem('sidebar_expanded')
@@ -449,6 +450,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     window.addEventListener('poweron:sidebar-collapse', handler as EventListener)
     return () => window.removeEventListener('poweron:sidebar-collapse', handler as EventListener)
   }, [isMobile, isTablet])
+
+  // Hide sidebar/header while Blueprint Viewer is in tablet immersive fullscreen.
+  useEffect(() => {
+    const handler = (e: CustomEvent) => setBlueprintImmersive(!!e.detail)
+    window.addEventListener('poweron:blueprint-immersive', handler as EventListener)
+    return () => window.removeEventListener('poweron:blueprint-immersive', handler as EventListener)
+  }, [])
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -918,7 +926,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           isMobile
             ? (sidebarOpen ? 'translate-x-0' : '-translate-x-full')
             : ''
-        }`}
+        } ${blueprintImmersive ? 'hidden' : ''}`}
         style={{
           width: sidebarWidth,
           transition: 'width 200ms ease',
@@ -1491,7 +1499,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         }
       >
         {/* TOP BAR — hidden in visual-suite fullscreen */}
-        {activeView === 'visual-suite' || activeView === 'neural-world' ? null : (
+        {activeView === 'visual-suite' || activeView === 'neural-world' || blueprintImmersive ? null : (
         <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
