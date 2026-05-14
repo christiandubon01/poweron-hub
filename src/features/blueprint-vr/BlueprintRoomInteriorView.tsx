@@ -67,6 +67,19 @@ function roleOf(room: BuildingRoomModel): string {
 
 function pickFurniture(room: BuildingRoomModel): FurnitureItem[] {
   const kind = roleOf(room)
+  const labelLc = room.label.toLowerCase()
+
+  // Treatment-room specific furniture (chair + mirror + side counter).
+  // Detected from label so the elevation-sheet "Treatment Room #1/#2" rooms
+  // read as actual treatment rooms, not back wash bays.
+  if (labelLc.includes('treatment')) {
+    return [
+      { x: 138, y: 110, w: 84, h: 26, label: 'Mirror', fill: '#0a1018', stroke: '#d7c084' },
+      { x: 152, y: 150, w: 56, h: 38, label: 'Treatment Chair', fill: '#1d2230', stroke: '#c4a873' },
+      { x: 70, y: 195, w: 56, h: 28, label: 'Sink', fill: '#d7e2ef', stroke: '#86a8c4' },
+      { x: 138, y: 195, w: 152, h: 26, label: 'Work Counter', fill: '#3a2e1f', stroke: '#c4a873' },
+    ]
+  }
 
   if (kind.includes('reception') || kind.includes('entrance')) {
     return [
@@ -186,6 +199,19 @@ interface CeilingFixture {
 
 function ceilingFixturesFor(room: BuildingRoomModel): CeilingFixture[] {
   const kind = roleOf(room)
+  const labelLc = room.label.toLowerCase()
+  if (labelLc.includes('treatment')) {
+    return [
+      { cx: 130, cy: 56, kind: 'downlight' },
+      { cx: 230, cy: 56, kind: 'downlight' },
+    ]
+  }
+  if (kind === 'wash-station' || labelLc.includes('hair wash')) {
+    return [
+      { cx: 130, cy: 56, kind: 'downlight' },
+      { cx: 230, cy: 56, kind: 'downlight' },
+    ]
+  }
   if (kind.includes('reception') || kind.includes('entrance')) {
     return [{ cx: 180, cy: 60, kind: 'chandelier' }]
   }
@@ -223,6 +249,22 @@ interface WallDeviceCue {
 
 function wallDevicesFor(room: BuildingRoomModel): WallDeviceCue[] {
   const kind = roleOf(room)
+  const labelLc = room.label.toLowerCase()
+
+  if (labelLc.includes('treatment')) {
+    return [
+      { x: 78, y: 178, label: 'GFCI', color: '#22C55E' },
+      { x: 286, y: 178, label: 'RCP', color: '#22C55E' },
+      { x: 286, y: 115, label: 'SW', color: '#4ADE80' },
+    ]
+  }
+  if (kind === 'wash-station' || kind.includes('shampoo') || labelLc.includes('hair wash')) {
+    return [
+      { x: 78, y: 178, label: 'GFCI', color: '#22C55E' },
+      { x: 286, y: 178, label: 'GFCI', color: '#22C55E' },
+      { x: 286, y: 115, label: 'SW', color: '#4ADE80' },
+    ]
+  }
   if (kind.includes('reception') || kind.includes('entrance')) {
     return [
       { x: 80, y: 178, label: 'RCP', color: '#22C55E' },
@@ -259,6 +301,9 @@ function wallDevicesFor(room: BuildingRoomModel): WallDeviceCue[] {
 
 function floorTextureForRoom(room: BuildingRoomModel): string {
   const kind = roleOf(room)
+  const labelLc = room.label.toLowerCase()
+  if (labelLc.includes('treatment')) return 'url(#floor-tile)'
+  if (kind === 'wash-station' || labelLc.includes('hair wash')) return 'url(#floor-tile)'
   if (kind.includes('reception') || kind.includes('entrance')) return 'url(#floor-marble)'
   if (kind.includes('bath') || kind.includes('restroom')) return 'url(#floor-tile)'
   if (kind.includes('utility') || kind.includes('panel') || kind.includes('storage'))
@@ -403,22 +448,41 @@ export default function BlueprintRoomInteriorView({
           </g>
         )}
 
-        {/* Storefront glass / sign for entry-style rooms */}
+        {/* Storefront glass / sign for entry-style rooms. The "SALON SIGN"
+            text is gated by showLabels so the toggle hides every text
+            annotation in the room view. The accent-bar finish (gold/black
+            trim) is preserved because the render references show it as a
+            wall finish, not an opening. */}
         {showStorefront && (
           <g>
             <rect x="78" y="96" width="204" height="42" fill="rgba(180,210,255,0.22)" stroke="#9ec7f9" />
             <line x1="180" y1="96" x2="180" y2="138" stroke="#9ec7f9" strokeDasharray="2 2" />
-            <text
-              x="180"
-              y="86"
-              textAnchor="middle"
-              fill="rgba(245,235,220,0.65)"
-              fontFamily="monospace"
-              fontSize="9"
-              letterSpacing="2"
-            >
-              SALON SIGN
-            </text>
+            {/* Gold/black accent finish band — finish, not an opening. */}
+            <rect x="60" y="82" width="240" height="6" fill="#1a1410" stroke="#c4a873" strokeWidth="0.8" />
+            <rect x="60" y="138" width="240" height="4" fill="#c4a873" opacity="0.85" />
+            {showLabels && (
+              <text
+                x="180"
+                y="79"
+                textAnchor="middle"
+                fill="rgba(245,235,220,0.78)"
+                fontFamily="monospace"
+                fontSize="9"
+                letterSpacing="2"
+              >
+                SALON SIGN
+              </text>
+            )}
+          </g>
+        )}
+
+        {/* Subtle gold/black trim at the floor-to-wall junction. The render
+            references treat this as accent trim, not a structural feature. */}
+        {showStorefront && (
+          <g pointerEvents="none">
+            <line x1="58" y1="232" x2="300" y2="232" stroke="#c4a873" strokeWidth="1.2" opacity="0.7" />
+            <line x1="30" y1="204" x2="58" y2="232" stroke="#c4a873" strokeWidth="0.8" opacity="0.6" />
+            <line x1="328" y1="204" x2="300" y2="232" stroke="#c4a873" strokeWidth="0.8" opacity="0.6" />
           </g>
         )}
 
@@ -512,9 +576,11 @@ export default function BlueprintRoomInteriorView({
             <line x1="50" y1="246" x2="310" y2="246" stroke={accent} strokeDasharray="4 3" strokeWidth="1.5" />
             <line x1="120" y1="246" x2="120" y2="234" stroke={accent} strokeDasharray="3 2" />
             <line x1="220" y1="246" x2="220" y2="234" stroke={accent} strokeDasharray="3 2" />
-            <text x="180" y="259" textAnchor="middle" fill={accent} fontSize={8.5} fontFamily="monospace">
-              Below-Slab Conduit Run
-            </text>
+            {showLabels && (
+              <text x="180" y="259" textAnchor="middle" fill={accent} fontSize={8.5} fontFamily="monospace">
+                Below-Slab Conduit Run
+              </text>
+            )}
           </g>
         )}
 
@@ -522,9 +588,11 @@ export default function BlueprintRoomInteriorView({
         {showElectrical && activeStage === 'roughIn' && (
           <g>
             <rect x="278" y="100" width="16" height="46" fill="rgba(0,0,0,0.5)" stroke={accent} />
-            <text x="286" y="93" textAnchor="middle" fill={accent} fontSize={7} fontFamily="monospace">
-              PANEL
-            </text>
+            {showLabels && (
+              <text x="286" y="93" textAnchor="middle" fill={accent} fontSize={7} fontFamily="monospace">
+                PANEL
+              </text>
+            )}
             <line x1="290" y1="146" x2="290" y2="220" stroke={accent} strokeWidth="1.2" />
           </g>
         )}
@@ -540,16 +608,22 @@ export default function BlueprintRoomInteriorView({
         {/* Stage overlay: finished circuit/label markers */}
         {showElectrical && activeStage === 'finished' && (
           <g>
-            <text x="62" y="178" fontSize={7} fontFamily="monospace" fill={accent}>
-              CKT-A
-            </text>
-            <text x="278" y="178" fontSize={7} fontFamily="monospace" fill={accent}>
-              CKT-B
-            </text>
+            {showLabels && (
+              <>
+                <text x="62" y="178" fontSize={7} fontFamily="monospace" fill={accent}>
+                  CKT-A
+                </text>
+                <text x="278" y="178" fontSize={7} fontFamily="monospace" fill={accent}>
+                  CKT-B
+                </text>
+              </>
+            )}
             <line x1="178" y1="58" x2="178" y2="48" stroke={accent} strokeDasharray="2 2" />
-            <text x="178" y="42" textAnchor="middle" fontSize={6.5} fontFamily="monospace" fill={accent}>
-              LT-FIN
-            </text>
+            {showLabels && (
+              <text x="178" y="42" textAnchor="middle" fontSize={6.5} fontFamily="monospace" fill={accent}>
+                LT-FIN
+              </text>
+            )}
           </g>
         )}
 
