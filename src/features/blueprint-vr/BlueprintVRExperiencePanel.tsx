@@ -414,11 +414,13 @@ function ScanStatusBanner({
     selectedPageNumber: number | null
     operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
+    opsSource?: 'provider' | 'dynamic-import' | 'missing'
   }
   runtimeProviderDebug?: {
     requestedKey?: string
     registeredKeys?: string[]
     matchReason?: string
+    matchedKey?: string
   }
   cacheDebug?: {
     mode: 'hit' | 'miss'
@@ -539,6 +541,16 @@ function ScanStatusBanner({
           Provider match reason: {runtimeProviderDebug.matchReason}
         </div>
       )}
+      {runtimeProviderDebug?.matchedKey && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,230,210,0.92)' }}>
+          Matched provider key: {runtimeProviderDebug.matchedKey}
+        </div>
+      )}
+      {traceRuntime?.opsSource && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,230,210,0.92)' }}>
+          OPS source: {traceRuntime.opsSource}
+        </div>
+      )}
       {scan.traceAttempted && !scan.traceAvailable && (
         <div style={{ opacity: 0.72, fontSize: 9.4, color: 'rgba(255,180,140,0.95)' }}>
           Vector trace unavailable from current viewer context.
@@ -655,6 +667,7 @@ export default function BlueprintVRExperiencePanel({
     requestedKey?: string
     registeredKeys?: string[]
     matchReason?: string
+    providerKey?: string
     providerMetadata?: Record<string, any>
     warnings: Array<{ code: string; message: string }>
   }>({
@@ -668,6 +681,7 @@ export default function BlueprintVRExperiencePanel({
     requestedKey: undefined,
     registeredKeys: [],
     matchReason: undefined,
+    providerKey: undefined,
     providerMetadata: undefined,
     warnings: [],
   })
@@ -697,6 +711,7 @@ export default function BlueprintVRExperiencePanel({
         requestedKey: undefined,
         registeredKeys: [],
         matchReason: undefined,
+        providerKey: undefined,
         providerMetadata: undefined,
         warnings: [],
       })
@@ -718,6 +733,7 @@ export default function BlueprintVRExperiencePanel({
         requestedKey: undefined,
         registeredKeys: [],
         matchReason: undefined,
+        providerKey: undefined,
         providerMetadata: undefined,
         warnings: [{ code: 'NO_FLOOR_PLAN_SHEET', message: 'No canonical floor-plan sheet selected for trace extraction.' }],
       })
@@ -725,10 +741,10 @@ export default function BlueprintVRExperiencePanel({
     }
     const runtimeRequestIdentity = {
       projectId: selectedSourceSet.projectId || projectId || runtimeSourceIdentity?.projectId,
-      sourceSetId: selectedSourceSet.id || runtimeSourceIdentity?.sourceSetId,
+      sourceSetId: runtimeSourceIdentity?.sourceSetId || selectedSourceSet.id,
       sourceSetName: selectedSourceSet.name || runtimeSourceIdentity?.sourceSetName,
-      blueprintId: selectedSourceSet.id || runtimeSourceIdentity?.blueprintId || sourceBlueprint.id,
-      fileName: selectedSourceSet.filePath || bestSourceSheet.fileName || runtimeSourceIdentity?.fileName,
+      blueprintId: runtimeSourceIdentity?.blueprintId || selectedSourceSet.id || sourceBlueprint.id,
+      fileName: runtimeSourceIdentity?.fileName || selectedSourceSet.filePath || bestSourceSheet.fileName,
       pageCount: selectedSourceSet.totalPages || runtimeSourceIdentity?.pageCount,
     }
     const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
@@ -762,6 +778,7 @@ export default function BlueprintVRExperiencePanel({
         requestedKey: runtimeTrace.providerRequestedKey || requestedRuntimeKey,
         registeredKeys: runtimeTrace.providerRegisteredKeys || [],
         matchReason: runtimeTrace.providerMatchReason,
+        providerKey: runtimeTrace.providerKey,
         providerMetadata: runtimeTrace.providerMetadata,
         warnings: runtimeTrace.result.warnings,
       })
@@ -1226,11 +1243,13 @@ export default function BlueprintVRExperiencePanel({
                 selectedPageNumber: traceExtraction.selectedPageNumber,
                 operatorListStatus: traceExtraction.operatorListStatus,
                 textContentStatus: traceExtraction.textContentStatus,
+                opsSource: traceExtraction.payload?.runtime?.opsSource,
               }}
               runtimeProviderDebug={{
                 requestedKey: traceExtraction.requestedKey,
                 registeredKeys: traceExtraction.registeredKeys,
                 matchReason: traceExtraction.matchReason,
+                matchedKey: traceExtraction.providerKey,
               }}
               cacheDebug={
                 cacheDebug || {

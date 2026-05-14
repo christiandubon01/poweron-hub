@@ -119,6 +119,7 @@ export interface PdfTracePayload {
     selectedPageNumber?: number
     operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    opsSource?: 'provider' | 'dynamic-import' | 'missing'
   }
   warnings: PdfTraceExtractionWarning[]
 }
@@ -142,6 +143,7 @@ export interface PdfTraceExtractionResult {
   success: boolean
   payload: PdfTracePayload | null
   warnings: PdfTraceExtractionWarning[]
+  opsSource?: 'provider' | 'dynamic-import' | 'missing'
 }
 
 // Backward-compatible aliases used by scanner/adapter code.

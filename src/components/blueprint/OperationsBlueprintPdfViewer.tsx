@@ -649,6 +649,7 @@ export default function OperationsBlueprintPdfViewer({
         runtimeKey,
         registeredAt: new Date().toISOString(),
         missingFields,
+        opsConstants: (_pdfjsLib as any)?.OPS ?? {},
       },
       getPage: async (pageNumber: number) => {
         const doc = pdfDocRef.current

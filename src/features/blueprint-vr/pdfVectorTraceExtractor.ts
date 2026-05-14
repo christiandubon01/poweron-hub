@@ -33,6 +33,7 @@ export interface PdfVectorTraceExtractorInput {
   coordinateSpace?: PdfTracePayload['coordinateSpace']
   existingPayload?: PdfTracePayload | null
   expectedAdapterFields?: string[]
+  opsConstants?: Record<string, number>
 }
 
 function warning(code: PdfTraceExtractionWarning['code'], message: string): PdfTraceExtractionWarning {
@@ -477,6 +478,7 @@ export async function extractPdfVectorTraceFromPage(
   const warnings: PdfTraceExtractionWarning[] = []
   const payload = createEmptyPayload(input)
   const page = input.page
+  let opsSource: 'provider' | 'dynamic-import' | 'missing' = 'missing'
   payload.runtime = {
     providerStatus: page ? 'available' : 'missing',
     selectedPageNumber: payload.pageNumber,
@@ -546,16 +548,22 @@ export async function extractPdfVectorTraceFromPage(
       payload.runtime.operatorListStatus = 'available'
       const operatorList = await page.getOperatorList()
       let ops: Record<string, number> = {}
-      try {
-        const pdfjsLib: any = await import(/* @vite-ignore */ 'pdfjs-dist')
-        ops = (pdfjsLib?.OPS || {}) as Record<string, number>
-      } catch {
-        warnings.push(
-          warning(
-            'UNSUPPORTED_OPERATOR_SEQUENCE',
-            'pdfjs OPS constants unavailable; operator decode is limited.',
-          ),
-        )
+      if (input.opsConstants && Object.keys(input.opsConstants).length > 0) {
+        ops = input.opsConstants
+        opsSource = 'provider'
+      } else {
+        try {
+          const pdfjsLib: any = await import(/* @vite-ignore */ 'pdfjs-dist')
+          ops = (pdfjsLib?.OPS || {}) as Record<string, number>
+          if (Object.keys(ops).length > 0) opsSource = 'dynamic-import'
+        } catch {
+          warnings.push(
+            warning(
+              'UNSUPPORTED_OPERATOR_SEQUENCE',
+              'pdfjs OPS constants unavailable; operator decode is limited.',
+            ),
+          )
+        }
       }
       const extracted = extractGeometryFromOperatorList(operatorList, ops, warnings)
       payload.lines = extracted.lines
@@ -584,11 +592,13 @@ export async function extractPdfVectorTraceFromPage(
   }
 
   payload.warnings = [...warnings]
+  if (payload.runtime) payload.runtime.opsSource = opsSource
   const normalized = normalizePdfTracePayload(payload)
   return {
     success: hasUsableTracePayload(normalized),
     payload: normalized,
     warnings,
+    opsSource,
   }
 }
 

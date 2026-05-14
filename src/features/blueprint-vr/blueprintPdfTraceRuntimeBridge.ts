@@ -264,6 +264,7 @@ export async function extractTraceForBlueprintSheet(
 ): Promise<RuntimeTraceForSheetResult> {
   const pageNumber = Math.max(1, Math.floor(Number(input.pageNumber) || 1))
   const runtimeDebug = getBlueprintPdfRuntimeProviderDebug(input)
+  const opsConstants = (runtimeDebug.providerMetadata?.opsConstants || {}) as Record<string, number>
   const runtimeMatch = runtimeDebug.matchedKey
     ? getActivePdfTracePageProvider(input)
     : null
@@ -367,6 +368,7 @@ export async function extractTraceForBlueprintSheet(
       sheetNumber: input.sheetNumber,
       sheetTitle: input.sheetTitle,
       existingPayload,
+      opsConstants,
       expectedAdapterFields: ['provider.getPage', 'page.getOperatorList', 'page.getTextContent'],
     })
 
@@ -383,6 +385,7 @@ export async function extractTraceForBlueprintSheet(
             selectedPageNumber: pageNumber,
             operatorListStatus,
             textContentStatus,
+            opsSource: extracted.opsSource,
           },
           warnings: extracted.warnings,
         }
@@ -414,6 +417,7 @@ export async function extractTraceForBlueprintSheet(
       sheetNumber: input.sheetNumber,
       sheetTitle: input.sheetTitle,
       existingPayload,
+      opsConstants,
       expectedAdapterFields: ['runtime provider failed to resolve page object'],
     })
     const message = error?.message
@@ -433,6 +437,7 @@ export async function extractTraceForBlueprintSheet(
             selectedPageNumber: pageNumber,
             operatorListStatus,
             textContentStatus,
+            opsSource: extracted.opsSource,
           },
           warnings,
         }
