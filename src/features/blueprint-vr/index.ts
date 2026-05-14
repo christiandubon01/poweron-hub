@@ -6,7 +6,23 @@
  */
 
 // ── Type Exports ────────────────────────────────────────────────────────────
-export type { VRStage, Discipline, BlueprintSource, VRJobStatus, StageItem, VRSceneManifest, VRGenerationJob } from './types'
+export type {
+  VRStage,
+  Discipline,
+  BlueprintSource,
+  VRJobStatus,
+  StageItem,
+  VRSceneManifest,
+  VRGenerationJob,
+} from './types'
+
+export type {
+  BlueprintDocumentLike,
+  BlueprintPageLike,
+  NormalizedBlueprintMetadata,
+  SheetLabelInfo,
+  DisciplineHint,
+} from './blueprintExtractionAdapter'
 
 // ── Stage Exports ───────────────────────────────────────────────────────────
 export {
@@ -22,3 +38,14 @@ export {
   getAllStages,
   isValidStage,
 } from './stages'
+
+// ── Adapter Exports ─────────────────────────────────────────────────────────
+export {
+  normalizeBlueprint,
+  extractVRInputs,
+  getElectricalHints,
+  getSheetLabelsFromIndex,
+  getDisciplineSummary,
+  isElectricalBlueprint,
+  getRecommendedActivePage,
+} from './blueprintExtractionAdapter'
