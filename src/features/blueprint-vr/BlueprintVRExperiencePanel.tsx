@@ -12,7 +12,7 @@
  *  - Category grouping in item list
  */
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo, useEffect } from 'react'
 import type {
   VRStage,
   BlueprintSource,
@@ -26,6 +26,10 @@ import {
 import { getCatalogItemsByStage } from './electricalCatalog'
 import type { ElectricalCatalogItem } from './electricalCatalog'
 import Blueprint3DSpaceViewer from './Blueprint3DSpaceViewer'
+import MeasuredPlanViewer from './MeasuredPlanViewer'
+import BlueprintRoomInteriorView from './BlueprintRoomInteriorView'
+import { createAutoDetectedDefaultModel } from './buildingModelDefaults'
+import type { BlueprintBuildingModel } from './buildingModel'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -33,6 +37,30 @@ interface BlueprintVRExperiencePanelProps {
   job: VRGenerationJob
   sourceBlueprint: BlueprintSource
   onClose: () => void
+}
+
+function controlButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: '5px 10px',
+    borderRadius: 4,
+    border: `1px solid ${active ? '#00ddcc' : 'rgba(255,255,255,0.16)'}`,
+    background: active ? 'rgba(0,221,204,0.14)' : 'rgba(255,255,255,0.02)',
+    color: active ? '#00ddcc' : 'rgba(255,255,255,0.6)',
+    cursor: 'pointer',
+    fontSize: 10,
+    fontFamily: 'monospace',
+    fontWeight: 700,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  }
+}
+
+const smallLabelStyle: React.CSSProperties = {
+  color: 'rgba(255,255,255,0.55)',
+  fontSize: 9.5,
+  fontFamily: 'monospace',
+  letterSpacing: 0.5,
+  textTransform: 'uppercase',
 }
 
 // ── Subcomponent: Progress Region ────────────────────────────────────
@@ -316,9 +344,42 @@ export default function BlueprintVRExperiencePanel({
   sourceBlueprint,
   onClose,
 }: BlueprintVRExperiencePanelProps) {
-  const [selectedStage, setSelectedStage] = useState<VRStage>(STAGE_ORDER[0])
+  const [activeStage, setActiveStage] = useState<VRStage>(STAGE_ORDER[0])
+  const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room'>('dollhouse')
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
+  const [showElectrical, setShowElectrical] = useState(true)
+  const [showDimensions, setShowDimensions] = useState(true)
+  const [showLabels, setShowLabels] = useState(true)
+  const [wallOpacity, setWallOpacity] = useState(0.82)
+  const [cameraPreset, setCameraPreset] = useState<'top' | 'iso' | 'room'>('iso')
+
+  const buildingModel = useMemo<BlueprintBuildingModel>(() => {
+    const manifestName = job.outputManifest?.projectName || sourceBlueprint.name
+    const manifestDescription = job.outputManifest?.metadata?.description
+    return createAutoDetectedDefaultModel(manifestName, sourceBlueprint.name, manifestDescription)
+  }, [job.outputManifest, sourceBlueprint.name])
 
   const handleBackdropClick = useCallback(() => { onClose() }, [onClose])
+  const firstRoomId = buildingModel.levels[0]?.rooms[0]?.id || null
+
+  useEffect(() => {
+    if (!selectedRoomId && firstRoomId) {
+      setSelectedRoomId(firstRoomId)
+    }
+  }, [selectedRoomId, firstRoomId])
+
+  const handleRoomSelect = useCallback((roomId: string) => {
+    setSelectedRoomId(roomId)
+    setViewMode('room')
+    setCameraPreset('room')
+  }, [])
+
+  const handleResetView = useCallback(() => {
+    setViewMode('dollhouse')
+    setSelectedRoomId(firstRoomId)
+    setCameraPreset('iso')
+    setWallOpacity(0.82)
+  }, [firstRoomId])
 
   // Always show all 4 stages from STAGE_ORDER — no dependency on manifest
   const visibleStages = [...STAGE_ORDER] as VRStage[]
@@ -455,16 +516,105 @@ export default function BlueprintVRExperiencePanel({
           scrollbarColor: 'rgba(0,229,204,0.2) transparent',
         }}>
 
-          {/* Planner5D-style 3D space viewer with optional 2D/3D mode toggle */}
-          <div style={{ padding: '14px 16px 0' }}>
-            <Blueprint3DSpaceViewer activeStage={selectedStage} show2DMode={false} />
+          {/* Planner-style view controls */}
+          <div style={{ padding: '14px 16px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => { setViewMode('plan'); setCameraPreset('top') }}
+                style={controlButtonStyle(viewMode === 'plan')}
+              >
+                2D Plan
+              </button>
+              <button
+                onClick={() => { setViewMode('dollhouse'); setCameraPreset('iso') }}
+                style={controlButtonStyle(viewMode === 'dollhouse')}
+              >
+                3D Dollhouse
+              </button>
+              <button
+                onClick={() => { setViewMode('room'); setCameraPreset('room'); if (!selectedRoomId) setSelectedRoomId(firstRoomId) }}
+                style={controlButtonStyle(viewMode === 'room')}
+                disabled={!selectedRoomId && !firstRoomId}
+              >
+                Room View
+              </button>
+              <button onClick={handleResetView} style={controlButtonStyle(false)}>
+                Reset View
+              </button>
+              <button onClick={() => setShowDimensions((v) => !v)} style={controlButtonStyle(showDimensions)}>
+                Show Dimensions
+              </button>
+              <button onClick={() => setShowElectrical((v) => !v)} style={controlButtonStyle(showElectrical)}>
+                Show Electrical
+              </button>
+              <button onClick={() => setShowLabels((v) => !v)} style={controlButtonStyle(showLabels)}>
+                Show Labels
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={smallLabelStyle}>Wall Transparency</span>
+              <input
+                type="range"
+                min={35}
+                max={95}
+                value={Math.round(wallOpacity * 100)}
+                onChange={(e) => setWallOpacity(Number(e.target.value) / 100)}
+                style={{ flex: 1 }}
+              />
+              <span style={smallLabelStyle}>{Math.round(wallOpacity * 100)}%</span>
+              <button onClick={() => setCameraPreset('top')} style={controlButtonStyle(cameraPreset === 'top')}>Top</button>
+              <button onClick={() => setCameraPreset('iso')} style={controlButtonStyle(cameraPreset === 'iso')}>Iso</button>
+              <button onClick={() => setCameraPreset('room')} style={controlButtonStyle(cameraPreset === 'room')}>Room</button>
+            </div>
+
+            {viewMode === 'plan' && (
+              <MeasuredPlanViewer
+                model={buildingModel}
+                width={760}
+                height={430}
+                selectedRoomId={selectedRoomId}
+                onRoomSelect={handleRoomSelect}
+                activeStage={activeStage}
+                showDimensions={showDimensions}
+                showRoomLabels={showLabels}
+                showAreaLabels={showLabels}
+                showElectrical={showElectrical}
+              />
+            )}
+
+            {viewMode === 'dollhouse' && (
+              <Blueprint3DSpaceViewer
+                buildingModel={buildingModel}
+                activeStage={activeStage}
+                selectedRoomId={selectedRoomId}
+                onRoomSelect={handleRoomSelect}
+                showElectrical={showElectrical}
+                showDimensions={showDimensions}
+                showLabels={showLabels}
+                wallOpacity={wallOpacity}
+                cameraPreset={cameraPreset}
+              />
+            )}
+
+            {viewMode === 'room' && (
+              <BlueprintRoomInteriorView
+                model={buildingModel}
+                selectedRoomId={selectedRoomId || firstRoomId}
+                activeStage={activeStage}
+                showElectrical={showElectrical}
+                showDimensions={showDimensions}
+                showLabels={showLabels}
+                wallOpacity={wallOpacity}
+              />
+            )}
           </div>
 
           {/* Stage tabs */}
           <StageTabs
             stages={visibleStages}
-            selectedStage={selectedStage}
-            onSelectStage={setSelectedStage}
+            selectedStage={activeStage}
+            onSelectStage={setActiveStage}
           />
 
           {/* Stage description */}
@@ -480,7 +630,7 @@ export default function BlueprintVRExperiencePanel({
               lineHeight: 1.5,
               letterSpacing: 0.3,
             }}>
-              {getStageDescription(selectedStage)}
+              {getStageDescription(activeStage)}
             </div>
             <div style={{
               marginTop: 4,
@@ -488,12 +638,12 @@ export default function BlueprintVRExperiencePanel({
               fontSize: 9,
               fontFamily: 'monospace',
             }}>
-              {getCatalogItemsByStage(selectedStage).length} items in this stage
+              {getCatalogItemsByStage(activeStage).length} items in this stage
             </div>
           </div>
 
           {/* Stage item list */}
-          <StageItemList stage={selectedStage} />
+          <StageItemList stage={activeStage} />
         </div>
 
         {/* Footer */}

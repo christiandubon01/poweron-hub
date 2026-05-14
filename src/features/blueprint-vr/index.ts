@@ -188,6 +188,10 @@ export {
 export { default as BlueprintVRLegend } from './BlueprintVRLegend'
 export type { BlueprintVRLegendProps } from './BlueprintVRLegend'
 
+// Room interior viewer for immersive room mode
+export { default as BlueprintRoomInteriorView } from './BlueprintRoomInteriorView'
+export type { BlueprintRoomInteriorViewProps } from './BlueprintRoomInteriorView'
+
 // Dimension extraction adapter — BVR12
 export type {
   ExtractedDimensionText,

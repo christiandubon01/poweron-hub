@@ -12,7 +12,7 @@
  * - Utility/electrical room with panel placement
  */
 
-import type { BlueprintBuildingModel, BuildingRoomModel, BuildingLevelModel } from './buildingModel'
+import type { BlueprintBuildingModel, BuildingRoomModel, BuildingLevelModel, BuildingWallModel, BuildingOpeningModel } from './buildingModel'
 import type { MeasurementValue, Rectangle, Bounds2D } from './measurementTypes'
 import { createMeasurement } from './dimensionModel'
 
@@ -113,15 +113,61 @@ function createRoom(
   }
 }
 
-function createWallsForBounds(id: string, bounds: Bounds2D, wallHeight: MeasurementValue) {
+function opening(
+  id: string,
+  type: 'door' | 'window',
+  position: number,
+  width: number,
+  height: number,
+): BuildingOpeningModel {
+  return {
+    id,
+    type,
+    positionAlongWall: createMeasurement(position, 'ft', 'default', 0.5),
+    width: createMeasurement(width, 'ft', 'default', 0.5),
+    height: createMeasurement(height, 'ft', 'default', 0.5),
+    visible: true,
+  }
+}
+
+function createWallsForBounds(id: string, bounds: Bounds2D, wallHeight: MeasurementValue): BuildingWallModel[] {
   const { min, max } = bounds
   const thickness = createMeasurement(0.5, 'ft', 'default', 1)
+  const width = max.x - min.x
+  const height = max.y - min.y
 
   return [
-    { id: `${id}_wall_n`, start: { x: min.x, y: max.y }, end: { x: max.x, y: max.y }, thickness, height: wallHeight, openings: [] },
-    { id: `${id}_wall_s`, start: { x: min.x, y: min.y }, end: { x: max.x, y: min.y }, thickness, height: wallHeight, openings: [] },
+    {
+      id: `${id}_wall_n`,
+      start: { x: min.x, y: max.y },
+      end: { x: max.x, y: max.y },
+      thickness,
+      height: wallHeight,
+      openings: [
+        opening(`${id}_window_n`, 'window', Math.max(2, width * 0.55), 3, 4),
+      ],
+    },
+    {
+      id: `${id}_wall_s`,
+      start: { x: min.x, y: min.y },
+      end: { x: max.x, y: min.y },
+      thickness,
+      height: wallHeight,
+      openings: [
+        opening(`${id}_door_s`, 'door', Math.max(1.5, width * 0.42), 3, 7),
+      ],
+    },
     { id: `${id}_wall_e`, start: { x: max.x, y: min.y }, end: { x: max.x, y: max.y }, thickness, height: wallHeight, openings: [] },
-    { id: `${id}_wall_w`, start: { x: min.x, y: min.y }, end: { x: min.x, y: max.y }, thickness, height: wallHeight, openings: [] },
+    {
+      id: `${id}_wall_w`,
+      start: { x: min.x, y: min.y },
+      end: { x: min.x, y: max.y },
+      thickness,
+      height: wallHeight,
+      openings: [
+        opening(`${id}_door_w`, 'door', Math.max(1.5, height * 0.48), 2.8, 7),
+      ],
+    },
   ]
 }
 
@@ -185,7 +231,8 @@ function createSalonLayout(wallHeight: MeasurementValue): BuildingRoomModel[] {
 
   return [
     createRoom('service1', 'Service Area 1', { min: { x: 0, y: 0 }, max: { x: w * 0.5, y: h * 0.65 } }, wallHeight, 'other'),
-    createRoom('service2', 'Service Area 2', { min: { x: w * 0.5, y: 0 }, max: { x: w, y: h * 0.65 } }, wallHeight, 'other'),
+    createRoom('service2', 'Service Area 2', { min: { x: w * 0.5, y: 0 }, max: { x: w * 0.82, y: h * 0.65 } }, wallHeight, 'other'),
+    createRoom('utility', 'Utility/Panel', { min: { x: w * 0.82, y: 0 }, max: { x: w, y: h * 0.65 } }, wallHeight, 'utility'),
     createRoom('waiting', 'Waiting/Reception', { min: { x: 0, y: h * 0.65 }, max: { x: w * 0.65, y: h } }, wallHeight, 'living'),
     createRoom('bath', 'Bathroom', { min: { x: w * 0.65, y: h * 0.65 }, max: { x: w, y: h } }, wallHeight, 'bath'),
   ]

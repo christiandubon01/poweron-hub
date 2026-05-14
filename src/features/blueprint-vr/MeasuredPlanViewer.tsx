@@ -13,6 +13,7 @@
 
 import React, { useMemo } from 'react'
 import type { BlueprintBuildingModel, BuildingRoomModel } from './buildingModel'
+import type { VRStage } from './types'
 
 export interface MeasuredPlanViewerProps {
   /** Building model to display */
@@ -30,6 +31,14 @@ export interface MeasuredPlanViewerProps {
   showBadges?: boolean
   /** Custom CSS class */
   className?: string
+  /** Currently selected room id */
+  selectedRoomId?: string | null
+  /** Called when a room is clicked */
+  onRoomSelect?: (roomId: string) => void
+  /** Current stage for plan tinting */
+  activeStage?: VRStage
+  /** Show electrical anchors on plan */
+  showElectrical?: boolean
 }
 
 /**
@@ -76,16 +85,35 @@ function formatMeasurement(value: number, unit: string): string {
 /**
  * Render a single room as SVG.
  */
+const STAGE_PLAN_ACCENT: Record<VRStage, string> = {
+  underground: '#E07020',
+  roughIn: '#3B82F6',
+  trim: '#22C55E',
+  finished: '#06B6D4',
+}
+
 function RoomElement({
   room,
   scalePerFoot,
   offsetX,
   offsetY,
+  isSelected,
+  showRoomLabels,
+  showAreaLabels,
+  showDimensions,
+  onRoomSelect,
+  accent,
 }: {
   room: BuildingRoomModel
   scalePerFoot: number
   offsetX: number
   offsetY: number
+  isSelected: boolean
+  showRoomLabels: boolean
+  showAreaLabels: boolean
+  showDimensions: boolean
+  onRoomSelect?: (roomId: string) => void
+  accent: string
 }): JSX.Element {
   const { bounds, walls, label, area } = room
   const { min, max } = bounds
@@ -103,26 +131,31 @@ function RoomElement({
         y={y1}
         width={width}
         height={height}
-        fill="#2a3f5f"
-        fillOpacity={0.3}
-        stroke="#4a90e2"
-        strokeWidth={2}
+        fill={isSelected ? `${accent}55` : '#2a3f5f'}
+        fillOpacity={isSelected ? 0.38 : 0.25}
+        stroke={isSelected ? accent : '#4a90e2'}
+        strokeWidth={isSelected ? 3 : 1.8}
+        rx={4}
+        style={{ cursor: 'pointer' }}
+        onClick={() => onRoomSelect?.(room.id)}
       />
 
       {/* Room label */}
-      <text
-        x={x1 + width / 2}
-        y={y1 + height / 2 - 8}
-        textAnchor="middle"
-        fill="#e0e6ed"
-        fontSize={12}
-        fontWeight="bold"
-      >
-        {label}
-      </text>
+      {showRoomLabels && (
+        <text
+          x={x1 + width / 2}
+          y={y1 + height / 2 - 8}
+          textAnchor="middle"
+          fill="#e0e6ed"
+          fontSize={12}
+          fontWeight="bold"
+        >
+          {label}
+        </text>
+      )}
 
       {/* Area label */}
-      {area && (
+      {showAreaLabels && area && (
         <text
           x={x1 + width / 2}
           y={y1 + height / 2 + 12}
@@ -147,19 +180,21 @@ function RoomElement({
         return (
           <g key={wall.id}>
             {/* Wall line */}
-            <line x1={wx1} y1={wy1} x2={wx2} y2={wy2} stroke="#e0e6ed" strokeWidth={2} />
+            <line x1={wx1} y1={wy1} x2={wx2} y2={wy2} stroke={isSelected ? '#f5f8ff' : '#e0e6ed'} strokeWidth={2} />
 
             {/* Wall dimension label (offset above/below) */}
-            <text
-              x={(wx1 + wx2) / 2}
-              y={(wy1 + wy2) / 2 - 8}
-              textAnchor="middle"
-              fill="#90b0d0"
-              fontSize={9}
-              opacity={0.8}
-            >
-              {lengthFt}
-            </text>
+            {showDimensions && (
+              <text
+                x={(wx1 + wx2) / 2}
+                y={(wy1 + wy2) / 2 - 8}
+                textAnchor="middle"
+                fill="#90b0d0"
+                fontSize={9}
+                opacity={0.8}
+              >
+                {lengthFt}
+              </text>
+            )}
           </g>
         )
       })}
@@ -178,6 +213,10 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   showRoomLabels = true,
   showAreaLabels = true,
   showBadges = true,
+  selectedRoomId = null,
+  onRoomSelect,
+  activeStage = 'roughIn',
+  showElectrical = true,
   className,
 }) => {
   const canvasSize = useMemo(
@@ -259,8 +298,29 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
             scalePerFoot={scalePerFoot}
             offsetX={offsetX}
             offsetY={offsetY}
+            isSelected={selectedRoomId === room.id}
+            showRoomLabels={showRoomLabels}
+            showAreaLabels={showAreaLabels}
+            showDimensions={showDimensions}
+            onRoomSelect={onRoomSelect}
+            accent={STAGE_PLAN_ACCENT[activeStage]}
           />
         ))}
+
+        {showElectrical && model.electricalAnchors?.map((anchor) => {
+          const x = offsetX + anchor.position.x * scalePerFoot
+          const y = offsetY + anchor.position.y * scalePerFoot
+          return (
+            <g key={anchor.id}>
+              <circle cx={x} cy={y} r={4} fill={STAGE_PLAN_ACCENT[activeStage]} opacity={0.85} />
+              {showRoomLabels && (
+                <text x={x + 6} y={y - 6} fill="rgba(255,255,255,0.65)" fontSize={8} fontFamily="monospace">
+                  {anchor.type}
+                </text>
+              )}
+            </g>
+          )
+        })}
       </svg>
 
       {/* Badges */}
