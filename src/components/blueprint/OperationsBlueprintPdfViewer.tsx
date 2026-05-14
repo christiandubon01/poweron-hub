@@ -3150,7 +3150,7 @@ export default function OperationsBlueprintPdfViewer({
           )}
 
           <div
-            className={useDesktopThreePaneLayout ? `grid grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : ''}
+            className={useDesktopThreePaneLayout ? `grid grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : isTabletImmersiveFullscreen ? 'flex-1 flex flex-col min-h-0' : ''}
             style={useDesktopThreePaneLayout ? {
               gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
               columnGap: 0,
@@ -3215,7 +3215,7 @@ export default function OperationsBlueprintPdfViewer({
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
               ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
-              : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1'}
+              : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1 flex-shrink-0'}
           >
             {/* â"€â"€â"€â"€ Tablet: Compact single-row segmented bucket selector â"€â"€â"€â"€ */}
             {!useDesktopThreePaneLayout && !isTabletImmersiveFullscreen && (
