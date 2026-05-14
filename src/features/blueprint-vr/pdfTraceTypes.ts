@@ -109,6 +109,13 @@ export interface PdfTracePayload {
   arcs: PdfTraceArc[]
   textRuns: PdfTraceTextRun[]
   scaleHints: PdfTraceScaleHint[]
+  runtime?: {
+    providerStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    providerKey?: string
+    selectedPageNumber?: number
+    operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'
+  }
   warnings: PdfTraceExtractionWarning[]
 }
 
@@ -121,6 +128,8 @@ export interface PdfTraceExtractionWarning {
     | 'EMPTY_TRACE_GEOMETRY'
     | 'UNSUPPORTED_OPERATOR_SEQUENCE'
     | 'ADAPTER_REQUIRED'
+    | 'RUNTIME_PROVIDER_MISSING'
+    | 'RUNTIME_PROVIDER_ERROR'
     | 'EXTRACTION_ERROR'
   message: string
 }
