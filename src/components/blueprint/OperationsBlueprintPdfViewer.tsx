@@ -487,6 +487,8 @@ export default function OperationsBlueprintPdfViewer({
   const renderTaskRef = useRef<any>(null)
   const noteEditorRef = useRef<HTMLTextAreaElement>(null)
   const richTextEditorRef = useRef<HTMLTextAreaElement>(null)
+  const draftTextBoxIdRef = useRef<string | null>(null)
+  const textBoxSnapshotRef = useRef<BlueprintAnnotation | null>(null)
   const allAnnotationsRef = useRef<BlueprintAnnotation[]>([])
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
@@ -1534,6 +1536,10 @@ export default function OperationsBlueprintPdfViewer({
     const rect = clampRectToPage(annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
     const meta = getAnnotationMeta(annotation)
     const box = clampRectToPage(meta.box || rect)
+    if (annotation.type === 'textBox') {
+      textBoxSnapshotRef.current = { ...annotation }
+      draftTextBoxIdRef.current = annotation.id
+    }
     setFocusedAnnotationId(annotation.id)
     setLayoutEditId(null)
     setRichTextEditor({
@@ -1561,6 +1567,43 @@ export default function OperationsBlueprintPdfViewer({
     const safeRect = clampRectToPage(rect)
     setFocusedAnnotationId(null)
     setLayoutEditId(null)
+    if (annotationType === 'textBox') {
+      const draftId = `ann_draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+      const now = new Date().toISOString()
+      if (blueprint) {
+        const draftAnn: BlueprintAnnotation = {
+          id: draftId,
+          blueprintSetId: blueprint.id,
+          projectId: blueprint.projectId,
+          pageNumber: currentPage,
+          type: 'textBox',
+          rect: safeRect,
+          text: '',
+          color: toolColors.textBox || '#111827',
+          meta: { box: safeRect, anchor: anchor || { x: safeRect.x, y: safeRect.y }, textStyle: {} },
+          metadata: {},
+          createdAt: now,
+          updatedAt: now,
+        } as BlueprintAnnotation
+        setAllAnnotations(prev => [...prev, draftAnn])
+      }
+      draftTextBoxIdRef.current = draftId
+      textBoxSnapshotRef.current = null
+      setRichTextEditor({
+        mode: 'create',
+        annotationId: draftId,
+        annotationType: 'textBox',
+        x: safeRect.x,
+        y: safeRect.y,
+        w: safeRect.w,
+        h: safeRect.h,
+        anchor,
+        text: '',
+        color: toolColors.textBox || '#111827',
+        questionType: generateQuestionType,
+      })
+      return
+    }
     setRichTextEditor({
       mode: 'create',
       annotationType,
@@ -1573,7 +1616,19 @@ export default function OperationsBlueprintPdfViewer({
       color: toolColors[annotationType as ToolKey] || '#facc15',
       questionType: generateQuestionType,
     })
-  }, [toolColors, generateQuestionType])
+  }, [toolColors, generateQuestionType, blueprint, currentPage])
+
+  useEffect(() => {
+    const id = draftTextBoxIdRef.current
+    if (!richTextEditor || richTextEditor.annotationType !== 'textBox' || !id) return
+    const box = clampRectToPage({ x: richTextEditor.x, y: richTextEditor.y, w: richTextEditor.w, h: richTextEditor.h })
+    const ts = { ...textStyle, fontWeight: Number(textStyle.fontWeight || 400) }
+    const baseMeta = { box, anchor: richTextEditor.anchor || { x: box.x, y: box.y }, textStyle: ts }
+    setAllAnnotations(prev => prev.map(a => {
+      if (a.id !== id) return a
+      return { ...a, text: richTextEditor.text || '', color: richTextEditor.color || a.color, meta: baseMeta, metadata: baseMeta }
+    }))
+  }, [richTextEditor, textStyle])
 
   const saveRichTextEditor = useCallback(async () => {
     if (!blueprint || !richTextEditor) return
@@ -1604,8 +1659,11 @@ export default function OperationsBlueprintPdfViewer({
     }
 
     if (richTextEditor.mode === 'create') {
+      const annId = richTextEditor.annotationType === 'textBox' && richTextEditor.annotationId
+        ? richTextEditor.annotationId
+        : `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
       const ann: BlueprintAnnotation = {
-        id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        id: annId,
         blueprintSetId: blueprint.id,
         projectId: blueprint.projectId,
         pageNumber: currentPage,
@@ -1619,6 +1677,7 @@ export default function OperationsBlueprintPdfViewer({
         updatedAt: now,
       } as BlueprintAnnotation
       await persistAnnotation(ann)
+      draftTextBoxIdRef.current = null
       setFocusedAnnotationId(ann.id)
       setRichTextEditor(null)
       if (richTextEditor.annotationType === 'generate') {
@@ -1646,6 +1705,8 @@ export default function OperationsBlueprintPdfViewer({
       updatedAt: now,
     }, baseMeta) as BlueprintAnnotation
     await persistAnnotation(updated)
+    draftTextBoxIdRef.current = null
+    textBoxSnapshotRef.current = null
     setFocusedAnnotationId(updated.id)
     setRichTextEditor(null)
     if (richTextEditor.annotationType === 'generate') {
@@ -3295,7 +3356,7 @@ export default function OperationsBlueprintPdfViewer({
             {toolbarBucket === 'annotate' && (
               <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
                 <button
-                  onClick={(e) => { setToolMode('textBox'); setOpenPopover({ tool: 'textBox', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                  onClick={() => { setToolMode('textBox'); openCreateRichTextEditor('textBox', clampRectToPage({ x: 0.1, y: 0.1, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })) }}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'textBox' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 ><Type size={12} /> Text Box</button>
                 <button
@@ -3710,6 +3771,11 @@ export default function OperationsBlueprintPdfViewer({
                         }
                         // Opens the ToolPopover (style editor) anchored to a given element.
                         const openStylePopover = (anchorEl: HTMLElement) => {
+                          if (a.type === 'textBox') {
+                            setFocusedAnnotationId(a.id)
+                            openRichTextEditor(a)
+                            return
+                          }
                           const toolKey = annotationTypeToToolKey(a.type)
                           if (!toolKey) return
                           setFocusedAnnotationId(a.id)
@@ -4314,40 +4380,13 @@ export default function OperationsBlueprintPdfViewer({
                             }}
                             placeholder={richTextEditor.annotationType === 'generate' ? 'Write the coordination or RFI question...' : 'Enter text...'}
                           />
-                          {richTextEditor.annotationType === 'textBox' ? (
-                            <div className="mt-2 grid grid-cols-2 gap-2">
-                              <label className="text-[11px] text-gray-400">
-                                Width
-                                <input
-                                  type="range"
-                                  min="0.08"
-                                  max="0.5"
-                                  step="0.01"
-                                  value={richTextEditor.w}
-                                  onChange={(e) => setRichTextEditor((prev) => prev ? { ...prev, w: Number(e.target.value) } : prev)}
-                                  className="w-full"
-                                />
-                              </label>
-                              <label className="text-[11px] text-gray-400">
-                                Height
-                                <input
-                                  type="range"
-                                  min="0.04"
-                                  max="0.32"
-                                  step="0.01"
-                                  value={richTextEditor.h}
-                                  onChange={(e) => setRichTextEditor((prev) => prev ? { ...prev, h: Number(e.target.value) } : prev)}
-                                  className="w-full"
-                                />
-                              </label>
-                            </div>
-                          ) : (
+                          {richTextEditor.annotationType !== 'textBox' && (
                             <div className="mt-2 rounded border border-gray-800 bg-gray-950/30 px-2 py-1.5 text-[11px] text-gray-400">
                               Callout boxes auto-size to the text when saved. Use Move after saving to reposition or resize.
                             </div>
                           )}
 
-                          <div className="mt-3 grid grid-cols-2 gap-2">
+                          <div className="mt-3">
                             <label className="text-[11px] text-gray-400">
                               Font size
                               <select
@@ -4356,16 +4395,6 @@ export default function OperationsBlueprintPdfViewer({
                                 className="mt-1 w-full rounded border border-gray-700 bg-gray-900/60 px-2 py-1 text-xs text-gray-100"
                               >
                                 {FONT_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}px</option>)}
-                              </select>
-                            </label>
-                            <label className="text-[11px] text-gray-400">
-                              Weight
-                              <select
-                                value={textStyle.fontWeight}
-                                onChange={(e) => setTextStyle((prev) => ({ ...prev, fontWeight: Number(e.target.value) }))}
-                                className="mt-1 w-full rounded border border-gray-700 bg-gray-900/60 px-2 py-1 text-xs text-gray-100"
-                              >
-                                {FONT_WEIGHT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                               </select>
                             </label>
                           </div>
@@ -4427,7 +4456,20 @@ export default function OperationsBlueprintPdfViewer({
                           <div className="mt-3 flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => setRichTextEditor(null)}
+                              onClick={() => {
+                                if (richTextEditor.annotationType === 'textBox') {
+                                  if (richTextEditor.mode === 'create' && richTextEditor.annotationId) {
+                                    const id = richTextEditor.annotationId
+                                    setAllAnnotations(prev => prev.filter(a => a.id !== id))
+                                  } else if (richTextEditor.mode === 'edit' && textBoxSnapshotRef.current) {
+                                    const snap = textBoxSnapshotRef.current
+                                    setAllAnnotations(prev => prev.map(a => a.id === snap.id ? snap : a))
+                                  }
+                                  draftTextBoxIdRef.current = null
+                                  textBoxSnapshotRef.current = null
+                                }
+                                setRichTextEditor(null)
+                              }}
                               className="inline-flex min-w-[72px] items-center justify-center gap-1 rounded border border-gray-700 px-2 py-1.5 text-[11px] text-gray-300 hover:bg-white/5"
                             >
                               <X size={10} /> Cancel
@@ -4494,6 +4536,10 @@ export default function OperationsBlueprintPdfViewer({
                           setLayoutEditId(null)
                           if (a.type === 'note') {
                             openEditNoteEditor(a)
+                            return
+                          }
+                          if (a.type === 'textBox') {
+                            openRichTextEditor(a)
                             return
                           }
                           const toolKey = annotationTypeToToolKey(a.type)
