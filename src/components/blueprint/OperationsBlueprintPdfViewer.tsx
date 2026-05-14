@@ -48,6 +48,9 @@ import {
 } from '@/services/blueprintLibraryService'
 import { getBackupData } from '@/services/backupDataService'
 import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './ToolPopover'
+import { useAuth } from '@/hooks/useAuth'
+import { createRFI } from '@/agents/blueprint/rfiManager'
+import { createCoordinationItem } from '@/agents/blueprint/coordinationTracker'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -482,6 +485,7 @@ export default function OperationsBlueprintPdfViewer({
   onPageChange,
   onGenerateQuestion,
 }: OperationsBlueprintPdfViewerProps) {
+  const { profile } = useAuth()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const pdfDocRef = useRef<any>(null)
@@ -600,6 +604,15 @@ export default function OperationsBlueprintPdfViewer({
   // iPad/tablet immersive fullscreen mode (in-app overlay, not browser fullscreen)
   const [isTabletImmersiveFullscreen, setIsTabletImmersiveFullscreen] = useState(false)
   const [tabletAnnotationsOpen, setTabletAnnotationsOpen] = useState(false)
+  const [indexModalOpen, setIndexModalOpen] = useState(false)
+  const [rfiModal, setRfiModal] = useState<{ open: boolean; annotation: BlueprintAnnotation | null }>({ open: false, annotation: null })
+  const [cordModal, setCordModal] = useState<{ open: boolean; annotation: BlueprintAnnotation | null }>({ open: false, annotation: null })
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [rfiForm, setRfiForm] = useState({ requestedFrom: '', category: 'coordination', dueDate: '' })
+  const [cordForm, setCordForm] = useState({ category: 'light', dueDate: '' })
+  const [submittingRfi, setSubmittingRfi] = useState(false)
+  const [submittingCord, setSubmittingCord] = useState(false)
+  const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Pane resize state Ã¢â‚¬â€ persisted across hard reloads Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [leftPaneWidth, setLeftPaneWidth] = useState(() => {
@@ -4704,68 +4717,212 @@ export default function OperationsBlueprintPdfViewer({
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
               >
-                <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-300 flex items-center justify-between">
-                  <span>Current Page Annotations ({pageAnnotations.length})</span>
-                  {!useDesktopThreePaneLayout && (
+                {/* ── Annotations panel header ── */}
+                <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-100">Annotations</span>
+                  <div className="flex items-center gap-1">
                     <button
-                      onClick={() => setTabletAnnotationsOpen(v => !v)}
-                      className="inline-flex items-center justify-center p-0.5 rounded text-gray-400 hover:text-gray-200"
-                      title={tabletAnnotationsOpen ? 'Collapse annotations' : 'Expand annotations'}
+                      onClick={() => setIndexModalOpen(true)}
+                      className="text-[10px] px-2 py-0.5 rounded bg-gray-700/50 border border-gray-700/80 text-gray-300 hover:bg-gray-700 transition-colors"
+                      title="All pages annotation index"
                     >
-                      {tabletAnnotationsOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      Index
                     </button>
-                  )}
-                </div>
-                {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && pageAnnotations.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-gray-500">No annotations on this page.</div>
-                ) : (useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) ? (
-                  <div className="divide-y divide-gray-800">
-                    {pageAnnotations.map((a) => (
+                    {!useDesktopThreePaneLayout && (
                       <button
-                        key={a.id}
-                        onClick={(e) => {
-                          setFocusedAnnotationId(a.id)
-                          setLayoutEditId(null)
-                          if (a.type === 'note') {
-                            openEditNoteEditor(a)
-                            return
-                          }
-                          const toolKey = annotationTypeToToolKey(a.type)
-                          if (toolKey && a.type !== 'textBox') {
-                            setOpenPopover({
-                              tool: toolKey as ToolMode,
-                              anchorEl: e.currentTarget as HTMLElement,
-                              mode: 'edit',
-                              editingAnnotationId: a.id,
-                            })
-                          }
-                        }}
-                        className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
+                        onClick={() => setTabletAnnotationsOpen(v => !v)}
+                        className="inline-flex items-center justify-center p-0.5 rounded text-gray-400 hover:text-gray-200"
+                        title={tabletAnnotationsOpen ? 'Collapse annotations' : 'Expand annotations'}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: a.color || '#facc15' }} />
-                            <span className="text-gray-300 uppercase truncate">{annotationLabel(a)}</span>
-                            <span className="text-gray-500">P{a.pageNumber}</span>
+                        {tabletAnnotationsOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Current Page Annotations block ── */}
+                {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && (
+                  <div className="px-3 pt-2.5 pb-2 border-b border-gray-800">
+                    <div className="text-[11px] font-semibold text-gray-300">Current Page Annotations</div>
+                    <div className="text-[10px] text-gray-500 mt-0.5">Page {currentPage} · {pageAnnotations.length} {pageAnnotations.length === 1 ? 'annotation' : 'annotations'}</div>
+                  </div>
+                )}
+
+                {/* ── Grouped annotation list ── */}
+                {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && (() => {
+                  if (pageAnnotations.length === 0) {
+                    return <div className="px-3 py-4 text-xs text-gray-500 text-center">No annotations on this page.</div>
+                  }
+
+                  const textInserts = pageAnnotations.filter(a => a.type === 'textBox')
+                  const highlighted = pageAnnotations.filter(a => a.type === 'highlight' || a.type === 'textHighlight')
+                  const underlined = pageAnnotations.filter(a => a.type === 'underline')
+                  const notes = pageAnnotations.filter(a => a.type === 'note')
+                  const callouts = pageAnnotations.filter(a => a.type === 'callout')
+                  const penMarker = pageAnnotations.filter(a => a.type === 'pen' || a.type === 'marker')
+                  const shapes = pageAnnotations.filter(a => a.type === 'shape' || a.type === 'freehand' || a.type === 'arrow' || a.type === 'cloud')
+                  const measurements = pageAnnotations.filter(a => a.type === 'measure-distance' || a.type === 'measure-area' || a.type === 'measure-perimeter' || a.type === 'calibrate')
+                  const generated = pageAnnotations.filter(a => a.type === 'generate')
+
+                  const annotationsCount = textInserts.length + highlighted.length + underlined.length + notes.length + callouts.length
+                  const drawingsCount = penMarker.length + shapes.length + measurements.length
+                  const generatedCount = generated.length
+
+                  const toggleGroup = (key: string) => {
+                    setCollapsedGroups(prev => {
+                      const next = new Set(prev)
+                      next.has(key) ? next.delete(key) : next.add(key)
+                      return next
+                    })
+                  }
+
+                  const AnnotationRow = ({ a }: { a: BlueprintAnnotation }) => (
+                    <button
+                      key={a.id}
+                      onClick={(e) => {
+                        setFocusedAnnotationId(a.id)
+                        setLayoutEditId(null)
+                        if (a.type === 'note') { openEditNoteEditor(a); return }
+                        const toolKey = annotationTypeToToolKey(a.type)
+                        if (toolKey && a.type !== 'textBox') {
+                          setOpenPopover({ tool: toolKey as ToolMode, anchorEl: e.currentTarget as HTMLElement, mode: 'edit', editingAnnotationId: a.id })
+                        }
+                      }}
+                      className={`w-full text-left pl-6 pr-3 py-1.5 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: a.color || '#facc15' }} />
+                          <span className="text-gray-400 truncate">{shortText(a.text, 28) || annotationLabel(a)}</span>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
+                          className="text-red-400/60 hover:text-red-300 flex-shrink-0"
+                          title="Delete annotation"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    </button>
+                  )
+
+                  const GeneratedRow = ({ a }: { a: BlueprintAnnotation }) => {
+                    const meta = getAnnotationMeta(a)
+                    return (
+                      <div
+                        className={`pl-6 pr-3 py-1.5 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
+                      >
+                        <button
+                          className="w-full text-left"
+                          onClick={(e) => {
+                            setFocusedAnnotationId(a.id)
+                            setLayoutEditId(null)
+                            const toolKey = annotationTypeToToolKey(a.type)
+                            if (toolKey) {
+                              setOpenPopover({ tool: toolKey as ToolMode, anchorEl: e.currentTarget as HTMLElement, mode: 'edit', editingAnnotationId: a.id })
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0 mb-1">
+                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-amber-400" />
+                            <span className="text-amber-300/80 text-[10px] uppercase tracking-wide">{meta.questionType === 'rfi' ? 'RFI' : 'Coordination'}</span>
                           </div>
+                          <div className="text-gray-400 truncate mb-1.5">{shortText(a.text, 32)}</div>
+                        </button>
+                        <div className="flex items-center gap-1">
                           <button
-                            onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
-                            className="text-red-300 hover:text-red-200"
+                            onClick={() => {
+                              setRfiForm({ requestedFrom: '', category: 'coordination', dueDate: '' })
+                              setRfiModal({ open: true, annotation: a })
+                            }}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/35 transition-colors whitespace-nowrap"
+                            title="Generate RFI from this entry"
+                          >
+                            Generate RFI
+                          </button>
+                          <button
+                            onClick={() => {
+                              setCordForm({ category: 'light', dueDate: '' })
+                              setCordModal({ open: true, annotation: a })
+                            }}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/35 transition-colors whitespace-nowrap"
+                            title="Generate Coordination Question from this entry"
+                          >
+                            Cord. Question
+                          </button>
+                          <div className="flex-1" />
+                          <button
+                            onClick={() => void removeAnnotation(a.id)}
+                            className="text-red-400/60 hover:text-red-300"
                             title="Delete annotation"
                           >
-                            <Trash2 size={12} />
+                            <Trash2 size={11} />
                           </button>
                         </div>
-                        {(a.text || a.type === 'note') && (
-                          <div className="mt-1 text-gray-400 truncate">{shortText(a.text)}</div>
+                      </div>
+                    )
+                  }
+
+                  const SubGroup = ({ groupKey, title, items }: { groupKey: string; title: string; items: BlueprintAnnotation[] }) => {
+                    const isCollapsed = collapsedGroups.has(groupKey)
+                    return (
+                      <div>
+                        <button
+                          onClick={() => toggleGroup(groupKey)}
+                          className="w-full flex items-center gap-1 pl-4 pr-3 py-1 text-[10px] text-gray-400 hover:text-gray-300 hover:bg-white/3"
+                        >
+                          {isCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+                          <span>{title}</span>
+                          <span className="ml-auto text-gray-500">{items.length}</span>
+                        </button>
+                        {!isCollapsed && items.length === 0 && (
+                          <div className="pl-6 pr-3 py-1 text-[10px] text-gray-600 italic">None</div>
                         )}
-                        {(a.type === 'callout' || a.type === 'generate') && (
-                          <div className="mt-1 text-[11px] text-gray-500">Arrow callout pinned to exact point.</div>
+                        {!isCollapsed && items.map(a => <AnnotationRow key={a.id} a={a} />)}
+                      </div>
+                    )
+                  }
+
+                  const TopGroup = ({ groupKey, title, count, children }: { groupKey: string; title: string; count: number; children: React.ReactNode }) => {
+                    const isCollapsed = collapsedGroups.has(groupKey)
+                    return (
+                      <div className="border-b border-gray-800/60">
+                        <button
+                          onClick={() => toggleGroup(groupKey)}
+                          className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-white/5"
+                        >
+                          {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                          <span>{title}</span>
+                          <span className="ml-auto text-[10px] font-normal text-gray-500">{count}</span>
+                        </button>
+                        {!isCollapsed && <div className="pb-1">{children}</div>}
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div>
+                      <TopGroup groupKey="grp-annotations" title="Annotations" count={annotationsCount}>
+                        <SubGroup groupKey="sub-text" title="Text Inserts" items={textInserts} />
+                        <SubGroup groupKey="sub-highlight" title="Highlighted" items={highlighted} />
+                        <SubGroup groupKey="sub-underline" title="Underlined" items={underlined} />
+                        <SubGroup groupKey="sub-notes" title="Notes" items={notes} />
+                        <SubGroup groupKey="sub-callouts" title="Callouts" items={callouts} />
+                      </TopGroup>
+                      <TopGroup groupKey="grp-drawings" title="Drawings" count={drawingsCount}>
+                        <SubGroup groupKey="sub-pen" title="Pen and Marker" items={penMarker} />
+                        <SubGroup groupKey="sub-shapes" title="Shapes" items={shapes} />
+                        {measurements.length > 0 && <SubGroup groupKey="sub-measure" title="Measurements" items={measurements} />}
+                      </TopGroup>
+                      <TopGroup groupKey="grp-generated" title="Generated" count={generatedCount}>
+                        {generated.length === 0 && (
+                          <div className="pl-6 pr-3 py-1.5 text-[10px] text-gray-600 italic">No generated entries</div>
                         )}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+                        {generated.map(a => <GeneratedRow key={a.id} a={a} />)}
+                      </TopGroup>
+                    </div>
+                  )
+                })()}
               </div>
             </div>
           </div>
@@ -4884,6 +5041,282 @@ export default function OperationsBlueprintPdfViewer({
         )
         return createPortal(bar, document.body)
       })()}
+
+      {/* ── All Pages Index Modal ── */}
+      {indexModalOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70"
+          onClick={() => setIndexModalOpen(false)}
+        >
+          <div
+            className="relative bg-[#10131c] border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <span className="text-sm font-semibold text-gray-200">All Pages — Annotation Index</span>
+              <button onClick={() => setIndexModalOpen(false)} className="text-gray-400 hover:text-gray-200" title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="overflow-auto flex-1 p-2">
+              {numPages === 0 ? (
+                <div className="p-4 text-xs text-gray-500 text-center">No pages loaded.</div>
+              ) : (
+                Array.from({ length: numPages }, (_, i) => i + 1).map(pg => {
+                  const pgAnns = allAnnotations.filter(a => Number(a.pageNumber) === pg)
+                  const counts = {
+                    'Text Inserts': pgAnns.filter(a => a.type === 'textBox').length,
+                    'Highlighted': pgAnns.filter(a => a.type === 'highlight' || a.type === 'textHighlight').length,
+                    'Underlined': pgAnns.filter(a => a.type === 'underline').length,
+                    'Notes': pgAnns.filter(a => a.type === 'note').length,
+                    'Callouts': pgAnns.filter(a => a.type === 'callout').length,
+                    'Pen/Marker': pgAnns.filter(a => a.type === 'pen' || a.type === 'marker').length,
+                    'Shapes': pgAnns.filter(a => a.type === 'shape' || a.type === 'freehand' || a.type === 'arrow' || a.type === 'cloud').length,
+                    'Generated': pgAnns.filter(a => a.type === 'generate').length,
+                  }
+                  const total = Object.values(counts).reduce((s, v) => s + v, 0)
+                  const active = Object.entries(counts).filter(([, v]) => v > 0)
+                  return (
+                    <div key={pg} className="mb-1 rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold text-gray-300">Page {pg}</span>
+                        <span className="text-[10px] text-gray-500">{total} total</span>
+                      </div>
+                      {active.length === 0 ? (
+                        <span className="text-[10px] text-gray-600 italic">No annotations</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {active.map(([label, cnt]) => (
+                            <span key={label} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400">
+                              {label}: {cnt}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Generate RFI Modal ── */}
+      {rfiModal.open && rfiModal.annotation && createPortal(
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70"
+          onClick={() => setRfiModal({ open: false, annotation: null })}
+        >
+          <div
+            className="relative bg-[#10131c] border border-gray-700 rounded-xl shadow-2xl w-full max-w-md"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <span className="text-sm font-semibold text-gray-200">Generate RFI</span>
+              <button onClick={() => setRfiModal({ open: false, annotation: null })} className="text-gray-400 hover:text-gray-200" title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="px-4 py-3 space-y-3">
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Question (pre-filled from annotation)</label>
+                <div className="px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-300 border border-gray-700 min-h-[48px]">
+                  {rfiModal.annotation.text || '(No text)'}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Requested From</label>
+                <input
+                  type="text"
+                  value={rfiForm.requestedFrom}
+                  onChange={e => setRfiForm(f => ({ ...f, requestedFrom: e.target.value }))}
+                  placeholder="e.g. Architect, Engineer…"
+                  className="w-full px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-200 border border-gray-700 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Category</label>
+                  <select
+                    value={rfiForm.category}
+                    onChange={e => setRfiForm(f => ({ ...f, category: e.target.value }))}
+                    className="w-full px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-200 border border-gray-700 focus:border-blue-500 outline-none"
+                  >
+                    <option value="coordination">Coordination</option>
+                    <option value="design">Design</option>
+                    <option value="supplier">Supplier</option>
+                    <option value="permit">Permit</option>
+                    <option value="ahj">AHJ</option>
+                    <option value="inspection">Inspection</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Due Date</label>
+                  <input
+                    type="date"
+                    value={rfiForm.dueDate}
+                    onChange={e => setRfiForm(f => ({ ...f, dueDate: e.target.value }))}
+                    className="w-full px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-200 border border-gray-700 focus:border-blue-500 outline-none"
+                  />
+                </div>
+              </div>
+              {actionMsg && (
+                <div className={`text-xs px-2 py-1.5 rounded ${actionMsg.type === 'success' ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+                  {actionMsg.text}
+                </div>
+              )}
+            </div>
+            <div className="px-4 pb-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setRfiModal({ open: false, annotation: null }); setActionMsg(null) }}
+                className="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={submittingRfi || !rfiForm.requestedFrom.trim()}
+                onClick={async () => {
+                  const ann = rfiModal.annotation
+                  if (!ann || !blueprint?.projectId || !profile?.org_id) {
+                    setActionMsg({ type: 'error', text: 'Missing project or org context.' })
+                    return
+                  }
+                  setSubmittingRfi(true)
+                  setActionMsg(null)
+                  try {
+                    await createRFI(
+                      profile.org_id,
+                      blueprint.projectId,
+                      ann.text || '',
+                      rfiForm.requestedFrom.trim(),
+                      rfiForm.category as any,
+                      rfiForm.dueDate || null,
+                      undefined,
+                      undefined,
+                      profile.id
+                    )
+                    setActionMsg({ type: 'success', text: 'RFI created successfully.' })
+                    setTimeout(() => { setRfiModal({ open: false, annotation: null }); setActionMsg(null) }, 1200)
+                  } catch (err) {
+                    setActionMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to create RFI.' })
+                  } finally {
+                    setSubmittingRfi(false)
+                  }
+                }}
+                className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {submittingRfi && <Loader2 size={11} className="animate-spin" />}
+                Create RFI
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Generate Coordination Question Modal ── */}
+      {cordModal.open && cordModal.annotation && createPortal(
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70"
+          onClick={() => setCordModal({ open: false, annotation: null })}
+        >
+          <div
+            className="relative bg-[#10131c] border border-gray-700 rounded-xl shadow-2xl w-full max-w-md"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <span className="text-sm font-semibold text-gray-200">Generate Coordination Question</span>
+              <button onClick={() => setCordModal({ open: false, annotation: null })} className="text-gray-400 hover:text-gray-200" title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="px-4 py-3 space-y-3">
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Description (pre-filled from annotation)</label>
+                <div className="px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-300 border border-gray-700 min-h-[48px]">
+                  {cordModal.annotation.text || '(No text)'}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Category</label>
+                  <select
+                    value={cordForm.category}
+                    onChange={e => setCordForm(f => ({ ...f, category: e.target.value }))}
+                    className="w-full px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-200 border border-gray-700 focus:border-emerald-500 outline-none"
+                  >
+                    <option value="light">Light</option>
+                    <option value="main">Main</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="research">Research</option>
+                    <option value="permit">Permit</option>
+                    <option value="inspect">Inspect</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Due Date</label>
+                  <input
+                    type="date"
+                    value={cordForm.dueDate}
+                    onChange={e => setCordForm(f => ({ ...f, dueDate: e.target.value }))}
+                    className="w-full px-2 py-1.5 rounded bg-gray-800/60 text-xs text-gray-200 border border-gray-700 focus:border-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+              {actionMsg && (
+                <div className={`text-xs px-2 py-1.5 rounded ${actionMsg.type === 'success' ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+                  {actionMsg.text}
+                </div>
+              )}
+            </div>
+            <div className="px-4 pb-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setCordModal({ open: false, annotation: null }); setActionMsg(null) }}
+                className="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={submittingCord}
+                onClick={async () => {
+                  const ann = cordModal.annotation
+                  if (!ann || !blueprint?.projectId || !profile?.org_id) {
+                    setActionMsg({ type: 'error', text: 'Missing project or org context.' })
+                    return
+                  }
+                  setSubmittingCord(true)
+                  setActionMsg(null)
+                  try {
+                    await createCoordinationItem(
+                      profile.org_id,
+                      blueprint.projectId,
+                      cordForm.category as any,
+                      ann.text || '',
+                      cordForm.dueDate || null,
+                      undefined,
+                      undefined,
+                      profile.id
+                    )
+                    setActionMsg({ type: 'success', text: 'Coordination question created.' })
+                    setTimeout(() => { setCordModal({ open: false, annotation: null }); setActionMsg(null) }, 1200)
+                  } catch (err) {
+                    setActionMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to create coordination item.' })
+                  } finally {
+                    setSubmittingCord(false)
+                  }
+                }}
+                className="px-3 py-1.5 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {submittingCord && <Loader2 size={11} className="animate-spin" />}
+                Create Item
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
