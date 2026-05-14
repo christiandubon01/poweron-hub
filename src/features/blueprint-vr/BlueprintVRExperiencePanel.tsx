@@ -352,6 +352,7 @@ export default function BlueprintVRExperiencePanel({
   const [showLabels, setShowLabels] = useState(true)
   const [wallOpacity, setWallOpacity] = useState(0.82)
   const [cameraPreset, setCameraPreset] = useState<'top' | 'iso' | 'room'>('iso')
+  const [resetViewNonce, setResetViewNonce] = useState(0)
 
   const buildingModel = useMemo<BlueprintBuildingModel>(() => {
     const manifestName = job.outputManifest?.projectName || sourceBlueprint.name
@@ -379,7 +380,15 @@ export default function BlueprintVRExperiencePanel({
     setSelectedRoomId(firstRoomId)
     setCameraPreset('iso')
     setWallOpacity(0.82)
+    setResetViewNonce((v) => v + 1)
   }, [firstRoomId])
+
+  const selectedRoomLabel = useMemo(() => {
+    if (!selectedRoomId) return null
+    const rooms = buildingModel.levels[0]?.rooms || []
+    const room = rooms.find((r) => r.id === selectedRoomId)
+    return room?.label || null
+  }, [buildingModel, selectedRoomId])
 
   // Always show all 4 stages from STAGE_ORDER — no dependency on manifest
   const visibleStages = [...STAGE_ORDER] as VRStage[]
@@ -568,6 +577,36 @@ export default function BlueprintVRExperiencePanel({
               <button onClick={() => setCameraPreset('room')} style={controlButtonStyle(cameraPreset === 'room')}>Room</button>
             </div>
 
+            {viewMode === 'room' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => { setViewMode('dollhouse'); setCameraPreset('iso') }}
+                  style={controlButtonStyle(false)}
+                >
+                  Back to 3D Dollhouse
+                </button>
+                <button
+                  onClick={() => { setViewMode('plan'); setCameraPreset('top') }}
+                  style={controlButtonStyle(false)}
+                >
+                  Back to 2D Plan
+                </button>
+                <button
+                  onClick={() => {
+                    setCameraPreset('room')
+                    setWallOpacity(0.82)
+                    setResetViewNonce((v) => v + 1)
+                  }}
+                  style={controlButtonStyle(false)}
+                >
+                  Reset Room View
+                </button>
+                <span style={smallLabelStyle}>
+                  Selected Room: {selectedRoomLabel || 'None'}
+                </span>
+              </div>
+            )}
+
             {viewMode === 'plan' && (
               <MeasuredPlanViewer
                 model={buildingModel}
@@ -594,6 +633,7 @@ export default function BlueprintVRExperiencePanel({
                 showLabels={showLabels}
                 wallOpacity={wallOpacity}
                 cameraPreset={cameraPreset}
+                resetViewNonce={resetViewNonce}
               />
             )}
 

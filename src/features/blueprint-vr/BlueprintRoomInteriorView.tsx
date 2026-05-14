@@ -20,6 +20,11 @@ const STAGE_ACCENT: Record<VRStage, string> = {
   finished: '#06B6D4',
 }
 
+function hasAnyToken(value: string, tokens: string[]): boolean {
+  const normalized = value.toLowerCase()
+  return tokens.some((token) => normalized.includes(token))
+}
+
 function pickFurniture(room: BuildingRoomModel): Array<{ x: number; y: number; w: number; h: number; label: string }> {
   const kind = `${room.metadata?.type || ''} ${room.label}`.toLowerCase()
   if (kind.includes('reception') || kind.includes('waiting')) {
@@ -90,6 +95,43 @@ export default function BlueprintRoomInteriorView({
   const wallFinish = 'url(#wall-polish)'
   const floorFinish = 'url(#floor-marble)'
   const furniture = pickFurniture(room)
+  const roomElectricalPoints = roomElectrical.map((comp) => {
+    const normalizedX = (comp.worldPos.x - room.bounds.min.x) / Math.max(1, roomWidth)
+    const normalizedZ = (comp.worldPos.z - room.bounds.min.y) / Math.max(1, roomDepth)
+    const x = 58 + normalizedX * 242
+    const floorY = 224 - normalizedZ * 18
+    const wallY = 204 - comp.worldPos.y * 12 - normalizedZ * 5
+    const ceilingY = 92 + normalizedZ * 10
+    const text = `${comp.category} ${comp.label}`.toLowerCase()
+    return {
+      ...comp,
+      text,
+      x,
+      floorY,
+      wallY,
+      ceilingY,
+    }
+  })
+
+  const undergroundPoints = roomElectricalPoints.filter((comp) =>
+    hasAnyToken(comp.text, ['conduit', 'floor box', 'service', 'ground']),
+  )
+  const roughWallBoxes = roomElectricalPoints.filter((comp) =>
+    hasAnyToken(comp.text, ['device box', 'j-box', 'panel']),
+  )
+  const trimReceptacles = roomElectricalPoints.filter((comp) =>
+    hasAnyToken(comp.text, ['receptacle']),
+  )
+  const trimSwitches = roomElectricalPoints.filter((comp) =>
+    hasAnyToken(comp.text, ['switch']),
+  )
+  const trimFixtures = roomElectricalPoints.filter((comp) =>
+    hasAnyToken(comp.text, ['fixture']),
+  )
+  const finishedDevices = roomElectricalPoints.filter((comp) =>
+    hasAnyToken(comp.text, ['labeled device', 'as-built marker', 'light circuit']),
+  )
+  const isUtilityLikeRoom = hasAnyToken(`${room.label} ${room.metadata?.type || ''}`, ['utility', 'panel', 'service', 'electrical'])
 
   return (
     <div style={{ border: '1px solid rgba(0,229,204,0.15)', borderRadius: 8, overflow: 'hidden', background: '#070b12' }}>
@@ -131,30 +173,131 @@ export default function BlueprintRoomInteriorView({
           </g>
         ))}
 
-        {showElectrical &&
-          roomElectrical.map((comp) => {
-            const normalizedX = (comp.worldPos.x - room.bounds.min.x) / Math.max(1, roomWidth)
-            const normalizedZ = (comp.worldPos.z - room.bounds.min.y) / Math.max(1, roomDepth)
-            const x = 58 + normalizedX * 242
-            const y =
-              activeStage === 'underground'
-                ? 224 - normalizedZ * 18
-                : activeStage === 'roughIn'
-                ? 198 - comp.worldPos.y * 10
-                : activeStage === 'trim'
-                ? 186 - comp.worldPos.y * 11
-                : 170 - comp.worldPos.y * 10
-            return (
+        {showElectrical && activeStage === 'underground' && (
+          <g>
+            {undergroundPoints.length > 1 && (
+              <polyline
+                points={undergroundPoints.map((point) => `${point.x},${point.floorY}`).join(' ')}
+                fill="none"
+                stroke="#ff9b45"
+                strokeWidth={2.6}
+                strokeDasharray="8 4"
+                opacity={0.9}
+              />
+            )}
+            {undergroundPoints.map((comp, idx) => {
+              const isFloorBox = hasAnyToken(comp.text, ['floor box'])
+              const isService = hasAnyToken(comp.text, ['service', 'ground'])
+              return (
+                <g key={comp.id}>
+                  {isFloorBox && (
+                    <rect x={comp.x - 4.5} y={comp.floorY - 4.5} width={9} height={9} fill="#ffa040" stroke="#ffd1a8" strokeWidth={0.8} />
+                  )}
+                  {!isFloorBox && <circle cx={comp.x} cy={comp.floorY} r={3.2} fill="#e07020" stroke="#ffe7cc" strokeWidth={0.9} />}
+                  {isService && (
+                    <path
+                      d={`M ${comp.x} ${comp.floorY - 10} L ${comp.x - 4} ${comp.floorY - 2} L ${comp.x + 4} ${comp.floorY - 2} Z`}
+                      fill="#ff5252"
+                      opacity={0.95}
+                    />
+                  )}
+                  {idx % 2 === 0 && !isFloorBox && (
+                    <circle cx={comp.x} cy={comp.floorY} r={6.4} fill="none" stroke="#ff8b5c" strokeDasharray="3 2" opacity={0.65} />
+                  )}
+                </g>
+              )
+            })}
+            {showLabels && (
+              <text x={64} y={216} fill="#ffbf8d" fontSize={8} fontFamily="monospace">
+                Below slab / floor rough path
+              </text>
+            )}
+          </g>
+        )}
+
+        {showElectrical && activeStage === 'roughIn' && (
+          <g>
+            {roughWallBoxes.map((comp, idx) => (
               <g key={comp.id}>
-                <circle cx={x} cy={y} r={3.6} fill={accent} stroke="rgba(255,255,255,0.4)" />
-                {showLabels && activeStage === 'finished' && (
-                  <text x={x + 6} y={y - 4} fill="rgba(190,236,255,0.9)" fontSize={7}>
-                    {comp.category}
+                <rect x={comp.x - 5} y={comp.wallY - 6} width={10} height={12} fill="rgba(59,130,246,0.2)" stroke="#60a5fa" strokeWidth={1.1} />
+                {idx > 0 && (
+                  <line
+                    x1={roughWallBoxes[idx - 1].x}
+                    y1={roughWallBoxes[idx - 1].wallY}
+                    x2={comp.x}
+                    y2={comp.wallY}
+                    stroke="#93c5fd"
+                    strokeWidth={1.4}
+                    strokeDasharray="4 3"
+                    opacity={0.85}
+                  />
+                )}
+              </g>
+            ))}
+            {isUtilityLikeRoom && (
+              <g>
+                <rect x={266} y={130} width={20} height={38} fill="rgba(234,179,8,0.14)" stroke="#fbbf24" />
+                <line x1={276} y1={130} x2={226} y2={106} stroke="#fbbf24" strokeDasharray="5 2" />
+                {showLabels && (
+                  <>
+                    <text x={276} y={126} textAnchor="middle" fill="#fbbf24" fontSize={7} fontFamily="monospace">
+                      PANEL
+                    </text>
+                    <text x={220} y={102} fill="#93c5fd" fontSize={7} fontFamily="monospace">
+                      HOMERUN
+                    </text>
+                  </>
+                )}
+              </g>
+            )}
+          </g>
+        )}
+
+        {showElectrical && activeStage === 'trim' && (
+          <g>
+            {trimReceptacles.map((comp) => (
+              <g key={comp.id}>
+                <rect x={comp.x - 4} y={comp.wallY - 5} width={8} height={10} fill="rgba(34,197,94,0.2)" stroke="#22c55e" />
+                <line x1={comp.x - 1.5} y1={comp.wallY - 2.5} x2={comp.x - 1.5} y2={comp.wallY + 2.5} stroke="#ccffe0" strokeWidth={0.7} />
+                <line x1={comp.x + 1.5} y1={comp.wallY - 2.5} x2={comp.x + 1.5} y2={comp.wallY + 2.5} stroke="#ccffe0" strokeWidth={0.7} />
+              </g>
+            ))}
+            {trimSwitches.map((comp) => (
+              <g key={comp.id}>
+                <rect x={comp.x - 3.8} y={comp.wallY - 3.8} width={7.6} height={7.6} fill="rgba(74,222,128,0.22)" stroke="#4ade80" />
+                <text x={comp.x} y={comp.wallY + 2} textAnchor="middle" fill="#b7ffd1" fontSize={6.2} fontFamily="monospace">S</text>
+              </g>
+            ))}
+            {trimFixtures.map((comp) => (
+              <g key={comp.id}>
+                <circle cx={comp.x} cy={comp.ceilingY} r={6} fill="rgba(134,239,172,0.2)" stroke="#86efac" />
+                <line x1={comp.x - 4} y1={comp.ceilingY - 4} x2={comp.x + 4} y2={comp.ceilingY + 4} stroke="#ccffe0" strokeWidth={1} />
+                <line x1={comp.x + 4} y1={comp.ceilingY - 4} x2={comp.x - 4} y2={comp.ceilingY + 4} stroke="#ccffe0" strokeWidth={1} />
+              </g>
+            ))}
+          </g>
+        )}
+
+        {showElectrical && activeStage === 'finished' && (
+          <g>
+            {finishedDevices.map((comp, idx) => (
+              <g key={comp.id}>
+                <circle cx={comp.x} cy={comp.wallY} r={4.2} fill="rgba(6,182,212,0.22)" stroke="#67e8f9" strokeWidth={1.1} />
+                <circle cx={comp.x} cy={comp.wallY} r={1.8} fill="#a78bfa" />
+                {showLabels && (
+                  <text x={comp.x + 6} y={comp.wallY - 5} fill={idx % 2 === 0 ? '#67e8f9' : '#d9b8ff'} fontSize={6.5} fontFamily="monospace">
+                    CKT-{idx + 1}
                   </text>
                 )}
               </g>
-            )
-          })}
+            ))}
+            {isUtilityLikeRoom && showLabels && (
+              <text x={268} y={122} textAnchor="middle" fill="#d9b8ff" fontSize={7} fontFamily="monospace">
+                PANEL LABELS VERIFIED
+              </text>
+            )}
+          </g>
+        )}
 
         {showDimensions && (
           <g>
