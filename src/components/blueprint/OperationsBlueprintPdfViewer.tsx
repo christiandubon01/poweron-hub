@@ -3603,8 +3603,8 @@ export default function OperationsBlueprintPdfViewer({
             </div>
           )}
 
-          <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-4' : 'p-2'}>
-            <div className={useDesktopThreePaneLayout ? 'contents' : isFullScreenView || isTabletImmersiveFullscreen ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-2 sm:gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
+          <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden' : isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-4' : 'p-2'}>
+            <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'grid grid-cols-1 h-full' : isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-2 sm:gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
