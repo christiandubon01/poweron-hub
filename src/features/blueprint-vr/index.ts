@@ -184,6 +184,10 @@ export {
   getLegendEntriesByStage,
 } from './electrical3DPlacement'
 
+// Blueprint VR Legend — component display and counts
+export { default as BlueprintVRLegend } from './BlueprintVRLegend'
+export type { BlueprintVRLegendProps } from './BlueprintVRLegend'
+
 // Dimension extraction adapter — BVR12
 export type {
   ExtractedDimensionText,
