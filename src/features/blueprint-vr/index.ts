@@ -95,3 +95,23 @@ export {
   getRoomArea,
   getFootprintArea,
 } from './dimensionModel'
+
+// Dimension extraction adapter — BVR12
+export type {
+  ExtractedDimensionText,
+  ExtractedScaleInfo,
+  DimensionExtractionWarningCode,
+  DimensionExtractionWarning,
+  BlueprintDimensionExtractionInput,
+  BlueprintDimensionExtractionResult,
+} from './blueprintDimensionExtractor'
+
+export {
+  parseArchitecturalScale,
+  parseDimensionText,
+  normalizeDimensionStrings,
+  inferFootprintFromBlueprintMetadata,
+  inferRoomZonesFromFootprint,
+  createFallbackMeasuredSpace,
+  extractBlueprintDimensions,
+} from './blueprintDimensionExtractor'
