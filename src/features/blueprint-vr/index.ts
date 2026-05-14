@@ -63,9 +63,17 @@ export {
   createBlueprintVRSceneManifest,
 } from './sceneManifestBuilder'
 
-// Landscape viewer
+// Landscape viewer (legacy 2D fallback — kept for reference)
 export { default as BlueprintVRLandscapeViewer } from './BlueprintVRLandscapeViewer'
 export type { BlueprintVRLandscapeViewerProps } from './BlueprintVRLandscapeViewer'
+
+// 3D space viewer — BVR14 Planner5D-style isometric renderer
+export { default as Blueprint3DSpaceViewer } from './Blueprint3DSpaceViewer'
+export type { Blueprint3DSpaceViewerProps } from './Blueprint3DSpaceViewer'
+
+// Space geometry helpers — BVR14
+export { buildSpaceGeometry } from './spaceGeometry'
+export type { SpaceGeometry, GeoShape, GeoDim, Pt } from './spaceGeometry'
 
 // Dimension model — measurement types
 export type {
