@@ -72,8 +72,8 @@ export { default as Blueprint3DSpaceViewer } from './Blueprint3DSpaceViewer'
 export type { Blueprint3DSpaceViewerProps } from './Blueprint3DSpaceViewer'
 
 // Space geometry helpers — BVR14
-export { buildSpaceGeometry } from './spaceGeometry'
-export type { SpaceGeometry, GeoShape, GeoDim, Pt } from './spaceGeometry'
+export { buildSpaceGeometry, compileBuildingModelToGeometry } from './spaceGeometry'
+export type { SpaceGeometry, GeoShape, GeoDim, Pt, CompiledGeometry } from './spaceGeometry'
 
 // Dimension model — measurement types
 export type {

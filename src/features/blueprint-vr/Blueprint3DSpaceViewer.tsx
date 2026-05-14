@@ -15,9 +15,11 @@
 
 import React, { useState, useMemo } from 'react'
 import type { BuildingSpace } from './dimensionModel'
+import type { BlueprintBuildingModel } from './buildingModel'
 import type { VRStage } from './types'
 import {
   buildSpaceGeometry,
+  compileBuildingModelToGeometry,
   type GeoShape,
   type GeoPoly,
   type GeoLine,
@@ -30,7 +32,9 @@ import {
 
 export interface Blueprint3DSpaceViewerProps {
   buildingSpace?: BuildingSpace | null
+  buildingModel?: BlueprintBuildingModel | null
   activeStage: VRStage
+  show2DMode?: boolean
 }
 
 // ─── Stage theme colors ───────────────────────────────────────────────────────
@@ -141,28 +145,28 @@ function Shape({ s }: { s: GeoShape }) {
 function DimAnnotation({ d }: { d: GeoDim }) {
   return (
     <g opacity={0.85}>
-      {/* Main dimension line */}
+      {/* Main dimension line with enhanced styling */}
       <line
         x1={d.line[0].sx.toFixed(1)} y1={d.line[0].sy.toFixed(1)}
         x2={d.line[1].sx.toFixed(1)} y2={d.line[1].sy.toFixed(1)}
-        stroke={d.stroke} strokeWidth={1} strokeLinecap="round"
+        stroke={d.stroke} strokeWidth={1.2} strokeLinecap="round"
       />
       {/* Tick marks */}
       <line
         x1={d.tick1[0].sx.toFixed(1)} y1={d.tick1[0].sy.toFixed(1)}
         x2={d.tick1[1].sx.toFixed(1)} y2={d.tick1[1].sy.toFixed(1)}
-        stroke={d.stroke} strokeWidth={1}
+        stroke={d.stroke} strokeWidth={1.2}
       />
       <line
         x1={d.tick2[0].sx.toFixed(1)} y1={d.tick2[0].sy.toFixed(1)}
         x2={d.tick2[1].sx.toFixed(1)} y2={d.tick2[1].sy.toFixed(1)}
-        stroke={d.stroke} strokeWidth={1}
+        stroke={d.stroke} strokeWidth={1.2}
       />
-      {/* Label */}
+      {/* Label with subtle background */}
       <text
         x={d.labelPt.sx.toFixed(1)} y={d.labelPt.sy.toFixed(1)}
         fill={d.stroke}
-        fontSize={7}
+        fontSize={7.5}
         fontFamily="monospace"
         fontWeight="700"
         textAnchor="middle"
@@ -257,13 +261,37 @@ function ToggleBtn({
 
 export default function Blueprint3DSpaceViewer({
   buildingSpace,
+  buildingModel,
   activeStage,
+  show2DMode = false,
 }: Blueprint3DSpaceViewerProps) {
   const [showDims, setShowDims]   = useState(true)
   const [showElec, setShowElec]   = useState(true)
   const [showLabels, setShowLabels] = useState(true)
+  const [is3DMode, setIs3DMode]   = useState(!show2DMode)
 
-  const geo = useMemo(() => buildSpaceGeometry(buildingSpace), [buildingSpace])
+  // Prefer building model geometry if available, fall back to BuildingSpace
+  const geo = useMemo(() => {
+    if (buildingModel) {
+      const compiled = compileBuildingModelToGeometry(buildingModel)
+      return {
+        vw: compiled.vw,
+        vh: compiled.vh,
+        baseShapes: compiled.shapes,
+        compsByStage: {
+          underground: [],
+          roughIn: [],
+          trim: [],
+          finished: [],
+        },
+        dims: compiled.dims,
+        badges: compiled.badges,
+        bldg: { W: buildingModel.footprint.width, D: buildingModel.footprint.height, H: buildingModel.wallHeight.value, ceilH: buildingModel.ceilingHeight.value, slabIn: buildingModel.slabThickness?.value || 4 },
+        isInferred: buildingModel.confidence < 0.8,
+      }
+    }
+    return buildSpaceGeometry(buildingSpace)
+  }, [buildingSpace, buildingModel])
 
   const { vw, vh, baseShapes, compsByStage, dims, badges, bldg, isInferred } = geo
   const theme = STAGE_THEME[activeStage]
@@ -390,6 +418,9 @@ export default function Blueprint3DSpaceViewer({
         background: `${theme.p}08`,
         flexWrap: 'wrap',
       }}>
+        {show2DMode && (
+          <ToggleBtn active={is3DMode} label="3D View" color="#00ddcc" onClick={() => setIs3DMode(v => !v)} />
+        )}
         <ToggleBtn active={showDims}   label="Dimensions" color="#00ddcc" onClick={() => setShowDims(v => !v)} />
         <ToggleBtn active={showElec}   label="Electrical" color={theme.p}  onClick={() => setShowElec(v => !v)} />
         <ToggleBtn active={showLabels} label="Labels"     color="#a0a8c0"  onClick={() => setShowLabels(v => !v)} />

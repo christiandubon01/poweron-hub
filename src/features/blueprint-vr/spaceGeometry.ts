@@ -1,7 +1,7 @@
 /**
  * src/features/blueprint-vr/spaceGeometry.ts
  *
- * Converts a BuildingSpace (or fallback) into isometric SVG geometry data.
+ * Converts a BuildingSpace (or BlueprintBuildingModel fallback) into isometric SVG geometry data.
  * Pure TypeScript — no React, no DOM, no external dependencies.
  *
  * Coordinate system:
@@ -13,6 +13,7 @@
  */
 
 import type { BuildingSpace } from './dimensionModel'
+import type { BlueprintBuildingModel, BuildingWallModel, BuildingOpeningModel } from './buildingModel'
 import type { VRStage } from './types'
 
 // ─── Viewport & Projection Constants ─────────────────────────────────────────
@@ -641,5 +642,261 @@ export function buildSpaceGeometry(
     badges: buildBadges(spec, isInferred),
     bldg: { W: spec.W, D: spec.D, H: spec.H, ceilH: spec.ceilH, slabIn: spec.slabIn },
     isInferred,
+  }
+}
+
+// ─── Building Model Geometry Compiler ─────────────────────────────────────────
+//
+// Converts a BlueprintBuildingModel into isometric geometry for 3D visualization.
+// Handles multiple levels, rooms, walls, openings, dimensions, and electrical anchors.
+
+export interface CompiledGeometry {
+  shapes: GeoShape[]
+  dims: GeoDim[]
+  badges: Array<{ x: number; y: number; label: string; value: string; color: string; inferred: boolean }>
+  walls: Array<{ id: string; pts: Pt[] }>
+  openings: Array<{ id: string; type: 'door' | 'window'; position: Pt; width: number; height: number }>
+  hasWarnings: boolean
+  warnings: string[]
+  vw: number
+  vh: number
+}
+
+/**
+ * Compile a BlueprintBuildingModel into SVG geometry.
+ * Handles ground floor layout with isometric projection.
+ */
+export function compileBuildingModelToGeometry(
+  model: BlueprintBuildingModel | null | undefined
+): CompiledGeometry {
+  const warnings: string[] = []
+  const shapes: GeoShape[] = []
+  const dims: GeoDim[] = []
+  const wallGeos: Array<{ id: string; pts: Pt[] }> = []
+  const openingGeos: Array<{ id: string; type: 'door' | 'window'; position: Pt; width: number; height: number }> = []
+
+  // Fallback to defaults if model not provided
+  if (!model || !model.levels || model.levels.length === 0) {
+    warnings.push('No building model provided; using default layout')
+    return {
+      shapes: [],
+      dims: [],
+      badges: [],
+      walls: [],
+      openings: [],
+      hasWarnings: true,
+      warnings,
+      vw: GEO_VW,
+      vh: GEO_VH,
+    }
+  }
+
+  // Extract ground floor (first level)
+  const groundFloor = model.levels[0]
+  if (!groundFloor) {
+    warnings.push('No ground floor found in model')
+    return {
+      shapes: [],
+      dims: [],
+      badges: [],
+      walls: [],
+      openings: [],
+      hasWarnings: true,
+      warnings,
+      vw: GEO_VW,
+      vh: GEO_VH,
+    }
+  }
+
+  // Calculate building dimensions from footprint
+  const W = model.footprint.width || 40
+  const D = model.footprint.height || 30
+  const H = model.wallHeight.unit === 'ft' ? model.wallHeight.value : model.wallHeight.value / 12
+  const ceilH = model.ceilingHeight.unit === 'ft' ? model.ceilingHeight.value : model.ceilingHeight.value / 12
+  const slabIn = model.slabThickness ? (model.slabThickness.unit === 'in' ? model.slabThickness.value : model.slabThickness.value * 12) : DEF_SLAB
+
+  // ── Render floor base ────────────────────────────────────────────────────
+  shapes.push(poly('fl-base', [
+    iso(0, 0, 0), iso(W, 0, 0), iso(W, D, 0), iso(0, D, 0),
+  ], 'rgba(0,229,204,0.04)', 'rgba(0,210,185,0.12)', 0.5, 1, -100))
+
+  // ── Render rooms and walls ───────────────────────────────────────────────
+  groundFloor.rooms.forEach((room, roomIdx) => {
+    const { bounds } = room
+    const roomW = bounds.max.x - bounds.min.x
+    const roomH = bounds.max.y - bounds.min.y
+
+    // Room label at floor level
+    const roomCenterX = bounds.min.x + roomW / 2
+    const roomCenterZ = bounds.min.y + roomH / 2
+    const roomLabel = room.label.toUpperCase()
+    shapes.push(lbl(
+      `room-label-${roomIdx}`,
+      iso(roomCenterX, roomCenterZ, 0),
+      roomLabel,
+      'rgba(255,255,255,0.08)',
+      12 + (roomLabel.length > 8 ? 0 : 2),
+      1,
+      -98,
+      { textAnchor: 'middle', dominantBaseline: 'middle', fontFamily: 'monospace' }
+    ))
+
+    // Render room walls
+    room.walls.forEach((wall, wallIdx) => {
+      const wallId = `wall-${roomIdx}-${wallIdx}`
+      const pts = [wall.start, wall.end, 
+        { x: wall.end.x, y: wall.end.y + (wall.height.value * 0.3) }, // top-right
+        { x: wall.start.x, y: wall.start.y + (wall.height.value * 0.3) }, // top-left
+      ]
+
+      // Calculate wall color based on position
+      const isExterior = bounds.min.x === wall.start.x || bounds.max.x === wall.start.x || 
+                         bounds.min.y === wall.start.y || bounds.max.y === wall.start.y
+      const wallColor = isExterior ? WC.front : WC.part
+
+      // Render wall segment (extruded to 3D)
+      const p1 = iso(wall.start.x, wall.start.y, 0)
+      const p2 = iso(wall.end.x, wall.end.y, 0)
+      const p3 = iso(wall.end.x, wall.end.y, H)
+      const p4 = iso(wall.start.x, wall.start.y, H)
+
+      shapes.push(poly(wallId, [p1, p2, p3, p4], wallColor.fill, wallColor.stroke, 1.2, 1, 30 + roomIdx * 5))
+      wallGeos.push({ id: wallId, pts: [p1, p2, p3, p4] })
+
+      // Render openings (doors and windows) on this wall
+      wall.openings.forEach((opening, opIdx) => {
+        const opId = `opening-${roomIdx}-${wallIdx}-${opIdx}`
+        const opPos = opening.positionAlongWall.value
+        const opW = opening.width.value
+        const opH = opening.height.value
+
+        // Calculate opening position along wall segment
+        const dx = wall.end.x - wall.start.x
+        const dz = wall.end.y - wall.start.y
+        const len = Math.sqrt(dx * dx + dz * dz)
+        const t = len > 0 ? opPos / len : 0
+        const opX = wall.start.x + dx * t
+        const opZ = wall.start.y + dz * t
+
+        const opPt = iso(opX, opZ, 1.5)
+        openingGeos.push({
+          id: opId,
+          type: opening.type,
+          position: opPt,
+          width: opW,
+          height: opH,
+        })
+
+        // Draw opening marker
+        const color = opening.type === 'door' ? 'rgba(0,229,204,0.4)' : 'rgba(100,180,255,0.35)'
+        shapes.push(gline(opId, 
+          { sx: opPt.sx - 8, sy: opPt.sy },
+          { sx: opPt.sx + 8, sy: opPt.sy },
+          color, 1.5, 0.8, 25, '2 2'
+        ))
+      })
+    })
+  })
+
+  // ── Render electrical anchors ────────────────────────────────────────────
+  if (model.electricalAnchors) {
+    model.electricalAnchors.slice(0, 5).forEach((anchor, idx) => {
+      const pt = iso(anchor.position.x, anchor.position.y, anchor.heightAboveFloor?.value || 1.5)
+      const color = anchor.type === 'panel' ? '#EAB308' : '#3B82F6'
+      shapes.push(circ(
+        `anchor-${idx}`,
+        pt,
+        4,
+        'rgba(0,0,0,0.5)',
+        color,
+        1,
+        0.7,
+        50
+      ))
+      shapes.push(lbl(
+        `anchor-label-${idx}`,
+        { sx: pt.sx, sy: pt.sy - 8 },
+        anchor.type.toUpperCase(),
+        color,
+        5,
+        0.6,
+        51,
+        { textAnchor: 'middle', fontFamily: 'monospace' }
+      ))
+    })
+  }
+
+  // ── Render dimensions ────────────────────────────────────────────────────
+  const dimColor = 'rgba(0,221,204,0.55)'
+
+  // Width dimension
+  const wStart = iso(0, D + 2.5, 0)
+  const wEnd = iso(W, D + 2.5, 0)
+  const wMid = iso(W / 2, D + 2.5, 0)
+  dims.push({
+    id: 'dim-width',
+    line: [wStart, wEnd],
+    tick1: [iso(0, D + 1.8, 0), iso(0, D + 3.2, 0)],
+    tick2: [iso(W, D + 1.8, 0), iso(W, D + 3.2, 0)],
+    labelPt: { sx: wMid.sx, sy: wMid.sy + 10 },
+    labelText: `${W}'-0" WIDTH`,
+    stroke: dimColor,
+  })
+
+  // Depth dimension
+  const dStart = iso(W + 2.5, 0, 0)
+  const dEnd = iso(W + 2.5, D, 0)
+  const dMid = iso(W + 2.5, D / 2, 0)
+  dims.push({
+    id: 'dim-depth',
+    line: [dStart, dEnd],
+    tick1: [iso(W + 1.8, 0, 0), iso(W + 3.2, 0, 0)],
+    tick2: [iso(W + 1.8, D, 0), iso(W + 3.2, D, 0)],
+    labelPt: { sx: dMid.sx + 10, sy: dMid.sy },
+    labelText: `${D}'-0" DEPTH`,
+    stroke: dimColor,
+  })
+
+  // Height dimension
+  const hBase = iso(W + 2, 0, 0)
+  const hTop = iso(W + 2, 0, H)
+  dims.push({
+    id: 'dim-height',
+    line: [hBase, hTop],
+    tick1: [{ sx: hBase.sx - 6, sy: hBase.sy }, { sx: hBase.sx + 6, sy: hBase.sy }],
+    tick2: [{ sx: hTop.sx - 6, sy: hTop.sy }, { sx: hTop.sx + 6, sy: hTop.sy }],
+    labelPt: { sx: hTop.sx + 8, sy: (hBase.sy + hTop.sy) / 2 },
+    labelText: `${H}' HT`,
+    stroke: 'rgba(255,215,0,0.55)',
+  })
+
+  // ── Build info badges ────────────────────────────────────────────────────
+  const badges = [
+    { x: 12, y: 14, label: 'WIDTH', value: `${W}'-0"`, color: '#00ddcc', inferred: model.confidence < 0.8 },
+    { x: 12, y: 32, label: 'DEPTH', value: `${D}'-0"`, color: '#00ddcc', inferred: model.confidence < 0.8 },
+    { x: 12, y: 50, label: 'HEIGHT', value: `${H}'-0"`, color: '#FFD700', inferred: model.confidence < 0.8 },
+    { x: 12, y: 68, label: 'CEIL', value: `${ceilH}'-0"`, color: '#FFD700', inferred: model.confidence < 0.8 },
+    { x: 12, y: 86, label: 'SLAB', value: `${slabIn}"`, color: '#a0a0c0', inferred: model.confidence < 0.8 },
+  ]
+
+  // Check for gaps in room coverage
+  const totalRoomArea = groundFloor.rooms.reduce((sum, r) => sum + (r.area || 0), 0)
+  const expectedArea = W * D
+  if (totalRoomArea < expectedArea * 0.8) {
+    warnings.push(`Room coverage is ${(totalRoomArea / expectedArea * 100).toFixed(0)}%; may have uncovered areas`)
+  }
+
+  shapes.sort((a, b) => a.zOrder - b.zOrder)
+
+  return {
+    shapes,
+    dims,
+    badges,
+    walls: wallGeos,
+    openings: openingGeos,
+    hasWarnings: warnings.length > 0,
+    warnings,
+    vw: GEO_VW,
+    vh: GEO_VH,
   }
 }

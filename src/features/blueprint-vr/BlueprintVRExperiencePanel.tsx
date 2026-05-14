@@ -455,9 +455,9 @@ export default function BlueprintVRExperiencePanel({
           scrollbarColor: 'rgba(0,229,204,0.2) transparent',
         }}>
 
-          {/* Planner5D-style 3D space viewer */}
+          {/* Planner5D-style 3D space viewer with optional 2D/3D mode toggle */}
           <div style={{ padding: '14px 16px 0' }}>
-            <Blueprint3DSpaceViewer activeStage={selectedStage} />
+            <Blueprint3DSpaceViewer activeStage={selectedStage} show2DMode={false} />
           </div>
 
           {/* Stage tabs */}
