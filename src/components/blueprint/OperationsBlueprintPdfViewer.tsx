@@ -585,6 +585,7 @@ export default function OperationsBlueprintPdfViewer({
   const [isFullScreenView, setIsFullScreenView] = useState(false)
   // iPad/tablet immersive fullscreen mode (in-app overlay, not browser fullscreen)
   const [isTabletImmersiveFullscreen, setIsTabletImmersiveFullscreen] = useState(false)
+  const [tabletAnnotationsOpen, setTabletAnnotationsOpen] = useState(false)
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Pane resize state Ã¢â‚¬â€ persisted across hard reloads Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [leftPaneWidth, setLeftPaneWidth] = useState(() => {
@@ -3705,20 +3706,9 @@ export default function OperationsBlueprintPdfViewer({
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); openStylePopover(e.currentTarget as HTMLElement) }}
                                 className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
-                                title="Edit style"
+                                title="Edit"
                               >
-                                <Pencil size={10} /> Style
-                              </button>
-                            )}
-                            {canEditText && (
-                              <button
-                                type="button"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openRichTextEditor(a) }}
-                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/10"
-                                title="Edit text"
-                              >
-                                <Type size={10} /> Edit
+                                <Pencil size={10} /> Edit
                               </button>
                             )}
                             <button
@@ -4433,19 +4423,28 @@ export default function OperationsBlueprintPdfViewer({
               )}
 
               <div
-                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'h-auto max-h-40 min-h-[140px]' : ''}`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? (tabletAnnotationsOpen ? 'h-auto max-h-56 min-h-0' : 'h-auto max-h-none min-h-0') : ''}`}
                 style={{
                   ...(useDesktopThreePaneLayout ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
               >
-                <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-300">
-                  Current Page Annotations ({pageAnnotations.length})
+                <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-300 flex items-center justify-between">
+                  <span>Current Page Annotations ({pageAnnotations.length})</span>
+                  {!useDesktopThreePaneLayout && (
+                    <button
+                      onClick={() => setTabletAnnotationsOpen(v => !v)}
+                      className="inline-flex items-center justify-center p-0.5 rounded text-gray-400 hover:text-gray-200"
+                      title={tabletAnnotationsOpen ? 'Collapse annotations' : 'Expand annotations'}
+                    >
+                      {tabletAnnotationsOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+                  )}
                 </div>
-                {pageAnnotations.length === 0 ? (
+                {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && pageAnnotations.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-gray-500">No annotations on this page.</div>
-                ) : (
+                ) : (useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) ? (
                   <div className="divide-y divide-gray-800">
                     {pageAnnotations.map((a) => (
                       <button
@@ -4492,7 +4491,7 @@ export default function OperationsBlueprintPdfViewer({
                       </button>
                     ))}
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
