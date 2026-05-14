@@ -66,3 +66,32 @@ export {
 // Landscape viewer
 export { default as BlueprintVRLandscapeViewer } from './BlueprintVRLandscapeViewer'
 export type { BlueprintVRLandscapeViewerProps } from './BlueprintVRLandscapeViewer'
+
+// Dimension model — measurement types
+export type {
+  Unit,
+  MeasurementValue,
+  Point2D,
+  Rectangle,
+  Bounds,
+  DimensionLine,
+} from './measurementTypes'
+
+// Dimension model — building space types and helpers
+export type {
+  Opening,
+  Wall,
+  RoomZone,
+  ScaleSource,
+  BuildingSpace,
+} from './dimensionModel'
+
+export {
+  feetToInches,
+  inchesToFeet,
+  formatFeetInches,
+  createMeasurement,
+  createDefaultBuildingSpace,
+  getRoomArea,
+  getFootprintArea,
+} from './dimensionModel'
