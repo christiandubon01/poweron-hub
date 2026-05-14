@@ -190,6 +190,27 @@ export default function BlueprintAI() {
     [projectVRSourceSets, currentVRSourceSetId],
   )
 
+  const runtimeSourceIdentity = useMemo(() => ({
+    projectId: selectedItem?.projectId,
+    blueprintId: selectedItem?.id,
+    sourceSetId: selectedItem?.id,
+    sourceSetName: selectedItem?.title || selectedItem?.fileName || currentVRSourceSet?.name,
+    fileName: selectedItem?.fileName || selectedItem?.storagePath || selectedItem?.title || currentVRSourceSet?.filePath,
+    currentPageNumber: currentViewerPage,
+    pageCount: Number(selectedItem?.pageCount || currentVRSourceSet?.totalPages || 0) || undefined,
+  }), [
+    selectedItem?.projectId,
+    selectedItem?.id,
+    selectedItem?.title,
+    selectedItem?.fileName,
+    selectedItem?.storagePath,
+    selectedItem?.pageCount,
+    currentVRSourceSet?.name,
+    currentVRSourceSet?.filePath,
+    currentVRSourceSet?.totalPages,
+    currentViewerPage,
+  ])
+
   const filteredLibraryItems = useMemo(() => {
     const q = librarySearch.trim().toLowerCase()
     return library.filter((item) => {
@@ -1420,15 +1441,7 @@ export default function BlueprintAI() {
           projectName={selectedItem?.projectName}
           availableSourceSets={projectVRSourceSets}
           initialSourceSetId={currentVRSourceSetId}
-          runtimeSourceIdentity={{
-            projectId: selectedItem?.projectId,
-            sourceSetId: currentVRSourceSet?.id || selectedItem?.id,
-            sourceSetName: currentVRSourceSet?.name || selectedItem?.title,
-            blueprintId: selectedItem?.id,
-            fileName: selectedItem?.fileName || selectedItem?.storagePath,
-            currentPageNumber: currentViewerPage,
-            pageCount: Number(selectedItem?.pageCount || currentVRSourceSet?.totalPages || 0) || undefined,
-          }}
+          runtimeSourceIdentity={runtimeSourceIdentity}
           onSelectSourceSet={(setId) => {
             if (!selectedItem?.projectId) return
             setVrSourceSetIdByProject((prev) => ({

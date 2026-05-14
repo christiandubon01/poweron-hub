@@ -421,6 +421,11 @@ function ScanStatusBanner({
     registeredKeys?: string[]
     matchReason?: string
     matchedKey?: string
+    registrySize?: number
+    providerAgeSec?: number
+    pdfDocReady?: boolean
+    hasGetPage?: boolean
+    lastUnregisterReason?: string
   }
   cacheDebug?: {
     mode: 'hit' | 'miss'
@@ -549,6 +554,19 @@ function ScanStatusBanner({
       {traceRuntime?.opsSource && (
         <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,230,210,0.92)' }}>
           OPS source: {traceRuntime.opsSource}
+        </div>
+      )}
+      {runtimeProviderDebug?.registrySize !== undefined && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,210,225,0.9)' }}>
+          Registry size: {runtimeProviderDebug.registrySize}
+          {' · '}Age: {runtimeProviderDebug.providerAgeSec !== undefined ? `${runtimeProviderDebug.providerAgeSec}s` : 'n/a'}
+          {' · '}pdfDoc ready: {runtimeProviderDebug.pdfDocReady != null ? String(runtimeProviderDebug.pdfDocReady) : 'n/a'}
+          {' · '}getPage available: {runtimeProviderDebug.hasGetPage != null ? (runtimeProviderDebug.hasGetPage ? 'yes' : 'no') : 'n/a'}
+        </div>
+      )}
+      {runtimeProviderDebug?.lastUnregisterReason && (
+        <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(255,190,145,0.9)' }}>
+          Last unregister reason: {runtimeProviderDebug.lastUnregisterReason}
         </div>
       )}
       {scan.traceAttempted && !scan.traceAvailable && (
@@ -697,6 +715,16 @@ export default function BlueprintVRExperiencePanel({
 
   const scannerVersion = 'W3.10D'
 
+  const runtimeIdentityKey = [
+    runtimeSourceIdentity?.projectId || '',
+    runtimeSourceIdentity?.blueprintId || '',
+    runtimeSourceIdentity?.sourceSetId || '',
+    runtimeSourceIdentity?.sourceSetName || '',
+    runtimeSourceIdentity?.fileName || '',
+    runtimeSourceIdentity?.pageCount || '',
+    runtimeSourceIdentity?.currentPageNumber || '',
+  ].join('|')
+
   useEffect(() => {
     let disposed = false
     if (!selectedSourceSet) {
@@ -740,12 +768,12 @@ export default function BlueprintVRExperiencePanel({
       return
     }
     const runtimeRequestIdentity = {
-      projectId: selectedSourceSet.projectId || projectId || runtimeSourceIdentity?.projectId,
-      sourceSetId: runtimeSourceIdentity?.sourceSetId || selectedSourceSet.id,
-      sourceSetName: selectedSourceSet.name || runtimeSourceIdentity?.sourceSetName,
+      projectId: runtimeSourceIdentity?.projectId || selectedSourceSet.projectId || projectId,
       blueprintId: runtimeSourceIdentity?.blueprintId || selectedSourceSet.id || sourceBlueprint.id,
+      sourceSetId: runtimeSourceIdentity?.sourceSetId || selectedSourceSet.id,
+      sourceSetName: runtimeSourceIdentity?.sourceSetName || selectedSourceSet.name,
       fileName: runtimeSourceIdentity?.fileName || selectedSourceSet.filePath || bestSourceSheet.fileName,
-      pageCount: selectedSourceSet.totalPages || runtimeSourceIdentity?.pageCount,
+      pageCount: runtimeSourceIdentity?.pageCount || selectedSourceSet.totalPages,
     }
     const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
     setLastScanAt(new Date().toISOString())
@@ -759,13 +787,24 @@ export default function BlueprintVRExperiencePanel({
       selectedPageNumber: best.pageNumber,
     }))
     void (async () => {
-      const runtimeTrace = await extractTraceForBlueprintSheet({
+      const traceArgs = {
         ...runtimeRequestIdentity,
         pageNumber: best.pageNumber,
         sheetNumber: best.sheetNumber,
         sheetTitle: best.sheetTitle,
         existingPayload: bestSourceSheet.tracePayload || null,
-      })
+      }
+      let runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
+      if (!disposed && runtimeTrace.providerStatus === 'missing') {
+        await new Promise<void>((r) => setTimeout(r, 150))
+        if (disposed) return
+        runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
+      }
+      if (!disposed && runtimeTrace.providerStatus === 'missing') {
+        await new Promise<void>((r) => setTimeout(r, 300))
+        if (disposed) return
+        runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
+      }
       if (disposed) return
       setTraceExtraction({
         selectedPageNumber: runtimeTrace.selectedPageNumber,
@@ -786,7 +825,8 @@ export default function BlueprintVRExperiencePanel({
     return () => {
       disposed = true
     }
-  }, [selectedSourceSet, rescanToken, projectId, runtimeSourceIdentity, sourceBlueprint.id, sourceBlueprint.filePath])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSourceSet, rescanToken, projectId, runtimeIdentityKey, sourceBlueprint.id, sourceBlueprint.filePath])
 
   const sourceCacheIdentity = useMemo<BlueprintVRCacheIdentity>(
     () => ({
@@ -1250,6 +1290,11 @@ export default function BlueprintVRExperiencePanel({
                 registeredKeys: traceExtraction.registeredKeys,
                 matchReason: traceExtraction.matchReason,
                 matchedKey: traceExtraction.providerKey,
+                registrySize: traceExtraction.providerMetadata?.registrySize,
+                providerAgeSec: traceExtraction.providerMetadata?.providerAgeSec,
+                pdfDocReady: traceExtraction.providerMetadata?.pdfDocReady,
+                hasGetPage: traceExtraction.providerMetadata?.hasGetPage,
+                lastUnregisterReason: traceExtraction.providerMetadata?.lastUnregisterReason,
               }}
               cacheDebug={
                 cacheDebug || {

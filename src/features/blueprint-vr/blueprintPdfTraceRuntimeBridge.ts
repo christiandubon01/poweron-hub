@@ -58,6 +58,7 @@ type RuntimeRegistryEntry = {
 }
 
 const runtimeProviders = new Map<string, RuntimeRegistryEntry>()
+let lastUnregisterInfo: { key: string; reason?: string; at: number } | null = null
 
 function safePart(value?: string): string {
   const raw = String(value || '').trim().toLowerCase()
@@ -118,9 +119,12 @@ export function registerBlueprintPdfRuntimeProvider(
   return normalized
 }
 
-export function unregisterBlueprintPdfRuntimeProvider(key: string): boolean {
+export function unregisterBlueprintPdfRuntimeProvider(key: string, reason?: string): boolean {
   const normalized = String(key || '').trim()
   if (!normalized) return false
+  if (runtimeProviders.has(normalized)) {
+    lastUnregisterInfo = { key: normalized, reason, at: Date.now() }
+  }
   return runtimeProviders.delete(normalized)
 }
 
@@ -188,27 +192,41 @@ export function getBlueprintPdfRuntimeProviderDebug(
 ): {
   requestedKey: string
   registeredKeys: string[]
+  registrySize: number
   matched: boolean
   matchReason: string
   matchedKey?: string
+  providerAgeSec?: number
+  lastUnregisterReason?: string
   providerMetadata?: Record<string, any>
 } {
   const requestedKey = buildBlueprintPdfRuntimeKey(request)
   const exact = runtimeProviders.get(requestedKey)
   if (exact) {
+    const ageSec = Math.round((Date.now() - exact.registeredAt) / 1000)
+    const baseMeta = exact.provider.metadata || {
+      projectId: exact.provider.projectId,
+      blueprintId: exact.provider.blueprintId,
+      sourceSetId: exact.provider.sourceSetId,
+      sourceSetName: exact.provider.sourceSetName,
+      fileName: exact.provider.fileName,
+      pageCount: exact.provider.pageCount,
+    }
     return {
       requestedKey,
       registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+      registrySize: runtimeProviders.size,
       matched: true,
       matchReason: 'exact_key_match',
       matchedKey: exact.key,
-      providerMetadata: exact.provider.metadata || {
-        projectId: exact.provider.projectId,
-        blueprintId: exact.provider.blueprintId,
-        sourceSetId: exact.provider.sourceSetId,
-        sourceSetName: exact.provider.sourceSetName,
-        fileName: exact.provider.fileName,
-        pageCount: exact.provider.pageCount,
+      providerAgeSec: ageSec,
+      lastUnregisterReason: lastUnregisterInfo?.reason,
+      providerMetadata: {
+        ...baseMeta,
+        providerAgeSec: ageSec,
+        hasGetPage: typeof exact.provider.getPage === 'function',
+        pdfDocReady: exact.provider.metadata?.pdfDocReady,
+        lastUnregisterReason: lastUnregisterInfo?.reason,
       },
     }
   }
@@ -228,23 +246,36 @@ export function getBlueprintPdfRuntimeProviderDebug(
     return {
       requestedKey,
       registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+      registrySize: runtimeProviders.size,
       matched: false,
       matchReason: bestReason,
+      lastUnregisterReason: lastUnregisterInfo?.reason,
     }
+  }
+  const bestAgeSec = Math.round((Date.now() - best.registeredAt) / 1000)
+  const bestBaseMeta = best.provider.metadata || {
+    projectId: best.provider.projectId,
+    blueprintId: best.provider.blueprintId,
+    sourceSetId: best.provider.sourceSetId,
+    sourceSetName: best.provider.sourceSetName,
+    fileName: best.provider.fileName,
+    pageCount: best.provider.pageCount,
   }
   return {
     requestedKey,
     registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+    registrySize: runtimeProviders.size,
     matched: true,
     matchReason: bestReason,
     matchedKey: best.key,
-    providerMetadata: best.provider.metadata || {
-      projectId: best.provider.projectId,
-      blueprintId: best.provider.blueprintId,
-      sourceSetId: best.provider.sourceSetId,
-      sourceSetName: best.provider.sourceSetName,
-      fileName: best.provider.fileName,
-      pageCount: best.provider.pageCount,
+    providerAgeSec: bestAgeSec,
+    lastUnregisterReason: lastUnregisterInfo?.reason,
+    providerMetadata: {
+      ...bestBaseMeta,
+      providerAgeSec: bestAgeSec,
+      hasGetPage: typeof best.provider.getPage === 'function',
+      pdfDocReady: best.provider.metadata?.pdfDocReady,
+      lastUnregisterReason: lastUnregisterInfo?.reason,
     },
   }
 }

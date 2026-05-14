@@ -650,6 +650,9 @@ export default function OperationsBlueprintPdfViewer({
         registeredAt: new Date().toISOString(),
         missingFields,
         opsConstants: (_pdfjsLib as any)?.OPS ?? {},
+        pdfDocReady: Boolean(pdfDoc),
+        hasGetPage: true,
+        numPages: resolvedPageCount,
       },
       getPage: async (pageNumber: number) => {
         const doc = pdfDocRef.current
@@ -690,7 +693,7 @@ export default function OperationsBlueprintPdfViewer({
       },
     })
     return () => {
-      unregisterBlueprintPdfRuntimeProvider(runtimeKey)
+      unregisterBlueprintPdfRuntimeProvider(runtimeKey, 'component-unmount-or-source-change')
     }
   }, [blueprint?.id, blueprint?.projectId, blueprint?.title, blueprint?.fileName, blueprint?.storagePath, blueprint?.pageCount, pdfDoc, numPages])
 
