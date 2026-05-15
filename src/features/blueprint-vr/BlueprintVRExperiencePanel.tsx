@@ -661,6 +661,10 @@ export default function BlueprintVRExperiencePanel({
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef<HTMLDivElement>(null)
   const viewMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const [labelsMenuOpen, setLabelsMenuOpen] = useState(false)
+  const labelsMenuRef = useRef<HTMLDivElement>(null)
+  const labelsMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const [scannerStatusExpanded, setScannerStatusExpanded] = useState(false)
 
   // ── Source-set state (project-level) ──────────────────────────────────
   const availableSets = availableSourceSets || []
@@ -1113,25 +1117,34 @@ export default function BlueprintVRExperiencePanel({
   }, [firstRoomId])
 
   useEffect(() => {
-    if (!viewMenuOpen) return
+    if (!viewMenuOpen && !labelsMenuOpen) return
     const onDocMouseDown = (e: MouseEvent) => {
       const t = e.target as Node
-      if (viewMenuRef.current?.contains(t)) return
-      if (viewMenuButtonRef.current?.contains(t)) return
-      setViewMenuOpen(false)
+      const inside =
+        viewMenuRef.current?.contains(t) ||
+        viewMenuButtonRef.current?.contains(t) ||
+        labelsMenuRef.current?.contains(t) ||
+        labelsMenuButtonRef.current?.contains(t)
+      if (!inside) {
+        setViewMenuOpen(false)
+        setLabelsMenuOpen(false)
+      }
     }
     document.addEventListener('mousedown', onDocMouseDown)
     return () => document.removeEventListener('mousedown', onDocMouseDown)
-  }, [viewMenuOpen])
+  }, [viewMenuOpen, labelsMenuOpen])
 
   useEffect(() => {
-    if (!viewMenuOpen) return
+    if (!viewMenuOpen && !labelsMenuOpen) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setViewMenuOpen(false)
+      if (e.key === 'Escape') {
+        setViewMenuOpen(false)
+        setLabelsMenuOpen(false)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewMenuOpen])
+  }, [viewMenuOpen, labelsMenuOpen])
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
@@ -1147,6 +1160,23 @@ export default function BlueprintVRExperiencePanel({
     const rooms = scanResult.rooms.length
     return `${scanResult.layoutContext.replace(/-/g, ' ')} · ${w}'-0" W × ${d}'-0" D · ${rooms} rooms`
   }, [scanResult])
+
+  const scannerStatusSummary = useMemo(() => {
+    const scan = scanResult
+    const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
+    const resultLabel =
+      resultKind === 'measured-trace'
+        ? 'Measured Trace'
+        : resultKind === 'cached-inferred'
+          ? 'Cached Inferred'
+          : resultKind === 'inferred'
+            ? 'Inferred'
+            : 'Fallback'
+    const pct = Math.round((scan.confidence || 0) * 100)
+    const cacheBit = fromCache && resultLabel !== 'Cached Inferred' ? 'Cached ' : ''
+    const src = selectedSourceSet?.name || sourceBlueprint.name
+    return `${src} · ${cacheBit}${resultLabel} · ${pct}%`
+  }, [scanResult, fromCache, selectedSourceSet, sourceBlueprint.name])
 
   // Always show all 4 stages from STAGE_ORDER — no dependency on manifest
   const visibleStages = [...STAGE_ORDER] as VRStage[]
@@ -1335,7 +1365,10 @@ export default function BlueprintVRExperiencePanel({
                   type="button"
                   aria-haspopup="menu"
                   aria-expanded={viewMenuOpen}
-                  onClick={() => setViewMenuOpen((o) => !o)}
+                  onClick={() => {
+                    setLabelsMenuOpen(false)
+                    setViewMenuOpen((o) => !o)
+                  }}
                   style={controlButtonStyle(viewMenuOpen)}
                 >
                   View
@@ -1365,6 +1398,7 @@ export default function BlueprintVRExperiencePanel({
                         setViewMode('walls')
                         setCameraPreset('top')
                         setViewMenuOpen(false)
+                        setLabelsMenuOpen(false)
                       }}
                       style={{
                         display: 'flex',
@@ -1395,6 +1429,7 @@ export default function BlueprintVRExperiencePanel({
                         setViewMode('plan')
                         setCameraPreset('top')
                         setViewMenuOpen(false)
+                        setLabelsMenuOpen(false)
                       }}
                       style={{
                         display: 'flex',
@@ -1425,6 +1460,7 @@ export default function BlueprintVRExperiencePanel({
                         setViewMode('dollhouse')
                         setCameraPreset('iso')
                         setViewMenuOpen(false)
+                        setLabelsMenuOpen(false)
                       }}
                       style={{
                         display: 'flex',
@@ -1457,6 +1493,7 @@ export default function BlueprintVRExperiencePanel({
                         setCameraPreset('room')
                         if (!selectedRoomId) setSelectedRoomId(firstRoomId)
                         setViewMenuOpen(false)
+                        setLabelsMenuOpen(false)
                       }}
                       style={{
                         display: 'flex',
@@ -1493,6 +1530,7 @@ export default function BlueprintVRExperiencePanel({
                       onClick={() => {
                         handleResetView()
                         setViewMenuOpen(false)
+                        setLabelsMenuOpen(false)
                       }}
                       style={{
                         display: 'flex',
@@ -1518,15 +1556,128 @@ export default function BlueprintVRExperiencePanel({
                   </div>
                 )}
               </div>
-              <button onClick={() => setShowDimensions((v) => !v)} style={controlButtonStyle(showDimensions)}>
-                Show Dimensions
-              </button>
-              <button onClick={() => setShowElectrical((v) => !v)} style={controlButtonStyle(showElectrical)}>
-                Show Electrical
-              </button>
-              <button onClick={() => setShowLabels((v) => !v)} style={controlButtonStyle(showLabels)}>
-                Show Labels
-              </button>
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <button
+                  ref={labelsMenuButtonRef}
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={labelsMenuOpen}
+                  onClick={() => {
+                    setViewMenuOpen(false)
+                    setLabelsMenuOpen((o) => !o)
+                  }}
+                  style={controlButtonStyle(labelsMenuOpen)}
+                >
+                  Labels
+                </button>
+                {labelsMenuOpen && (
+                  <div
+                    ref={labelsMenuRef}
+                    role="menu"
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: 6,
+                      minWidth: 220,
+                      padding: '6px 0',
+                      background: 'rgba(6,12,20,0.98)',
+                      border: '1px solid rgba(0,229,204,0.35)',
+                      borderRadius: 6,
+                      boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+                      zIndex: 1000,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setShowDimensions((v) => !v)
+                        setLabelsMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: showDimensions ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color: showDimensions ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>Show Dimensions</span>
+                      {showDimensions ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setShowElectrical((v) => !v)
+                        setLabelsMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: showElectrical ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color: showElectrical ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>Show Electrical</span>
+                      {showElectrical ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setShowLabels((v) => !v)
+                        setLabelsMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: showLabels ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color: showLabels ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>Show Labels</span>
+                      {showLabels ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1558,41 +1709,81 @@ export default function BlueprintVRExperiencePanel({
               />
             )}
 
-            <ScanStatusBanner
-              scan={scanResult}
-              fullSetScan={fullSetScan}
-              fromCache={fromCache}
-              sourceLabel={selectedSourceSet?.name || sourceBlueprint.name}
-              sourceType={selectedSourceSet?.type}
-              traceRuntime={{
-                providerStatus: traceExtraction.providerStatus,
-                selectedPageNumber: traceExtraction.selectedPageNumber,
-                operatorListStatus: traceExtraction.operatorListStatus,
-                textContentStatus: traceExtraction.textContentStatus,
-                opsSource: traceExtraction.payload?.runtime?.opsSource,
+            <div
+              style={{
+                border: '1px solid rgba(0,229,204,0.22)',
+                borderRadius: 6,
+                overflow: 'hidden',
+                background: 'rgba(8,14,22,0.5)',
               }}
-              runtimeProviderDebug={{
-                requestedKey: traceExtraction.requestedKey,
-                registeredKeys: traceExtraction.registeredKeys,
-                matchReason: traceExtraction.matchReason,
-                matchedKey: traceExtraction.providerKey,
-                registrySize: traceExtraction.providerMetadata?.registrySize,
-                providerAgeSec: traceExtraction.providerMetadata?.providerAgeSec,
-                pdfDocReady: traceExtraction.providerMetadata?.pdfDocReady,
-                hasGetPage: traceExtraction.providerMetadata?.hasGetPage,
-                lastUnregisterReason: traceExtraction.providerMetadata?.lastUnregisterReason,
-              }}
-              cacheDebug={
-                cacheDebug || {
-                  mode: fromCache ? 'hit' : 'miss',
-                  key: sourceKey,
-                  keyHash: sourceKey.slice(0, 8),
-                  sourceIdentity: sourceCacheIdentity,
-                  rescanCount,
-                  scannedAt: lastScanAt || undefined,
-                }
-              }
-            />
+            >
+              <button
+                type="button"
+                onClick={() => setScannerStatusExpanded((v) => !v)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  flexWrap: 'wrap' as const,
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '10px 12px',
+                  border: 'none',
+                  background: 'rgba(0,229,204,0.06)',
+                  cursor: 'pointer',
+                  textAlign: 'left' as const,
+                  fontFamily: 'monospace',
+                }}
+              >
+                <span style={{ color: '#00ddcc', fontWeight: 700, letterSpacing: 0.8, fontSize: 10, textTransform: 'uppercase' as const }}>
+                  Scanner Status
+                </span>
+                <span style={{ flex: '1 1 220px', color: 'rgba(220,230,240,0.88)', fontSize: 10, lineHeight: 1.45 }}>
+                  {scannerStatusSummary}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9.5, fontWeight: 700, letterSpacing: 0.6 }}>
+                  {scannerStatusExpanded ? '▾ Hide details' : '▸ Show details'}
+                </span>
+              </button>
+              {scannerStatusExpanded && (
+                <div style={{ padding: '0 10px 10px' }}>
+                  <ScanStatusBanner
+                    scan={scanResult}
+                    fullSetScan={fullSetScan}
+                    fromCache={fromCache}
+                    sourceLabel={selectedSourceSet?.name || sourceBlueprint.name}
+                    sourceType={selectedSourceSet?.type}
+                    traceRuntime={{
+                      providerStatus: traceExtraction.providerStatus,
+                      selectedPageNumber: traceExtraction.selectedPageNumber,
+                      operatorListStatus: traceExtraction.operatorListStatus,
+                      textContentStatus: traceExtraction.textContentStatus,
+                      opsSource: traceExtraction.payload?.runtime?.opsSource,
+                    }}
+                    runtimeProviderDebug={{
+                      requestedKey: traceExtraction.requestedKey,
+                      registeredKeys: traceExtraction.registeredKeys,
+                      matchReason: traceExtraction.matchReason,
+                      matchedKey: traceExtraction.providerKey,
+                      registrySize: traceExtraction.providerMetadata?.registrySize,
+                      providerAgeSec: traceExtraction.providerMetadata?.providerAgeSec,
+                      pdfDocReady: traceExtraction.providerMetadata?.pdfDocReady,
+                      hasGetPage: traceExtraction.providerMetadata?.hasGetPage,
+                      lastUnregisterReason: traceExtraction.providerMetadata?.lastUnregisterReason,
+                    }}
+                    cacheDebug={
+                      cacheDebug || {
+                        mode: fromCache ? 'hit' : 'miss',
+                        key: sourceKey,
+                        keyHash: sourceKey.slice(0, 8),
+                        sourceIdentity: sourceCacheIdentity,
+                        rescanCount,
+                        scannedAt: lastScanAt || undefined,
+                      }
+                    }
+                  />
+                </div>
+              )}
+            </div>
 
             {viewMode === 'walls' && (() => {
               const traceCount = Object.keys(fullSetPageTraces).length
@@ -1744,37 +1935,41 @@ export default function BlueprintVRExperiencePanel({
 
               // Done — real geometry extracted
               return (
-                <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
                   {headerRow}
-                  <MeasuredPlanViewer
-                    model={buildingModel}
-                    width={760}
-                    height={380}
-                    showDimensions={showDimensions}
-                    showRoomLabels={showLabels}
-                    showAreaLabels={false}
-                    showElectrical={false}
-                    wallOnlyMode={true}
-                    traceDebug={scanResult.traceDebugCounts || null}
-                  />
+                  <div style={{ display: 'flex', justifyContent: 'center', width: '100%', background: '#0d121b' }}>
+                    <MeasuredPlanViewer
+                      model={buildingModel}
+                      width={760}
+                      height={380}
+                      showDimensions={showDimensions}
+                      showRoomLabels={showLabels}
+                      showAreaLabels={false}
+                      showElectrical={false}
+                      wallOnlyMode={true}
+                      traceDebug={scanResult.traceDebugCounts || null}
+                    />
+                  </div>
                 </div>
               )
             })()}
 
             {viewMode === 'plan' && (
-              <MeasuredPlanViewer
-                model={buildingModel}
-                width={760}
-                height={430}
-                selectedRoomId={selectedRoomId}
-                onRoomSelect={handleRoomEnter}
-                activeStage={activeStage}
-                showDimensions={showDimensions}
-                showRoomLabels={showLabels}
-                showAreaLabels={showLabels}
-                showElectrical={showElectrical}
-                traceDebug={scanResult.traceDebugCounts || null}
-              />
+              <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+                <MeasuredPlanViewer
+                  model={buildingModel}
+                  width={760}
+                  height={430}
+                  selectedRoomId={selectedRoomId}
+                  onRoomSelect={handleRoomEnter}
+                  activeStage={activeStage}
+                  showDimensions={showDimensions}
+                  showRoomLabels={showLabels}
+                  showAreaLabels={showLabels}
+                  showElectrical={showElectrical}
+                  traceDebug={scanResult.traceDebugCounts || null}
+                />
+              </div>
             )}
 
             {viewMode === 'dollhouse' && (
@@ -1793,15 +1988,19 @@ export default function BlueprintVRExperiencePanel({
 
             {viewMode === 'room' && (
               <>
-                <BlueprintRoomInteriorView
-                  model={buildingModel}
-                  selectedRoomId={selectedRoomId || firstRoomId}
-                  activeStage={activeStage}
-                  showElectrical={showElectrical}
-                  showDimensions={showDimensions}
-                  showLabels={showLabels}
-                  wallOpacity={wallOpacity}
-                />
+                <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+                  <div style={{ width: '100%', maxWidth: 960 }}>
+                    <BlueprintRoomInteriorView
+                      model={buildingModel}
+                      selectedRoomId={selectedRoomId || firstRoomId}
+                      activeStage={activeStage}
+                      showElectrical={showElectrical}
+                      showDimensions={showDimensions}
+                      showLabels={showLabels}
+                      wallOpacity={wallOpacity}
+                    />
+                  </div>
+                </div>
                 <RoomNavStrip
                   rooms={buildingModel.levels[0]?.rooms || []}
                   selectedRoomId={selectedRoomId}

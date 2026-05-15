@@ -388,7 +388,7 @@ export default function BlueprintRoomInteriorView({
         background: '#070b12',
       }}
     >
-      <svg viewBox="0 0 360 270" width="100%" style={{ display: 'block' }}>
+      <svg viewBox="0 0 360 270" width="100%" preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
         <defs>
           <linearGradient id="wall-polish" x1="0" x2="1">
             <stop offset="0%" stopColor={`rgba(245,240,235,${wallOpacity})`} />

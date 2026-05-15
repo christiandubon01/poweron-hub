@@ -52,6 +52,21 @@ const STAGE_COLOR: Record<VRStage, number> = {
   finished: 0x06b6d4,
 }
 
+/** Matches modal 2D embed (760×440) so the dollhouse camera aspect stays natural in wide layouts. */
+const VIEWPORT_ASPECT = 760 / 440
+
+function computeViewportPixels(containerWidth: number, containerHeight: number): { w: number; h: number } {
+  const maxW = Math.max(280, containerWidth)
+  const maxH = Math.max(240, Math.min(containerHeight || 480, 560))
+  let w = maxW
+  let h = Math.round(w / VIEWPORT_ASPECT)
+  if (h > maxH) {
+    h = maxH
+    w = Math.round(h * VIEWPORT_ASPECT)
+  }
+  return { w: Math.max(280, w), h: Math.max(200, h) }
+}
+
 // ─── Color cues by room role ─────────────────────────────────────────────────
 
 function getRoomColor(room: BuildingRoomModel): number {
@@ -435,6 +450,7 @@ export default function Blueprint3DSpaceViewer({
   showCeiling = false,
 }: Blueprint3DSpaceViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
 
@@ -468,11 +484,16 @@ export default function Blueprint3DSpaceViewer({
   // ── Init scene once ─────────────────────────────────────────────────────
   useEffect(() => {
     const container = containerRef.current
+    const viewport = viewportRef.current
     const canvas = canvasRef.current
-    if (!container || !canvas) return
+    if (!container || !viewport || !canvas) return
 
-    const width = container.clientWidth || 620
-    const height = 440
+    const { w: width, h: height } = computeViewportPixels(
+      container.clientWidth,
+      container.clientHeight,
+    )
+    viewport.style.width = `${width}px`
+    viewport.style.height = `${height}px`
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -544,20 +565,23 @@ export default function Blueprint3DSpaceViewer({
     }
     animate()
 
-    // Resize handling
-    const handleResize = () => {
+    const applyLayout = () => {
       const c = containerRef.current
-      if (!c || !rendererRef.current || !cameraRef.current) return
-      const newW = c.clientWidth || 620
-      const newH = 440
-      rendererRef.current.setSize(newW, newH, false)
-      cameraRef.current.aspect = newW / newH
+      const vp = viewportRef.current
+      if (!c || !vp || !rendererRef.current || !cameraRef.current) return
+      const { w, h } = computeViewportPixels(c.clientWidth, c.clientHeight)
+      vp.style.width = `${w}px`
+      vp.style.height = `${h}px`
+      rendererRef.current.setSize(w, h, false)
+      cameraRef.current.aspect = w / h
       cameraRef.current.updateProjectionMatrix()
     }
-    window.addEventListener('resize', handleResize)
+
+    const ro = new ResizeObserver(() => applyLayout())
+    ro.observe(container)
 
     return () => {
-      window.removeEventListener('resize', handleResize)
+      ro.disconnect()
       if (animRef.current !== null) cancelAnimationFrame(animRef.current)
       controls.dispose()
       renderer.dispose()
@@ -845,8 +869,18 @@ export default function Blueprint3DSpaceViewer({
     >
       <div
         ref={containerRef}
-        style={{ position: 'relative', width: '100%', height: 440, background: '#070b12' }}
+        style={{
+          position: 'relative',
+          width: '100%',
+          minHeight: 400,
+          height: 'min(520px, max(400px, 48vh))',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#070b12',
+        }}
       >
+        <div ref={viewportRef} style={{ position: 'relative', flexShrink: 0 }}>
         <canvas
           ref={canvasRef}
           style={{ display: 'block', width: '100%', height: '100%', cursor: 'grab' }}
@@ -911,6 +945,7 @@ export default function Blueprint3DSpaceViewer({
               {cameraInfo.zoom.toFixed(0)} ft
             </div>
           </div>
+        </div>
         </div>
       </div>
 
