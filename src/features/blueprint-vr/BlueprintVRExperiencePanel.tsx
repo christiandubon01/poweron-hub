@@ -1217,7 +1217,7 @@ export default function BlueprintVRExperiencePanel({
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
   }, [availableSets, selectedSourceSetId])
 
-  const scannerVersion = 'W3.11-W1B-NO-FALLBACK-3D'
+  const scannerVersion = 'W3.11-W1B-NO-FALLBACK-3D-WALLFILTER-TABLEGRID-1'
 
   const enumeratedPageCount = useMemo(
     () => (selectedSourceSet ? enumerateFullSourceSetSheets(selectedSourceSet).length : null),
