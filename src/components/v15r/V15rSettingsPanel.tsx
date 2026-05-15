@@ -24,7 +24,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
-import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
@@ -1109,7 +1109,19 @@ const persist = useCallback((mutatedData?: BackupData) => {
     }
   }, [gcalUrlDraft, persist])
 
-  const phaseWeights = settings.phaseWeights || {}
+  const effectivePhaseWeights = getPhaseWeights(backup)
+  const effPhaseKeys = Object.keys(effectivePhaseWeights)
+  /** All workflow phases: saved mto order first, then any weight keys missing from mto */
+  const workflowPhasesForList = (() => {
+    const m = Array.isArray(settings.mtoPhases) ? settings.mtoPhases : []
+    if (m.length === 0) return effPhaseKeys
+    const out = m.filter((p: string) => effPhaseKeys.includes(p))
+    for (const k of effPhaseKeys) {
+      if (!out.includes(k)) out.push(k)
+    }
+    return out
+  })()
+  const phaseWeights = effectivePhaseWeights
   const mtoPhases = settings.mtoPhases || ['Underground', 'Rough In', 'Trim', 'Finish']
   const overhead = settings.overhead || { essential: [], extra: [], loans: [], vehicle: [] }
 
@@ -2269,7 +2281,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
               <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-gray-100">Project workflow setup</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Phase weights and MTO phase labels used across project planning.</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Shared project phases for Progress, phase weights, and MTO labels.</p>
                 </div>
                 <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${phaseWeightTotal === 100 ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>
                   Total: {phaseWeightTotal}%
@@ -2298,12 +2310,14 @@ const persist = useCallback((mutatedData?: BackupData) => {
                           value={weight as number}
                           onChange={(e) => {
                             const data = getBackupData()
-                            if (data) {
-                              pushState(data)
-                              data.settings.phaseWeights[phase] = parseInt(e.target.value) || 0
-                              saveBackupData(data)
-                              forceUpdate()
-                            }
+                            if (!data) return
+                            pushState(data)
+                            const merged = { ...getPhaseWeights(data), [phase]: parseInt(e.target.value, 10) || 0 }
+                            data.settings.phaseWeights = merged
+                            const keys = Object.keys(merged)
+                            const prev = Array.isArray(data.settings.mtoPhases) ? data.settings.mtoPhases : []
+                            data.settings.mtoPhases = [...prev.filter(k => keys.includes(k)), ...keys.filter(k => !prev.includes(k))]
+                            persist(data)
                           }}
                           className="w-full accent-cyan-400"
                         />
@@ -2311,12 +2325,23 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         <button
                           onClick={() => {
                             const data = getBackupData()
-                            if (data) {
-                              pushState(data)
-                              delete data.settings.phaseWeights[phase]
-                              saveBackupData(data)
-                              forceUpdate()
+                            if (!data) return
+                            pushState(data)
+                            const w = { ...getPhaseWeights(data) }
+                            delete w[phase]
+                            if (Object.keys(w).length === 0) {
+                              data.settings.phaseWeights = {}
+                              data.settings.mtoPhases = []
+                            } else {
+                              data.settings.phaseWeights = w
+                              const prev = Array.isArray(data.settings.mtoPhases) ? data.settings.mtoPhases : []
+                              const next = prev.filter(p => p in w)
+                              for (const k of Object.keys(w)) {
+                                if (!next.includes(k)) next.push(k)
+                              }
+                              data.settings.mtoPhases = next
                             }
+                            persist(data)
                           }}
                           className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
                         >
@@ -2331,17 +2356,19 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   <button
                     onClick={() => {
                       const data = getBackupData()
-                      if (data && Object.keys(data.settings.phaseWeights).length > 0) {
-                        pushState(data)
-                        const numPhases = Object.keys(data.settings.phaseWeights).length
-                        const baseWeight = Math.floor(100 / numPhases)
-                        const remainder = 100 % numPhases
-                        Object.entries(data.settings.phaseWeights).forEach(([ph], idx) => {
-                          data.settings.phaseWeights[ph] = baseWeight + (idx < remainder ? 1 : 0)
-                        })
-                        saveBackupData(data)
-                        forceUpdate()
-                      }
+                      if (!data) return
+                      const keys = Object.keys(getPhaseWeights(data))
+                      if (keys.length === 0) return
+                      pushState(data)
+                      if (!data.settings.phaseWeights) data.settings.phaseWeights = {}
+                      const numPhases = keys.length
+                      const baseWeight = Math.floor(100 / numPhases)
+                      const remainder = 100 % numPhases
+                      keys.forEach((ph, idx) => {
+                        data.settings.phaseWeights[ph] = baseWeight + (idx < remainder ? 1 : 0)
+                      })
+                      data.settings.mtoPhases = [...keys]
+                      persist(data)
                     }}
                     className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
                   >
@@ -2352,25 +2379,37 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
                   <div className="flex items-center justify-between gap-3 mb-3">
                     <div>
-                      <h4 className="text-sm font-bold text-gray-100">MTO Phases</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Material takeoff phase labels.</p>
+                      <h4 className="text-sm font-bold text-gray-100">Project phases</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Phase names (same list as Progress and MTO).</p>
                     </div>
                     <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">
-                      {mtoPhases.length} phases
+                      {workflowPhasesForList.length} phases
                     </span>
                   </div>
                   <div className="space-y-2">
-                    {mtoPhases.map((phase: string, i: number) => (
-                      <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/60 px-3 py-2 text-sm">
+                    {workflowPhasesForList.map((phase: string, i: number) => (
+                      <div key={`${phase}-${i}`} className="flex items-center justify-between gap-3 rounded-lg border border-cyan-400/10 bg-slate-900/60 px-3 py-2 text-sm">
                         <span className="truncate font-medium text-gray-200">{phase}</span>
                         <button
                           onClick={() => {
                             const data = getBackupData()
-                            if (data) {
-                              pushState(data)
-                              data.settings.mtoPhases = data.settings.mtoPhases.filter((_: string, idx: number) => idx !== i)
-                              persist(data)
+                            if (!data) return
+                            pushState(data)
+                            const w = { ...getPhaseWeights(data) }
+                            delete w[phase]
+                            if (Object.keys(w).length === 0) {
+                              data.settings.phaseWeights = {}
+                              data.settings.mtoPhases = []
+                            } else {
+                              data.settings.phaseWeights = w
+                              const prev = Array.isArray(data.settings.mtoPhases) ? data.settings.mtoPhases : []
+                              const next = prev.filter(p => p in w)
+                              for (const k of Object.keys(w)) {
+                                if (!next.includes(k)) next.push(k)
+                              }
+                              data.settings.mtoPhases = next
                             }
+                            persist(data)
                           }}
                           className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
                         >
@@ -2381,15 +2420,26 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   </div>
                   <button
                     onClick={() => {
-                      const name = prompt('New MTO phase:')
-                      if (!name) return
+                      const name = prompt('New project phase:')
+                      if (!name || !String(name).trim()) return
+                      const trimmed = String(name).trim()
                       const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        if (!data.settings.mtoPhases) data.settings.mtoPhases = []
-                        data.settings.mtoPhases.push(name)
-                        persist(data)
+                      if (!data) return
+                      if (trimmed in getPhaseWeights(data)) {
+                        alert('That phase already exists.')
+                        return
                       }
+                      pushState(data)
+                      if (!data.settings.mtoPhases) data.settings.mtoPhases = []
+                      if (!data.settings.phaseWeights) data.settings.phaseWeights = {}
+                      data.settings.mtoPhases.push(trimmed)
+                      const pw = data.settings.phaseWeights
+                      if (Object.keys(pw).length === 0) {
+                        Object.assign(pw, buildEqualPhaseWeights(data.settings.mtoPhases))
+                      } else {
+                        pw[trimmed] = 0
+                      }
+                      persist(data)
                     }}
                     className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
                   >

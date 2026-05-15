@@ -838,12 +838,34 @@ export function pct(v: number): string {
   return v + '%'
 }
 
-/** Phase weights from settings or defaults */
+/** Equal whole-number weights that sum to 100 (remainder distributed to first phases). */
+export function buildEqualPhaseWeights(phaseNames: string[]): Record<string, number> {
+  const phases = (phaseNames || []).map(p => String(p || '').trim()).filter(Boolean)
+  const n = phases.length
+  if (n === 0) return {}
+  const base = Math.floor(100 / n)
+  const remainder = 100 - base * n
+  const out: Record<string, number> = {}
+  phases.forEach((ph, idx) => {
+    out[ph] = base + (idx < remainder ? 1 : 0)
+  })
+  return out
+}
+
+/** Phase weights: non-empty saved map, else derive from mtoPhases, else built-in defaults */
 export function getPhaseWeights(d: BackupData): Record<string, number> {
   const defaults: Record<string, number> = {
     Estimating: 5, Planning: 10, 'Site Prep': 15, 'Rough-in': 35, Finish: 25, Trim: 10,
   }
-  return (d.settings && d.settings.phaseWeights) || defaults
+  const raw = d.settings?.phaseWeights
+  if (raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length > 0) {
+    return raw
+  }
+  const mto = d.settings?.mtoPhases
+  if (Array.isArray(mto) && mto.length > 0) {
+    return buildEqualPhaseWeights(mto)
+  }
+  return defaults
 }
 
 /** Overall completion — weighted phase average (matches HTML ov(p)) */
