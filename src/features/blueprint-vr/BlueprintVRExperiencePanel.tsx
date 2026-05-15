@@ -36,8 +36,7 @@ import {
   convertPlanScanToBuildingModel,
   scanBlueprintFullSet,
   mergeFullSetScanIntoBuildingModel,
-  chooseBestFloorPlanSheet,
-  classifySheetRole,
+  enumerateFullSourceSetSheets,
 } from './blueprintPlanScanner'
 import type {
   BlueprintPlanScanResult,
@@ -47,6 +46,7 @@ import type {
 import type { PdfTracePayload as PdfTracePayloadType } from './pdfTraceTypes'
 import type { PdfTracePayload } from './pdfTraceTypes'
 import { buildBlueprintPdfRuntimeKey, extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
+import type { PdfRuntimeProviderMatchTier, RuntimeTraceForSheetResult } from './blueprintPdfTraceRuntimeBridge'
 import {
   type BlueprintVRCacheIdentity,
   buildBlueprintVRCacheIdentityKey,
@@ -660,6 +660,16 @@ function StageItemList({ stage }: { stage: VRStage }) {
   )
 }
 
+/** UI-facing scan kind: never shows measured/canonical when geometry is fallback-derived. */
+function effectiveScanDisplayKind(scan: BlueprintPlanScanResult): 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace' {
+  if (scan.isFallback || scan.scanResultKind === 'fallback') return 'fallback'
+  const k = scan.scanResultKind
+  if (k === 'measured-trace') return 'measured-trace'
+  if (k === 'cached-inferred') return 'cached-inferred'
+  if (k === 'inferred') return 'inferred'
+  return 'fallback'
+}
+
 // ── Subcomponent: Scan Status Banner ─────────────────────────────────
 
 function ScanStatusBanner({
@@ -671,6 +681,7 @@ function ScanStatusBanner({
   traceRuntime,
   runtimeProviderDebug,
   cacheDebug,
+  engineDebug,
 }: {
   scan: BlueprintPlanScanResult
   fullSetScan?: BlueprintFullSetScanResult
@@ -678,7 +689,8 @@ function ScanStatusBanner({
   sourceLabel?: string
   sourceType?: string
   traceRuntime?: {
-    providerStatus: 'available' | 'missing' | 'error'
+    providerStatus: 'available' | 'partial' | 'missing' | 'error'
+    providerMatchTier?: PdfRuntimeProviderMatchTier
     selectedPageNumber: number | null
     operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
@@ -689,6 +701,7 @@ function ScanStatusBanner({
     registeredKeys?: string[]
     matchReason?: string
     matchedKey?: string
+    matchTier?: PdfRuntimeProviderMatchTier
     registrySize?: number
     providerAgeSec?: number
     pdfDocReady?: boolean
@@ -696,16 +709,29 @@ function ScanStatusBanner({
     lastUnregisterReason?: string
   }
   cacheDebug?: {
-    mode: 'hit' | 'miss'
+    mode: 'hit' | 'miss' | 'bypass'
     key: string
     keyHash: string
     sourceIdentity: BlueprintVRCacheIdentity
     rescanCount: number
     scannedAt?: string
   }
+  engineDebug?: {
+    extractionPhase: 'idle' | 'extracting' | 'done'
+    targetPages: number[]
+    pageRangeLabel?: string
+    totalPagesScanned?: number
+    providerMatchTier: PdfRuntimeProviderMatchTier | 'unknown'
+    cacheMode: 'hit' | 'miss' | 'bypass'
+    fallbackUsed: boolean
+    traceUsable: boolean
+    confidencePct: number
+    blockerSummary: string
+  }
 }) {
   const top = scan.warnings.slice(0, 5)
-  const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
+  const displayKind = effectiveScanDisplayKind(scan)
+  const resultKind = displayKind
   const resultLabel =
     resultKind === 'measured-trace'
       ? 'Measured Trace'
@@ -743,6 +769,19 @@ function ScanStatusBanner({
         gap: 4,
       }}
     >
+      <div style={{ opacity: 0.78, fontSize: 9.2, lineHeight: 1.45, color: 'rgba(200,235,255,0.92)' }}>
+        Engine: phase {engineDebug?.extractionPhase ?? 'n/a'} · pages{' '}
+        {engineDebug?.pageRangeLabel ||
+          (engineDebug?.targetPages?.length
+            ? engineDebug.targetPages.length > 18
+              ? `${engineDebug.targetPages[0]}…${engineDebug.targetPages[engineDebug.targetPages.length - 1]} (${engineDebug.targetPages.length})`
+              : `[${engineDebug.targetPages.join(', ')}]`
+            : '—')}{' '}
+        · scanned {engineDebug?.totalPagesScanned ?? '—'} · provider tier {engineDebug?.providerMatchTier ?? 'unknown'}{' '}
+        · cache {engineDebug?.cacheMode ?? cacheDebug?.mode ?? 'n/a'} · fallback {engineDebug?.fallbackUsed ? 'yes' : 'no'} · trace usable{' '}
+        {engineDebug?.traceUsable ? 'yes' : 'no'} · confidence {engineDebug?.confidencePct ?? Math.round((scan.confidence || 0) * 100)}% · blockers:{' '}
+        {engineDebug?.blockerSummary || 'none'}
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ color: accent, fontWeight: 700, letterSpacing: 0.8 }}>SCANNER STATUS</span>
         <span style={{ opacity: 0.6 }}>
@@ -756,8 +795,41 @@ function ScanStatusBanner({
       <div style={{ opacity: 0.72, fontSize: 9.5, color: 'rgba(200,230,240,0.9)' }}>
         Selected floor plan: {selectedFloorPlan
           ? `Pg ${selectedFloorPlan.pageNumber} · ${selectedFloorPlan.sheetNumber || '(no #)'} · ${selectedFloorPlan.sheetTitle || '(no title)'} · ${Math.round(selectedFloorPlan.confidence * 100)}%`
-          : 'Not selected (missing reliable floor-plan sheet metadata)'}
+          : 'Not selected (missing eligible wall-plan source page after full-set classification)'}
       </div>
+
+      {fullSetScan && fullSetScan.pageClassifications.length > 0 && (
+        <div style={{ opacity: 0.74, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(185,235,225,0.95)' }}>
+          W1B · pages scanned {fullSetScan.totalPagesScanned}
+          {fullSetScan.canonicalSelectionAmbiguous ? ' · canonical ambiguous' : ''} · sel. conf.{' '}
+          {Math.round((fullSetScan.canonicalSelectionConfidence || 0) * 100)}% · roles (non-zero):{' '}
+          {Object.entries(fullSetScan.pageRoleCounts || {})
+            .filter(([, n]) => n > 0)
+            .map(([k, n]) => `${k.replace(/_/g, ' ')}=${n}`)
+            .join(' · ') || '—'}
+        </div>
+      )}
+      {fullSetScan && fullSetScan.rankedWallPlanCandidates.length > 0 && (
+        <div style={{ opacity: 0.72, fontSize: 9, lineHeight: 1.4, color: 'rgba(175,225,245,0.92)' }}>
+          Top wall-source:{' '}
+          {fullSetScan.rankedWallPlanCandidates
+            .slice(0, 5)
+            .map((r) => `p${r.pageNumber} ${r.role} (#${r.rank})`)
+            .join(' · ')}
+        </div>
+      )}
+      {fullSetScan && fullSetScan.canonicalWallPlanPages.length > 0 && (
+        <div style={{ opacity: 0.72, fontSize: 9, lineHeight: 1.4, color: 'rgba(160,240,220,0.95)' }}>
+          Canonical wall source:{' '}
+          {fullSetScan.canonicalWallPlanPages.map((c) => `p${c.pageNumber} (${c.role})`).join(' · ')}
+        </div>
+      )}
+      {(fullSetScan?.classificationWarnings?.length || fullSetScan?.classificationBlockers?.length) ? (
+        <div style={{ opacity: 0.7, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(255,205,160,0.92)' }}>
+          {fullSetScan?.classificationBlockers?.length ? `Blockers: ${fullSetScan.classificationBlockers.join('; ')}. ` : ''}
+          {fullSetScan?.classificationWarnings?.length ? `Warnings: ${fullSetScan.classificationWarnings.join('; ')}` : ''}
+        </div>
+      ) : null}
 
       {sheetCounts && (
         <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
@@ -769,7 +841,11 @@ function ScanStatusBanner({
         Trace: {traceStatus} · Scale: {scaleStatus} · Geometry: walls {scan.walls.length}, openings {scan.openings.length}, rooms {scan.rooms.length}
       </div>
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
-        Runtime provider: {traceRuntime?.providerStatus || debug?.runtimeProviderStatus || 'missing'} · Selected trace page: {traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
+        Runtime provider: {traceRuntime?.providerStatus || debug?.runtimeProviderStatus || 'missing'}
+        {traceRuntime?.providerMatchTier || debug?.runtimeProviderMatchTier
+          ? ` (${traceRuntime?.providerMatchTier || debug?.runtimeProviderMatchTier})`
+          : ''}{' '}
+        · Selected trace page: {traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
       </div>
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
         Operator list: {traceRuntime?.operatorListStatus || debug?.operatorListStatus || 'unknown'} · Text content: {traceRuntime?.textContentStatus || debug?.textContentStatus || 'unknown'}
@@ -807,6 +883,12 @@ function ScanStatusBanner({
       {runtimeProviderDebug?.requestedKey && (!runtimeProviderDebug.registeredKeys || runtimeProviderDebug.registeredKeys.length === 0) && (
         <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(255,190,145,0.92)' }}>
           Registered provider keys: none
+        </div>
+      )}
+      {runtimeProviderDebug?.requestedKey && (
+        <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(255,210,160,0.95)' }}>
+          Provider match tier: {runtimeProviderDebug.matchTier ?? 'pending'}
+          {runtimeProviderDebug.matchTier === 'partial' ? ' — verify the open PDF matches this source set.' : ''}
         </div>
       )}
       {runtimeProviderDebug?.matchReason && (
@@ -969,14 +1051,19 @@ export default function BlueprintVRExperiencePanel({
     pagesTotal: number
     pagesExtracted: number
     targetPages: number[]
-  }>({ pagesTotal: 0, pagesExtracted: 0, targetPages: [] })
+    pageRangeLabel: string
+  }>({ pagesTotal: 0, pagesExtracted: 0, targetPages: [], pageRangeLabel: '' })
+
+  /** Canonical geometry driver page from Wave 1B scan (not viewer current page). */
+  const [geometryDriverPage, setGeometryDriverPage] = useState<number | null>(null)
 
   const [traceExtraction, setTraceExtraction] = useState<{
     selectedPageNumber: number | null
     payload: PdfTracePayload | null
     attempted: boolean
     available: boolean
-    providerStatus: 'available' | 'missing' | 'error'
+    providerStatus: 'available' | 'partial' | 'missing' | 'error'
+    providerMatchTier?: PdfRuntimeProviderMatchTier
     operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
     requestedKey?: string
@@ -991,6 +1078,7 @@ export default function BlueprintVRExperiencePanel({
     attempted: false,
     available: false,
     providerStatus: 'missing',
+    providerMatchTier: undefined,
     operatorListStatus: 'unknown',
     textContentStatus: 'unknown',
     requestedKey: undefined,
@@ -1010,7 +1098,12 @@ export default function BlueprintVRExperiencePanel({
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
   }, [availableSets, selectedSourceSetId])
 
-  const scannerVersion = 'W3.10D'
+  const scannerVersion = 'W3.11-W1B'
+
+  const enumeratedPageCount = useMemo(
+    () => (selectedSourceSet ? enumerateFullSourceSetSheets(selectedSourceSet).length : null),
+    [selectedSourceSet],
+  )
 
   // Excludes currentPageNumber — page navigation should not trigger a full
   // re-extraction. The Rescan button handles that explicitly.
@@ -1032,6 +1125,7 @@ export default function BlueprintVRExperiencePanel({
       attempted: false,
       available: false,
       providerStatus: 'missing' as const,
+      providerMatchTier: undefined as PdfRuntimeProviderMatchTier | undefined,
       operatorListStatus: 'unknown' as const,
       textContentStatus: 'unknown' as const,
       requestedKey: undefined as string | undefined,
@@ -1046,8 +1140,17 @@ export default function BlueprintVRExperiencePanel({
       setTraceExtraction(noTrace)
       setFullSetPageTraces({})
       setFullSetExtractionPhase('idle')
+      setGeometryDriverPage(null)
+      setFullSetExtractionProgress({
+        pagesTotal: 0,
+        pagesExtracted: 0,
+        targetPages: [],
+        pageRangeLabel: '',
+      })
       return
     }
+
+    setGeometryDriverPage(null)
 
     const sheets = selectedSourceSet.sheets || []
     // Build the provider key from the selected source set first, not from
@@ -1066,63 +1169,43 @@ export default function BlueprintVRExperiencePanel({
     }
     const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
 
-    // Choose the best floor plan sheet for the primary trace
-    const best = chooseBestFloorPlanSheet(sheets)
-
-    // Identify floor-plan candidate pages using sheet-role classification
-    const floorPlanRoles = new Set(['floor_plan', 'partition_plan', 'dimension_plan'])
-    const classifiedCandidates = sheets
-      .map((sheet) => {
-        const roles = classifySheetRole(sheet)
-        const isFloorPlan = roles.some((r) => floorPlanRoles.has(r))
-        return { sheet, isFloorPlan }
-      })
-      .filter((c) => c.isFloorPlan)
-
-    // Build ordered target page list: best first, then other classified candidates
-    const targetPageSet = new Set<number>()
-    if (best) targetPageSet.add(best.pageNumber)
-    for (const c of classifiedCandidates.slice(0, 7)) targetPageSet.add(c.sheet.pageNumber)
-    // If no floor-plan candidates found via metadata, sample pages distributed
-    // across the full document. For a 67-page Full Set this reaches page ~37
-    // (floor plan area) rather than stopping at page 3.
-    if (targetPageSet.size === 0) {
-      const totalPgs = selectedSourceSet.totalPages || sheets.length || 1
-      if (totalPgs <= 8) {
-        for (let p = 1; p <= Math.min(5, totalPgs); p++) targetPageSet.add(p)
-      } else {
-        targetPageSet.add(1)
-        targetPageSet.add(2)
-        for (const pct of [0.20, 0.35, 0.50, 0.65, 0.80]) {
-          const p = Math.max(1, Math.min(totalPgs, Math.round(totalPgs * pct)))
-          targetPageSet.add(p)
-        }
-      }
-      // Always include the currently-viewed page — user may have the floor
-      // plan already open in the viewer.
-      if (runtimeSourceIdentity?.currentPageNumber && runtimeSourceIdentity.currentPageNumber > 0) {
-        targetPageSet.add(runtimeSourceIdentity.currentPageNumber)
-      }
-    }
-    const targetPages = Array.from(targetPageSet).sort((a, b) => a - b)
+    const totalPages = Math.max(
+      Math.floor(Number(selectedSourceSet.totalPages) || 0),
+      sheets.reduce((m, s) => Math.max(m, Math.floor(Number(s.pageNumber) || 0)), 0),
+      sheets.length > 0 ? sheets.length : 0,
+      1,
+    )
+    const targetPages = Array.from({ length: totalPages }, (_, idx) => idx + 1)
+    const pageRangeLabel = totalPages <= 24 ? targetPages.join(', ') : `1–${totalPages}`
 
     setLastScanAt(new Date().toISOString())
     setFullSetExtractionPhase('extracting')
-    setFullSetExtractionProgress({ pagesTotal: targetPages.length, pagesExtracted: 0, targetPages })
+    setFullSetExtractionProgress({
+      pagesTotal: totalPages,
+      pagesExtracted: 0,
+      targetPages,
+      pageRangeLabel,
+    })
     setTraceExtraction((prev) => ({
       ...prev,
       attempted: false,
       requestedKey: requestedRuntimeKey,
-      selectedPageNumber: best?.pageNumber ?? null,
+      selectedPageNumber: null,
     }))
+
+    const projectNameForScan =
+      projectNameProp ||
+      selectedSourceSet.projectName ||
+      job.outputManifest?.projectName ||
+      sourceBlueprint.name
 
     void (async () => {
       const newTraces: Record<number, PdfTracePayloadType> = {}
-      let primaryTraceSet = false
+      const extractionByPage: Record<number, RuntimeTraceForSheetResult> = {}
 
       for (let i = 0; i < targetPages.length; i++) {
         if (disposed) break
-        const pageNumber = targetPages[i]
+        const pageNumber = targetPages[i]!
         const sheet = sheets.find((s) => s.pageNumber === pageNumber)
 
         const traceArgs = {
@@ -1133,8 +1216,6 @@ export default function BlueprintVRExperiencePanel({
           existingPayload: sheet?.tracePayload || null,
         }
 
-        // Initial attempt + up to 2 retries for the first page to give the
-        // PDF runtime a chance to register before giving up.
         let runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
         if (!disposed && i === 0 && runtimeTrace.providerStatus === 'missing') {
           await new Promise<void>((r) => setTimeout(r, 160))
@@ -1147,41 +1228,66 @@ export default function BlueprintVRExperiencePanel({
 
         if (disposed) break
 
+        extractionByPage[pageNumber] = runtimeTrace
+
         if (runtimeTrace.result.payload) {
           newTraces[pageNumber] = runtimeTrace.result.payload
         }
 
-        // Update the primary traceExtraction state for the best floor-plan page
-        const isPrimary = pageNumber === (best?.pageNumber ?? targetPages[0])
-        if (isPrimary && !primaryTraceSet) {
-          primaryTraceSet = true
-          setTraceExtraction({
-            selectedPageNumber: runtimeTrace.selectedPageNumber,
-            payload: runtimeTrace.result.payload,
-            attempted: true,
-            available: Boolean(runtimeTrace.result.success),
-            providerStatus: runtimeTrace.providerStatus,
-            operatorListStatus: runtimeTrace.operatorListStatus,
-            textContentStatus: runtimeTrace.textContentStatus,
-            requestedKey: runtimeTrace.providerRequestedKey || requestedRuntimeKey,
-            registeredKeys: runtimeTrace.providerRegisteredKeys || [],
-            matchReason: runtimeTrace.providerMatchReason,
-            providerKey: runtimeTrace.providerKey,
-            providerMetadata: runtimeTrace.providerMetadata,
-            warnings: runtimeTrace.result.warnings,
-          })
-        }
-
         setFullSetExtractionProgress((prev) => ({
           ...prev,
-          pagesExtracted: prev.pagesExtracted + 1,
+          pagesExtracted: i + 1,
         }))
       }
 
       if (disposed) return
 
-      // If the primary page was never found in the loop, emit a no-trace state
-      if (!primaryTraceSet) {
+      const mergedForProbe = {
+        ...selectedSourceSet,
+        totalPages,
+        sheets: sheets.map((sheet) => ({
+          ...sheet,
+          tracePayload: newTraces[sheet.pageNumber] ?? sheet.tracePayload,
+          traceAttempted:
+            Object.prototype.hasOwnProperty.call(newTraces, sheet.pageNumber) || sheet.traceAttempted,
+        })),
+      }
+
+      const probe = scanBlueprintFullSet({
+        projectName: projectNameForScan,
+        sourceSet: mergedForProbe,
+        extractedText: job.outputManifest?.metadata?.description,
+        multiPageTraces: newTraces,
+      })
+
+      const driver =
+        probe.planScan.selectedFloorPlanSheet?.pageNumber ??
+        probe.rankedWallPlanCandidates[0]?.pageNumber ??
+        null
+
+      setGeometryDriverPage(driver)
+
+      const pickRt =
+        (driver != null && extractionByPage[driver]) || extractionByPage[1] || Object.values(extractionByPage)[0]
+
+      if (pickRt) {
+        setTraceExtraction({
+          selectedPageNumber: pickRt.selectedPageNumber,
+          payload: pickRt.result.payload,
+          attempted: true,
+          available: Boolean(pickRt.result.success),
+          providerStatus: pickRt.providerStatus,
+          providerMatchTier: pickRt.providerMatchTier,
+          operatorListStatus: pickRt.operatorListStatus,
+          textContentStatus: pickRt.textContentStatus,
+          requestedKey: pickRt.providerRequestedKey || requestedRuntimeKey,
+          registeredKeys: pickRt.providerRegisteredKeys || [],
+          matchReason: pickRt.providerMatchReason,
+          providerKey: pickRt.providerKey,
+          providerMetadata: pickRt.providerMetadata,
+          warnings: pickRt.result.warnings,
+        })
+      } else {
         setTraceExtraction({ ...noTrace, attempted: true, requestedKey: requestedRuntimeKey })
       }
 
@@ -1213,13 +1319,11 @@ export default function BlueprintVRExperiencePanel({
         sourceBlueprint.filePath ||
         sourceBlueprint.name ||
         null,
-      selectedFloorPlanPage:
-        traceExtraction.selectedPageNumber ||
-        runtimeSourceIdentity?.currentPageNumber ||
-        null,
+      selectedFloorPlanPage: geometryDriverPage ?? traceExtraction.selectedPageNumber ?? null,
       pageCount:
-        selectedSourceSet?.totalPages ||
-        runtimeSourceIdentity?.pageCount ||
+        enumeratedPageCount ??
+        selectedSourceSet?.totalPages ??
+        runtimeSourceIdentity?.pageCount ??
         null,
       scannerVersion,
     }),
@@ -1233,6 +1337,8 @@ export default function BlueprintVRExperiencePanel({
       sourceBlueprint.id,
       sourceBlueprint.filePath,
       traceExtraction.selectedPageNumber,
+      geometryDriverPage,
+      enumeratedPageCount,
       scannerVersion,
     ],
   )
@@ -1246,11 +1352,8 @@ export default function BlueprintVRExperiencePanel({
   const cacheKeyParts = `${sourceKey}::${rescanToken}`
 
   const { scanResult, fullSetScan, buildingModel, fromCache, cacheDebug } = useMemo(() => {
-    // Only serve the cache when we haven't completed a fresh multi-page
-    // extraction yet. Once fullSetExtractionPhase === 'done' we have real
-    // (or definitively failed) trace data and must bypass the cache so the
-    // scan reflects the actual extraction result.
-    const allowCache = rescanToken === 0 && fullSetExtractionPhase !== 'done'
+    const extractionComplete = fullSetExtractionPhase === 'done'
+    const allowCache = extractionComplete
     const cached = allowCache ? getCachedProjectModel(sourceCacheIdentity) : undefined
     if (cached) {
       return {
@@ -1273,16 +1376,14 @@ export default function BlueprintVRExperiencePanel({
     let fullScan: BlueprintFullSetScanResult | undefined
     let model: BlueprintBuildingModel
 
-    // Attach all freshly extracted page traces to their respective sheets so
-    // the full-set scanner can pick the best floor-plan trace from real data.
+    const driverPage = geometryDriverPage ?? traceExtraction.selectedPageNumber
     const sourceSetForScan = selectedSourceSet
       ? {
           ...selectedSourceSet,
+          totalPages: enumeratedPageCount ?? selectedSourceSet.totalPages,
           sheets: selectedSourceSet.sheets.map((sheet) => {
             const freshTrace = fullSetPageTraces[sheet.pageNumber]
-            const isPrimarySheet =
-              traceExtraction.selectedPageNumber != null &&
-              sheet.pageNumber === traceExtraction.selectedPageNumber
+            const isPrimarySheet = driverPage != null && sheet.pageNumber === driverPage
             return {
               ...sheet,
               tracePayload: freshTrace ?? (isPrimarySheet ? traceExtraction.payload : sheet.tracePayload),
@@ -1299,7 +1400,6 @@ export default function BlueprintVRExperiencePanel({
         sourceSet: sourceSetForScan,
         extractedText: job.outputManifest?.metadata?.description,
         multiPageTraces: fullSetPageTraces,
-        totalPagesScanned: fullSetExtractionProgress.pagesExtracted || undefined,
       })
       scan = fullScan.planScan
       const base = convertPlanScanToBuildingModel(scan)
@@ -1312,6 +1412,24 @@ export default function BlueprintVRExperiencePanel({
         extractedText: job.outputManifest?.metadata?.description,
       })
       model = convertPlanScanToBuildingModel(scan)
+    }
+
+    const bypassCache = !extractionComplete
+    if (bypassCache) {
+      return {
+        scanResult: scan,
+        fullSetScan: fullScan,
+        buildingModel: model,
+        fromCache: false,
+        cacheDebug: {
+          mode: 'bypass' as const,
+          key: sourceKey,
+          keyHash: sourceKey.slice(0, 8),
+          sourceIdentity: sourceCacheIdentity,
+          rescanCount,
+          scannedAt: lastScanAt || undefined,
+        },
+      }
     }
 
     const stored = setCachedProjectModel(sourceCacheIdentity, {
@@ -1335,13 +1453,14 @@ export default function BlueprintVRExperiencePanel({
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKeyParts, traceExtraction, fullSetPageTraces, fullSetExtractionPhase, sourceCacheIdentity, rescanCount])
+  }, [cacheKeyParts, traceExtraction, fullSetPageTraces, fullSetExtractionPhase, sourceCacheIdentity, rescanCount, lastScanAt, geometryDriverPage, enumeratedPageCount])
 
   const handleChangeSource = useCallback(
     (setId: string) => {
       setSelectedSourceSetId(setId)
       setSelectedRoomId(null)
       setRescanToken(0)
+      setGeometryDriverPage(null)
       setLastScanAt(new Date().toISOString())
       onSelectSourceSet?.(setId)
     },
@@ -1352,15 +1471,17 @@ export default function BlueprintVRExperiencePanel({
     clearCachedProjectModel(sourceCacheIdentity)
     setLastScanAt(new Date().toISOString())
     setRescanCount((n) => n + 1)
+    setGeometryDriverPage(null)
     setTraceExtraction((prev) => ({
       ...prev,
       attempted: false,
       available: false,
       providerStatus: 'missing',
+      providerMatchTier: undefined,
     }))
     setFullSetPageTraces({})
     setFullSetExtractionPhase('idle')
-    setFullSetExtractionProgress({ pagesTotal: 0, pagesExtracted: 0, targetPages: [] })
+    setFullSetExtractionProgress({ pagesTotal: 0, pagesExtracted: 0, targetPages: [], pageRangeLabel: '' })
     setRescanToken((t) => t + 1)
   }, [sourceCacheIdentity])
 
@@ -1471,11 +1592,11 @@ export default function BlueprintVRExperiencePanel({
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
-    const kind = scanResult.scanResultKind || (scanResult.isFallback ? 'fallback' : 'measured-trace')
+    const kind = effectiveScanDisplayKind(scanResult)
     if (kind === 'measured-trace') return fromCache ? 'cached-measured' : 'measured'
     if (kind === 'fallback') return 'fallback'
     return fromCache ? 'cached-inferred' : 'inferred'
-  }, [fromCache, scanResult.scanResultKind, scanResult.isFallback])
+  }, [fromCache, scanResult])
 
   const scanSummary = useMemo(() => {
     const w = Math.round(scanResult.footprint.width)
@@ -1484,9 +1605,68 @@ export default function BlueprintVRExperiencePanel({
     return `${scanResult.layoutContext.replace(/-/g, ' ')} · ${w}'-0" W × ${d}'-0" D · ${rooms} rooms`
   }, [scanResult])
 
+  const scannerEngineDebug = useMemo(
+    () => ({
+      extractionPhase: fullSetExtractionPhase,
+      targetPages: fullSetExtractionProgress.targetPages,
+      pageRangeLabel: fullSetExtractionProgress.pageRangeLabel,
+      totalPagesScanned: fullSetScan?.totalPagesScanned,
+      providerMatchTier:
+        traceExtraction.providerMatchTier ??
+        scanResult.metadata?.runtimeProviderMatchTier ??
+        traceExtraction.payload?.runtime?.providerMatchTier ??
+        ('unknown' as const),
+      cacheMode: cacheDebug.mode,
+      fallbackUsed: effectiveScanDisplayKind(scanResult) === 'fallback',
+      traceUsable:
+        Boolean(scanResult.traceAvailable) &&
+        !scanResult.isFallback &&
+        (scanResult.traceLines?.length ?? 0) > 0,
+      confidencePct: Math.round((scanResult.confidence || 0) * 100),
+      blockerSummary:
+        scanResult.warnings
+          .slice(0, 3)
+          .map((w) => w.code)
+          .join(', ') || 'none',
+    }),
+    [
+      fullSetExtractionPhase,
+      fullSetExtractionProgress.targetPages,
+      fullSetExtractionProgress.pageRangeLabel,
+      fullSetScan?.totalPagesScanned,
+      traceExtraction.providerMatchTier,
+      traceExtraction.payload?.runtime?.providerMatchTier,
+      scanResult,
+      cacheDebug.mode,
+    ],
+  )
+
+  useEffect(() => {
+    if (typeof console === 'undefined' || !console.info) return
+    console.info('[BlueprintVR][cache]', cacheDebug.mode, {
+      keyHash: cacheDebug.keyHash,
+      extractionPhase: fullSetExtractionPhase,
+      fromCache,
+    })
+    console.info('[BlueprintVR][provider]', {
+      status: traceExtraction.providerStatus,
+      tier: traceExtraction.providerMatchTier ?? traceExtraction.payload?.runtime?.providerMatchTier,
+      matchReason: traceExtraction.matchReason,
+    })
+  }, [
+    cacheDebug.mode,
+    cacheDebug.keyHash,
+    fullSetExtractionPhase,
+    fromCache,
+    traceExtraction.providerStatus,
+    traceExtraction.providerMatchTier,
+    traceExtraction.matchReason,
+    traceExtraction.payload?.runtime?.providerMatchTier,
+  ])
+
   const scannerStatusSummary = useMemo(() => {
     const scan = scanResult
-    const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
+    const resultKind = effectiveScanDisplayKind(scan)
     const resultLabel =
       resultKind === 'measured-trace'
         ? 'Measured Trace'
@@ -1500,6 +1680,8 @@ export default function BlueprintVRExperiencePanel({
     const src = selectedSourceSet?.name || sourceBlueprint.name
     return `${src} · ${cacheBit}${resultLabel} · ${pct}%`
   }, [scanResult, fromCache, selectedSourceSet, sourceBlueprint.name])
+
+  const headerScanKind = useMemo(() => effectiveScanDisplayKind(scanResult), [scanResult])
 
   // Always show all 4 stages from STAGE_ORDER — no dependency on manifest
   const visibleStages = [...STAGE_ORDER] as VRStage[]
@@ -1801,20 +1983,27 @@ export default function BlueprintVRExperiencePanel({
                 style={{
                   padding: '1px 6px',
                   borderRadius: 3,
-                  background: (scanResult.scanResultKind === 'measured-trace')
+                  background: headerScanKind === 'measured-trace'
                     ? 'rgba(123,229,216,0.10)'
                     : 'rgba(255,179,71,0.10)',
-                  border: (scanResult.scanResultKind === 'measured-trace')
+                  border: headerScanKind === 'measured-trace'
                     ? '1px solid rgba(123,229,216,0.4)'
                     : '1px solid rgba(255,179,71,0.4)',
-                  color: (scanResult.scanResultKind === 'measured-trace') ? '#9EF0E2' : '#FFD0A0',
+                  color: headerScanKind === 'measured-trace' ? '#9EF0E2' : '#FFD0A0',
                   fontSize: 9,
                   letterSpacing: 0.6,
                   textTransform: 'uppercase',
                 }}
               >
-                Scan: {scanResult.scanResultKind === 'measured-trace' ? 'Measured Trace' : 'Inferred'} ·{' '}
-                {Math.round((scanResult.confidence || 0) * 100)}%
+                Scan:{' '}
+                {headerScanKind === 'measured-trace'
+                  ? 'Measured Trace'
+                  : headerScanKind === 'fallback'
+                    ? 'Fallback layout'
+                    : headerScanKind === 'cached-inferred'
+                      ? 'Cached inferred'
+                      : 'Inferred'}{' '}
+                · {Math.round((scanResult.confidence || 0) * 100)}%
               </span>
               <span style={{ color: 'rgba(0,221,204,0.4)' }}>
                 {visibleStages.length} stages · {totalItems} catalog items
@@ -1944,6 +2133,7 @@ export default function BlueprintVRExperiencePanel({
                     sourceType={selectedSourceSet?.type}
                     traceRuntime={{
                       providerStatus: traceExtraction.providerStatus,
+                      providerMatchTier: traceExtraction.providerMatchTier,
                       selectedPageNumber: traceExtraction.selectedPageNumber,
                       operatorListStatus: traceExtraction.operatorListStatus,
                       textContentStatus: traceExtraction.textContentStatus,
@@ -1954,22 +2144,15 @@ export default function BlueprintVRExperiencePanel({
                       registeredKeys: traceExtraction.registeredKeys,
                       matchReason: traceExtraction.matchReason,
                       matchedKey: traceExtraction.providerKey,
+                      matchTier: traceExtraction.providerMatchTier,
                       registrySize: traceExtraction.providerMetadata?.registrySize,
                       providerAgeSec: traceExtraction.providerMetadata?.providerAgeSec,
                       pdfDocReady: traceExtraction.providerMetadata?.pdfDocReady,
                       hasGetPage: traceExtraction.providerMetadata?.hasGetPage,
                       lastUnregisterReason: traceExtraction.providerMetadata?.lastUnregisterReason,
                     }}
-                    cacheDebug={
-                      cacheDebug || {
-                        mode: fromCache ? 'hit' : 'miss',
-                        key: sourceKey,
-                        keyHash: sourceKey.slice(0, 8),
-                        sourceIdentity: sourceCacheIdentity,
-                        rescanCount,
-                        scannedAt: lastScanAt || undefined,
-                      }
-                    }
+                    engineDebug={scannerEngineDebug}
+                    cacheDebug={cacheDebug}
                   />
                 </div>
               )}
@@ -2145,7 +2328,7 @@ export default function BlueprintVRExperiencePanel({
                         }} />
                       </div>
                       <div style={{ color: 'rgba(255,220,120,0.5)', fontFamily: 'monospace', fontSize: 9.5 }}>
-                        target pages: {fullSetExtractionProgress.targetPages.join(', ') || 'classifying…'}
+                        target pages: {fullSetExtractionProgress.pageRangeLabel || fullSetExtractionProgress.targetPages.join(', ') || '…'}
                       </div>
                     </div>
                   </div>

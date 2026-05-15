@@ -110,7 +110,9 @@ export interface PdfTracePayload {
   textRuns: PdfTraceTextRun[]
   scaleHints: PdfTraceScaleHint[]
   runtime?: {
-    providerStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    /** exact = registry key matches request; partial = scored fallback provider; none = missing. */
+    providerMatchTier?: 'exact' | 'partial' | 'none'
+    providerStatus?: 'available' | 'partial' | 'missing' | 'error' | 'unknown'
     providerKey?: string
     providerRequestedKey?: string
     providerRegisteredKeys?: string[]
@@ -134,6 +136,7 @@ export interface PdfTraceExtractionWarning {
     | 'UNSUPPORTED_OPERATOR_SEQUENCE'
     | 'ADAPTER_REQUIRED'
     | 'RUNTIME_PROVIDER_MISSING'
+    | 'RUNTIME_PROVIDER_PARTIAL_MATCH'
     | 'RUNTIME_PROVIDER_ERROR'
     | 'EXTRACTION_ERROR'
   message: string
@@ -145,6 +148,11 @@ export interface PdfTraceExtractionResult {
   warnings: PdfTraceExtractionWarning[]
   opsSource?: 'provider' | 'dynamic-import' | 'missing'
 }
+
+// ---------------------------------------------------------------------------
+// Blueprint VR Wave 1B page roles live in blueprintPlanScanner.ts
+// (BlueprintPageClassificationRole, BlueprintPageClassification, etc.).
+// ---------------------------------------------------------------------------
 
 // Backward-compatible aliases used by scanner/adapter code.
 export type PdfTraceScale = PdfTraceScaleHint

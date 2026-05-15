@@ -174,8 +174,10 @@ export function setCachedProjectModel(
       sourceSetName: identity.sourceSetName || null,
       blueprintId: identity.blueprintId || null,
       fileName: identity.fileName || null,
-      selectedFloorPlanPage: Number(identity.selectedFloorPlanPage || 0) || null,
-      pageCount: Number(identity.pageCount || 0) || null,
+      selectedFloorPlanPage:
+        Number(resolvedEntry.scan?.selectedFloorPlanSheet?.pageNumber || identity.selectedFloorPlanPage || 0) ||
+        null,
+      pageCount: Number(resolvedEntry.fullSetScan?.totalPagesScanned || identity.pageCount || 0) || null,
       scannerVersion: identity.scannerVersion || null,
     },
     generatedAt: new Date().toISOString(),
@@ -183,11 +185,10 @@ export function setCachedProjectModel(
     model: resolvedEntry.model,
     scan: resolvedEntry.scan,
     fullSetScan: resolvedEntry.fullSetScan,
-    modelDerivation:
-      resolvedEntry.scan.scanResultKind === 'measured-trace'
+    modelDerivation: resolvedEntry.scan.isFallback
+      ? 'fallback-derived'
+      : resolvedEntry.scan.scanResultKind === 'measured-trace'
         ? 'trace-derived'
-        : resolvedEntry.scan.scanResultKind === 'fallback'
-        ? 'fallback-derived'
         : 'inferred-derived',
   }
   cache.set(key, stored)

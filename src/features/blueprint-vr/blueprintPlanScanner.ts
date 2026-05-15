@@ -326,6 +326,10 @@ export interface BlueprintPlanScanResult {
     activePageNumber?: number
     totalPages?: number
     generatedAt: string
+    /** True when footprint/rooms are context fallback (e.g. salon template), not trace-validated. */
+    geometryFromFallback?: boolean
+    /** Runtime PDF registry match quality for the trace that drove this scan. */
+    runtimeProviderMatchTier?: 'exact' | 'partial' | 'none'
   }
   /** Point-by-point confidence explanation for scanner status panel. */
   confidenceBreakdown?: ScanConfidenceBreakdown
@@ -347,7 +351,8 @@ export interface BlueprintPlanScanResult {
     rawRects?: number
     rawPolylines?: number
     rawTextRuns?: number
-    runtimeProviderStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    runtimeProviderStatus?: 'available' | 'partial' | 'missing' | 'error' | 'unknown'
+    runtimeProviderMatchTier?: 'exact' | 'partial' | 'none'
     operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'
     mergedWalls: number
@@ -1641,8 +1646,13 @@ export function scanBlueprintPlan(
   const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(input.tracePayload)
   const traceLines = adapted.lines
   const traceTextRuns: PdfTraceTextRun[] = input.tracePayload?.textRuns || []
-  const runtimeProviderStatus =
-    input.tracePayload?.runtime?.providerStatus || (traceAttempted ? 'missing' : 'unknown')
+  const rtStatus = input.tracePayload?.runtime?.providerStatus
+  const runtimeProviderStatus: NonNullable<BlueprintPlanScanResult['traceDebugCounts']>['runtimeProviderStatus'] =
+    rtStatus === 'available' || rtStatus === 'partial' || rtStatus === 'missing' || rtStatus === 'error'
+      ? rtStatus
+      : traceAttempted
+        ? 'missing'
+        : 'unknown'
   const operatorListStatus = input.tracePayload?.runtime?.operatorListStatus || 'unknown'
   const textContentStatus = input.tracePayload?.runtime?.textContentStatus || 'unknown'
   const rawRectCount = Array.isArray(input.tracePayload?.rects) ? input.tracePayload!.rects.length : 0
@@ -1893,6 +1903,8 @@ export function scanBlueprintPlan(
       activePageNumber: input.activePageNumber,
       totalPages: input.totalPages,
       generatedAt,
+      geometryFromFallback: isFallback,
+      runtimeProviderMatchTier: input.tracePayload?.runtime?.providerMatchTier,
     },
     scanResultKind: isFallback ? 'fallback' : 'measured-trace',
     traceStatus: traceAvailable ? (isFallback ? 'provided' : 'extracted') : 'missing',
@@ -1905,6 +1917,7 @@ export function scanBlueprintPlan(
       rawPolylines: rawPolylineCount,
       rawTextRuns: rawTextRunCount,
       runtimeProviderStatus,
+      runtimeProviderMatchTier: input.tracePayload?.runtime?.providerMatchTier,
       operatorListStatus,
       textContentStatus,
       mergedWalls: inferredWalls.length,
@@ -2197,6 +2210,544 @@ export function convertRoomCandidatesToBuildingModel(params: {
   return convertPlanScanToBuildingModel(scan)
 }
 
+type SheetClassificationContext = {
+  sourceSetName?: string
+  sourceSetType?: string
+  blueprintTitle?: string
+  extractedText?: string
+  projectName?: string
+}
+
+// ---------------------------------------------------------------------------
+// Wave 1B — full-set page classification roles (deterministic, per-page)
+// ---------------------------------------------------------------------------
+
+export type BlueprintPageClassificationRole =
+  | 'proposed_dimensioned_plan'
+  | 'proposed_floor_plan'
+  | 'partition_plan'
+  | 'demolition_plan'
+  | 'electrical_plan'
+  | 'reflected_ceiling_plan'
+  | 'interior_elevation'
+  | 'rendering'
+  | 'schedule'
+  | 'title_notes'
+  | 'unknown'
+
+export interface BlueprintPageClassification {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  role: BlueprintPageClassificationRole
+  roleConfidence: number
+  reasons: string[]
+  eligibleForWallSource: boolean
+}
+
+export interface RankedWallPlanCandidate {
+  rank: number
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  role: BlueprintPageClassificationRole
+  score: number
+  reasons: string[]
+}
+
+export interface CanonicalWallPlanPage {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  role: BlueprintPageClassificationRole
+  confidence: number
+  selectionReasons: string[]
+}
+
+const WALL_SOURCE_ROLES: ReadonlySet<BlueprintPageClassificationRole> = new Set([
+  'proposed_dimensioned_plan',
+  'proposed_floor_plan',
+  'partition_plan',
+])
+
+/** Higher index = lower priority when scores tie. */
+const ROLE_TIEBREAK_ORDER: BlueprintPageClassificationRole[] = [
+  'proposed_dimensioned_plan',
+  'proposed_floor_plan',
+  'partition_plan',
+  'demolition_plan',
+  'electrical_plan',
+  'reflected_ceiling_plan',
+  'interior_elevation',
+  'rendering',
+  'schedule',
+  'title_notes',
+  'unknown',
+]
+
+function roleTiebreakIndex(role: BlueprintPageClassificationRole): number {
+  const idx = ROLE_TIEBREAK_ORDER.indexOf(role)
+  return idx >= 0 ? idx : ROLE_TIEBREAK_ORDER.length
+}
+
+function flattenTraceText(payload: PdfTracePayload | null | undefined): string {
+  if (!payload?.textRuns?.length) return ''
+  const joined = payload.textRuns
+    .map((t) => String(t.text || '').trim())
+    .filter(Boolean)
+    .join(' ')
+  return joined.length > 8000 ? joined.slice(0, 8000) : joined
+}
+
+function traceGeometryHints(payload: PdfTracePayload | null | undefined): {
+  lineCount: number
+  textRunCount: number
+  rectCount: number
+} {
+  if (!payload) return { lineCount: 0, textRunCount: 0, rectCount: 0 }
+  return {
+    lineCount: Array.isArray(payload.lines) ? payload.lines.length : 0,
+    textRunCount: Array.isArray(payload.textRuns) ? payload.textRuns.length : 0,
+    rectCount: Array.isArray(payload.rects) ? payload.rects.length : 0,
+  }
+}
+
+type RoleKeywordRule = { term: string; weight: number }
+
+const PAGE_ROLE_KEYWORD_RULES: Record<BlueprintPageClassificationRole, RoleKeywordRule[]> = {
+  proposed_dimensioned_plan: [
+    { term: 'proposed dimensioned plan', weight: 1.0 },
+    { term: 'dimensioned plan', weight: 0.75 },
+    { term: 'dimensioned floor plan', weight: 0.85 },
+    { term: 'proposed dimensioned', weight: 0.9 },
+  ],
+  proposed_floor_plan: [
+    { term: 'proposed floor plan', weight: 0.95 },
+    { term: 'floor plan', weight: 0.7 },
+    { term: 'proposed plan', weight: 0.72 },
+    { term: 'suite plan', weight: 0.65 },
+    { term: 'tenant improvement plan', weight: 0.55 },
+    { term: 'furniture plan', weight: 0.5 },
+    { term: 'architectural plan', weight: 0.62 },
+    { term: 'layout plan', weight: 0.45 },
+  ],
+  partition_plan: [
+    { term: 'partition plan', weight: 0.95 },
+    { term: 'partition layout', weight: 0.85 },
+    { term: 'stud layout', weight: 0.75 },
+    { term: 'drywall layout', weight: 0.72 },
+    { term: 'framing plan', weight: 0.68 },
+    { term: 'wall layout', weight: 0.55 },
+  ],
+  demolition_plan: [
+    { term: 'demolition plan', weight: 0.95 },
+    { term: 'demo plan', weight: 0.88 },
+    { term: 'demolition', weight: 0.65 },
+    { term: 'remove existing', weight: 0.55 },
+    { term: 'existing to remain', weight: 0.35 },
+  ],
+  electrical_plan: [
+    { term: 'electrical plan', weight: 0.9 },
+    { term: 'power plan', weight: 0.82 },
+    { term: 'receptacle plan', weight: 0.85 },
+    { term: 'lighting plan', weight: 0.55 },
+    { term: 'panel schedule', weight: 0.45 },
+    { term: 'electrical', weight: 0.5 },
+  ],
+  reflected_ceiling_plan: [
+    { term: 'reflected ceiling plan', weight: 0.95 },
+    { term: 'reflected ceiling', weight: 0.88 },
+    { term: 'rcp', weight: 0.75 },
+    { term: 'ceiling plan', weight: 0.72 },
+  ],
+  interior_elevation: [
+    { term: 'interior elevation', weight: 0.95 },
+    { term: 'interior elevations', weight: 0.92 },
+    { term: 'wall elevation', weight: 0.55 },
+    { term: 'elevation', weight: 0.45 },
+    { term: 'north elevation', weight: 0.35 },
+    { term: 'south elevation', weight: 0.35 },
+    { term: 'east elevation', weight: 0.35 },
+    { term: 'west elevation', weight: 0.35 },
+  ],
+  rendering: [
+    { term: 'rendering', weight: 0.92 },
+    { term: 'renderings', weight: 0.92 },
+    { term: '3d rendering', weight: 0.88 },
+    { term: 'perspective', weight: 0.75 },
+    { term: 'photorealistic', weight: 0.55 },
+  ],
+  schedule: [
+    { term: 'door schedule', weight: 0.92 },
+    { term: 'finish schedule', weight: 0.88 },
+    { term: 'equipment schedule', weight: 0.88 },
+    { term: 'panel schedule', weight: 0.72 },
+    { term: 'schedule', weight: 0.55 },
+    { term: 'door list', weight: 0.6 },
+  ],
+  title_notes: [
+    { term: 'title sheet', weight: 0.92 },
+    { term: 'cover sheet', weight: 0.88 },
+    { term: 'general notes', weight: 0.78 },
+    { term: 'drawing index', weight: 0.72 },
+    { term: 'index of drawings', weight: 0.72 },
+    { term: 'sheet index', weight: 0.7 },
+    { term: 'abbreviations', weight: 0.45 },
+    { term: 'symbol legend', weight: 0.42 },
+  ],
+  unknown: [],
+}
+
+function scorePageRoleFromHaystack(
+  role: BlueprintPageClassificationRole,
+  haystack: string,
+): { score: number; hits: string[] } {
+  const rules = PAGE_ROLE_KEYWORD_RULES[role]
+  let score = 0
+  const hits: string[] = []
+  for (const { term, weight } of rules) {
+    if (haystack.includes(term)) {
+      score += weight
+      hits.push(term)
+    }
+  }
+  return { score: Math.min(2.5, score), hits }
+}
+
+/**
+ * Deterministic per-page classification for Wave 1B. Uses sheet metadata,
+ * optional extracted/trace text, file names, and light vector/text counts —
+ * never uses "current viewer page" (caller must not pass that as sheet truth).
+ */
+export function classifyBlueprintPage(
+  sheet: BlueprintVRSourceSheet,
+  context?: SheetClassificationContext,
+  tracePayload?: PdfTracePayload | null,
+): BlueprintPageClassification {
+  const traceText = flattenTraceText(tracePayload)
+  const geom = traceGeometryHints(tracePayload)
+  const haystack = normalizeText([
+    sheet.sheetNumber,
+    sheet.sheetTitle,
+    sheet.sheetLabel,
+    sheet.label,
+    sheet.discipline,
+    sheet.fileName,
+    sheet.extractedText,
+    traceText,
+    sheet.sourceSetName || context?.sourceSetName,
+    sheet.sourceSetType || context?.sourceSetType,
+    sheet.blueprintTitle || context?.blueprintTitle,
+    context?.extractedText,
+    context?.projectName,
+  ])
+
+  const reasons: string[] = []
+  const scores: Partial<Record<BlueprintPageClassificationRole, number>> = {}
+
+  for (const role of ROLE_TIEBREAK_ORDER) {
+    if (role === 'unknown') continue
+    const { score, hits } = scorePageRoleFromHaystack(role, haystack)
+    if (score > 0) {
+      scores[role] = score
+      if (hits.length) reasons.push(`${role}:keyword=${hits.slice(0, 3).join('|')}`)
+    }
+  }
+
+  const sheetNumHay = normalizeText([sheet.sheetNumber, sheet.sheetLabel, sheet.label])
+  if (/\bap[\s\-]?\d{2,4}(?:\.\d+)?\b/i.test(sheetNumHay)) {
+    scores.proposed_floor_plan = (scores.proposed_floor_plan || 0) + 0.55
+    reasons.push('sheet_number:architectural_ap_prefix')
+  }
+  if (/\be[\s\-]?\d{1,3}(?:\.\d+)?\b/i.test(sheetNumHay)) {
+    scores.electrical_plan = (scores.electrical_plan || 0) + 0.65
+    reasons.push('sheet_number:electrical_e_prefix')
+  }
+  if (/\bie[\s\-]?\d{1,3}(?:\.\d+)?\b/i.test(sheetNumHay)) {
+    scores.interior_elevation = (scores.interior_elevation || 0) + 0.7
+    reasons.push('sheet_number:interior_elevation_ie_prefix')
+  }
+  if (/\b(?:p|l|m)\d{1,2}(?:\.\d+)?\b/i.test(sheetNumHay) && haystack.includes('schedule')) {
+    scores.schedule = (scores.schedule || 0) + 0.35
+    reasons.push('sheet_number:possible_schedule_index')
+  }
+
+  const disc = normalizeText([sheet.discipline])
+  if (disc.includes('electrical') || disc.includes('ee')) {
+    scores.electrical_plan = (scores.electrical_plan || 0) + 0.45
+    reasons.push('discipline:electrical')
+  }
+  if (disc.includes('architectural') || disc.includes('aia')) {
+    scores.proposed_floor_plan = (scores.proposed_floor_plan || 0) + 0.25
+    reasons.push('discipline:architectural')
+  }
+
+  if (geom.lineCount > 400 && geom.textRunCount < 5) {
+    scores.rendering = (scores.rendering || 0) + 0.15
+    reasons.push('trace:high_line_low_text_suggesting_image_like_sheet')
+  }
+  if (geom.textRunCount > 80 && (scores.schedule || 0) < 0.4) {
+    scores.schedule = (scores.schedule || 0) + 0.12
+    reasons.push('trace:high_text_run_count_weak_schedule_hint')
+  }
+
+  let bestRole: BlueprintPageClassificationRole = 'unknown'
+  let bestScore = -1
+  for (const role of ROLE_TIEBREAK_ORDER) {
+    if (role === 'unknown') continue
+    const s = scores[role] || 0
+    if (s > bestScore || (s === bestScore && roleTiebreakIndex(role) < roleTiebreakIndex(bestRole))) {
+      bestScore = s
+      bestRole = role
+    }
+  }
+
+  if (bestScore <= 0) {
+    bestRole = 'unknown'
+    reasons.push('no_role_evidence_from_metadata_or_trace_text')
+  }
+
+  let eligibleForWallSource = WALL_SOURCE_ROLES.has(bestRole) && bestScore >= 0.45
+
+  if (WALL_SOURCE_ROLES.has(bestRole)) {
+    const veto = Math.max(
+      scores.electrical_plan || 0,
+      scores.demolition_plan || 0,
+      scores.reflected_ceiling_plan || 0,
+      scores.rendering || 0,
+      scores.schedule || 0,
+      scores.title_notes || 0,
+      scores.interior_elevation || 0,
+    )
+    if (veto >= bestScore - 0.15 && veto >= 0.5) {
+      eligibleForWallSource = false
+      reasons.push(`veto:competing_non_wall_role_score=${veto.toFixed(2)}`)
+    }
+  }
+
+  const roleConfidence =
+    bestRole === 'unknown'
+      ? 0.22
+      : Math.max(0.28, Math.min(0.92, 0.28 + bestScore * 0.28))
+
+  return {
+    pageNumber: sheet.pageNumber,
+    sheetNumber: sheet.sheetNumber,
+    sheetTitle: sheet.sheetTitle,
+    role: bestRole,
+    roleConfidence,
+    reasons: Array.from(new Set(reasons)).slice(0, 12),
+    eligibleForWallSource,
+  }
+}
+
+function mapPageRoleToLegacySheetRoles(role: BlueprintPageClassificationRole): SheetRole[] {
+  switch (role) {
+    case 'proposed_dimensioned_plan':
+    case 'proposed_floor_plan':
+    case 'partition_plan':
+      return ['floor_plan']
+    case 'electrical_plan':
+      return ['electrical', 'power']
+    case 'reflected_ceiling_plan':
+      return ['reflected_ceiling_plan', 'lighting']
+    case 'interior_elevation':
+      return ['elevations']
+    case 'rendering':
+      return ['rendering']
+    case 'schedule':
+      return ['schedules']
+    case 'title_notes':
+      return ['unknown']
+    case 'demolition_plan':
+      return ['finish']
+    default:
+      return ['unknown']
+  }
+}
+
+function pageClassificationToLegacyRow(
+  row: BlueprintPageClassification,
+  legacyScores: Partial<Record<SheetRole, number>>,
+): FullSetSheetClassification {
+  const roles = mapPageRoleToLegacySheetRoles(row.role)
+  return {
+    pageNumber: row.pageNumber,
+    sheetNumber: row.sheetNumber,
+    sheetTitle: row.sheetTitle,
+    sheetLabel: undefined,
+    discipline: undefined,
+    roles: roles.length ? roles : ['unknown'],
+    roleScores: legacyScores,
+    reason: row.reasons.join('; ') || row.role,
+    confidence: row.roleConfidence,
+  }
+}
+
+function countPageRoles(
+  rows: BlueprintPageClassification[],
+): Record<BlueprintPageClassificationRole, number> {
+  const init = {} as Record<BlueprintPageClassificationRole, number>
+  for (const r of ROLE_TIEBREAK_ORDER) init[r] = 0
+  for (const row of rows) {
+    init[row.role] = (init[row.role] || 0) + 1
+  }
+  return init
+}
+
+function rankWallPlanCandidatesFromPages(
+  pages: BlueprintPageClassification[],
+): RankedWallPlanCandidate[] {
+  const eligible = pages.filter((p) => p.eligibleForWallSource)
+  const roleRank = (role: BlueprintPageClassificationRole): number => {
+    if (role === 'proposed_dimensioned_plan') return 0
+    if (role === 'proposed_floor_plan') return 1
+    if (role === 'partition_plan') return 2
+    return 99
+  }
+  const sorted = [...eligible].sort((a, b) => {
+    const ra = roleRank(a.role)
+    const rb = roleRank(b.role)
+    if (ra !== rb) return ra - rb
+    if (b.roleConfidence !== a.roleConfidence) return b.roleConfidence - a.roleConfidence
+    return a.pageNumber - b.pageNumber
+  })
+  return sorted.map((p, i) => ({
+    rank: i + 1,
+    pageNumber: p.pageNumber,
+    sheetNumber: p.sheetNumber,
+    sheetTitle: p.sheetTitle,
+    role: p.role,
+    score: p.roleConfidence + (roleRank(p.role) <= 2 ? (2 - roleRank(p.role)) * 0.08 : 0),
+    reasons: [...p.reasons].slice(0, 4),
+  }))
+}
+
+function selectCanonicalWallPlanPages(params: {
+  ranked: RankedWallPlanCandidate[]
+  pages: BlueprintPageClassification[]
+}): {
+  canonical: CanonicalWallPlanPage[]
+  ambiguous: boolean
+  confidence: number
+  warnings: string[]
+  blockers: string[]
+} {
+  const warnings: string[] = []
+  const blockers: string[] = []
+  if (params.ranked.length === 0) {
+    blockers.push('no_eligible_wall_plan_pages_after_classification')
+    return { canonical: [], ambiguous: false, confidence: 0.15, warnings, blockers }
+  }
+
+  const top = params.ranked[0]
+  const second = params.ranked[1]
+  const scoreGap = second ? top.score - second.score : 1
+  const nearTie = second && Math.abs(scoreGap) < 0.06 && top.role === second.role
+
+  if (nearTie) {
+    warnings.push('ambiguous_canonical_wall_plan:top_two_candidates_nearly_tied')
+    const conf = Math.max(0.25, Math.min(0.55, (top.score + second.score) / 4))
+    return {
+      canonical: [
+        {
+          pageNumber: top.pageNumber,
+          sheetNumber: top.sheetNumber,
+          sheetTitle: top.sheetTitle,
+          role: top.role,
+          confidence: conf,
+          selectionReasons: [
+            'co_top_ranked_eligible_wall_source',
+            `tied_with_page_${second.pageNumber}`,
+          ],
+        },
+        {
+          pageNumber: second.pageNumber,
+          sheetNumber: second.sheetNumber,
+          sheetTitle: second.sheetTitle,
+          role: second.role,
+          confidence: conf,
+          selectionReasons: [
+            'co_top_ranked_eligible_wall_source',
+            `tied_with_page_${top.pageNumber}`,
+          ],
+        },
+      ],
+      ambiguous: true,
+      confidence: conf,
+      warnings,
+      blockers,
+    }
+  }
+
+  const conf = Math.max(0.35, Math.min(0.9, top.score))
+  return {
+    canonical: [
+      {
+        pageNumber: top.pageNumber,
+        sheetNumber: top.sheetNumber,
+        sheetTitle: top.sheetTitle,
+        role: top.role,
+        confidence: conf,
+        selectionReasons: [
+          'highest_ranked_eligible_wall_plan_candidate',
+          second ? `score_gap_vs_rank2=${scoreGap.toFixed(3)}` : 'single_eligible_candidate',
+        ],
+      },
+    ],
+    ambiguous: false,
+    confidence: conf,
+    warnings,
+    blockers,
+  }
+}
+
+/**
+ * Enumerate one {@link BlueprintVRSourceSheet} per physical page (1..N).
+ * Merges optional per-page vector payloads for trace text / geometry hints only
+ * after extraction; classification does not assume traces exist.
+ */
+export function enumerateFullSourceSetSheets(
+  sourceSet: BlueprintVRSourceSet,
+  multiPageTraces?: Record<number, PdfTracePayload | null | undefined>,
+): BlueprintVRSourceSheet[] {
+  const sheets = sourceSet.sheets || []
+  const maxFromRows = sheets.reduce((m, s) => Math.max(m, Math.floor(Number(s.pageNumber) || 0)), 0)
+  const declared = Math.floor(Number(sourceSet.totalPages) || 0)
+  const total = Math.max(declared, maxFromRows, sheets.length > 0 ? sheets.length : 0, 1)
+  const byPage = new Map<number, BlueprintVRSourceSheet>()
+  for (const sh of sheets) {
+    const p = Math.floor(Number(sh.pageNumber) || 0)
+    if (p > 0) byPage.set(p, sh)
+  }
+  const out: BlueprintVRSourceSheet[] = []
+  for (let page = 1; page <= total; page += 1) {
+    const base = byPage.get(page)
+    const trace = multiPageTraces?.[page] ?? undefined
+    const traceText = flattenTraceText(trace || null)
+    const mergedText = [base?.extractedText, traceText].filter(Boolean).join(' | ')
+    out.push({
+      pageNumber: page,
+      sheetNumber: base?.sheetNumber,
+      sheetTitle: base?.sheetTitle,
+      sheetLabel: base?.sheetLabel,
+      label: base?.label,
+      discipline: base?.discipline,
+      fileName: base?.fileName || sourceSet.filePath,
+      extractedText: mergedText.length > 12000 ? mergedText.slice(0, 12000) : mergedText || undefined,
+      sourceSetName: base?.sourceSetName || sourceSet.name,
+      sourceSetType: base?.sourceSetType || sourceSet.type,
+      blueprintTitle: base?.blueprintTitle || sourceSet.name,
+      tracePayload: trace ?? base?.tracePayload ?? null,
+      traceAttempted:
+        base?.traceAttempted ||
+        (multiPageTraces ? Object.prototype.hasOwnProperty.call(multiPageTraces, page) : false),
+      traceWarnings: base?.traceWarnings,
+    })
+  }
+  return out
+}
+
 // ---------------------------------------------------------------------------
 // Full-set scanner — multi-sheet classification + merged hints
 // ---------------------------------------------------------------------------
@@ -2334,6 +2885,24 @@ export interface BlueprintFullSetScanResult {
   planScan: BlueprintPlanScanResult
   /** Per-sheet role classifications. */
   classifications: FullSetSheetClassification[]
+  /** Wave 1B: deterministic per-page roles (full enumerated set). */
+  pageClassifications: BlueprintPageClassification[]
+  /** Total physical pages in the enumerated source set (classification pass). */
+  totalPagesScanned: number
+  /** Ranked eligible wall-plan source pages (proposed / partition roles). */
+  rankedWallPlanCandidates: RankedWallPlanCandidate[]
+  /** Canonical wall-plan source page(s); may be multiple when ambiguous. */
+  canonicalWallPlanPages: CanonicalWallPlanPage[]
+  /** Non-fatal classification issues (e.g. ambiguity). */
+  classificationWarnings: string[]
+  /** Hard gating issues (e.g. no eligible wall-plan pages). */
+  classificationBlockers: string[]
+  /** 0–1 confidence in canonical wall-plan selection. */
+  canonicalSelectionConfidence: number
+  /** True when two or more pages share top-tier canonical status. */
+  canonicalSelectionAmbiguous: boolean
+  /** Histogram of Wave 1B roles across all pages. */
+  pageRoleCounts: Record<BlueprintPageClassificationRole, number>
   /** Best floor-plan sheet chosen from the set (if any). */
   bestFloorPlanSheet: SelectedFloorPlanSheet | null
   /** Best electrical sheets in priority order. */
@@ -2375,14 +2944,6 @@ export interface BlueprintFullSetScanResult {
 // ---------------------------------------------------------------------------
 // Sheet classification heuristics
 // ---------------------------------------------------------------------------
-
-type SheetClassificationContext = {
-  sourceSetName?: string
-  sourceSetType?: string
-  blueprintTitle?: string
-  extractedText?: string
-  projectName?: string
-}
 
 const SHEET_ROLE_RULES: Array<{
   role: SheetRole
@@ -2791,9 +3352,16 @@ function buildConfidenceBreakdown(params: {
     totalPoints = Math.min(totalPoints, 55)
     confidenceCapReason = 'No canonical floor-plan sheet selected; confidence capped below 60%.'
   }
-  if (runtimeProviderStatus !== 'available') {
+  if (runtimeProviderStatus === 'missing' || runtimeProviderStatus === 'unknown') {
     totalPoints = Math.min(totalPoints, 59)
     confidenceCapReason = 'Runtime PDF provider missing; confidence capped below 60%.'
+  } else if (runtimeProviderStatus === 'error') {
+    totalPoints = Math.min(totalPoints, 59)
+    confidenceCapReason = 'Runtime PDF provider error; confidence capped below 60%.'
+  } else if (runtimeProviderStatus === 'partial') {
+    totalPoints = Math.min(totalPoints, 62)
+    confidenceCapReason =
+      'Runtime PDF provider identity is a partial registry match only; confidence capped below 63%.'
   } else if (!hasVectorTrace) {
     totalPoints = Math.min(totalPoints, 64)
     confidenceCapReason =
@@ -2994,7 +3562,6 @@ export function scanBlueprintFullSet(
   input: BlueprintFullSetScanInput,
 ): BlueprintFullSetScanResult {
   const warnings: PlanScanWarning[] = []
-  const sheets = input.sourceSet?.sheets || []
   const classificationContext: SheetClassificationContext = {
     sourceSetName: input.sourceSet?.name,
     sourceSetType: input.sourceSet?.type,
@@ -3002,54 +3569,114 @@ export function scanBlueprintFullSet(
     extractedText: input.extractedText,
     projectName: input.projectName || input.sourceSet?.projectName,
   }
-  const classifications = classifyAllSheets(sheets, classificationContext)
-  const bestFloorPlanSheet = chooseBestFloorPlanSheet(sheets, classificationContext)
-  const bestElectricalSheets = chooseBestElectricalSheets(sheets, classificationContext)
-  const bestRenderingSheets = chooseBestRenderingSheets(sheets, classificationContext)
-  const bestFloorPlanSourceSheet = bestFloorPlanSheet
-    ? sheets.find((s) => s.pageNumber === bestFloorPlanSheet.pageNumber) || null
-    : null
-  const roleCounts = getSheetRoleCounts(classifications)
-  const classifiedKnownSheets = classifications.filter((c) => !c.roles.includes('unknown')).length
 
-  if (!bestFloorPlanSheet && sheets.length > 0) {
+  const expandedSheets = enumerateFullSourceSetSheets(
+    input.sourceSet,
+    input.multiPageTraces,
+  )
+  const totalPagesScanned = expandedSheets.length
+
+  const pageClassifications: BlueprintPageClassification[] = expandedSheets.map((sheet) =>
+    classifyBlueprintPage(
+      sheet,
+      classificationContext,
+      input.multiPageTraces?.[sheet.pageNumber],
+    ),
+  )
+
+  const rankedWallPlanCandidates = rankWallPlanCandidatesFromPages(pageClassifications)
+  const selection = selectCanonicalWallPlanPages({
+    ranked: rankedWallPlanCandidates,
+    pages: pageClassifications,
+  })
+
+  const classificationWarnings = [...selection.warnings]
+  const classificationBlockers = [...selection.blockers]
+  if (selection.ambiguous) {
+    classificationWarnings.push('canonical_wall_plan_selection:ambiguous')
+  }
+
+  const canonicalWallPlanPages = selection.canonical
+  const geometryDriverPage =
+    canonicalWallPlanPages.length > 0
+      ? [...canonicalWallPlanPages].sort((a, b) => a.pageNumber - b.pageNumber)[0]!.pageNumber
+      : rankedWallPlanCandidates[0]?.pageNumber ?? null
+
+  const bestFloorPlanSourceSheet = geometryDriverPage
+    ? expandedSheets.find((s) => s.pageNumber === geometryDriverPage) || null
+    : null
+
+  const bestFloorPlanSheet: SelectedFloorPlanSheet | null =
+    geometryDriverPage && bestFloorPlanSourceSheet
+      ? {
+          pageNumber: geometryDriverPage,
+          sheetNumber:
+            bestFloorPlanSourceSheet.sheetNumber ||
+            bestFloorPlanSourceSheet.sheetLabel ||
+            bestFloorPlanSourceSheet.label,
+          sheetTitle: bestFloorPlanSourceSheet.sheetTitle,
+          confidence: selection.confidence,
+          reason:
+            selection.ambiguous && canonicalWallPlanPages.length > 1
+              ? `ambiguous:geometry_uses_lowest_page_among_canonical [${canonicalWallPlanPages
+                  .map((c) => c.pageNumber)
+                  .sort((a, b) => a - b)
+                  .join(',')}]`
+              : canonicalWallPlanPages[0]?.selectionReasons.join('; ') ||
+                'ranked_wall_plan_candidate',
+        }
+      : null
+
+  const classifications: FullSetSheetClassification[] = pageClassifications.map((row) => {
+    const legacyRoles = mapPageRoleToLegacySheetRoles(row.role)
+    const legacyScores: Partial<Record<SheetRole, number>> = {}
+    for (const lr of legacyRoles) {
+      legacyScores[lr] = Math.max(legacyScores[lr] || 0, row.roleConfidence)
+    }
+    return pageClassificationToLegacyRow(row, legacyScores)
+  })
+
+  const bestElectricalSheets = chooseBestElectricalSheets(expandedSheets, classificationContext)
+  const bestRenderingSheets = chooseBestRenderingSheets(expandedSheets, classificationContext)
+  const roleCounts = getSheetRoleCounts(classifications)
+  const classifiedKnownSheets = pageClassifications.filter((c) => c.role !== 'unknown').length
+
+  if (!bestFloorPlanSheet && expandedSheets.length > 0) {
     warnings.push({
       code: 'NO_FLOOR_PLAN_SHEET',
       message:
-        'No floor-plan sheet identified in the source set. Scanner stays inferred until a floor-plan candidate is labeled.',
+        'No eligible wall-plan source page identified after full-set classification. Scanner stays inferred until a proposed/partition plan is labeled or detected in text.',
     })
   }
   if (bestFloorPlanSheet && bestFloorPlanSheet.confidence < 0.55) {
     warnings.push({
       code: 'NO_FLOOR_PLAN_SHEET',
-      message: `Floor-plan candidate is weak (${Math.round(bestFloorPlanSheet.confidence * 100)}%). ${bestFloorPlanSheet.reason}`,
+      message: `Wall-plan source confidence is low (${Math.round(bestFloorPlanSheet.confidence * 100)}%). ${bestFloorPlanSheet.reason}`,
     })
   }
-  if (bestElectricalSheets.length === 0 && sheets.length > 0) {
+  if (bestElectricalSheets.length === 0 && expandedSheets.length > 0) {
     warnings.push({
       code: 'NO_ELECTRICAL_SHEET',
       message:
         'No electrical/power sheet identified in source metadata. Electrical overlays remain inferred.',
     })
   }
-  if (bestRenderingSheets.length === 0 && sheets.length > 0) {
+  if (bestRenderingSheets.length === 0 && expandedSheets.length > 0) {
     warnings.push({
       code: 'NO_RENDERING_SHEET',
       message:
         'No rendering/elevation sheet identified in source metadata. Visual detail hints remain inferred.',
     })
   }
-  if (classifiedKnownSheets === 0 && sheets.length > 0) {
+  if (classifiedKnownSheets === 0 && expandedSheets.length > 0) {
     warnings.push({
       code: 'SHEET_ROLES_INFERRED',
       message:
-        'Sheet metadata is too sparse for reliable role classification. Add sheet titles/labels or auto-detected index rows for better scanner confidence.',
+        'Per-page metadata and trace text did not yield confident roles. Add sheet titles/labels or index rows for better scanner confidence.',
     })
   }
 
-  // Pass an aggregated sheetIndex to the plan scanner so it can read all
-  // sheets and not just the active page.
-  const sheetIndex: BlueprintPlanScanSheetHint[] = sheets.map((s) => ({
+  const sheetIndex: BlueprintPlanScanSheetHint[] = expandedSheets.map((s) => ({
     pageNumber: s.pageNumber,
     sheetNumber: s.sheetNumber,
     sheetTitle: s.sheetTitle,
@@ -3057,27 +3684,25 @@ export function scanBlueprintFullSet(
     discipline: s.discipline,
   }))
 
-  // Prefer the freshly-extracted multi-page trace for the best floor-plan page
-  // over the sheet's pre-attached tracePayload (which may be from a previous
-  // stale scan or absent entirely).
-  const bestPageNumber = bestFloorPlanSheet?.pageNumber ?? -1
   const bestTraceFromMap =
-    input.multiPageTraces && bestPageNumber > 0
-      ? input.multiPageTraces[bestPageNumber] ?? null
+    geometryDriverPage && input.multiPageTraces && geometryDriverPage > 0
+      ? input.multiPageTraces[geometryDriverPage] ?? null
       : null
   const bestTrace = bestTraceFromMap ?? bestFloorPlanSourceSheet?.tracePayload ?? null
   const traceAttempted = Boolean(
-    bestTraceFromMap !== null ||
-    bestFloorPlanSourceSheet?.traceAttempted ||
-    bestFloorPlanSourceSheet?.tracePayload,
+    (geometryDriverPage &&
+      input.multiPageTraces &&
+      Object.prototype.hasOwnProperty.call(input.multiPageTraces, geometryDriverPage)) ||
+      bestFloorPlanSourceSheet?.traceAttempted ||
+      bestFloorPlanSourceSheet?.tracePayload,
   )
 
   const planScan = scanBlueprintPlan({
     projectName: input.projectName || input.sourceSet?.projectName,
     blueprintTitle: input.sourceSet?.name,
     fileName: input.sourceSet?.filePath || bestFloorPlanSourceSheet?.fileName,
-    activePageNumber: input.activePageNumber || bestFloorPlanSheet?.pageNumber,
-    totalPages: input.totalPagesScanned || input.sourceSet?.totalPages || sheets.length,
+    activePageNumber: geometryDriverPage ?? undefined,
+    totalPages: totalPagesScanned,
     extractedText: input.extractedText,
     annotationsSummary: input.annotationsSummary,
     sheetIndex,
@@ -3114,12 +3739,13 @@ export function scanBlueprintFullSet(
         planScan.traceDebugCounts?.confidenceCapReason,
     },
     scaleStatus: confidenceBreakdown.items.scaleDetected > 0 ? 'detected' : 'default',
-    scanResultKind:
-      confidenceBreakdown.items.vectorTraceAvailable > 0
+    scanResultKind: planScan.isFallback
+      ? 'fallback'
+      : confidenceBreakdown.items.vectorTraceAvailable > 0
         ? 'measured-trace'
         : confidenceBreakdown.items.floorPlanSheetSelected > 0
-        ? 'inferred'
-        : 'fallback',
+          ? 'inferred'
+          : 'fallback',
   }
 
   const projectHint = extractProjectStyleHints(input)
@@ -3130,14 +3756,26 @@ export function scanBlueprintFullSet(
   warnings.push({
     code: 'FULL_SET_INFERRED',
     message:
-      `Full-set scan classified ${classifications.length} sheets and chose ` +
-      `${bestFloorPlanSheet ? 'a floor plan sheet' : 'a context fallback'} ` +
-      `for geometry. Confidence ${confidenceBreakdown.totalPercent}%.`,
+      `Full-set scan classified ${totalPagesScanned} page(s); ` +
+      `${rankedWallPlanCandidates.length} eligible wall-plan candidate(s); ` +
+      `canonical page(s): ${canonicalWallPlanPages.length ? canonicalWallPlanPages.map((c) => c.pageNumber).join(',') : 'none'}. ` +
+      `Geometry driver page ${geometryDriverPage ?? 'n/a'}. Confidence ${confidenceBreakdown.totalPercent}%.`,
   })
+
+  const pageRoleCounts = countPageRoles(pageClassifications)
 
   return {
     planScan: enrichedPlanScan,
     classifications,
+    pageClassifications,
+    totalPagesScanned,
+    rankedWallPlanCandidates,
+    canonicalWallPlanPages,
+    classificationWarnings,
+    classificationBlockers,
+    canonicalSelectionConfidence: selection.confidence,
+    canonicalSelectionAmbiguous: selection.ambiguous,
+    pageRoleCounts,
     bestFloorPlanSheet,
     bestElectricalSheets,
     bestRenderingSheets,
@@ -3152,7 +3790,7 @@ export function scanBlueprintFullSet(
       sourceSetId: input.sourceSet?.id || 'unknown',
       sourceSetName: input.sourceSet?.name || 'Unknown Set',
       projectName: input.projectName || input.sourceSet?.projectName,
-      sheetCount: sheets.length,
+      sheetCount: totalPagesScanned,
       generatedAt: new Date().toISOString(),
     },
   }
