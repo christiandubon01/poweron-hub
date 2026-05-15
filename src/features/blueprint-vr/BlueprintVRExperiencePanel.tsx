@@ -12,7 +12,7 @@
  *  - Category grouping in item list
  */
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import type {
   VRStage,
   BlueprintSource,
@@ -37,12 +37,14 @@ import {
   scanBlueprintFullSet,
   mergeFullSetScanIntoBuildingModel,
   chooseBestFloorPlanSheet,
+  classifySheetRole,
 } from './blueprintPlanScanner'
 import type {
   BlueprintPlanScanResult,
   BlueprintVRSourceSet,
   BlueprintFullSetScanResult,
 } from './blueprintPlanScanner'
+import type { PdfTracePayload as PdfTracePayloadType } from './pdfTraceTypes'
 import type { PdfTracePayload } from './pdfTraceTypes'
 import { buildBlueprintPdfRuntimeKey, extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
 import {
@@ -649,13 +651,16 @@ export default function BlueprintVRExperiencePanel({
   runtimeSourceIdentity,
 }: BlueprintVRExperiencePanelProps) {
   const [activeStage, setActiveStage] = useState<VRStage>(STAGE_ORDER[0])
-  const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room'>('dollhouse')
+  const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room' | 'walls'>('dollhouse')
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [showElectrical, setShowElectrical] = useState(true)
   const [showDimensions, setShowDimensions] = useState(true)
   const [showLabels, setShowLabels] = useState(true)
   const [wallOpacity, setWallOpacity] = useState(0.82)
   const [cameraPreset, setCameraPreset] = useState<'top' | 'iso' | 'room'>('iso')
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const viewMenuRef = useRef<HTMLDivElement>(null)
+  const viewMenuButtonRef = useRef<HTMLButtonElement>(null)
 
   // ── Source-set state (project-level) ──────────────────────────────────
   const availableSets = availableSourceSets || []
@@ -674,6 +679,16 @@ export default function BlueprintVRExperiencePanel({
   const [rescanToken, setRescanToken] = useState(0)
   const [rescanCount, setRescanCount] = useState(0)
   const [lastScanAt, setLastScanAt] = useState<string | null>(null)
+
+  // Multi-page full-set extraction state
+  const [fullSetPageTraces, setFullSetPageTraces] = useState<Record<number, PdfTracePayloadType>>({})
+  const [fullSetExtractionPhase, setFullSetExtractionPhase] = useState<'idle' | 'extracting' | 'done'>('idle')
+  const [fullSetExtractionProgress, setFullSetExtractionProgress] = useState<{
+    pagesTotal: number
+    pagesExtracted: number
+    targetPages: number[]
+  }>({ pagesTotal: 0, pagesExtracted: 0, targetPages: [] })
+
   const [traceExtraction, setTraceExtraction] = useState<{
     selectedPageNumber: number | null
     payload: PdfTracePayload | null
@@ -715,6 +730,8 @@ export default function BlueprintVRExperiencePanel({
 
   const scannerVersion = 'W3.10D'
 
+  // Excludes currentPageNumber — page navigation should not trigger a full
+  // re-extraction. The Rescan button handles that explicitly.
   const runtimeIdentityKey = [
     runtimeSourceIdentity?.projectId || '',
     runtimeSourceIdentity?.blueprintId || '',
@@ -722,106 +739,174 @@ export default function BlueprintVRExperiencePanel({
     runtimeSourceIdentity?.sourceSetName || '',
     runtimeSourceIdentity?.fileName || '',
     runtimeSourceIdentity?.pageCount || '',
-    runtimeSourceIdentity?.currentPageNumber || '',
   ].join('|')
 
   useEffect(() => {
     let disposed = false
+
+    const noTrace = {
+      selectedPageNumber: null as number | null,
+      payload: null as PdfTracePayloadType | null,
+      attempted: false,
+      available: false,
+      providerStatus: 'missing' as const,
+      operatorListStatus: 'unknown' as const,
+      textContentStatus: 'unknown' as const,
+      requestedKey: undefined as string | undefined,
+      registeredKeys: [] as string[],
+      matchReason: undefined as string | undefined,
+      providerKey: undefined as string | undefined,
+      providerMetadata: undefined as Record<string, any> | undefined,
+      warnings: [] as Array<{ code: string; message: string }>,
+    }
+
     if (!selectedSourceSet) {
-      setTraceExtraction({
-        selectedPageNumber: null,
-        payload: null,
-        attempted: false,
-        available: false,
-        providerStatus: 'missing',
-        operatorListStatus: 'unknown',
-        textContentStatus: 'unknown',
-        requestedKey: undefined,
-        registeredKeys: [],
-        matchReason: undefined,
-        providerKey: undefined,
-        providerMetadata: undefined,
-        warnings: [],
-      })
+      setTraceExtraction(noTrace)
+      setFullSetPageTraces({})
+      setFullSetExtractionPhase('idle')
       return
     }
-    const best = chooseBestFloorPlanSheet(selectedSourceSet.sheets || [])
-    const bestSourceSheet = best
-      ? selectedSourceSet.sheets.find((s) => s.pageNumber === best.pageNumber) || null
-      : null
-    if (!best || !bestSourceSheet) {
-      setTraceExtraction({
-        selectedPageNumber: null,
-        payload: null,
-        attempted: false,
-        available: false,
-        providerStatus: 'missing',
-        operatorListStatus: 'unknown',
-        textContentStatus: 'unknown',
-        requestedKey: undefined,
-        registeredKeys: [],
-        matchReason: undefined,
-        providerKey: undefined,
-        providerMetadata: undefined,
-        warnings: [{ code: 'NO_FLOOR_PLAN_SHEET', message: 'No canonical floor-plan sheet selected for trace extraction.' }],
-      })
-      return
-    }
+
+    const sheets = selectedSourceSet.sheets || []
+    // Build the provider key from the selected source set first, not from
+    // runtimeSourceIdentity. The viewer registers its provider keyed by
+    // blueprint.id = selectedItem.id, which equals selectedSourceSet.id when
+    // the user has the correct set open. Using runtimeSourceIdentity first
+    // caused the slip-sheets provider (9 pages) to be matched when the user
+    // had previously clicked a different blueprint in the library.
     const runtimeRequestIdentity = {
-      projectId: runtimeSourceIdentity?.projectId || selectedSourceSet.projectId || projectId,
-      blueprintId: runtimeSourceIdentity?.blueprintId || selectedSourceSet.id || sourceBlueprint.id,
-      sourceSetId: runtimeSourceIdentity?.sourceSetId || selectedSourceSet.id,
-      sourceSetName: runtimeSourceIdentity?.sourceSetName || selectedSourceSet.name,
-      fileName: runtimeSourceIdentity?.fileName || selectedSourceSet.filePath || bestSourceSheet.fileName,
-      pageCount: runtimeSourceIdentity?.pageCount || selectedSourceSet.totalPages,
+      projectId: selectedSourceSet.projectId || projectId || runtimeSourceIdentity?.projectId,
+      blueprintId: selectedSourceSet.id || sourceBlueprint.id || runtimeSourceIdentity?.blueprintId,
+      sourceSetId: selectedSourceSet.id || runtimeSourceIdentity?.sourceSetId,
+      sourceSetName: selectedSourceSet.name || runtimeSourceIdentity?.sourceSetName,
+      fileName: selectedSourceSet.filePath || runtimeSourceIdentity?.fileName,
+      pageCount: selectedSourceSet.totalPages || runtimeSourceIdentity?.pageCount,
     }
     const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
+
+    // Choose the best floor plan sheet for the primary trace
+    const best = chooseBestFloorPlanSheet(sheets)
+
+    // Identify floor-plan candidate pages using sheet-role classification
+    const floorPlanRoles = new Set(['floor_plan', 'partition_plan', 'dimension_plan'])
+    const classifiedCandidates = sheets
+      .map((sheet) => {
+        const roles = classifySheetRole(sheet)
+        const isFloorPlan = roles.some((r) => floorPlanRoles.has(r))
+        return { sheet, isFloorPlan }
+      })
+      .filter((c) => c.isFloorPlan)
+
+    // Build ordered target page list: best first, then other classified candidates
+    const targetPageSet = new Set<number>()
+    if (best) targetPageSet.add(best.pageNumber)
+    for (const c of classifiedCandidates.slice(0, 7)) targetPageSet.add(c.sheet.pageNumber)
+    // If no floor-plan candidates found via metadata, sample pages distributed
+    // across the full document. For a 67-page Full Set this reaches page ~37
+    // (floor plan area) rather than stopping at page 3.
+    if (targetPageSet.size === 0) {
+      const totalPgs = selectedSourceSet.totalPages || sheets.length || 1
+      if (totalPgs <= 8) {
+        for (let p = 1; p <= Math.min(5, totalPgs); p++) targetPageSet.add(p)
+      } else {
+        targetPageSet.add(1)
+        targetPageSet.add(2)
+        for (const pct of [0.20, 0.35, 0.50, 0.65, 0.80]) {
+          const p = Math.max(1, Math.min(totalPgs, Math.round(totalPgs * pct)))
+          targetPageSet.add(p)
+        }
+      }
+      // Always include the currently-viewed page — user may have the floor
+      // plan already open in the viewer.
+      if (runtimeSourceIdentity?.currentPageNumber && runtimeSourceIdentity.currentPageNumber > 0) {
+        targetPageSet.add(runtimeSourceIdentity.currentPageNumber)
+      }
+    }
+    const targetPages = Array.from(targetPageSet).sort((a, b) => a - b)
+
     setLastScanAt(new Date().toISOString())
+    setFullSetExtractionPhase('extracting')
+    setFullSetExtractionProgress({ pagesTotal: targetPages.length, pagesExtracted: 0, targetPages })
     setTraceExtraction((prev) => ({
       ...prev,
       attempted: false,
       requestedKey: requestedRuntimeKey,
-      registeredKeys: prev.registeredKeys || [],
-      matchReason: prev.matchReason,
-      providerMetadata: prev.providerMetadata,
-      selectedPageNumber: best.pageNumber,
+      selectedPageNumber: best?.pageNumber ?? null,
     }))
+
     void (async () => {
-      const traceArgs = {
-        ...runtimeRequestIdentity,
-        pageNumber: best.pageNumber,
-        sheetNumber: best.sheetNumber,
-        sheetTitle: best.sheetTitle,
-        existingPayload: bestSourceSheet.tracePayload || null,
+      const newTraces: Record<number, PdfTracePayloadType> = {}
+      let primaryTraceSet = false
+
+      for (let i = 0; i < targetPages.length; i++) {
+        if (disposed) break
+        const pageNumber = targetPages[i]
+        const sheet = sheets.find((s) => s.pageNumber === pageNumber)
+
+        const traceArgs = {
+          ...runtimeRequestIdentity,
+          pageNumber,
+          sheetNumber: sheet?.sheetNumber,
+          sheetTitle: sheet?.sheetTitle,
+          existingPayload: sheet?.tracePayload || null,
+        }
+
+        // Initial attempt + up to 2 retries for the first page to give the
+        // PDF runtime a chance to register before giving up.
+        let runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
+        if (!disposed && i === 0 && runtimeTrace.providerStatus === 'missing') {
+          await new Promise<void>((r) => setTimeout(r, 160))
+          if (!disposed) runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
+        }
+        if (!disposed && i === 0 && runtimeTrace.providerStatus === 'missing') {
+          await new Promise<void>((r) => setTimeout(r, 320))
+          if (!disposed) runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
+        }
+
+        if (disposed) break
+
+        if (runtimeTrace.result.payload) {
+          newTraces[pageNumber] = runtimeTrace.result.payload
+        }
+
+        // Update the primary traceExtraction state for the best floor-plan page
+        const isPrimary = pageNumber === (best?.pageNumber ?? targetPages[0])
+        if (isPrimary && !primaryTraceSet) {
+          primaryTraceSet = true
+          setTraceExtraction({
+            selectedPageNumber: runtimeTrace.selectedPageNumber,
+            payload: runtimeTrace.result.payload,
+            attempted: true,
+            available: Boolean(runtimeTrace.result.success),
+            providerStatus: runtimeTrace.providerStatus,
+            operatorListStatus: runtimeTrace.operatorListStatus,
+            textContentStatus: runtimeTrace.textContentStatus,
+            requestedKey: runtimeTrace.providerRequestedKey || requestedRuntimeKey,
+            registeredKeys: runtimeTrace.providerRegisteredKeys || [],
+            matchReason: runtimeTrace.providerMatchReason,
+            providerKey: runtimeTrace.providerKey,
+            providerMetadata: runtimeTrace.providerMetadata,
+            warnings: runtimeTrace.result.warnings,
+          })
+        }
+
+        setFullSetExtractionProgress((prev) => ({
+          ...prev,
+          pagesExtracted: prev.pagesExtracted + 1,
+        }))
       }
-      let runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
-      if (!disposed && runtimeTrace.providerStatus === 'missing') {
-        await new Promise<void>((r) => setTimeout(r, 150))
-        if (disposed) return
-        runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
-      }
-      if (!disposed && runtimeTrace.providerStatus === 'missing') {
-        await new Promise<void>((r) => setTimeout(r, 300))
-        if (disposed) return
-        runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
-      }
+
       if (disposed) return
-      setTraceExtraction({
-        selectedPageNumber: runtimeTrace.selectedPageNumber,
-        payload: runtimeTrace.result.payload,
-        attempted: true,
-        available: Boolean(runtimeTrace.result.success),
-        providerStatus: runtimeTrace.providerStatus,
-        operatorListStatus: runtimeTrace.operatorListStatus,
-        textContentStatus: runtimeTrace.textContentStatus,
-        requestedKey: runtimeTrace.providerRequestedKey || requestedRuntimeKey,
-        registeredKeys: runtimeTrace.providerRegisteredKeys || [],
-        matchReason: runtimeTrace.providerMatchReason,
-        providerKey: runtimeTrace.providerKey,
-        providerMetadata: runtimeTrace.providerMetadata,
-        warnings: runtimeTrace.result.warnings,
-      })
+
+      // If the primary page was never found in the loop, emit a no-trace state
+      if (!primaryTraceSet) {
+        setTraceExtraction({ ...noTrace, attempted: true, requestedKey: requestedRuntimeKey })
+      }
+
+      setFullSetPageTraces(newTraces)
+      setFullSetExtractionPhase('done')
     })()
+
     return () => {
       disposed = true
     }
@@ -879,9 +964,12 @@ export default function BlueprintVRExperiencePanel({
   const cacheKeyParts = `${sourceKey}::${rescanToken}`
 
   const { scanResult, fullSetScan, buildingModel, fromCache, cacheDebug } = useMemo(() => {
-    const cached = rescanToken === 0
-      ? getCachedProjectModel(sourceCacheIdentity)
-      : undefined
+    // Only serve the cache when we haven't completed a fresh multi-page
+    // extraction yet. Once fullSetExtractionPhase === 'done' we have real
+    // (or definitively failed) trace data and must bypass the cache so the
+    // scan reflects the actual extraction result.
+    const allowCache = rescanToken === 0 && fullSetExtractionPhase !== 'done'
+    const cached = allowCache ? getCachedProjectModel(sourceCacheIdentity) : undefined
     if (cached) {
       return {
         scanResult: cached.scan,
@@ -903,20 +991,23 @@ export default function BlueprintVRExperiencePanel({
     let fullScan: BlueprintFullSetScanResult | undefined
     let model: BlueprintBuildingModel
 
+    // Attach all freshly extracted page traces to their respective sheets so
+    // the full-set scanner can pick the best floor-plan trace from real data.
     const sourceSetForScan = selectedSourceSet
       ? {
           ...selectedSourceSet,
-          sheets: selectedSourceSet.sheets.map((sheet) =>
-            traceExtraction.selectedPageNumber &&
-            sheet.pageNumber === traceExtraction.selectedPageNumber
-              ? {
-                  ...sheet,
-                  tracePayload: traceExtraction.payload,
-                  traceAttempted: traceExtraction.attempted,
-                  traceWarnings: traceExtraction.warnings,
-                }
-              : sheet,
-          ),
+          sheets: selectedSourceSet.sheets.map((sheet) => {
+            const freshTrace = fullSetPageTraces[sheet.pageNumber]
+            const isPrimarySheet =
+              traceExtraction.selectedPageNumber != null &&
+              sheet.pageNumber === traceExtraction.selectedPageNumber
+            return {
+              ...sheet,
+              tracePayload: freshTrace ?? (isPrimarySheet ? traceExtraction.payload : sheet.tracePayload),
+              traceAttempted: freshTrace !== undefined || (isPrimarySheet ? traceExtraction.attempted : sheet.traceAttempted),
+              traceWarnings: isPrimarySheet ? traceExtraction.warnings : sheet.traceWarnings,
+            }
+          }),
         }
       : null
 
@@ -925,6 +1016,8 @@ export default function BlueprintVRExperiencePanel({
         projectName: projectNameForCache,
         sourceSet: sourceSetForScan,
         extractedText: job.outputManifest?.metadata?.description,
+        multiPageTraces: fullSetPageTraces,
+        totalPagesScanned: fullSetExtractionProgress.pagesExtracted || undefined,
       })
       scan = fullScan.planScan
       const base = convertPlanScanToBuildingModel(scan)
@@ -960,7 +1053,7 @@ export default function BlueprintVRExperiencePanel({
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKeyParts, traceExtraction, sourceCacheIdentity, rescanCount])
+  }, [cacheKeyParts, traceExtraction, fullSetPageTraces, fullSetExtractionPhase, sourceCacheIdentity, rescanCount])
 
   const handleChangeSource = useCallback(
     (setId: string) => {
@@ -983,6 +1076,9 @@ export default function BlueprintVRExperiencePanel({
       available: false,
       providerStatus: 'missing',
     }))
+    setFullSetPageTraces({})
+    setFullSetExtractionPhase('idle')
+    setFullSetExtractionProgress({ pagesTotal: 0, pagesExtracted: 0, targetPages: [] })
     setRescanToken((t) => t + 1)
   }, [sourceCacheIdentity])
 
@@ -1016,6 +1112,27 @@ export default function BlueprintVRExperiencePanel({
     setWallOpacity(0.82)
   }, [firstRoomId])
 
+  useEffect(() => {
+    if (!viewMenuOpen) return
+    const onDocMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (viewMenuRef.current?.contains(t)) return
+      if (viewMenuButtonRef.current?.contains(t)) return
+      setViewMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [viewMenuOpen])
+
+  useEffect(() => {
+    if (!viewMenuOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setViewMenuOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewMenuOpen])
+
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
     const kind = scanResult.scanResultKind || (scanResult.isFallback ? 'fallback' : 'measured-trace')
@@ -1044,8 +1161,8 @@ export default function BlueprintVRExperiencePanel({
     <>
       <style>{`
         @keyframes bvr7-slide-in {
-          from { transform: translateY(20px); opacity: 0; }
-          to   { transform: translateY(0);    opacity: 1; }
+          from { opacity: 0; }
+          to   { opacity: 1; }
         }
         @keyframes bvr7-backdrop-fade {
           from { opacity: 0; }
@@ -1065,12 +1182,14 @@ export default function BlueprintVRExperiencePanel({
         }}
       />
 
-      {/* Panel container */}
+      {/* Panel container — spans workspace (sidebar inset → right edge) */}
       <div style={{
         position: 'fixed',
-        top: '50%', left: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: 'min(96vw, 960px)',
+        top: '50%',
+        left: 'max(10px, var(--v15r-workspace-inset-left, 0px))',
+        right: 'max(10px, env(safe-area-inset-right, 0px))',
+        transform: 'translateY(-50%)',
+        width: 'auto',
         maxHeight: '94vh',
         background: 'rgba(4,8,12,0.97)',
         backdropFilter: 'blur(12px)',
@@ -1209,29 +1328,196 @@ export default function BlueprintVRExperiencePanel({
 
           {/* Planner-style view controls */}
           <div style={{ padding: '14px 16px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                onClick={() => { setViewMode('plan'); setCameraPreset('top') }}
-                style={controlButtonStyle(viewMode === 'plan')}
-              >
-                2D Plan
-              </button>
-              <button
-                onClick={() => { setViewMode('dollhouse'); setCameraPreset('iso') }}
-                style={controlButtonStyle(viewMode === 'dollhouse')}
-              >
-                3D Dollhouse
-              </button>
-              <button
-                onClick={() => { setViewMode('room'); setCameraPreset('room'); if (!selectedRoomId) setSelectedRoomId(firstRoomId) }}
-                style={controlButtonStyle(viewMode === 'room')}
-                disabled={!selectedRoomId && !firstRoomId}
-              >
-                Room View
-              </button>
-              <button onClick={handleResetView} style={controlButtonStyle(false)}>
-                Reset View
-              </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <button
+                  ref={viewMenuButtonRef}
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={viewMenuOpen}
+                  onClick={() => setViewMenuOpen((o) => !o)}
+                  style={controlButtonStyle(viewMenuOpen)}
+                >
+                  View
+                </button>
+                {viewMenuOpen && (
+                  <div
+                    ref={viewMenuRef}
+                    role="menu"
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: 6,
+                      minWidth: 200,
+                      padding: '6px 0',
+                      background: 'rgba(6,12,20,0.98)',
+                      border: '1px solid rgba(0,229,204,0.35)',
+                      borderRadius: 6,
+                      boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+                      zIndex: 1000,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setViewMode('walls')
+                        setCameraPreset('top')
+                        setViewMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: viewMode === 'walls' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color: viewMode === 'walls' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>Proposed Walls</span>
+                      {viewMode === 'walls' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setViewMode('plan')
+                        setCameraPreset('top')
+                        setViewMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: viewMode === 'plan' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color: viewMode === 'plan' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>2D Plan</span>
+                      {viewMode === 'plan' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setViewMode('dollhouse')
+                        setCameraPreset('iso')
+                        setViewMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: viewMode === 'dollhouse' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color: viewMode === 'dollhouse' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>3D Dollhouse</span>
+                      {viewMode === 'dollhouse' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!selectedRoomId && !firstRoomId}
+                      onClick={() => {
+                        setViewMode('room')
+                        setCameraPreset('room')
+                        if (!selectedRoomId) setSelectedRoomId(firstRoomId)
+                        setViewMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: viewMode === 'room' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                        color:
+                          !selectedRoomId && !firstRoomId
+                            ? 'rgba(255,255,255,0.25)'
+                            : viewMode === 'room'
+                              ? '#00ddcc'
+                              : 'rgba(255,255,255,0.75)',
+                        cursor: !selectedRoomId && !firstRoomId ? 'not-allowed' : 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                        opacity: !selectedRoomId && !firstRoomId ? 0.45 : 1,
+                      }}
+                    >
+                      <span>Room View</span>
+                      {viewMode === 'room' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                    </button>
+                    <div style={{ height: 1, margin: '4px 8px', background: 'rgba(0,229,204,0.12)' }} />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        handleResetView()
+                        setViewMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'rgba(255,255,255,0.75)',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        fontWeight: 700,
+                        letterSpacing: 0.6,
+                        textTransform: 'uppercase' as const,
+                        textAlign: 'left' as const,
+                      }}
+                    >
+                      <span>Reset View</span>
+                    </button>
+                  </div>
+                )}
+              </div>
               <button onClick={() => setShowDimensions((v) => !v)} style={controlButtonStyle(showDimensions)}>
                 Show Dimensions
               </button>
@@ -1307,6 +1593,173 @@ export default function BlueprintVRExperiencePanel({
                 }
               }
             />
+
+            {viewMode === 'walls' && (() => {
+              const traceCount = Object.keys(fullSetPageTraces).length
+              const providerMissing = traceExtraction.providerStatus === 'missing'
+              const isFallback = buildingModel.metadata?.source === 'fallback'
+              const rawLines = scanResult.traceDebugCounts?.rawLines ?? 0
+              const wallCount = scanResult.walls?.length ?? 0
+              const openingCount = scanResult.openings?.length ?? 0
+              const phase = fullSetExtractionPhase
+              const pagesEx = fullSetExtractionProgress.pagesExtracted
+              const pagesTotal = fullSetExtractionProgress.pagesTotal
+
+              const headerRow = (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 10px',
+                  background: 'rgba(0,229,204,0.06)',
+                  borderBottom: '1px solid rgba(0,229,204,0.18)',
+                  fontFamily: 'monospace', fontSize: 10,
+                }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ color: '#00ddcc', fontWeight: 700, letterSpacing: 0.8 }}>
+                      FULL-SET PROPOSED WALL LAYOUT
+                    </span>
+                    {phase === 'extracting' && (
+                      <span style={{ color: '#FFD700' }}>
+                        Scanning {pagesEx}/{pagesTotal} pages…
+                      </span>
+                    )}
+                    {phase === 'done' && !isFallback && (
+                      <span style={{ color: '#7BE5D8' }}>
+                        {pagesEx} pages scanned · {wallCount} walls · {openingCount} openings
+                      </span>
+                    )}
+                    {phase === 'done' && isFallback && (
+                      <span style={{ color: '#FF9999' }}>
+                        {providerMissing ? 'Provider not available' : `0 vectors from ${pagesEx} pages`}
+                      </span>
+                    )}
+                  </div>
+                  <button onClick={handleRescan} style={controlButtonStyle(false)}>Rescan</button>
+                </div>
+              )
+
+              // Extracting — show progress screen
+              if (phase === 'extracting') {
+                return (
+                  <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden' }}>
+                    {headerRow}
+                    <div style={{
+                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      justifyContent: 'center', background: '#0d121b', gap: 12,
+                    }}>
+                      <div style={{ color: '#FFD700', fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
+                        SCANNING FULL SET
+                      </div>
+                      <div style={{ color: 'rgba(255,220,120,0.75)', fontFamily: 'monospace', fontSize: 11 }}>
+                        Page {pagesEx} / {pagesTotal} — extracting vector geometry from floor-plan sheets
+                      </div>
+                      <div style={{
+                        width: 280, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden',
+                      }}>
+                        <div style={{
+                          height: '100%',
+                          width: `${pagesTotal > 0 ? (pagesEx / pagesTotal) * 100 : 0}%`,
+                          background: '#FFD700', borderRadius: 3,
+                          transition: 'width 0.3s ease-out',
+                        }} />
+                      </div>
+                      <div style={{ color: 'rgba(255,220,120,0.5)', fontFamily: 'monospace', fontSize: 9.5 }}>
+                        target pages: {fullSetExtractionProgress.targetPages.join(', ') || 'classifying…'}
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+
+              // Done — provider was missing (can't blame the PDF)
+              if (phase === 'done' && providerMissing && traceCount === 0) {
+                return (
+                  <div style={{ border: '1px solid rgba(255,140,0,0.3)', borderRadius: 6, overflow: 'hidden' }}>
+                    {headerRow}
+                    <div style={{
+                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      justifyContent: 'center', background: '#0d121b', gap: 10, padding: 24,
+                    }}>
+                      <div style={{ color: '#FF9966', fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
+                        PDF RUNTIME NOT AVAILABLE
+                      </div>
+                      <div style={{ color: 'rgba(255,200,160,0.8)', fontFamily: 'monospace', fontSize: 10.5, textAlign: 'center', maxWidth: 440 }}>
+                        The Blueprint Viewer runtime was not registered when the scan ran.
+                        Make sure the correct PDF is open in the Blueprint Viewer, then click Rescan.
+                      </div>
+                      <div style={{ color: 'rgba(200,210,220,0.5)', fontFamily: 'monospace', fontSize: 9.5, textAlign: 'center', maxWidth: 440 }}>
+                        Requested key: {traceExtraction.requestedKey || 'n/a'}
+                      </div>
+                      <div style={{ color: 'rgba(200,210,220,0.5)', fontFamily: 'monospace', fontSize: 9.5, textAlign: 'center', maxWidth: 440 }}>
+                        Registered keys: {traceExtraction.registeredKeys?.length ? traceExtraction.registeredKeys.join(' | ') : 'none'}
+                      </div>
+                      <button onClick={handleRescan} style={{ ...controlButtonStyle(false), marginTop: 12, fontSize: 11 }}>
+                        Rescan
+                      </button>
+                    </div>
+                  </div>
+                )
+              }
+
+              // Done — provider available but no vectors (rasterized PDF)
+              if (phase === 'done' && !providerMissing && traceCount === 0 && isFallback) {
+                return (
+                  <div style={{ border: '1px solid rgba(255,80,80,0.3)', borderRadius: 6, overflow: 'hidden' }}>
+                    {headerRow}
+                    <div style={{
+                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      justifyContent: 'center', background: '#0d121b', gap: 10, padding: 24,
+                    }}>
+                      <div style={{ color: '#FF6666', fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
+                        FULL-SET WALL EXTRACTION FAILED
+                      </div>
+                      <div style={{ color: 'rgba(255,200,160,0.8)', fontFamily: 'monospace', fontSize: 10.5, textAlign: 'center', maxWidth: 440 }}>
+                        {pagesEx} page{pagesEx !== 1 ? 's' : ''} scanned · {rawLines} raw vector lines found.
+                        The PDF appears to be image-based (rasterized scan). No line geometry was extractable.
+                      </div>
+                      <div style={{ color: 'rgba(200,210,220,0.5)', fontFamily: 'monospace', fontSize: 9.5, textAlign: 'center', maxWidth: 440 }}>
+                        To extract real wall geometry, provide a vector PDF, DWG, DXF, or IFC source file.
+                        Rasterized PDFs require server-side OCR or image-processing preprocessing.
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+
+              // Still idle (extraction hasn't started yet)
+              if (phase === 'idle') {
+                return (
+                  <div style={{ border: '1px solid rgba(0,229,204,0.15)', borderRadius: 6, overflow: 'hidden' }}>
+                    {headerRow}
+                    <div style={{
+                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      justifyContent: 'center', background: '#0d121b', gap: 8,
+                    }}>
+                      <div style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'monospace', fontSize: 11 }}>
+                        Waiting for source set…
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+
+              // Done — real geometry extracted
+              return (
+                <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden' }}>
+                  {headerRow}
+                  <MeasuredPlanViewer
+                    model={buildingModel}
+                    width={760}
+                    height={380}
+                    showDimensions={showDimensions}
+                    showRoomLabels={showLabels}
+                    showAreaLabels={false}
+                    showElectrical={false}
+                    wallOnlyMode={true}
+                    traceDebug={scanResult.traceDebugCounts || null}
+                  />
+                </div>
+              )
+            })()}
 
             {viewMode === 'plan' && (
               <MeasuredPlanViewer

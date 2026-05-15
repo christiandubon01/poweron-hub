@@ -758,6 +758,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // Sidebar width
   const sidebarWidth = isMobile ? 280 : isDesktop ? (effectiveDesktopCollapsed ? 48 : 224) : (sidebarOpen ? 224 : 64)
+  /** Matches main column `marginLeft` — exposed for fixed overlays (e.g. Blueprint VR modal) */
+  const workspaceInsetLeftPx =
+    activeView === 'visual-suite' || activeView === 'neural-world' || blueprintImmersive
+      ? 0
+      : isMobile
+        ? 0
+        : sidebarWidth
   const showLabels = isDesktop ? !effectiveDesktopCollapsed : sidebarOpen
   const isOverlay = isMobile || (isTablet && sidebarOpen)
 
@@ -1494,10 +1501,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       <div
         className="flex flex-col flex-1 transition-all duration-300"
         style={activeView === 'visual-suite' || activeView === 'neural-world'
-          ? { position: 'fixed', inset: 0, zIndex: 55, marginLeft: 0 }
+          ? {
+              position: 'fixed',
+              inset: 0,
+              zIndex: 55,
+              marginLeft: 0,
+              ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
+            }
           : blueprintImmersive
-            ? { marginLeft: 0 }
-            : { marginLeft: isMobile ? 0 : sidebarWidth }
+            ? { marginLeft: 0, ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px` }
+            : {
+                marginLeft: isMobile ? 0 : sidebarWidth,
+                ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
+              }
         }
       >
         {/* TOP BAR — hidden in visual-suite fullscreen */}
