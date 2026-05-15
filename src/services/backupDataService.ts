@@ -1422,18 +1422,26 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     const remoteDevice = remoteMeta?.savedBy || 'unknown'
     _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '' }
 
-    // Explicit bootstrap load: remote is authoritative. Never push local here.
+    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
+    const local = getBackupData(userId)
+    const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
+
+    // Login/bootstrap path (explicit user id): prefer remote, but if this browser already
+    // has a newer tenant cache than Supabase (e.g. settings saved locally before periodic
+    // sync ran), keep local — same rule as the non-bootstrap merge below.
     if (explicitUserId) {
+      if (local && localTime > remoteTime) {
+        console.log(`[Sync] Bootstrap: local tenant cache newer than remote — keeping local (${localTime} > ${remoteTime})`)
+        markTenantDataReady(userId)
+        await hydrateRelationshipAccountsIntoLocalProjection(userId)
+        return { success: true, merged: false, fromDevice: remoteDevice, status: 'loaded_remote' }
+      }
       saveBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
       return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
     }
-
-    const local = getBackupData(userId)
-    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
-    const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
 
     console.log(`[Sync] This device: ${thisDevice}`)
     console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
