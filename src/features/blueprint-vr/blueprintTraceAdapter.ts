@@ -1953,6 +1953,152 @@ export function filterWallCandidatesToWallNetwork(
   return { lines: networked, stats }
 }
 
+// ---------------------------------------------------------------------------
+// Wave 2C — page-level table/schedule grid detection (full-set ranking)
+// ---------------------------------------------------------------------------
+
+export interface PageTableGridAnalysis {
+  tableGridScore: number
+  wallLikeIrregularityScore: number
+  uniformRowSpacingScore: number
+  uniformColSpacingScore: number
+  parallelHorizontalCount: number
+  parallelVerticalCount: number
+  shortCellSegmentRatio: number
+  longWallSegmentRatio: number
+  isLikelyTableGrid: boolean
+  reasons: string[]
+}
+
+function scoreUniformLineSpacing(sortedPositions: number[]): number {
+  if (sortedPositions.length < 8) return 0
+  const gaps: number[] = []
+  for (let i = 1; i < sortedPositions.length; i += 1) {
+    const g = sortedPositions[i] - sortedPositions[i - 1]
+    if (g >= 0.2 && g <= 24) gaps.push(g)
+  }
+  if (gaps.length < 6) return 0
+  const sortedGaps = [...gaps].sort((a, b) => a - b)
+  const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)] || 0
+  if (medianGap <= 0) return 0
+  const matching = gaps.filter((g) => Math.abs(g - medianGap) <= Math.max(0.18, medianGap * 0.18))
+  return matching.length / gaps.length
+}
+
+function lengthVariance(values: number[]): number {
+  if (values.length < 2) return 0
+  const mean = values.reduce((a, b) => a + b, 0) / values.length
+  let v = 0
+  for (const x of values) v += (x - mean) ** 2
+  return v / values.length
+}
+
+/**
+ * Detect schedule/table/detail grids from orthogonal line regularity.
+ * Used to penalize full-set wall-plan page ranking — dense uniform grids are not suites.
+ */
+export function analyzePageTableGridFromTrace(
+  payload: PdfTracePayload | null | undefined,
+): PageTableGridAnalysis {
+  const empty: PageTableGridAnalysis = {
+    tableGridScore: 0,
+    wallLikeIrregularityScore: 0,
+    uniformRowSpacingScore: 0,
+    uniformColSpacingScore: 0,
+    parallelHorizontalCount: 0,
+    parallelVerticalCount: 0,
+    shortCellSegmentRatio: 0,
+    longWallSegmentRatio: 0,
+    isLikelyTableGrid: false,
+    reasons: [],
+  }
+  if (!payload) return empty
+
+  const adapted = adaptPdfTraceToPlanLines(payload)
+  const lines = adapted.lines.filter((l) => l.orthogonal && l.lengthFt >= 0.45)
+  if (lines.length < 12) return empty
+
+  const horizontals = lines.filter((l) => classifyLineOrientation(l) === 'horizontal')
+  const verticals = lines.filter((l) => classifyLineOrientation(l) === 'vertical')
+  const hPositions = horizontals.map((l) => (l.start.y + l.end.y) / 2).sort((a, b) => a - b)
+  const vPositions = verticals.map((l) => (l.start.x + l.end.x) / 2).sort((a, b) => a - b)
+  const uniformRowSpacingScore = scoreUniformLineSpacing(hPositions)
+  const uniformColSpacingScore = scoreUniformLineSpacing(vPositions)
+
+  const shortCell = lines.filter((l) => l.lengthFt < 5.5)
+  const longWalls = lines.filter((l) => l.lengthFt >= 12)
+  const shortCellSegmentRatio = shortCell.length / Math.max(1, lines.length)
+  const longWallSegmentRatio = longWalls.length / Math.max(1, lines.length)
+  const lenVar = lengthVariance(lines.map((l) => l.lengthFt))
+
+  const gridLineCount = horizontals.length + verticals.length
+  const gridDominance = gridLineCount / Math.max(1, lines.length)
+  const uniformGrid =
+    uniformRowSpacingScore >= 0.62 &&
+    uniformColSpacingScore >= 0.62 &&
+    horizontals.length >= 18 &&
+    verticals.length >= 18
+
+  let tableGridScore = 0
+  const reasons: string[] = []
+  if (uniformGrid) {
+    tableGridScore += 0.38
+    reasons.push('uniform_row_col_grid')
+  }
+  if (gridDominance > 0.88 && lines.length > 50) {
+    tableGridScore += 0.12
+    reasons.push('orthogonal_grid_dominant')
+  }
+  if (shortCellSegmentRatio > 0.52 && longWallSegmentRatio < 0.1) {
+    tableGridScore += 0.22
+    reasons.push('many_short_cells_few_long_walls')
+  }
+  if (horizontals.length > 35 && verticals.length > 35 && lenVar < 18) {
+    tableGridScore += 0.15
+    reasons.push('high_parallel_count_low_length_variance')
+  }
+  if (lines.length > 90 && uniformRowSpacingScore > 0.55 && uniformColSpacingScore > 0.55) {
+    tableGridScore += 0.1
+    reasons.push('dense_regular_lattice')
+  }
+
+  const openingHints =
+    (payload.arcs?.length || 0) +
+    lines.filter((l) => l.role === 'door' || l.role === 'window').length
+  if (openingHints >= 2 && tableGridScore > 0.2) {
+    tableGridScore -= 0.12
+    reasons.push('opening_arcs_reduce_table_confidence')
+  }
+
+  tableGridScore = Math.max(0, Math.min(1, tableGridScore))
+
+  let wallLikeIrregularityScore = 0
+  wallLikeIrregularityScore += Math.min(0.35, lenVar / 90)
+  wallLikeIrregularityScore += longWallSegmentRatio * 0.45
+  wallLikeIrregularityScore += (1 - uniformRowSpacingScore) * 0.12
+  wallLikeIrregularityScore += (1 - uniformColSpacingScore) * 0.12
+  if (lines.length >= 20 && lines.length <= 220) wallLikeIrregularityScore += 0.08
+  wallLikeIrregularityScore = Math.max(0, Math.min(1, wallLikeIrregularityScore))
+
+  const isLikelyTableGrid =
+    tableGridScore >= 0.52 ||
+    (uniformGrid && shortCellSegmentRatio > 0.45) ||
+    (horizontals.length > 40 && verticals.length > 40 && longWallSegmentRatio < 0.06)
+
+  return {
+    tableGridScore,
+    wallLikeIrregularityScore,
+    uniformRowSpacingScore,
+    uniformColSpacingScore,
+    parallelHorizontalCount: horizontals.length,
+    parallelVerticalCount: verticals.length,
+    shortCellSegmentRatio,
+    longWallSegmentRatio,
+    isLikelyTableGrid,
+    reasons: reasons.slice(0, 6),
+  }
+}
+
 export function filterWorldMarginArtifactLines(
   lines: PlanTraceLine[],
   page: { minX: number; minY: number; maxX: number; maxY: number },

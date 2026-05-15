@@ -58,7 +58,9 @@ import {
   filterWallCandidatesToWallNetwork,
   detectDoubleLineWalls,
   classifyLineOrientation,
+  analyzePageTableGridFromTrace,
   type WallNetworkFilterStats,
+  type PageTableGridAnalysis,
 } from './blueprintTraceAdapter'
 import type { PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
 
@@ -406,6 +408,13 @@ export interface BlueprintPlanScanResult {
     /** First blocker codes/messages for compact HUD (full list on scan result). */
     wallExtractionBlockersPreview?: string
     geometrySourcePageNumbers?: number[]
+    selectedGeometryDriverPage?: number | null
+    pageTableGridScore?: number
+    rejectedTableGridPages?: number[]
+    selectedFloorPlanPageScore?: number
+    topWallPlanCandidatePages?: number[]
+    geometryDriverSelectionReason?: string
+    tableGridPenaltyApplied?: boolean
     /** Raw PDF payload line primitives before sanitation (not merged polyline expansion). */
     rawPayloadLines?: number
     /** Raw payload rects before sanitation. */
@@ -3111,6 +3120,73 @@ function vectorEvidenceScore(
   }
 }
 
+const FLOOR_PLAN_SEMANTIC_CUES = [
+  'floor plan',
+  'power plan',
+  'proposed dimensioned plan',
+  'dimensioned plan',
+  'tenant suite',
+  'beauty salon',
+  'architectural plan',
+  'electrical plan',
+  'partition plan',
+  'suite plan',
+  'layout plan',
+  '1/4"=1',
+  '1/4 = 1',
+  'scale 1/4',
+]
+
+function floorPlanSemanticBoostFromPage(page: BlueprintPageClassification): number {
+  const hay = normalizeText([page.sheetTitle, page.sheetNumber, ...page.reasons])
+  let boost = 0
+  for (const cue of FLOOR_PLAN_SEMANTIC_CUES) {
+    if (hay.includes(cue)) boost += 0.14
+  }
+  if (page.role === 'proposed_dimensioned_plan') boost += 0.38
+  else if (page.role === 'proposed_floor_plan') boost += 0.3
+  else if (page.role === 'partition_plan') boost += 0.24
+  else if (page.role === 'electrical_plan' && hay.includes('power')) boost += 0.18
+  return Math.min(1, boost)
+}
+
+function pageTableGridAnalysisForTrace(
+  trace: PdfTracePayload | null | undefined,
+): PageTableGridAnalysis {
+  return analyzePageTableGridFromTrace(trace)
+}
+
+function scorePageForWallPlanRanking(
+  page: BlueprintPageClassification,
+  trace: PdfTracePayload | null | undefined,
+): { sortScore: number; grid: PageTableGridAnalysis; semanticBoost: number } {
+  const grid = pageTableGridAnalysisForTrace(trace)
+  const evidence = vectorEvidenceScore(trace)
+  const semanticBoost = floorPlanSemanticBoostFromPage(page)
+
+  let sortScore = 0
+  if (evidence.wave2Accepted) sortScore += 1200
+  else if (evidence.wave2Filtered > 0) sortScore += 180 + evidence.wave2Filtered
+  else if (evidence.geomCount > 0) sortScore += 40 + Math.min(100, evidence.geomCount * 0.06)
+
+  sortScore += semanticBoost * 520
+  sortScore += grid.wallLikeIrregularityScore * 380
+  sortScore += page.roleConfidence * 80
+
+  if (page.role === 'proposed_dimensioned_plan') sortScore += 90
+  else if (page.role === 'proposed_floor_plan') sortScore += 70
+  else if (page.role === 'partition_plan') sortScore += 55
+
+  if (page.role === 'schedule' || page.role === 'title_notes') sortScore -= 900
+
+  const tablePenalty = grid.tableGridScore * 950
+  sortScore -= tablePenalty
+  if (grid.isLikelyTableGrid) sortScore -= 1100
+  if (grid.isLikelyTableGrid && semanticBoost < 0.35) sortScore -= 400
+
+  return { sortScore, grid, semanticBoost }
+}
+
 function inferExtractionFailureStage(params: {
   rawPayloadLines: number
   rawPayloadRects: number
@@ -3350,6 +3426,26 @@ export function classifyBlueprintPage(
 
   let eligibleForWallSource = WALL_SOURCE_ROLES.has(bestRole) && bestScore >= 0.45
 
+  const planCueStrong =
+    haystack.includes('floor plan') ||
+    haystack.includes('proposed dimensioned') ||
+    haystack.includes('dimensioned plan') ||
+    haystack.includes('tenant suite') ||
+    haystack.includes('power plan')
+  const gridAnalysis = tracePayload ? pageTableGridAnalysisForTrace(tracePayload) : null
+  if (gridAnalysis?.isLikelyTableGrid && !planCueStrong) {
+    eligibleForWallSource = false
+    reasons.push(`veto:table_grid_geometry score=${gridAnalysis.tableGridScore.toFixed(2)}`)
+    scores.schedule = (scores.schedule || 0) + Math.max(0.4, gridAnalysis.tableGridScore * 0.55)
+    if (gridAnalysis.tableGridScore >= 0.5 && (scores.schedule || 0) > bestScore - 0.1) {
+      bestRole = 'schedule'
+      bestScore = Math.max(bestScore, scores.schedule || 0)
+      reasons.push('role_override:uniform_table_grid')
+    }
+  } else if (gridAnalysis?.isLikelyTableGrid) {
+    reasons.push(`table_grid_hint score=${gridAnalysis.tableGridScore.toFixed(2)}_plan_text_retained`)
+  }
+
   if (WALL_SOURCE_ROLES.has(bestRole)) {
     const veto = Math.max(
       scores.electrical_plan || 0,
@@ -3447,34 +3543,32 @@ function rankWallPlanCandidatesFromPages(
     if (role === 'partition_plan') return 2
     return 99
   }
-  const vectorRankScore = (page: BlueprintPageClassification): number => {
-    const evidence = vectorEvidenceScore(multiPageTraces?.[page.pageNumber])
-    if (evidence.wave2Accepted) return 1000 + evidence.geomCount
-    if (evidence.wave2Filtered > 0) return 200 + evidence.wave2Filtered + evidence.geomCount * 0.05
-    if (evidence.geomCount > 0) return 50 + Math.min(120, evidence.geomCount * 0.08)
-    return 0
-  }
-  const sorted = [...eligible].sort((a, b) => {
-    const va = vectorRankScore(a)
-    const vb = vectorRankScore(b)
-    if (va !== vb) return vb - va
-    const ra = roleRank(a.role)
-    const rb = roleRank(b.role)
-    if (ra !== rb) return ra - rb
-    if (b.roleConfidence !== a.roleConfidence) return b.roleConfidence - a.roleConfidence
-    return a.pageNumber - b.pageNumber
+  const scored = eligible.map((page) => {
+    const ranked = scorePageForWallPlanRanking(page, multiPageTraces?.[page.pageNumber])
+    return { page, ...ranked }
   })
-  return sorted.map((p, i) => {
+  const sorted = [...scored].sort((a, b) => {
+    if (b.sortScore !== a.sortScore) return b.sortScore - a.sortScore
+    const ra = roleRank(a.page.role)
+    const rb = roleRank(b.page.role)
+    if (ra !== rb) return ra - rb
+    if (b.page.roleConfidence !== a.page.roleConfidence) return b.page.roleConfidence - a.page.roleConfidence
+    return a.page.pageNumber - b.page.pageNumber
+  })
+  return sorted.map((entry, i) => {
+    const p = entry.page
     const evidence = vectorEvidenceScore(multiPageTraces?.[p.pageNumber])
-    const vectorBoost =
-      evidence.wave2Accepted ? 0.35 : evidence.wave2Filtered > 0 ? 0.18 : evidence.geomCount > 0 ? 0.08 : 0
+    const normalizedScore = Math.max(
+      0.05,
+      Math.min(0.98, 0.12 + entry.sortScore / 2200 + entry.semanticBoost * 0.15),
+    )
     return {
       rank: i + 1,
       pageNumber: p.pageNumber,
       sheetNumber: p.sheetNumber,
       sheetTitle: p.sheetTitle,
       role: p.role,
-      score: p.roleConfidence + (roleRank(p.role) <= 2 ? (2 - roleRank(p.role)) * 0.08 : 0) + vectorBoost,
+      score: normalizedScore,
       reasons: [
         ...p.reasons,
         evidence.wave2Accepted
@@ -3482,7 +3576,10 @@ function rankWallPlanCandidatesFromPages(
           : evidence.geomCount > 0
             ? `vector:primitives=${evidence.geomCount}`
             : 'vector:none',
-      ].slice(0, 5),
+        `tableGridScore=${entry.grid.tableGridScore.toFixed(2)}`,
+        entry.grid.isLikelyTableGrid ? 'table:likely_grid' : `wallIrregularity=${entry.grid.wallLikeIrregularityScore.toFixed(2)}`,
+        entry.semanticBoost > 0.2 ? `semantic:floor_plan_boost=${entry.semanticBoost.toFixed(2)}` : 'semantic:weak',
+      ].slice(0, 6),
     }
   })
 }
@@ -3490,34 +3587,85 @@ function rankWallPlanCandidatesFromPages(
 function pickGeometryDriverPageNumber(params: {
   canonicalWallPlanPages: CanonicalWallPlanPage[]
   rankedWallPlanCandidates: RankedWallPlanCandidate[]
+  pageClassifications: BlueprintPageClassification[]
   multiPageTraces?: Record<number, PdfTracePayload | null | undefined>
-}): number | null {
+}): {
+  pageNumber: number | null
+  selectionReason: string
+  tableGridPenaltyApplied: boolean
+  rejectedTableGridPages: number[]
+  driverPageTableGridScore: number
+} {
   const pagePool = new Set<number>()
   for (const c of params.canonicalWallPlanPages) pagePool.add(c.pageNumber)
   for (const r of params.rankedWallPlanCandidates) pagePool.add(r.pageNumber)
 
-  let best: { pageNumber: number; score: number } | null = null
+  const rejectedTableGridPages: number[] = []
+  let best: { pageNumber: number; score: number; reason: string; gridScore: number } | null = null
+  let tableGridPenaltyApplied = false
+
   for (const pageNumber of pagePool) {
-    const evidence = vectorEvidenceScore(params.multiPageTraces?.[pageNumber])
-    const roleBoost = params.canonicalWallPlanPages.some((c) => c.pageNumber === pageNumber) ? 40 : 0
-    const rankBoost =
-      params.rankedWallPlanCandidates.find((r) => r.pageNumber === pageNumber)?.score != null
-        ? (params.rankedWallPlanCandidates.find((r) => r.pageNumber === pageNumber)!.score || 0) * 10
-        : 0
-    const score =
-      roleBoost +
-      rankBoost +
-      (evidence.wave2Accepted ? 2000 : 0) +
-      evidence.wave2Filtered * 3 +
-      evidence.geomCount
-    if (!best || score > best.score) best = { pageNumber, score }
+    const trace = params.multiPageTraces?.[pageNumber]
+    const pageMeta =
+      params.pageClassifications.find((p) => p.pageNumber === pageNumber) ||
+      ({
+        pageNumber,
+        role: 'unknown' as BlueprintPageClassificationRole,
+        roleConfidence: 0.3,
+        reasons: [],
+        eligibleForWallSource: false,
+      } satisfies BlueprintPageClassification)
+    const ranked = scorePageForWallPlanRanking(pageMeta, trace)
+    const rankEntry = params.rankedWallPlanCandidates.find((r) => r.pageNumber === pageNumber)
+    let score = ranked.sortScore + (rankEntry?.score || 0) * 120
+
+    if (ranked.grid.isLikelyTableGrid) {
+      rejectedTableGridPages.push(pageNumber)
+      tableGridPenaltyApplied = true
+      if (ranked.semanticBoost < 0.4) {
+        score -= 2500
+      }
+    }
+
+    const reason = [
+      `sort=${ranked.sortScore.toFixed(0)}`,
+      `tableGrid=${ranked.grid.tableGridScore.toFixed(2)}`,
+      `irregularity=${ranked.grid.wallLikeIrregularityScore.toFixed(2)}`,
+      ranked.semanticBoost > 0.2 ? `semantic=${ranked.semanticBoost.toFixed(2)}` : 'semantic=low',
+    ].join(';')
+
+    if (!best || score > best.score) {
+      best = { pageNumber, score, reason, gridScore: ranked.grid.tableGridScore }
+    }
   }
 
-  if (best) return best.pageNumber
-  if (params.canonicalWallPlanPages.length > 0) {
-    return [...params.canonicalWallPlanPages].sort((a, b) => a.pageNumber - b.pageNumber)[0]!.pageNumber
+  if (best) {
+    return {
+      pageNumber: best.pageNumber,
+      selectionReason: best.reason,
+      tableGridPenaltyApplied,
+      rejectedTableGridPages,
+      driverPageTableGridScore: best.gridScore,
+    }
   }
-  return params.rankedWallPlanCandidates[0]?.pageNumber ?? null
+  if (params.canonicalWallPlanPages.length > 0) {
+    const p = [...params.canonicalWallPlanPages].sort((a, b) => a.pageNumber - b.pageNumber)[0]!.pageNumber
+    return {
+      pageNumber: p,
+      selectionReason: 'fallback:lowest_canonical_page',
+      tableGridPenaltyApplied,
+      rejectedTableGridPages,
+      driverPageTableGridScore: 0,
+    }
+  }
+  const fallback = params.rankedWallPlanCandidates[0]?.pageNumber ?? null
+  return {
+    pageNumber: fallback,
+    selectionReason: fallback ? 'fallback:top_ranked_candidate' : 'fallback:none',
+    tableGridPenaltyApplied,
+    rejectedTableGridPages,
+    driverPageTableGridScore: 0,
+  }
 }
 
 function selectCanonicalWallPlanPages(params: {
@@ -4504,11 +4652,52 @@ export function scanBlueprintFullSet(
     canonicalWallPlanPages.length > 0
       ? [...canonicalWallPlanPages].sort((a, b) => a.pageNumber - b.pageNumber)[0]!.pageNumber
       : rankedWallPlanCandidates[0]?.pageNumber ?? null
-  const geometryDriverPage = pickGeometryDriverPageNumber({
+  const geometryDriverPick = pickGeometryDriverPageNumber({
     canonicalWallPlanPages,
     rankedWallPlanCandidates,
+    pageClassifications,
     multiPageTraces: input.multiPageTraces,
-  }) ?? initialCanonicalDriverPage
+  })
+  let geometryDriverPage = geometryDriverPick.pageNumber ?? initialCanonicalDriverPage
+  let geometryDriverSelectionReason = geometryDriverPick.selectionReason
+
+  const driverGridAtPick = geometryDriverPage
+    ? pageTableGridAnalysisForTrace(input.multiPageTraces?.[geometryDriverPage])
+    : null
+  if (
+    geometryDriverPage != null &&
+    driverGridAtPick?.isLikelyTableGrid &&
+    rankedWallPlanCandidates.length > 1
+  ) {
+    for (const cand of rankedWallPlanCandidates) {
+      if (cand.pageNumber === geometryDriverPage) continue
+      const altTrace = input.multiPageTraces?.[cand.pageNumber]
+      if (!altTrace) continue
+      const altGrid = pageTableGridAnalysisForTrace(altTrace)
+      const altPage = pageClassifications.find((p) => p.pageNumber === cand.pageNumber)
+      const altSemantic = altPage ? floorPlanSemanticBoostFromPage(altPage) : 0
+      if (altGrid.isLikelyTableGrid && altSemantic < 0.35) continue
+      const altPreview = previewWave2WallExtractionForTracePayload(altTrace)
+      if (!altPreview.accepted) continue
+      if (altGrid.tableGridScore >= driverGridAtPick.tableGridScore - 0.08) continue
+      geometryDriverPage = cand.pageNumber
+      geometryDriverSelectionReason = `table_grid_reject_driver_switch:p${cand.pageNumber};${geometryDriverPick.selectionReason}`
+      warnings.push({
+        code: 'GEOMETRY_DRIVER_PAGE_SWITCH',
+        message:
+          `Rejected table/grid geometry driver; switched to page ${cand.pageNumber} ` +
+          `(tableGrid ${altGrid.tableGridScore.toFixed(2)} vs ${driverGridAtPick.tableGridScore.toFixed(2)}).`,
+      })
+      break
+    }
+  }
+
+  const topWallPlanCandidatePages = rankedWallPlanCandidates.slice(0, 5).map((r) => r.pageNumber)
+  const selectedFloorPlanPageScore =
+    rankedWallPlanCandidates.find((r) => r.pageNumber === geometryDriverPage)?.score ?? 0
+  const driverGridFinal = geometryDriverPage
+    ? pageTableGridAnalysisForTrace(input.multiPageTraces?.[geometryDriverPage])
+    : null
 
   const bestFloorPlanSourceSheet = geometryDriverPage
     ? expandedSheets.find((s) => s.pageNumber === geometryDriverPage) || null
@@ -4525,13 +4714,14 @@ export function scanBlueprintFullSet(
           sheetTitle: bestFloorPlanSourceSheet.sheetTitle,
           confidence: selection.confidence,
           reason:
-            selection.ambiguous && canonicalWallPlanPages.length > 1
+            geometryDriverSelectionReason ||
+            (selection.ambiguous && canonicalWallPlanPages.length > 1
               ? `ambiguous:geometry_uses_lowest_page_among_canonical [${canonicalWallPlanPages
                   .map((c) => c.pageNumber)
                   .sort((a, b) => a - b)
                   .join(',')}]`
               : canonicalWallPlanPages[0]?.selectionReasons.join('; ') ||
-                'ranked_wall_plan_candidate',
+                'ranked_wall_plan_candidate'),
         }
       : null
 
@@ -4647,6 +4837,11 @@ export function scanBlueprintFullSet(
       if (cand.pageNumber === initialDriverForRetry) continue
       const altTrace = input.multiPageTraces[cand.pageNumber]
       if (!altTrace) continue
+      const altGrid = pageTableGridAnalysisForTrace(altTrace)
+      const altPageMeta = pageClassifications.find((p) => p.pageNumber === cand.pageNumber)
+      if (altGrid.isLikelyTableGrid && (altPageMeta ? floorPlanSemanticBoostFromPage(altPageMeta) : 0) < 0.35) {
+        continue
+      }
       if (!previewWave2WallExtractionForTracePayload(altTrace).accepted) continue
       const altSheet = expandedSheets.find((s) => s.pageNumber === cand.pageNumber) || null
       const rescanned = scanBlueprintPlan({
@@ -4721,6 +4916,13 @@ export function scanBlueprintFullSet(
         confidenceBreakdown.confidenceCapReason ||
         planScan.traceDebugCounts?.confidenceCapReason,
       geometrySourcePageNumbers: canonicalGeomPages,
+      selectedGeometryDriverPage: effectiveDriverPage ?? geometryDriverPage,
+      pageTableGridScore: driverGridFinal?.tableGridScore ?? geometryDriverPick.driverPageTableGridScore,
+      rejectedTableGridPages: geometryDriverPick.rejectedTableGridPages,
+      selectedFloorPlanPageScore,
+      topWallPlanCandidatePages,
+      geometryDriverSelectionReason,
+      tableGridPenaltyApplied: geometryDriverPick.tableGridPenaltyApplied,
     },
     scaleStatus: confidenceBreakdown.items.scaleDetected > 0 ? 'detected' : 'default',
     scanResultKind: planScan.isFallback
@@ -4739,9 +4941,13 @@ export function scanBlueprintFullSet(
       sourceSetId: input.sourceSet?.id,
       sourceSetName: input.sourceSet?.name,
       canonicalWallPlanPageNumbers: canonicalWallPlanPages.map((c) => c.pageNumber),
-      initialGeometryDriverPage: geometryDriverPage,
+      initialGeometryDriverPage: initialCanonicalDriverPage,
       effectiveGeometryDriverPage: effectiveDriverPage,
       geometrySourcePageNumbers: canonicalGeomPages,
+      pageTableGridScore: driverGridFinal?.tableGridScore,
+      rejectedTableGridPages: geometryDriverPick.rejectedTableGridPages,
+      geometryDriverSelectionReason,
+      tableGridPenaltyApplied: geometryDriverPick.tableGridPenaltyApplied,
       planScanFallback: enrichedPlanScan.isFallback,
       wave2Blockers: enrichedPlanScan.wallExtractionBlockers,
       rankedWallPlanPages: rankedWallPlanCandidates.map((r) => r.pageNumber),
@@ -4760,7 +4966,9 @@ export function scanBlueprintFullSet(
       `${rankedWallPlanCandidates.length} eligible wall-plan candidate(s); ` +
       `canonical page(s): ${canonicalWallPlanPages.length ? canonicalWallPlanPages.map((c) => c.pageNumber).join(',') : 'none'}. ` +
       `Geometry driver page ${effectiveDriverPage ?? geometryDriverPage ?? 'n/a'} ` +
-      `(initial canonical driver ${geometryDriverPage ?? 'n/a'}). Confidence ${confidenceBreakdown.totalPercent}%.`,
+      `(initial canonical driver ${initialCanonicalDriverPage ?? 'n/a'}). ` +
+      `Table/grid pages rejected: ${geometryDriverPick.rejectedTableGridPages.length}. ` +
+      `Confidence ${confidenceBreakdown.totalPercent}%.`,
   })
 
   const pageRoleCounts = countPageRoles(pageClassifications)

@@ -189,6 +189,30 @@ export interface PdfTraceWallNetworkFilterStats {
   keptWallNetworkComponents?: number
 }
 
+/** Per-page table/schedule grid vs floor-plan wall geometry signals. */
+export interface PdfTracePageTableGridAnalysis {
+  tableGridScore: number
+  wallLikeIrregularityScore: number
+  uniformRowSpacingScore: number
+  uniformColSpacingScore: number
+  parallelHorizontalCount: number
+  parallelVerticalCount: number
+  shortCellSegmentRatio: number
+  isLikelyTableGrid: boolean
+  reasons: string[]
+}
+
+/** Full-set geometry driver selection telemetry. */
+export interface PdfTraceGeometryDriverDebug {
+  selectedGeometryDriverPage?: number | null
+  pageTableGridScore?: number
+  rejectedTableGridPages?: number[]
+  selectedFloorPlanPageScore?: number
+  topWallPlanCandidatePages?: number[]
+  geometryDriverSelectionReason?: string
+  tableGridPenaltyApplied?: boolean
+}
+
 export interface PdfTraceExtractionResult {
   success: boolean
   payload: PdfTracePayload | null
