@@ -11,7 +11,8 @@
  *    openings rendered as transparent glass bands
  *  - Room fills, labels, area labels, dimension annotations
  *  - Source / confidence badges including a clear "Inferred Source" mark
- *  - Selected room highlight and click → enter Room View
+ *  - Optional small green room-entry dots (VR panel) with parent-handled
+ *    confirmation before switching to Room View
  *
  * The viewer is auto-sizing — it fills the parent width but locks the modal-
  * friendly aspect ratio so the long Beauty Salon plan does not leave wide
@@ -38,8 +39,190 @@ export interface MeasuredPlanViewerProps {
   className?: string
   selectedRoomId?: string | null
   onRoomSelect?: (roomId: string) => void
+  /**
+   * When set, the plan body does not navigate on click; small green dots call
+   * this instead (parent shows confirmation, then runs room navigation).
+   */
+  onPlanRoomEntryIntent?: (roomId: string) => void
   activeStage?: VRStage
   showElectrical?: boolean
+  /**
+   * Wall-only mode: hides furniture/equipment symbols, shows PROPOSED WALL
+   * LAYOUT badge, and renders an explicit failure overlay when the model is
+   * still a fallback (no real geometry was extracted).
+   */
+  wallOnlyMode?: boolean
+  /** Phase reported by the async full-set extraction loop. */
+  extractionPhase?: 'idle' | 'extracting' | 'done'
+  /** Pages extracted so far (for progress display). */
+  pagesScanned?: number
+  /** Total pages targeted for extraction. */
+  totalPages?: number
+  traceDebug?: {
+    /** Raw PDF line primitives (pre-sanitation). */
+    rawLines: number
+    rawRects?: number
+    rawPolylines?: number
+    rawTextRuns?: number
+    adaptedMergedTraceLines?: number
+    sanitizedPayloadLines?: number
+    wave2PreMarginCandidates?: number
+    wave2WorldMarginRemoved?: number
+    wave2ClassifiedSegments?: number
+    wave2FootprintAreaRatio?: number
+    wave2CoreSampleFraction?: number
+    vectorMix?: string
+    extractionFallbackReason?: string
+    mergedWalls: number
+    openings: number
+    roomCandidates: number
+    runtimeProviderStatus?: string
+    runtimeProviderMatchTier?: string
+    operatorListStatus?: string
+    textContentStatus?: string
+    confidenceCapReason?: string
+    wallCandidatesRaw?: number
+    wallCandidatesFiltered?: number
+    footprintConfidence?: number
+    wave2ExteriorCount?: number
+    wave2InteriorCount?: number
+    wave2PartitionCount?: number
+    wallExtractionBlockersPreview?: string
+    geometrySourcePageNumbers?: number[]
+  } | null
+  /**
+   * 2D Plan / Proposed Walls: subtler room fills and titles when using subtle
+   * mode. Full-room hit targets are only used when onPlanRoomEntryIntent is
+   * omitted (legacy); VR panel passes entry intent so only green dots navigate.
+   */
+  roomInteractionStyle?: 'default' | 'subtle'
+  /**
+   * When false, badges are omitted from this component’s DOM so a parent can
+   * render {@link MeasuredPlanViewerBadgeHud} in a non-transformed viewport
+   * overlay (zoom/pan hosts).
+   */
+  renderBadgesInTransformedLayer?: boolean
+}
+
+export interface MeasuredPlanViewerBadgeHudProps {
+  model: BlueprintBuildingModel
+  showBadges?: boolean
+  wallOnlyMode?: boolean
+  traceDebug?: MeasuredPlanViewerProps['traceDebug']
+}
+
+/** Viewport-fixed badge strip; use outside CSS zoom/pan transforms. */
+export function MeasuredPlanViewerBadgeHud({
+  model,
+  showBadges = true,
+  wallOnlyMode = false,
+  traceDebug = null,
+}: MeasuredPlanViewerBadgeHudProps): JSX.Element | null {
+  if (!showBadges) return null
+  if (!model || model.footprint.width === 0 || model.footprint.height === 0) return null
+
+  const allRooms: BuildingRoomModel[] = model.levels.flatMap((l) => l.rooms)
+  const allWalls: Array<{ wall: BuildingWallModel; room: BuildingRoomModel }> =
+    allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
+  const isFallback = model.metadata.source === 'fallback'
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 10,
+        left: 10,
+        display: 'flex',
+        gap: 8,
+        flexWrap: 'wrap',
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: 'rgba(42,63,95,0.95)',
+          color: '#a0d8ff',
+          padding: '3px 7px',
+          borderRadius: 4,
+          fontSize: 10,
+          border: '1px solid #4a90e2',
+          fontFamily: 'monospace',
+        }}
+      >
+        Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
+      </div>
+      {wallOnlyMode ? (
+        <div
+          style={{
+            backgroundColor: isFallback ? 'rgba(95,42,42,0.95)' : 'rgba(20,60,48,0.95)',
+            color: isFallback ? '#FF9999' : '#7BE5D8',
+            padding: '3px 7px',
+            borderRadius: 4,
+            fontSize: 10,
+            border: isFallback ? '1px solid #FF5555' : '1px solid #00ddcc',
+            fontFamily: 'monospace',
+            letterSpacing: 0.5,
+          }}
+        >
+          {isFallback
+            ? 'WALL EXTRACTION FAILED · FALLBACK TEMPLATE'
+            : `FULL-SET PROPOSED WALL LAYOUT · ${allWalls.length} walls · ${allWalls.reduce((n, { wall }) => n + wall.openings.length, 0)} openings`}
+        </div>
+      ) : (
+        <div
+          style={{
+            backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
+            color: isFallback ? '#ffd0a0' : '#a0ffa0',
+            padding: '3px 7px',
+            borderRadius: 4,
+            fontSize: 10,
+            border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
+            fontFamily: 'monospace',
+          }}
+        >
+          {isFallback ? 'FALLBACK LAYOUT (NOT MEASURED)' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
+        </div>
+      )}
+      {traceDebug && (
+        <div
+          style={{
+            backgroundColor: 'rgba(20,28,38,0.95)',
+            color: '#9ec7f9',
+            padding: '3px 7px',
+            borderRadius: 4,
+            fontSize: 10,
+            border: '1px solid rgba(158,199,249,0.45)',
+            fontFamily: 'monospace',
+          }}
+        >
+          TRACE DEBUG · raw L{traceDebug.rawLines}
+          {traceDebug.rawRects != null ? `·R${traceDebug.rawRects}` : ''}
+          {traceDebug.rawPolylines != null ? `·P${traceDebug.rawPolylines}` : ''}
+          {traceDebug.adaptedMergedTraceLines != null ? `·adpt ${traceDebug.adaptedMergedTraceLines}` : ''}
+          {` · walls ${traceDebug.mergedWalls} · opn ${traceDebug.openings} · rooms ${traceDebug.roomCandidates}`}
+          {traceDebug.wallCandidatesRaw != null ? ` · cand ${traceDebug.wallCandidatesRaw}→${traceDebug.wallCandidatesFiltered ?? '?'}` : ''}
+          {traceDebug.wave2PreMarginCandidates != null
+            ? ` · preMrg ${traceDebug.wave2PreMarginCandidates}${traceDebug.wave2WorldMarginRemoved != null ? `(-${traceDebug.wave2WorldMarginRemoved})` : ''}`
+            : ''}
+          {traceDebug.wave2ClassifiedSegments != null ? ` · cls ${traceDebug.wave2ClassifiedSegments}` : ''}
+          {traceDebug.wave2FootprintAreaRatio != null
+            ? ` · ar${(traceDebug.wave2FootprintAreaRatio * 100).toFixed(0)}%`
+            : ''}
+          {traceDebug.wave2CoreSampleFraction != null
+            ? ` · core${(traceDebug.wave2CoreSampleFraction * 100).toFixed(0)}%`
+            : ''}
+          {traceDebug.vectorMix ? ` · ${traceDebug.vectorMix}` : ''}
+          {traceDebug.footprintConfidence != null ? ` · fp ${Math.round(traceDebug.footprintConfidence * 100)}%` : ''}
+          {traceDebug.wave2ExteriorCount != null
+            ? ` · ext/int/part ${traceDebug.wave2ExteriorCount}/${traceDebug.wave2InteriorCount ?? 0}/${traceDebug.wave2PartitionCount ?? 0}`
+            : ''}
+          {traceDebug.geometrySourcePageNumbers?.length ? ` · src p${traceDebug.geometrySourcePageNumbers.join(',')}` : ''}
+          {traceDebug.wallExtractionBlockersPreview ? ` · blk ${traceDebug.wallExtractionBlockersPreview}` : ''}
+          {traceDebug.runtimeProviderMatchTier ? ` · tier ${traceDebug.runtimeProviderMatchTier}` : ''}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -163,6 +346,27 @@ function styleForWall(wall: BuildingWallModel, selected: boolean): WallStyle {
   return { stroke: '#b6c0cc', strokeWidth: 2 }
 }
 
+/** Model-space point for the room-view entry dot (nudged from center, clamped inside bounds). */
+function planRoomEntryDotFt(
+  room: BuildingRoomModel,
+  footprint: { width: number; height: number },
+): { x: number; y: number } {
+  const { min, max } = room.bounds
+  const cx = (min.x + max.x) / 2
+  const cy = (min.y + max.y) / 2
+  const fcx = footprint.width / 2
+  const fcy = footprint.height / 2
+  const t = 0.14
+  let x = cx + (fcx - cx) * t
+  let y = cy + (fcy - cy) * t
+  const w = max.x - min.x
+  const h = max.y - min.y
+  const pad = Math.min(0.45, w * 0.1, h * 0.1, w / 2 - 0.05, h / 2 - 0.05)
+  x = Math.max(min.x + pad, Math.min(max.x - pad, x))
+  y = Math.max(min.y + pad, Math.min(max.y - pad, y))
+  return { x, y }
+}
+
 // ─── opening rendering ───────────────────────────────────────────────────
 
 function renderOpening(
@@ -280,6 +484,8 @@ function renderOpening(
 
 // ─── room ───────────────────────────────────────────────────────────────
 
+type PlanRoomVisualMode = 'default' | 'subtle' | 'boundary'
+
 function RoomElement({
   room,
   scalePerFoot,
@@ -290,6 +496,7 @@ function RoomElement({
   showAreaLabels,
   onRoomSelect,
   accent,
+  roomMode = 'default',
 }: {
   room: BuildingRoomModel
   scalePerFoot: number
@@ -300,6 +507,7 @@ function RoomElement({
   showAreaLabels: boolean
   onRoomSelect?: (roomId: string) => void
   accent: string
+  roomMode?: PlanRoomVisualMode
 }): JSX.Element {
   const { bounds, area, label } = room
   const { min, max } = bounds
@@ -307,6 +515,14 @@ function RoomElement({
   const y1 = offsetY + min.y * scalePerFoot
   const width = (max.x - min.x) * scalePerFoot
   const height = (max.y - min.y) * scalePerFoot
+  const subtle = roomMode === 'subtle'
+  const boundary = roomMode === 'boundary'
+  const nonInteractive = subtle || boundary
+  const titleSize = boundary
+    ? Math.max(7, Math.min(10, width / 24))
+    : subtle
+      ? Math.max(7, Math.min(10, width / 22))
+      : Math.max(9, Math.min(13, width / 16))
 
   return (
     <g>
@@ -315,21 +531,41 @@ function RoomElement({
         y={y1}
         width={width}
         height={height}
-        fill={isSelected ? `${accent}33` : 'rgba(42,63,95,0.42)'}
-        fillOpacity={isSelected ? 0.55 : 0.45}
-        stroke={isSelected ? accent : 'rgba(74,144,226,0.55)'}
-        strokeWidth={isSelected ? 2.6 : 1.4}
-        rx={3}
-        style={{ cursor: 'pointer' }}
-        onClick={() => onRoomSelect?.(room.id)}
+        fill={
+          boundary
+            ? 'transparent'
+            : subtle
+              ? isSelected
+                ? `${accent}28`
+                : 'rgba(42,63,95,0.16)'
+              : isSelected
+                ? `${accent}33`
+                : 'rgba(42,63,95,0.42)'
+        }
+        fillOpacity={boundary ? 0 : subtle ? (isSelected ? 0.42 : 0.28) : isSelected ? 0.55 : 0.45}
+        stroke={
+          boundary
+            ? isSelected
+              ? accent
+              : 'rgba(120,140,168,0.42)'
+            : isSelected
+              ? accent
+              : subtle
+                ? 'rgba(74,144,226,0.35)'
+                : 'rgba(74,144,226,0.55)'
+        }
+        strokeWidth={boundary ? (isSelected ? 1.25 : 0.75) : subtle ? (isSelected ? 1.35 : 0.85) : isSelected ? 2.6 : 1.4}
+        rx={subtle || boundary ? 2 : 3}
+        style={nonInteractive ? { pointerEvents: 'none' } : { cursor: 'pointer' }}
+        onClick={nonInteractive ? undefined : () => onRoomSelect?.(room.id)}
       />
       {showRoomLabels && (
         <text
           x={x1 + width / 2}
-          y={y1 + height / 2 - 5}
+          y={y1 + height / 2 - (subtle ? 3 : 5)}
           textAnchor="middle"
           fill={isSelected ? '#fff' : '#e0e6ed'}
-          fontSize={Math.max(9, Math.min(13, width / 16))}
+          fontSize={titleSize}
           fontWeight="bold"
           style={{ pointerEvents: 'none' }}
         >
@@ -342,7 +578,7 @@ function RoomElement({
           y={y1 + height / 2 + 10}
           textAnchor="middle"
           fill="rgba(160,168,184,0.85)"
-          fontSize={9}
+          fontSize={subtle ? 8 : 9}
           style={{ pointerEvents: 'none' }}
         >
           {Math.round(area)} sq ft
@@ -364,14 +600,24 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   showBadges = true,
   selectedRoomId = null,
   onRoomSelect,
+  onPlanRoomEntryIntent,
   activeStage = 'roughIn',
   showElectrical = true,
+  wallOnlyMode = false,
+  extractionPhase,
+  pagesScanned,
+  totalPages,
+  traceDebug = null,
   className,
+  roomInteractionStyle = 'default',
+  renderBadgesInTransformedLayer = true,
 }) => {
   const canvasSize = useMemo(
     () => ({ width: width || 760, height: height || 430 }),
     [width, height],
   )
+
+  const isExtracting = extractionPhase === 'extracting'
 
   if (!model || model.footprint.width === 0 || model.footprint.height === 0) {
     return (
@@ -383,8 +629,9 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: '#1a1f2e',
+          backgroundColor: '#0d121b',
           borderRadius: 8,
+          border: '1px solid rgba(0,229,204,0.18)',
           color: '#a0a8b8',
           fontSize: 13,
           textAlign: 'center',
@@ -392,10 +639,23 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
         }}
       >
         <div>
-          <p style={{ margin: '0 0 8px' }}>No building model available</p>
-          <p style={{ margin: 0, fontSize: 12, opacity: 0.7 }}>
-            Pick a VR Source Set to drive the measured plan
-          </p>
+          {isExtracting ? (
+            <>
+              <p style={{ margin: '0 0 8px', color: '#FFD700', fontFamily: 'monospace', fontSize: 12 }}>
+                SCANNING FULL SET — page {pagesScanned ?? 0} / {totalPages ?? '?'}
+              </p>
+              <p style={{ margin: 0, fontSize: 11, opacity: 0.6, fontFamily: 'monospace' }}>
+                Extracting vector geometry from floor-plan sheets…
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 8px' }}>No building model available</p>
+              <p style={{ margin: 0, fontSize: 12, opacity: 0.7 }}>
+                Pick a VR Source Set to drive the measured plan
+              </p>
+            </>
+          )}
         </div>
       </div>
     )
@@ -413,7 +673,13 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
 
   const accent = STAGE_PLAN_ACCENT[activeStage]
-  const isFallback = model.metadata.source === 'fallback'
+
+  const planRoomVisualMode: PlanRoomVisualMode =
+    wallOnlyMode && onPlanRoomEntryIntent
+      ? 'boundary'
+      : roomInteractionStyle === 'subtle'
+        ? 'subtle'
+        : 'default'
 
   // De-duplicate walls by canonical key so partition walls shared between two
   // rooms render once. Use endpoints as key.
@@ -464,6 +730,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
             showAreaLabels={showAreaLabels}
             onRoomSelect={onRoomSelect}
             accent={accent}
+            roomMode={planRoomVisualMode}
           />
         ))}
 
@@ -526,11 +793,9 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
               )
             })}
 
-        {/* Furniture / fixture footprint symbols. These map an equipment hint
-            to a tiny rectangle so the 2D plan reads as a CAD plan and not just
-            colored rectangles. Symbols are independent of the labels toggle —
-            their text labels follow it. */}
-        {allRooms.map((room) => {
+        {/* Furniture / fixture footprint symbols — hidden in wall-only mode so
+            the view shows only structural geometry. */}
+        {!wallOnlyMode && allRooms.map((room) => {
           const hints = room.equipmentHints || []
           if (!hints.length) return null
           const w = room.bounds.max.x - room.bounds.min.x
@@ -635,9 +900,8 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           </g>
         )}
 
-        {/* Electrical anchor markers — label respects showRoomLabels so the
-            "Show Labels" toggle hides every text annotation in the plan. */}
-        {showElectrical &&
+        {/* Electrical anchor markers — hidden in wall-only mode */}
+        {showElectrical && !wallOnlyMode &&
           model.electricalAnchors?.map((anchor) => {
             const x = offsetX + anchor.position.x * scalePerFoot
             const y = offsetY + anchor.position.y * scalePerFoot
@@ -652,47 +916,81 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
               </g>
             )
           })}
+
+        {/* Full-room hit layer — only when subtle mode still uses rect navigation */}
+        {onRoomSelect &&
+          roomInteractionStyle === 'subtle' &&
+          !onPlanRoomEntryIntent &&
+          allRooms.map((room) => {
+            const { min, max } = room.bounds
+            const rx1 = offsetX + min.x * scalePerFoot
+            const ry1 = offsetY + min.y * scalePerFoot
+            const rw = (max.x - min.x) * scalePerFoot
+            const rh = (max.y - min.y) * scalePerFoot
+            if (rw < 4 || rh < 4) return null
+            return (
+              <rect
+                key={`room-hit-${room.id}`}
+                x={rx1}
+                y={ry1}
+                width={rw}
+                height={rh}
+                fill="#ffffff"
+                fillOpacity={0.001}
+                stroke="none"
+                pointerEvents="all"
+                style={{ cursor: 'pointer' }}
+                onClick={() => onRoomSelect(room.id)}
+              />
+            )
+          })}
+
+        {/* Room View entry targets — small green dots; only these start navigation */}
+        {onPlanRoomEntryIntent &&
+          allRooms.map((room) => {
+            const { x, y } = planRoomEntryDotFt(room, model.footprint)
+            const px = offsetX + x * scalePerFoot
+            const py = offsetY + y * scalePerFoot
+            const rw = (room.bounds.max.x - room.bounds.min.x) * scalePerFoot
+            const rh = (room.bounds.max.y - room.bounds.min.y) * scalePerFoot
+            if (rw < 14 || rh < 14) return null
+            return (
+              <g key={`room-entry-${room.id}`}>
+                <circle
+                  cx={px}
+                  cy={py}
+                  r={14}
+                  fill="transparent"
+                  stroke="none"
+                  style={{ cursor: 'pointer' }}
+                  aria-label={`Room view entry for ${room.label}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    onPlanRoomEntryIntent(room.id)
+                  }}
+                />
+                <circle
+                  cx={px}
+                  cy={py}
+                  r={3.6}
+                  fill="#22c55e"
+                  stroke="#052e16"
+                  strokeWidth={0.85}
+                  pointerEvents="none"
+                />
+              </g>
+            )
+          })}
+
       </svg>
 
-      {showBadges && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 10,
-            left: 10,
-            display: 'flex',
-            gap: 8,
-            flexWrap: 'wrap',
-            pointerEvents: 'none',
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: 'rgba(42,63,95,0.95)',
-              color: '#a0d8ff',
-              padding: '3px 7px',
-              borderRadius: 4,
-              fontSize: 10,
-              border: '1px solid #4a90e2',
-              fontFamily: 'monospace',
-            }}
-          >
-            Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
-          </div>
-          <div
-            style={{
-              backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
-              color: isFallback ? '#ffd0a0' : '#a0ffa0',
-              padding: '3px 7px',
-              borderRadius: 4,
-              fontSize: 10,
-              border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
-              fontFamily: 'monospace',
-            }}
-          >
-            {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
-          </div>
-        </div>
+      {showBadges && renderBadgesInTransformedLayer && (
+        <MeasuredPlanViewerBadgeHud
+          model={model}
+          wallOnlyMode={wallOnlyMode}
+          traceDebug={traceDebug}
+        />
       )}
     </div>
   )
