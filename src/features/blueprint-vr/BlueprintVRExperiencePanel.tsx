@@ -1011,6 +1011,40 @@ function RoomNavStrip({ rooms, selectedRoomId, onSelect, onBackToDollhouse, onBa
   )
 }
 
+function BvrMeasuredTraceRequiredPanel() {
+  return (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px 24px',
+        boxSizing: 'border-box',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 420,
+          padding: '14px 16px',
+          borderRadius: 8,
+          background: 'rgba(10,18,28,0.92)',
+          border: '1px solid rgba(255,153,102,0.45)',
+          fontFamily: 'monospace',
+          fontSize: 11,
+          lineHeight: 1.55,
+          color: 'rgba(232,240,255,0.92)',
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: 8, color: '#FF9966' }}>3D blocked until measured wall trace is accepted.</div>
+        <div style={{ color: 'rgba(232,240,255,0.78)' }}>Open Proposed Walls and rescan or fix extraction.</div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────────────
 
 export default function BlueprintVRExperiencePanel({
@@ -1025,7 +1059,7 @@ export default function BlueprintVRExperiencePanel({
   runtimeSourceIdentity,
 }: BlueprintVRExperiencePanelProps) {
   const [activeStage, setActiveStage] = useState<VRStage>(STAGE_ORDER[0])
-  const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room' | 'walls'>('dollhouse')
+  const [viewMode, setViewMode] = useState<'plan' | 'dollhouse' | 'room' | 'walls'>('walls')
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [showElectrical, setShowElectrical] = useState(true)
   const [showDimensions, setShowDimensions] = useState(true)
@@ -1124,7 +1158,7 @@ export default function BlueprintVRExperiencePanel({
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
   }, [availableSets, selectedSourceSetId])
 
-  const scannerVersion = 'W3.11-W1B'
+  const scannerVersion = 'W3.11-W1B-NO-FALLBACK-3D'
 
   const enumeratedPageCount = useMemo(
     () => (selectedSourceSet ? enumerateFullSourceSetSheets(selectedSourceSet).length : null),
@@ -1458,6 +1492,23 @@ export default function BlueprintVRExperiencePanel({
       }
     }
 
+    if (effectiveScanDisplayKind(scan) !== 'measured-trace') {
+      return {
+        scanResult: scan,
+        fullSetScan: fullScan,
+        buildingModel: model,
+        fromCache: false,
+        cacheDebug: {
+          mode: 'bypass' as const,
+          key: sourceKey,
+          keyHash: sourceKey.slice(0, 8),
+          sourceIdentity: sourceCacheIdentity,
+          rescanCount,
+          scannedAt: lastScanAt || undefined,
+        },
+      }
+    }
+
     const stored = setCachedProjectModel(sourceCacheIdentity, {
       model,
       scan,
@@ -1480,6 +1531,17 @@ export default function BlueprintVRExperiencePanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKeyParts, traceExtraction, fullSetPageTraces, fullSetExtractionPhase, sourceCacheIdentity, rescanCount, lastScanAt, geometryDriverPage, enumeratedPageCount])
+
+  const canRender3D = useMemo(
+    () => effectiveScanDisplayKind(scanResult) === 'measured-trace',
+    [scanResult],
+  )
+
+  useEffect(() => {
+    if (!canRender3D && (viewMode === 'dollhouse' || viewMode === 'room')) {
+      setViewMode('walls')
+    }
+  }, [canRender3D, viewMode])
 
   const handleChangeSource = useCallback(
     (setId: string) => {
@@ -1525,27 +1587,37 @@ export default function BlueprintVRExperiencePanel({
     // From the 3D dollhouse, room click should focus that room without forcing
     // the user out of 3D.
     setCameraPreset((prev) => (prev === 'top' ? 'room' : prev === 'room' ? 'room' : 'room'))
-    setViewMode((prev) => (prev === 'plan' ? 'room' : prev === 'room' ? 'room' : 'dollhouse'))
-  }, [])
+    setViewMode((prev) => {
+      if (!canRender3D) return 'walls'
+      if (prev === 'plan') return 'room'
+      if (prev === 'room') return 'room'
+      return 'dollhouse'
+    })
+  }, [canRender3D])
 
   const handleRoomEnter = useCallback((roomId: string) => {
+    if (effectiveScanDisplayKind(scanResult) !== 'measured-trace') {
+      setViewMode('walls')
+      return
+    }
     setSelectedRoomId(roomId)
     setViewMode('room')
     setCameraPreset('room')
-  }, [])
+  }, [scanResult])
 
   const handlePlanRoomEntryIntent = useCallback((roomId: string) => {
+    if (effectiveScanDisplayKind(scanResult) !== 'measured-trace') return
     const room = buildingModel.levels.flatMap((l) => l.rooms).find((r) => r.id === roomId)
     const label = room?.label?.trim() || 'This room'
     setRoomEntryConfirm({ roomId, label })
-  }, [buildingModel])
+  }, [buildingModel, scanResult])
 
   const handleResetView = useCallback(() => {
-    setViewMode('dollhouse')
+    setViewMode(canRender3D ? 'dollhouse' : 'walls')
     setSelectedRoomId(firstRoomId)
     setCameraPreset('iso')
     setWallOpacity(0.82)
-  }, [firstRoomId])
+  }, [firstRoomId, canRender3D])
 
   useEffect(() => {
     setPlanZoomScale(1)
@@ -2627,36 +2699,46 @@ export default function BlueprintVRExperiencePanel({
 
             {viewMode === 'dollhouse' && (
               <div style={{ flex: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
-                <Blueprint3DSpaceViewer
-                  buildingModel={buildingModel}
-                  activeStage={activeStage}
-                  selectedRoomId={selectedRoomId}
-                  onRoomSelect={handleRoomSelect}
-                  showElectrical={showElectrical}
-                  showDimensions={showDimensions}
-                  showLabels={showLabels}
-                  wallOpacity={wallOpacity}
-                  cameraPreset={cameraPreset}
-                />
+                {canRender3D ? (
+                  <Blueprint3DSpaceViewer
+                    buildingModel={buildingModel}
+                    activeStage={activeStage}
+                    selectedRoomId={selectedRoomId}
+                    onRoomSelect={handleRoomSelect}
+                    showElectrical={showElectrical}
+                    showDimensions={showDimensions}
+                    showLabels={showLabels}
+                    wallOpacity={wallOpacity}
+                    cameraPreset={cameraPreset}
+                  />
+                ) : (
+                  <BvrMeasuredTraceRequiredPanel />
+                )}
               </div>
             )}
 
             {viewMode === 'room' && (
-              <BvrRoomViewportFrame>
-                <BlueprintRoomInteriorView
-                  model={buildingModel}
-                  selectedRoomId={selectedRoomId || firstRoomId}
-                  activeStage={activeStage}
-                  showElectrical={showElectrical}
-                  showDimensions={showDimensions}
-                  showLabels={showLabels}
-                  wallOpacity={wallOpacity}
-                />
-              </BvrRoomViewportFrame>
+              <div style={{ flex: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+                {canRender3D ? (
+                  <BvrRoomViewportFrame>
+                    <BlueprintRoomInteriorView
+                      model={buildingModel}
+                      selectedRoomId={selectedRoomId || firstRoomId}
+                      activeStage={activeStage}
+                      showElectrical={showElectrical}
+                      showDimensions={showDimensions}
+                      showLabels={showLabels}
+                      wallOpacity={wallOpacity}
+                    />
+                  </BvrRoomViewportFrame>
+                ) : (
+                  <BvrMeasuredTraceRequiredPanel />
+                )}
+              </div>
             )}
                   </div>
                 </div>
-                {viewMode === 'room' && (
+                {viewMode === 'room' && canRender3D && (
                   <RoomNavStrip
                     rooms={buildingModel.levels[0]?.rooms || []}
                     selectedRoomId={selectedRoomId}
@@ -2774,7 +2856,9 @@ export default function BlueprintVRExperiencePanel({
                       <button
                         type="button"
                         role="menuitem"
+                        disabled={!canRender3D}
                         onClick={() => {
+                          if (!canRender3D) return
                           setViewMode('dollhouse')
                           setCameraPreset('iso')
                           setViewMenuOpen(false)
@@ -2791,13 +2875,14 @@ export default function BlueprintVRExperiencePanel({
                           border: 'none',
                           background: viewMode === 'dollhouse' ? 'rgba(0,221,204,0.12)' : 'transparent',
                           color: viewMode === 'dollhouse' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                          cursor: 'pointer',
+                          cursor: !canRender3D ? 'not-allowed' : 'pointer',
                           fontSize: 10,
                           fontFamily: 'monospace',
                           fontWeight: 700,
                           letterSpacing: 0.6,
                           textTransform: 'uppercase' as const,
                           textAlign: 'left' as const,
+                          opacity: !canRender3D ? 0.45 : 1,
                         }}
                       >
                         <span>3D Dollhouse</span>
@@ -2806,8 +2891,9 @@ export default function BlueprintVRExperiencePanel({
                       <button
                         type="button"
                         role="menuitem"
-                        disabled={!selectedRoomId && !firstRoomId}
+                        disabled={!canRender3D || (!selectedRoomId && !firstRoomId)}
                         onClick={() => {
+                          if (!canRender3D) return
                           setViewMode('room')
                           setCameraPreset('room')
                           if (!selectedRoomId) setSelectedRoomId(firstRoomId)
@@ -2825,19 +2911,19 @@ export default function BlueprintVRExperiencePanel({
                           border: 'none',
                           background: viewMode === 'room' ? 'rgba(0,221,204,0.12)' : 'transparent',
                           color:
-                            !selectedRoomId && !firstRoomId
+                            (!canRender3D || (!selectedRoomId && !firstRoomId))
                               ? 'rgba(255,255,255,0.25)'
                               : viewMode === 'room'
                                 ? '#00ddcc'
                                 : 'rgba(255,255,255,0.75)',
-                          cursor: !selectedRoomId && !firstRoomId ? 'not-allowed' : 'pointer',
+                          cursor: !canRender3D || (!selectedRoomId && !firstRoomId) ? 'not-allowed' : 'pointer',
                           fontSize: 10,
                           fontFamily: 'monospace',
                           fontWeight: 700,
                           letterSpacing: 0.6,
                           textTransform: 'uppercase' as const,
                           textAlign: 'left' as const,
-                          opacity: !selectedRoomId && !firstRoomId ? 0.45 : 1,
+                          opacity: !canRender3D || (!selectedRoomId && !firstRoomId) ? 0.45 : 1,
                         }}
                       >
                         <span>Room View</span>
