@@ -45,8 +45,16 @@ import type {
 } from './blueprintPlanScanner'
 import type { PdfTracePayload as PdfTracePayloadType } from './pdfTraceTypes'
 import type { PdfTracePayload } from './pdfTraceTypes'
-import { buildBlueprintPdfRuntimeKey, extractTraceForBlueprintSheet } from './blueprintPdfTraceRuntimeBridge'
-import type { PdfRuntimeProviderMatchTier, RuntimeTraceForSheetResult } from './blueprintPdfTraceRuntimeBridge'
+import {
+  buildBlueprintPdfRuntimeKey,
+  extractTraceForBlueprintSheet,
+  getBlueprintPdfRuntimeProviderDebug,
+} from './blueprintPdfTraceRuntimeBridge'
+import type {
+  BlueprintPdfRuntimeLookup,
+  PdfRuntimeProviderMatchTier,
+  RuntimeTraceForSheetResult,
+} from './blueprintPdfTraceRuntimeBridge'
 import {
   type BlueprintVRCacheIdentity,
   buildBlueprintVRCacheIdentityKey,
@@ -675,6 +683,22 @@ function StageItemList({ stage }: { stage: VRStage }) {
   )
 }
 
+function pickDefinedTrimmedString(...candidates: Array<string | undefined | null>): string | undefined {
+  for (const c of candidates) {
+    const s = String(c ?? '').trim()
+    if (s) return s
+  }
+  return undefined
+}
+
+function pickPositiveIntPageCount(...candidates: Array<number | undefined | null>): number | undefined {
+  for (const c of candidates) {
+    const n = Math.floor(Number(c))
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  return undefined
+}
+
 /** UI-facing scan kind: never shows measured/canonical when geometry is fallback-derived. */
 function effectiveScanDisplayKind(scan: BlueprintPlanScanResult): 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace' {
   if (scan.isFallback || scan.scanResultKind === 'fallback') return 'fallback'
@@ -693,6 +717,7 @@ function ScanStatusBanner({
   fromCache,
   sourceLabel,
   sourceType,
+  viewerCurrentPage,
   traceRuntime,
   runtimeProviderDebug,
   cacheDebug,
@@ -703,9 +728,12 @@ function ScanStatusBanner({
   fromCache?: boolean
   sourceLabel?: string
   sourceType?: string
+  viewerCurrentPage?: number | null
   traceRuntime?: {
     providerStatus: 'available' | 'partial' | 'missing' | 'error'
     providerMatchTier?: PdfRuntimeProviderMatchTier
+    providerRequestedKey?: string
+    providerMatchedKey?: string
     selectedPageNumber: number | null
     operatorListStatus: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus: 'available' | 'missing' | 'error' | 'unknown'
@@ -861,7 +889,32 @@ function ScanStatusBanner({
           ? ` (${traceRuntime?.providerMatchTier || debug?.runtimeProviderMatchTier})`
           : ''}{' '}
         · Selected trace page: {traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
+        {viewerCurrentPage != null && Number.isFinite(viewerCurrentPage) ? (
+          <>
+            {' '}
+            · Open viewer page: {viewerCurrentPage}
+          </>
+        ) : null}
       </div>
+      {(traceRuntime?.providerMatchTier === 'partial' ||
+        runtimeProviderDebug?.matchTier === 'partial' ||
+        traceRuntime?.providerStatus === 'partial') && (
+        <div
+          style={{
+            marginTop: 2,
+            padding: '6px 8px',
+            borderRadius: 4,
+            background: 'rgba(255,153,102,0.12)',
+            border: '1px solid rgba(255,153,102,0.42)',
+            color: '#FFBB88',
+            fontSize: 9.5,
+            lineHeight: 1.45,
+            fontWeight: 700,
+          }}
+        >
+          Partial PDF runtime match — verify the open PDF matches this source set.
+        </div>
+      )}
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
         Operator list: {traceRuntime?.operatorListStatus || debug?.operatorListStatus || 'unknown'} · Text content: {traceRuntime?.textContentStatus || debug?.textContentStatus || 'unknown'}
       </div>
@@ -914,7 +967,6 @@ function ScanStatusBanner({
       {runtimeProviderDebug?.requestedKey && (
         <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(255,210,160,0.95)' }}>
           Provider match tier: {runtimeProviderDebug.matchTier ?? 'pending'}
-          {runtimeProviderDebug.matchTier === 'partial' ? ' — verify the open PDF matches this source set.' : ''}
         </div>
       )}
       {runtimeProviderDebug?.matchReason && (
@@ -922,9 +974,9 @@ function ScanStatusBanner({
           Provider match reason: {runtimeProviderDebug.matchReason}
         </div>
       )}
-      {runtimeProviderDebug?.matchedKey && (
+      {(traceRuntime?.providerMatchedKey || runtimeProviderDebug?.matchedKey) && (
         <div style={{ opacity: 0.68, fontSize: 8.8, lineHeight: 1.4, color: 'rgba(170,230,210,0.92)' }}>
-          Matched provider key: {runtimeProviderDebug.matchedKey}
+          Matched provider key: {traceRuntime?.providerMatchedKey || runtimeProviderDebug?.matchedKey}
         </div>
       )}
       {traceRuntime?.opsSource && (
@@ -1153,6 +1205,13 @@ export default function BlueprintVRExperiencePanel({
     setSelectedSourceSetId(autoPickedSetId)
   }, [autoPickedSetId])
 
+  useEffect(() => {
+    if (!availableSets.length) return
+    if (selectedSourceSetId != null && !availableSets.some((s) => s.id === selectedSourceSetId)) {
+      setSelectedSourceSetId(autoPickedSetId ?? availableSets[0]?.id ?? null)
+    }
+  }, [availableSets, selectedSourceSetId, autoPickedSetId])
+
   const selectedSourceSet = useMemo<BlueprintVRSourceSet | null>(() => {
     if (!availableSets.length) return null
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
@@ -1165,16 +1224,44 @@ export default function BlueprintVRExperiencePanel({
     [selectedSourceSet],
   )
 
-  // Excludes currentPageNumber — page navigation should not trigger a full
-  // re-extraction. The Rescan button handles that explicitly.
-  const runtimeIdentityKey = [
-    runtimeSourceIdentity?.projectId || '',
-    runtimeSourceIdentity?.blueprintId || '',
-    runtimeSourceIdentity?.sourceSetId || '',
-    runtimeSourceIdentity?.sourceSetName || '',
-    runtimeSourceIdentity?.fileName || '',
-    runtimeSourceIdentity?.pageCount || '',
-  ].join('|')
+  /** Align PDF.js runtime registry lookups with the open Blueprint viewer first; fill gaps from VR source-set metadata. */
+  const providerLookupIdentity = useMemo((): BlueprintPdfRuntimeLookup => {
+    const r = runtimeSourceIdentity
+    return {
+      projectId: pickDefinedTrimmedString(r?.projectId, selectedSourceSet?.projectId, projectId),
+      blueprintId: pickDefinedTrimmedString(r?.blueprintId, selectedSourceSet?.id, sourceBlueprint.id),
+      sourceSetId: pickDefinedTrimmedString(r?.sourceSetId, selectedSourceSet?.id, sourceBlueprint.id),
+      sourceSetName: pickDefinedTrimmedString(r?.sourceSetName, selectedSourceSet?.name, sourceBlueprint.name),
+      fileName: pickDefinedTrimmedString(r?.fileName, selectedSourceSet?.filePath, sourceBlueprint.filePath),
+      pageCount: pickPositiveIntPageCount(
+        r?.pageCount,
+        selectedSourceSet?.totalPages,
+        enumeratedPageCount ?? undefined,
+      ),
+    }
+  }, [
+    runtimeSourceIdentity?.projectId,
+    runtimeSourceIdentity?.blueprintId,
+    runtimeSourceIdentity?.sourceSetId,
+    runtimeSourceIdentity?.sourceSetName,
+    runtimeSourceIdentity?.fileName,
+    runtimeSourceIdentity?.pageCount,
+    selectedSourceSet?.id,
+    selectedSourceSet?.projectId,
+    selectedSourceSet?.name,
+    selectedSourceSet?.filePath,
+    selectedSourceSet?.totalPages,
+    projectId,
+    sourceBlueprint.id,
+    sourceBlueprint.name,
+    sourceBlueprint.filePath,
+    enumeratedPageCount,
+  ])
+
+  const providerLookupKey = useMemo(
+    () => buildBlueprintPdfRuntimeKey(providerLookupIdentity),
+    [providerLookupIdentity],
+  )
 
   useEffect(() => {
     let disposed = false
@@ -1213,21 +1300,8 @@ export default function BlueprintVRExperiencePanel({
     setGeometryDriverPage(null)
 
     const sheets = selectedSourceSet.sheets || []
-    // Build the provider key from the selected source set first, not from
-    // runtimeSourceIdentity. The viewer registers its provider keyed by
-    // blueprint.id = selectedItem.id, which equals selectedSourceSet.id when
-    // the user has the correct set open. Using runtimeSourceIdentity first
-    // caused the slip-sheets provider (9 pages) to be matched when the user
-    // had previously clicked a different blueprint in the library.
-    const runtimeRequestIdentity = {
-      projectId: selectedSourceSet.projectId || projectId || runtimeSourceIdentity?.projectId,
-      blueprintId: selectedSourceSet.id || sourceBlueprint.id || runtimeSourceIdentity?.blueprintId,
-      sourceSetId: selectedSourceSet.id || runtimeSourceIdentity?.sourceSetId,
-      sourceSetName: selectedSourceSet.name || runtimeSourceIdentity?.sourceSetName,
-      fileName: selectedSourceSet.filePath || runtimeSourceIdentity?.fileName,
-      pageCount: selectedSourceSet.totalPages || runtimeSourceIdentity?.pageCount,
-    }
-    const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
+    const runtimeRequestIdentity = providerLookupIdentity
+    const requestedRuntimeKey = providerLookupKey
 
     const totalPages = Math.max(
       Math.floor(Number(selectedSourceSet.totalPages) || 0),
@@ -1359,7 +1433,7 @@ export default function BlueprintVRExperiencePanel({
       disposed = true
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSourceSet, rescanToken, projectId, runtimeIdentityKey, sourceBlueprint.id, sourceBlueprint.filePath])
+  }, [selectedSourceSet, rescanToken, projectId, providerLookupIdentity, providerLookupKey, sourceBlueprint.id, sourceBlueprint.filePath])
 
   const sourceCacheIdentity = useMemo<BlueprintVRCacheIdentity>(
     () => ({
@@ -1560,13 +1634,22 @@ export default function BlueprintVRExperiencePanel({
     setLastScanAt(new Date().toISOString())
     setRescanCount((n) => n + 1)
     setGeometryDriverPage(null)
-    setTraceExtraction((prev) => ({
-      ...prev,
+    setTraceExtraction({
+      selectedPageNumber: null,
+      payload: null,
       attempted: false,
       available: false,
       providerStatus: 'missing',
       providerMatchTier: undefined,
-    }))
+      operatorListStatus: 'unknown',
+      textContentStatus: 'unknown',
+      requestedKey: undefined,
+      registeredKeys: [],
+      matchReason: undefined,
+      providerKey: undefined,
+      providerMetadata: undefined,
+      warnings: [],
+    })
     setFullSetPageTraces({})
     setFullSetExtractionPhase('idle')
     setFullSetExtractionProgress({ pagesTotal: 0, pagesExtracted: 0, targetPages: [], pageRangeLabel: '' })
@@ -1687,6 +1770,38 @@ export default function BlueprintVRExperiencePanel({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen, roomEntryConfirm])
+
+  const scannerRuntimeProviderDebug = useMemo(() => {
+    const live = getBlueprintPdfRuntimeProviderDebug(providerLookupIdentity)
+    const att = traceExtraction.attempted
+    return {
+      requestedKey: (att && traceExtraction.requestedKey) || live.requestedKey,
+      registeredKeys:
+        att && traceExtraction.registeredKeys && traceExtraction.registeredKeys.length > 0
+          ? traceExtraction.registeredKeys
+          : live.registeredKeys,
+      matchReason: (att && traceExtraction.matchReason) || live.matchReason,
+      matchedKey: (att && traceExtraction.providerKey) || live.matchedKey,
+      matchTier: (att && traceExtraction.providerMatchTier) || live.matchTier,
+      registrySize: traceExtraction.providerMetadata?.registrySize ?? live.registrySize,
+      providerAgeSec: traceExtraction.providerMetadata?.providerAgeSec ?? live.providerAgeSec,
+      pdfDocReady:
+        traceExtraction.providerMetadata?.pdfDocReady ?? live.providerMetadata?.pdfDocReady,
+      hasGetPage:
+        traceExtraction.providerMetadata?.hasGetPage ?? live.providerMetadata?.hasGetPage,
+      lastUnregisterReason:
+        traceExtraction.providerMetadata?.lastUnregisterReason ?? live.lastUnregisterReason,
+    }
+  }, [
+    providerLookupIdentity,
+    traceExtraction.attempted,
+    traceExtraction.requestedKey,
+    traceExtraction.registeredKeys,
+    traceExtraction.matchReason,
+    traceExtraction.providerKey,
+    traceExtraction.providerMatchTier,
+    traceExtraction.providerMetadata,
+  ])
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
@@ -2229,26 +2344,20 @@ export default function BlueprintVRExperiencePanel({
                     fromCache={fromCache}
                     sourceLabel={selectedSourceSet?.name || sourceBlueprint.name}
                     sourceType={selectedSourceSet?.type}
+                    viewerCurrentPage={runtimeSourceIdentity?.currentPageNumber ?? null}
                     traceRuntime={{
                       providerStatus: traceExtraction.providerStatus,
                       providerMatchTier: traceExtraction.providerMatchTier,
+                      providerRequestedKey:
+                        traceExtraction.requestedKey || traceExtraction.payload?.runtime?.providerRequestedKey,
+                      providerMatchedKey:
+                        traceExtraction.providerKey || traceExtraction.payload?.runtime?.providerKey,
                       selectedPageNumber: traceExtraction.selectedPageNumber,
                       operatorListStatus: traceExtraction.operatorListStatus,
                       textContentStatus: traceExtraction.textContentStatus,
                       opsSource: traceExtraction.payload?.runtime?.opsSource,
                     }}
-                    runtimeProviderDebug={{
-                      requestedKey: traceExtraction.requestedKey,
-                      registeredKeys: traceExtraction.registeredKeys,
-                      matchReason: traceExtraction.matchReason,
-                      matchedKey: traceExtraction.providerKey,
-                      matchTier: traceExtraction.providerMatchTier,
-                      registrySize: traceExtraction.providerMetadata?.registrySize,
-                      providerAgeSec: traceExtraction.providerMetadata?.providerAgeSec,
-                      pdfDocReady: traceExtraction.providerMetadata?.pdfDocReady,
-                      hasGetPage: traceExtraction.providerMetadata?.hasGetPage,
-                      lastUnregisterReason: traceExtraction.providerMetadata?.lastUnregisterReason,
-                    }}
+                    runtimeProviderDebug={scannerRuntimeProviderDebug}
                     engineDebug={scannerEngineDebug}
                     cacheDebug={cacheDebug}
                   />

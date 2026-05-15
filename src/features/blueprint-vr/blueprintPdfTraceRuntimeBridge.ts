@@ -138,12 +138,23 @@ export function getBlueprintPdfRuntimeProvider(key: string): BlueprintPdfRuntime
   return runtimeProviders.get(normalized)?.provider || null
 }
 
-function scoreProviderMatch(
-  request: BlueprintPdfRuntimeLookup,
-  provider: BlueprintPdfRuntimeProvider,
-): { score: number; reason: string } {
-  const req = normalizeLookup(request)
-  const p = normalizeLookup({
+/** Shared ids must never contradict; then require blueprint or source-set overlap (not project-only). */
+function providersIdentityCompatible(
+  req: ReturnType<typeof normalizeLookup>,
+  p: ReturnType<typeof normalizeLookup>,
+): boolean {
+  if (req.projectId !== 'na' && p.projectId !== 'na' && req.projectId !== p.projectId) return false
+  if (req.blueprintId !== 'na' && p.blueprintId !== 'na' && req.blueprintId !== p.blueprintId) return false
+  if (req.sourceSetId !== 'na' && p.sourceSetId !== 'na' && req.sourceSetId !== p.sourceSetId) return false
+  const blueprintOverlap =
+    req.blueprintId !== 'na' && p.blueprintId !== 'na' && req.blueprintId === p.blueprintId
+  const sourceSetOverlap =
+    req.sourceSetId !== 'na' && p.sourceSetId !== 'na' && req.sourceSetId === p.sourceSetId
+  return blueprintOverlap || sourceSetOverlap
+}
+
+function providerNormalizedFromRegistry(provider: BlueprintPdfRuntimeProvider) {
+  return normalizeLookup({
     projectId: provider.projectId,
     sourceSetId: provider.sourceSetId,
     sourceSetName: provider.sourceSetName,
@@ -151,21 +162,26 @@ function scoreProviderMatch(
     fileName: provider.fileName,
     pageCount: provider.pageCount,
   })
+}
+
+/** Secondary scoring among identity-compatible providers (filename, page count, name). */
+function scoreCompatibleProviderPartial(
+  request: BlueprintPdfRuntimeLookup,
+  provider: BlueprintPdfRuntimeProvider,
+): { score: number; reason: string } {
+  const req = normalizeLookup(request)
+  const p = providerNormalizedFromRegistry(provider)
   const fields: Array<{
     name: string
     req: string | number
     provider: string | number
     weight: number
   }> = [
-    { name: 'projectId', req: req.projectId, provider: p.projectId, weight: 4 },
-    { name: 'blueprintId', req: req.blueprintId, provider: p.blueprintId, weight: 6 },
-    { name: 'sourceSetId', req: req.sourceSetId, provider: p.sourceSetId, weight: 6 },
     { name: 'sourceSetName', req: req.sourceSetName, provider: p.sourceSetName, weight: 2 },
-    { name: 'fileName', req: req.fileName, provider: p.fileName, weight: 3 },
-    { name: 'pageCount', req: safeCount(req.pageCount), provider: safeCount(p.pageCount), weight: 2 },
+    { name: 'fileName', req: req.fileName, provider: p.fileName, weight: 4 },
+    { name: 'pageCount', req: safeCount(req.pageCount), provider: safeCount(p.pageCount), weight: 3 },
   ]
   let score = 0
-  let matched = 0
   const mismatches: string[] = []
   for (const field of fields) {
     const reqValue = String(field.req)
@@ -173,17 +189,14 @@ function scoreProviderMatch(
     if (reqValue === 'na' || providerValue === 'na') continue
     if (reqValue === providerValue) {
       score += field.weight
-      matched += 1
     } else {
       mismatches.push(field.name)
     }
   }
   const reason =
-    matched > 0
-      ? mismatches.length
-        ? `best_partial_match;mismatched=${mismatches.join(',')}`
-        : 'best_partial_match;all_available_fields_matched'
-      : 'no_shared_identity_fields'
+    mismatches.length > 0
+      ? `aligned_identity;secondary_mismatch=${mismatches.join(',')}`
+      : 'aligned_identity;secondary_fields_match'
   return { score, reason }
 }
 
@@ -239,18 +252,35 @@ export function getBlueprintPdfRuntimeProviderDebug(
     }
   }
 
+  const compatibleEntries = Array.from(runtimeProviders.values()).filter((entry) =>
+    providersIdentityCompatible(normalizeLookup(request), providerNormalizedFromRegistry(entry.provider)),
+  )
+  if (!compatibleEntries.length) {
+    return {
+      requestedKey,
+      registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+      registrySize: runtimeProviders.size,
+      matched: false,
+      matchTier: 'none',
+      matchReason: 'no_identity_compatible_runtime_provider',
+      lastUnregisterReason: lastUnregisterInfo?.reason,
+    }
+  }
+
   let best: RuntimeRegistryEntry | null = null
-  let bestReason = 'no_runtime_provider_registered'
   let bestScore = -1
-  for (const entry of runtimeProviders.values()) {
-    const scored = scoreProviderMatch(request, entry.provider)
-    if (scored.score > bestScore || (scored.score === bestScore && !!best && entry.registeredAt > best.registeredAt)) {
+  let bestReason = 'no_runtime_provider_registered'
+  for (const entry of compatibleEntries) {
+    const scored = scoreCompatibleProviderPartial(request, entry.provider)
+    const s = scored.score
+    if (s > bestScore || (s === bestScore && best && entry.registeredAt > best.registeredAt)) {
       best = entry
-      bestScore = scored.score
+      bestScore = s
       bestReason = scored.reason
     }
   }
-  if (!best || bestScore < 1) {
+
+  if (!best) {
     return {
       requestedKey,
       registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
@@ -258,6 +288,19 @@ export function getBlueprintPdfRuntimeProviderDebug(
       matched: false,
       matchTier: 'none',
       matchReason: bestReason,
+      lastUnregisterReason: lastUnregisterInfo?.reason,
+    }
+  }
+
+  const tied = compatibleEntries.filter((e) => scoreCompatibleProviderPartial(request, e.provider).score === bestScore)
+  if (tied.length > 1 && new Set(tied.map((e) => e.key)).size > 1) {
+    return {
+      requestedKey,
+      registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
+      registrySize: runtimeProviders.size,
+      matched: false,
+      matchTier: 'none',
+      matchReason: 'ambiguous_multiple_identity_compatible_providers',
       lastUnregisterReason: lastUnregisterInfo?.reason,
     }
   }

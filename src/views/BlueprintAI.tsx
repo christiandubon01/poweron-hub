@@ -190,26 +190,32 @@ export default function BlueprintAI() {
     [projectVRSourceSets, currentVRSourceSetId],
   )
 
-  const runtimeSourceIdentity = useMemo(() => ({
-    projectId: selectedItem?.projectId,
-    blueprintId: selectedItem?.id,
-    sourceSetId: selectedItem?.id,
-    sourceSetName: selectedItem?.title || selectedItem?.fileName || currentVRSourceSet?.name,
-    fileName: selectedItem?.fileName || selectedItem?.storagePath || selectedItem?.title || currentVRSourceSet?.filePath,
-    currentPageNumber: currentViewerPage,
-    pageCount: Number(selectedItem?.pageCount || currentVRSourceSet?.totalPages || 0) || undefined,
-  }), [
-    selectedItem?.projectId,
-    selectedItem?.id,
-    selectedItem?.title,
-    selectedItem?.fileName,
-    selectedItem?.storagePath,
-    selectedItem?.pageCount,
-    currentVRSourceSet?.name,
-    currentVRSourceSet?.filePath,
-    currentVRSourceSet?.totalPages,
-    currentViewerPage,
-  ])
+  const runtimeSourceIdentity = useMemo(
+    () => ({
+      projectId: selectedItem?.projectId,
+      blueprintId: selectedItem?.id,
+      sourceSetId: selectedItem?.id,
+      sourceSetName: selectedItem?.title || selectedItem?.fileName,
+      fileName: selectedItem?.fileName || selectedItem?.storagePath,
+      currentPageNumber: currentViewerPage,
+      pageCount:
+        selectedItem?.pageCount != null && Number(selectedItem.pageCount) > 0
+          ? Number(selectedItem.pageCount)
+          : currentVRSourceSet?.totalPages != null && Number(currentVRSourceSet.totalPages) > 0
+            ? Number(currentVRSourceSet.totalPages)
+            : undefined,
+    }),
+    [
+      selectedItem?.projectId,
+      selectedItem?.id,
+      selectedItem?.title,
+      selectedItem?.fileName,
+      selectedItem?.storagePath,
+      selectedItem?.pageCount,
+      currentVRSourceSet?.totalPages,
+      currentViewerPage,
+    ],
+  )
 
   const filteredLibraryItems = useMemo(() => {
     const q = librarySearch.trim().toLowerCase()
