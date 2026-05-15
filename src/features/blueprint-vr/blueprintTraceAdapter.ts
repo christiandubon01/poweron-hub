@@ -667,6 +667,491 @@ export function computeWorldPageBoundsFromPayload(
 /**
  * Drop segments that still hug the physical sheet edge in world units (bleed/frame).
  */
+// ---------------------------------------------------------------------------
+// Wave 2B — plan-core detection + wall-network filtering (world units)
+// ---------------------------------------------------------------------------
+
+export interface PlanCoreBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+export interface WallNetworkFilterStats {
+  wallCandidatesRaw: number
+  wallCandidatesAfterFrameFilter: number
+  wallCandidatesAfterTitleBlockFilter: number
+  wallCandidatesAfterNoiseFilter: number
+  /** Final segments accepted into the wall network (same as finalWallNetworkSegments). */
+  wallCandidatesFiltered: number
+  detectedPlanCoreBounds: PlanCoreBounds | null
+  removedFrameSegments: number
+  removedTitleBlockSegments: number
+  removedAnnotationNoiseSegments: number
+  removedFurnitureNoiseSegments: number
+  finalWallNetworkSegments: number
+}
+
+const WALL_NETWORK_SCORE_THRESHOLD = 0.38
+const ENDPOINT_SNAP_FT = 0.42
+
+function traceLineMidpoint(line: PlanTraceLine): WorldPoint2D {
+  return { x: (line.start.x + line.end.x) / 2, y: (line.start.y + line.end.y) / 2 }
+}
+
+function pointInBounds(p: WorldPoint2D, b: PlanCoreBounds, pad = 0): boolean {
+  return p.x >= b.minX - pad && p.x <= b.maxX + pad && p.y >= b.minY - pad && p.y <= b.maxY + pad
+}
+
+function segmentMidpointInsideBounds(line: PlanTraceLine, b: PlanCoreBounds, pad = 0): boolean {
+  return pointInBounds(traceLineMidpoint(line), b, pad)
+}
+
+/**
+ * Locate the dense orthogonal wall cluster (tenant suite / floor plan core)
+ * without assuming the plan is centered on the sheet.
+ */
+export function detectPlanCoreBounds(
+  lines: PlanTraceLine[],
+  page: { minX: number; minY: number; maxX: number; maxY: number } | null,
+): PlanCoreBounds | null {
+  if (lines.length < 4) return null
+  const outer = detectOuterFootprint(lines)
+  if (!outer) return null
+
+  const pageMinX = page?.minX ?? outer.minX
+  const pageMinY = page?.minY ?? outer.minY
+  const pageMaxX = page?.maxX ?? outer.maxX
+  const pageMaxY = page?.maxY ?? outer.maxY
+  const pw = Math.max(1, pageMaxX - pageMinX)
+  const ph = Math.max(1, pageMaxY - pageMinY)
+
+  const cols = 28
+  const rows = Math.max(18, Math.round(cols * (ph / pw)))
+  const cellW = pw / cols
+  const cellH = ph / rows
+  const grid: number[] = new Array(cols * rows).fill(0)
+
+  for (const line of lines) {
+    if (!line.orthogonal && line.lengthFt < 3.5) continue
+    const m = traceLineMidpoint(line)
+    const cx = Math.min(cols - 1, Math.max(0, Math.floor((m.x - pageMinX) / cellW)))
+    const cy = Math.min(rows - 1, Math.max(0, Math.floor((m.y - pageMinY) / cellH)))
+    const w = line.orthogonal ? 1 + Math.min(2.5, line.lengthFt / 12) : 0.35
+    grid[cy * cols + cx] += w
+  }
+
+  let peak = 0
+  let peakIdx = 0
+  for (let i = 0; i < grid.length; i += 1) {
+    if (grid[i] > peak) {
+      peak = grid[i]
+      peakIdx = i
+    }
+  }
+  if (peak < 1.2) {
+    return {
+      minX: outer.minX,
+      minY: outer.minY,
+      maxX: outer.maxX,
+      maxY: outer.maxY,
+    }
+  }
+
+  const threshold = peak * 0.28
+  const visited = new Set<number>()
+  const queue = [peakIdx]
+  visited.add(peakIdx)
+  let minCx = cols
+  let maxCx = 0
+  let minCy = rows
+  let maxCy = 0
+
+  while (queue.length > 0) {
+    const idx = queue.shift()!
+    const cx = idx % cols
+    const cy = Math.floor(idx / cols)
+    minCx = Math.min(minCx, cx)
+    maxCx = Math.max(maxCx, cx)
+    minCy = Math.min(minCy, cy)
+    maxCy = Math.max(maxCy, cy)
+    const neighbors = [
+      idx - 1,
+      idx + 1,
+      idx - cols,
+      idx + cols,
+    ]
+    for (const n of neighbors) {
+      if (n < 0 || n >= grid.length) continue
+      if (visited.has(n)) continue
+      if (grid[n] < threshold) continue
+      visited.add(n)
+      queue.push(n)
+    }
+  }
+
+  const padX = cellW * 1.4
+  const padY = cellH * 1.4
+  return {
+    minX: pageMinX + minCx * cellW - padX,
+    minY: pageMinY + minCy * cellH - padY,
+    maxX: pageMinX + (maxCx + 1) * cellW + padX,
+    maxY: pageMinY + (maxCy + 1) * cellH + padY,
+  }
+}
+
+function isLikelySheetFrameLine(
+  line: PlanTraceLine,
+  page: { minX: number; minY: number; maxX: number; maxY: number },
+  core: PlanCoreBounds | null,
+): boolean {
+  const pw = page.maxX - page.minX
+  const ph = page.maxY - page.minY
+  if (pw < 2 || ph < 2) return false
+  const margin = Math.max(0.45, Math.min(pw, ph) * 0.014)
+  const nearEdge = (p: WorldPoint2D) =>
+    p.x <= page.minX + margin ||
+    p.x >= page.maxX - margin ||
+    p.y <= page.minY + margin ||
+    p.y >= page.maxY - margin
+  const edgeA = nearEdge(line.start)
+  const edgeB = nearEdge(line.end)
+  if (!edgeA || !edgeB) return false
+  const orient = classifyLineOrientation(line)
+  const span =
+    orient === 'horizontal'
+      ? Math.abs(line.end.x - line.start.x)
+      : orient === 'vertical'
+        ? Math.abs(line.end.y - line.start.y)
+        : line.lengthFt
+  const pageSpan = orient === 'horizontal' ? pw : orient === 'vertical' ? ph : Math.min(pw, ph)
+  if (span < pageSpan * 0.72) return false
+  if (core && segmentMidpointInsideBounds(line, core, Math.min(pw, ph) * 0.06)) return false
+  return true
+}
+
+function isInTitleBlockHeuristicRegion(
+  p: WorldPoint2D,
+  page: { minX: number; minY: number; maxX: number; maxY: number },
+  core: PlanCoreBounds | null,
+): boolean {
+  const pw = page.maxX - page.minX
+  const ph = page.maxY - page.minY
+  const nx = (p.x - page.minX) / pw
+  const ny = (p.y - page.minY) / ph
+  const rightStrip = nx > 0.62 && ny > 0.08 && ny < 0.92
+  const bottomStrip = ny > 0.78 && nx > 0.08
+  const farRightCorner = nx > 0.72 && ny > 0.52
+  if (!rightStrip && !bottomStrip && !farRightCorner) return false
+  if (core && pointInBounds(p, core, Math.min(pw, ph) * 0.04)) return false
+  return true
+}
+
+function countParallelNeighbors(
+  line: PlanTraceLine,
+  lines: PlanTraceLine[],
+  maxOffset: number,
+): number {
+  const orient = classifyLineOrientation(line)
+  if (orient === 'angled') return 0
+  const mid = traceLineMidpoint(line)
+  let count = 0
+  for (const other of lines) {
+    if (other.id === line.id) continue
+    if (classifyLineOrientation(other) !== orient) continue
+    if (other.lengthFt > line.lengthFt * 1.8) continue
+    const om = traceLineMidpoint(other)
+    const offset =
+      orient === 'horizontal' ? Math.abs(mid.y - om.y) : Math.abs(mid.x - om.x)
+    if (offset > 0.04 && offset <= maxOffset) count += 1
+  }
+  return count
+}
+
+function isLikelyHatchOrDetailNoise(line: PlanTraceLine, pool: PlanTraceLine[]): boolean {
+  if (!line.orthogonal) return false
+  if (line.lengthFt >= 5.5) return false
+  const parallel = countParallelNeighbors(line, pool, 0.22)
+  if (parallel >= 4 && line.lengthFt < 4.5) return true
+  if (parallel >= 7) return true
+  return false
+}
+
+function isLikelyAnnotationLeader(line: PlanTraceLine, core: PlanCoreBounds | null): boolean {
+  if (line.orthogonal) return false
+  if (line.lengthFt >= 9) return false
+  const a = line.angleDeg
+  const diag = a > 18 && a < 72
+  if (!diag) return line.lengthFt < 2.2
+  if (core && segmentMidpointInsideBounds(line, core, 0)) return false
+  return line.lengthFt < 7.5
+}
+
+function isLikelyFurnitureSymbol(line: PlanTraceLine, pool: PlanTraceLine[]): boolean {
+  if (line.lengthFt > 6.5) return false
+  if (!line.orthogonal) {
+    return line.lengthFt < 2.8 && countParallelNeighbors(line, pool, 0.35) === 0
+  }
+  const mid = traceLineMidpoint(line)
+  let nearbyShort = 0
+  for (const other of pool) {
+    if (other.id === line.id) continue
+    if (other.lengthFt > 5.5) continue
+    const om = traceLineMidpoint(other)
+    if (Math.hypot(mid.x - om.x, mid.y - om.y) < 2.2) nearbyShort += 1
+  }
+  return nearbyShort >= 5 && line.lengthFt < 4.2
+}
+
+function scoreWallCandidate(
+  line: PlanTraceLine,
+  core: PlanCoreBounds | null,
+  page: { minX: number; minY: number; maxX: number; maxY: number } | null,
+  endpointDegree: number,
+): number {
+  let score = 0.12
+  const lenScore = Math.min(1, line.lengthFt / 28)
+  score += lenScore * 0.28
+  if (line.orthogonal) score += 0.22
+  else if (line.lengthFt >= 6) score += 0.06
+  else score -= 0.18
+
+  const conn = Math.min(1, endpointDegree / 4)
+  score += conn * 0.26
+
+  if (core) {
+    const mid = traceLineMidpoint(line)
+    const cw = core.maxX - core.minX
+    const ch = core.maxY - core.minY
+    const dx = Math.abs(mid.x - (core.minX + cw / 2)) / Math.max(1, cw / 2)
+    const dy = Math.abs(mid.y - (core.minY + ch / 2)) / Math.max(1, ch / 2)
+    const coreProx = 1 - Math.min(1, Math.hypot(dx, dy))
+    score += coreProx * 0.18
+    if (!segmentMidpointInsideBounds(line, core, Math.min(cw, ch) * 0.12)) {
+      score -= 0.14
+    }
+  }
+
+  if (page && isInTitleBlockHeuristicRegion(traceLineMidpoint(line), page, core)) {
+    score -= 0.35
+  }
+
+  if (line.role === 'exterior-wall') score += 0.12
+  else if (line.role === 'interior-wall') score += 0.08
+
+  return Math.max(0, Math.min(1, score))
+}
+
+function buildEndpointDegree(lines: PlanTraceLine[]): Map<string, number> {
+  const points: WorldPoint2D[] = []
+  for (const line of lines) {
+    points.push(line.start, line.end)
+  }
+  const degree = new Map<string, number>()
+  for (const line of lines) {
+    let d = 0
+    for (const p of [line.start, line.end]) {
+      for (const other of lines) {
+        if (other.id === line.id) continue
+        const hits =
+          Math.hypot(p.x - other.start.x, p.y - other.start.y) <= ENDPOINT_SNAP_FT ||
+          Math.hypot(p.x - other.end.x, p.y - other.end.y) <= ENDPOINT_SNAP_FT
+        if (hits) {
+          d += 1
+          break
+        }
+      }
+    }
+    degree.set(line.id, d)
+  }
+  return degree
+}
+
+function keepLargestConnectedWallNetwork(
+  lines: PlanTraceLine[],
+  scores: Map<string, number>,
+): PlanTraceLine[] {
+  if (lines.length <= 2) return lines
+  const byId = new Map(lines.map((l) => [l.id, l]))
+  const adj = new Map<string, Set<string>>()
+  for (const line of lines) adj.set(line.id, new Set())
+
+  for (let i = 0; i < lines.length; i += 1) {
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const a = lines[i]
+      const b = lines[j]
+      const connected =
+        Math.hypot(a.start.x - b.start.x, a.start.y - b.start.y) <= ENDPOINT_SNAP_FT ||
+        Math.hypot(a.start.x - b.end.x, a.start.y - b.end.y) <= ENDPOINT_SNAP_FT ||
+        Math.hypot(a.end.x - b.start.x, a.end.y - b.start.y) <= ENDPOINT_SNAP_FT ||
+        Math.hypot(a.end.x - b.end.x, a.end.y - b.end.y) <= ENDPOINT_SNAP_FT
+      if (!connected) continue
+      adj.get(a.id)!.add(b.id)
+      adj.get(b.id)!.add(a.id)
+    }
+  }
+
+  const visited = new Set<string>()
+  let best: string[] = []
+  for (const line of lines) {
+    if (visited.has(line.id)) continue
+    const stack = [line.id]
+    const comp: string[] = []
+    visited.add(line.id)
+    while (stack.length > 0) {
+      const id = stack.pop()!
+      comp.push(id)
+      for (const nb of adj.get(id) || []) {
+        if (visited.has(nb)) continue
+        visited.add(nb)
+        stack.push(nb)
+      }
+    }
+    if (comp.length > best.length) best = comp
+  }
+
+  const coreIds = new Set(best)
+  const out: PlanTraceLine[] = []
+  for (const id of coreIds) {
+    const line = byId.get(id)
+    if (line) out.push(line)
+  }
+
+  for (const line of lines) {
+    if (coreIds.has(line.id)) continue
+    const s = scores.get(line.id) ?? 0
+    if (s >= WALL_NETWORK_SCORE_THRESHOLD + 0.12 && line.lengthFt >= 5.5 && line.orthogonal) {
+      out.push(line)
+    }
+  }
+  return out
+}
+
+/**
+ * Progressive wall-only filter: sheet frame → title block → hatch/leaders →
+ * scored wall network connected to the detected plan core.
+ */
+export function filterWallCandidatesToWallNetwork(
+  lines: PlanTraceLine[],
+  page: { minX: number; minY: number; maxX: number; maxY: number } | null,
+): { lines: PlanTraceLine[]; stats: WallNetworkFilterStats } {
+  const wallCandidatesRaw = lines.length
+  const emptyStats = (): WallNetworkFilterStats => ({
+    wallCandidatesRaw,
+    wallCandidatesAfterFrameFilter: 0,
+    wallCandidatesAfterTitleBlockFilter: 0,
+    wallCandidatesAfterNoiseFilter: 0,
+    wallCandidatesFiltered: 0,
+    detectedPlanCoreBounds: null,
+    removedFrameSegments: 0,
+    removedTitleBlockSegments: 0,
+    removedAnnotationNoiseSegments: 0,
+    removedFurnitureNoiseSegments: 0,
+    finalWallNetworkSegments: 0,
+  })
+
+  if (lines.length === 0) {
+    return { lines: [], stats: emptyStats() }
+  }
+
+  const core = detectPlanCoreBounds(lines, page)
+  let pool = [...lines]
+  let removedFrameSegments = 0
+
+  if (page) {
+    const afterFrame: PlanTraceLine[] = []
+    for (const line of pool) {
+      if (isLikelySheetFrameLine(line, page, core)) {
+        removedFrameSegments += 1
+        continue
+      }
+      afterFrame.push(line)
+    }
+    pool = afterFrame
+  }
+  const wallCandidatesAfterFrameFilter = pool.length
+
+  let removedTitleBlockSegments = 0
+  if (page) {
+    const afterTitle: PlanTraceLine[] = []
+    for (const line of pool) {
+      const mid = traceLineMidpoint(line)
+      const inTitle = isInTitleBlockHeuristicRegion(mid, page, core)
+      if (inTitle && line.lengthFt < 8.5) {
+        removedTitleBlockSegments += 1
+        continue
+      }
+      afterTitle.push(line)
+    }
+    pool = afterTitle
+  }
+  const wallCandidatesAfterTitleBlockFilter = pool.length
+
+  let removedAnnotationNoiseSegments = 0
+  let removedFurnitureNoiseSegments = 0
+  const afterNoise: PlanTraceLine[] = []
+  for (const line of pool) {
+    if (isLikelyAnnotationLeader(line, core)) {
+      removedAnnotationNoiseSegments += 1
+      continue
+    }
+    if (isLikelyHatchOrDetailNoise(line, pool)) {
+      removedAnnotationNoiseSegments += 1
+      continue
+    }
+    if (isLikelyFurnitureSymbol(line, pool)) {
+      removedFurnitureNoiseSegments += 1
+      continue
+    }
+    if (!line.orthogonal && line.lengthFt < 4.5) {
+      removedAnnotationNoiseSegments += 1
+      continue
+    }
+    if (line.orthogonal && line.lengthFt < 1.15) {
+      removedAnnotationNoiseSegments += 1
+      continue
+    }
+    afterNoise.push(line)
+  }
+  pool = afterNoise
+  const wallCandidatesAfterNoiseFilter = pool.length
+
+  const endpointDegree = buildEndpointDegree(pool)
+  const scores = new Map<string, number>()
+  for (const line of pool) {
+    scores.set(line.id, scoreWallCandidate(line, core, page, endpointDegree.get(line.id) ?? 0))
+  }
+
+  const scoredKeep = pool.filter((line) => {
+    const s = scores.get(line.id) ?? 0
+    if (s >= WALL_NETWORK_SCORE_THRESHOLD) return true
+    if (line.orthogonal && line.lengthFt >= 7) {
+      if (!core || segmentMidpointInsideBounds(line, core, 0)) return true
+    }
+    return false
+  })
+
+  const networked = keepLargestConnectedWallNetwork(scoredKeep, scores)
+  const finalWallNetworkSegments = networked.length
+
+  const stats: WallNetworkFilterStats = {
+    wallCandidatesRaw,
+    wallCandidatesAfterFrameFilter,
+    wallCandidatesAfterTitleBlockFilter,
+    wallCandidatesAfterNoiseFilter,
+    wallCandidatesFiltered: finalWallNetworkSegments,
+    detectedPlanCoreBounds: core,
+    removedFrameSegments,
+    removedTitleBlockSegments,
+    removedAnnotationNoiseSegments,
+    removedFurnitureNoiseSegments,
+    finalWallNetworkSegments,
+  }
+
+  return { lines: networked, stats }
+}
+
 export function filterWorldMarginArtifactLines(
   lines: PlanTraceLine[],
   page: { minX: number; minY: number; maxX: number; maxY: number },

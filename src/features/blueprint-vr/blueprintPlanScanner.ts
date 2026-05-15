@@ -55,8 +55,10 @@ import {
   filterPdfTracePayloadForWallExtraction,
   computeWorldPageBoundsFromPayload,
   filterWorldMarginArtifactLines,
+  filterWallCandidatesToWallNetwork,
   detectDoubleLineWalls,
   classifyLineOrientation,
+  type WallNetworkFilterStats,
 } from './blueprintTraceAdapter'
 import type { PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
 
@@ -373,6 +375,15 @@ export interface BlueprintPlanScanResult {
     wallCandidatesRaw?: number
     /** Wave 2 — candidates after sheet-artifact filtering. */
     wallCandidatesFiltered?: number
+    wallCandidatesAfterFrameFilter?: number
+    wallCandidatesAfterTitleBlockFilter?: number
+    wallCandidatesAfterNoiseFilter?: number
+    detectedPlanCoreBounds?: { minX: number; minY: number; maxX: number; maxY: number } | null
+    removedFrameSegments?: number
+    removedTitleBlockSegments?: number
+    removedAnnotationNoiseSegments?: number
+    removedFurnitureNoiseSegments?: number
+    finalWallNetworkSegments?: number
     /** Wave 2 — detected building footprint confidence (0–1). */
     footprintConfidence?: number
     wave2ExteriorCount?: number
@@ -1709,6 +1720,7 @@ interface Wave2WallExtractionModel {
   worldMarginArtifactRemovedCount: number
   /** Classified wall segments (exterior+interior+partition) when validation ran. */
   classifiedSegmentsTotal: number
+  wallNetworkFilter: WallNetworkFilterStats | null
 }
 
 function wave2Midpoint(line: PlanTraceLine): Point2D {
@@ -1812,6 +1824,7 @@ export function runWave2WallExtractionFromAdapted(params: {
     orthogonalLongCandidatesPreMargin: 0,
     worldMarginArtifactRemovedCount: 0,
     classifiedSegmentsTotal: 0,
+    wallNetworkFilter: null,
   })
 
   const wallCandidatesRaw = params.adaptedLines.filter((l) => l.orthogonal && l.lengthFt >= 1.5).length
@@ -1826,7 +1839,11 @@ export function runWave2WallExtractionFromAdapted(params: {
     candidates = afterMargin
   }
 
-  const wallCandidatesFiltered = candidates.length
+  const wallNetwork = filterWallCandidatesToWallNetwork(candidates, pageWorld)
+  const wallNetworkFilter = wallNetwork.stats
+  candidates = wallNetwork.lines
+
+  const wallCandidatesFiltered = wallNetworkFilter.finalWallNetworkSegments
   if (candidates.length < 5) {
     return {
       ...reject('insufficient_filtered_wall_segments'),
@@ -1834,6 +1851,7 @@ export function runWave2WallExtractionFromAdapted(params: {
       wallCandidatesFiltered,
       orthogonalLongCandidatesPreMargin,
       worldMarginArtifactRemovedCount,
+      wallNetworkFilter,
     }
   }
 
@@ -1845,6 +1863,7 @@ export function runWave2WallExtractionFromAdapted(params: {
       wallCandidatesFiltered,
       orthogonalLongCandidatesPreMargin,
       worldMarginArtifactRemovedCount,
+      wallNetworkFilter,
     }
   }
 
@@ -1991,6 +2010,7 @@ export function runWave2WallExtractionFromAdapted(params: {
       orthogonalLongCandidatesPreMargin,
       worldMarginArtifactRemovedCount,
       classifiedSegmentsTotal: classified.length,
+      wallNetworkFilter,
     }
   }
 
@@ -2074,6 +2094,7 @@ export function runWave2WallExtractionFromAdapted(params: {
     orthogonalLongCandidatesPreMargin,
     worldMarginArtifactRemovedCount,
     classifiedSegmentsTotal: classified.length,
+    wallNetworkFilter,
   }
 }
 
@@ -2637,6 +2658,15 @@ export function scanBlueprintPlan(
       confidenceCapReason,
       wallCandidatesRaw: wave2.wallCandidatesRaw,
       wallCandidatesFiltered: wave2.wallCandidatesFiltered,
+      wallCandidatesAfterFrameFilter: wave2.wallNetworkFilter?.wallCandidatesAfterFrameFilter,
+      wallCandidatesAfterTitleBlockFilter: wave2.wallNetworkFilter?.wallCandidatesAfterTitleBlockFilter,
+      wallCandidatesAfterNoiseFilter: wave2.wallNetworkFilter?.wallCandidatesAfterNoiseFilter,
+      detectedPlanCoreBounds: wave2.wallNetworkFilter?.detectedPlanCoreBounds ?? null,
+      removedFrameSegments: wave2.wallNetworkFilter?.removedFrameSegments,
+      removedTitleBlockSegments: wave2.wallNetworkFilter?.removedTitleBlockSegments,
+      removedAnnotationNoiseSegments: wave2.wallNetworkFilter?.removedAnnotationNoiseSegments,
+      removedFurnitureNoiseSegments: wave2.wallNetworkFilter?.removedFurnitureNoiseSegments,
+      finalWallNetworkSegments: wave2.wallNetworkFilter?.finalWallNetworkSegments,
       footprintConfidence: wave2.detectedFootprint.confidence,
       wave2ExteriorCount: exteriorWallSegments.length,
       wave2InteriorCount: interiorWallSegments.length,

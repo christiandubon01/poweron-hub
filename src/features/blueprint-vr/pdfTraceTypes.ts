@@ -158,6 +158,14 @@ export interface PdfTraceExtractionStats {
   extractionWarnings?: string[]
 }
 
+/** World-space plan core bbox from measured-trace wall-network filtering (feet). */
+export interface PdfTracePlanCoreBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
 export interface PdfTraceExtractionResult {
   success: boolean
   payload: PdfTracePayload | null
