@@ -166,6 +166,23 @@ export interface PdfTracePlanCoreBounds {
   maxY: number
 }
 
+/** Wall-network filter telemetry surfaced on scan debug HUD. */
+export interface PdfTraceWallNetworkFilterStats {
+  wallCandidatesRaw?: number
+  wallCandidatesAfterFrameFilter?: number
+  wallCandidatesAfterTitleBlockFilter?: number
+  wallCandidatesAfterNoiseFilter?: number
+  wallCandidatesAfterCoreCrop?: number
+  drawingBounds?: PdfTracePlanCoreBounds | null
+  detectedPlanCoreBounds?: PdfTracePlanCoreBounds | null
+  finalCropBounds?: PdfTracePlanCoreBounds | null
+  removedSheetFrameSegments?: number
+  removedDetailRegionSegments?: number
+  removedOutsideCoreSegments?: number
+  finalWallNetworkSegments?: number
+  keptWallNetworkComponents?: number
+}
+
 export interface PdfTraceExtractionResult {
   success: boolean
   payload: PdfTracePayload | null

@@ -378,9 +378,15 @@ export interface BlueprintPlanScanResult {
     wallCandidatesAfterFrameFilter?: number
     wallCandidatesAfterTitleBlockFilter?: number
     wallCandidatesAfterNoiseFilter?: number
+    wallCandidatesAfterCoreCrop?: number
+    drawingBounds?: { minX: number; minY: number; maxX: number; maxY: number } | null
     detectedPlanCoreBounds?: { minX: number; minY: number; maxX: number; maxY: number } | null
+    finalCropBounds?: { minX: number; minY: number; maxX: number; maxY: number } | null
     removedFrameSegments?: number
+    removedSheetFrameSegments?: number
     removedTitleBlockSegments?: number
+    removedDetailRegionSegments?: number
+    removedOutsideCoreSegments?: number
     removedAnnotationNoiseSegments?: number
     removedFurnitureNoiseSegments?: number
     finalWallNetworkSegments?: number
@@ -2663,9 +2669,15 @@ export function scanBlueprintPlan(
       wallCandidatesAfterFrameFilter: wave2.wallNetworkFilter?.wallCandidatesAfterFrameFilter,
       wallCandidatesAfterTitleBlockFilter: wave2.wallNetworkFilter?.wallCandidatesAfterTitleBlockFilter,
       wallCandidatesAfterNoiseFilter: wave2.wallNetworkFilter?.wallCandidatesAfterNoiseFilter,
+      wallCandidatesAfterCoreCrop: wave2.wallNetworkFilter?.wallCandidatesAfterCoreCrop,
+      drawingBounds: wave2.wallNetworkFilter?.drawingBounds ?? null,
       detectedPlanCoreBounds: wave2.wallNetworkFilter?.detectedPlanCoreBounds ?? null,
+      finalCropBounds: wave2.wallNetworkFilter?.finalCropBounds ?? null,
       removedFrameSegments: wave2.wallNetworkFilter?.removedFrameSegments,
+      removedSheetFrameSegments: wave2.wallNetworkFilter?.removedSheetFrameSegments,
       removedTitleBlockSegments: wave2.wallNetworkFilter?.removedTitleBlockSegments,
+      removedDetailRegionSegments: wave2.wallNetworkFilter?.removedDetailRegionSegments,
+      removedOutsideCoreSegments: wave2.wallNetworkFilter?.removedOutsideCoreSegments,
       removedAnnotationNoiseSegments: wave2.wallNetworkFilter?.removedAnnotationNoiseSegments,
       removedFurnitureNoiseSegments: wave2.wallNetworkFilter?.removedFurnitureNoiseSegments,
       finalWallNetworkSegments: wave2.wallNetworkFilter?.finalWallNetworkSegments,
