@@ -59,7 +59,20 @@ export interface MeasuredPlanViewerProps {
   /** Total pages targeted for extraction. */
   totalPages?: number
   traceDebug?: {
+    /** Raw PDF line primitives (pre-sanitation). */
     rawLines: number
+    rawRects?: number
+    rawPolylines?: number
+    rawTextRuns?: number
+    adaptedMergedTraceLines?: number
+    sanitizedPayloadLines?: number
+    wave2PreMarginCandidates?: number
+    wave2WorldMarginRemoved?: number
+    wave2ClassifiedSegments?: number
+    wave2FootprintAreaRatio?: number
+    wave2CoreSampleFraction?: number
+    vectorMix?: string
+    extractionFallbackReason?: string
     mergedWalls: number
     openings: number
     roomCandidates: number
@@ -182,8 +195,23 @@ export function MeasuredPlanViewerBadgeHud({
             fontFamily: 'monospace',
           }}
         >
-          TRACE DEBUG · raw {traceDebug.rawLines} · walls {traceDebug.mergedWalls} · opn {traceDebug.openings} · rooms {traceDebug.roomCandidates}
+          TRACE DEBUG · raw L{traceDebug.rawLines}
+          {traceDebug.rawRects != null ? `·R${traceDebug.rawRects}` : ''}
+          {traceDebug.rawPolylines != null ? `·P${traceDebug.rawPolylines}` : ''}
+          {traceDebug.adaptedMergedTraceLines != null ? `·adpt ${traceDebug.adaptedMergedTraceLines}` : ''}
+          {` · walls ${traceDebug.mergedWalls} · opn ${traceDebug.openings} · rooms ${traceDebug.roomCandidates}`}
           {traceDebug.wallCandidatesRaw != null ? ` · cand ${traceDebug.wallCandidatesRaw}→${traceDebug.wallCandidatesFiltered ?? '?'}` : ''}
+          {traceDebug.wave2PreMarginCandidates != null
+            ? ` · preMrg ${traceDebug.wave2PreMarginCandidates}${traceDebug.wave2WorldMarginRemoved != null ? `(-${traceDebug.wave2WorldMarginRemoved})` : ''}`
+            : ''}
+          {traceDebug.wave2ClassifiedSegments != null ? ` · cls ${traceDebug.wave2ClassifiedSegments}` : ''}
+          {traceDebug.wave2FootprintAreaRatio != null
+            ? ` · ar${(traceDebug.wave2FootprintAreaRatio * 100).toFixed(0)}%`
+            : ''}
+          {traceDebug.wave2CoreSampleFraction != null
+            ? ` · core${(traceDebug.wave2CoreSampleFraction * 100).toFixed(0)}%`
+            : ''}
+          {traceDebug.vectorMix ? ` · ${traceDebug.vectorMix}` : ''}
           {traceDebug.footprintConfidence != null ? ` · fp ${Math.round(traceDebug.footprintConfidence * 100)}%` : ''}
           {traceDebug.wave2ExteriorCount != null
             ? ` · ext/int/part ${traceDebug.wave2ExteriorCount}/${traceDebug.wave2InteriorCount ?? 0}/${traceDebug.wave2PartitionCount ?? 0}`

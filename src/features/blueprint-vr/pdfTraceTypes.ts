@@ -49,6 +49,7 @@ export interface PdfTraceRect {
 
 export interface PdfTracePolyline {
   id: string
+  /** Vertices in PDF space; often derived from constructPath / stroked polygons. */
   points: PdfTracePoint[]
   closed?: boolean
   role?: PdfTraceLineRole

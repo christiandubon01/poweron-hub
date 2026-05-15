@@ -190,6 +190,7 @@ export type PlanScanWarningCode =
   | 'NO_FLOOR_PLAN_SHEET'
   | 'NO_ELECTRICAL_SHEET'
   | 'NO_RENDERING_SHEET'
+  | 'GEOMETRY_DRIVER_PAGE_SWITCH'
 
 export interface PlanScanWarning {
   code: PlanScanWarningCode
@@ -355,6 +356,7 @@ export interface BlueprintPlanScanResult {
   scaleStatus?: 'missing' | 'default' | 'detected'
   /** Lightweight debug counts for trace diagnostics. */
   traceDebugCounts?: {
+    /** Count of `payload.lines` before PDF sanitation (true raw vector line ops). */
     rawLines: number
     rawRects?: number
     rawPolylines?: number
@@ -379,6 +381,33 @@ export interface BlueprintPlanScanResult {
     /** First blocker codes/messages for compact HUD (full list on scan result). */
     wallExtractionBlockersPreview?: string
     geometrySourcePageNumbers?: number[]
+    /** Raw PDF payload line primitives before sanitation (not merged polyline expansion). */
+    rawPayloadLines?: number
+    /** Raw payload rects before sanitation. */
+    rawPayloadRects?: number
+    /** Raw payload polylines (= path groups from vector extractor). */
+    rawPayloadPolylines?: number
+    rawPayloadArcs?: number
+    /** Line primitives in payload after {@link filterPdfTracePayloadForWallExtraction}. */
+    sanitizedPayloadLines?: number
+    /** Adapted plan segments after adapter merge/noise pass (same as traceLines.length). */
+    adaptedMergedTraceLines?: number
+    /** Wave 2 — orthogonal segments ≥1.75 ft before world-margin strip. */
+    wave2PreMarginCandidates?: number
+    /** Segments removed by world-margin artifact filter inside Wave 2. */
+    wave2WorldMarginRemoved?: number
+    /** Wave 2 — classified wall segments when validation completed. */
+    wave2ClassifiedSegments?: number
+    /** Footprint bbox area ÷ page area in world units (Wave 2). */
+    wave2FootprintAreaRatio?: number
+    /** Mid-footprint sample density (Wave 2). */
+    wave2CoreSampleFraction?: number
+    /** Heuristic: vector geometry vs text-only / empty. */
+    vectorMix?: 'empty' | 'vector' | 'text-only' | 'mixed'
+    /** Human-readable primary reason for deterministic fallback, when applicable. */
+    extractionFallbackReason?: string
+    /** Full Wave 2 blocker codes (same as wallExtractionBlockers on result). */
+    extractionBlockerCodes?: string[]
   }
   /** Selected floor-plan sheet metadata when full-set scan is used. */
   selectedFloorPlanSheet?: SelectedFloorPlanSheet | null
@@ -1663,10 +1692,41 @@ interface Wave2WallExtractionModel {
   wallCandidatesRaw: number
   wallCandidatesFiltered: number
   sanitizeStats: PdfTraceWallSanitizeStats
+  /** Orthogonal segments ≥1.75 ft before world-margin artifact stripping. */
+  orthogonalLongCandidatesPreMargin: number
+  /** Segments removed by {@link filterWorldMarginArtifactLines}. */
+  worldMarginArtifactRemovedCount: number
+  /** Classified wall segments (exterior+interior+partition) when validation ran. */
+  classifiedSegmentsTotal: number
 }
 
 function wave2Midpoint(line: PlanTraceLine): Point2D {
   return { x: (line.start.x + line.end.x) / 2, y: (line.start.y + line.end.y) / 2 }
+}
+
+function computeWave2FootprintDiagnostics(
+  candidates: PlanTraceLine[],
+  payload: PdfTracePayload | null,
+  scale: import('./pdfTraceTypes').PdfTraceScaleHint | null,
+): { areaRatio?: number; coreFrac?: number } {
+  if (!payload || candidates.length < 3) return {}
+  const outer = detectOuterFootprint(candidates)
+  const pageWorld = computeWorldPageBoundsFromPayload(payload, scale)
+  if (!outer || !pageWorld) return {}
+  const fpW = outer.maxX - outer.minX
+  const fpH = outer.maxY - outer.minY
+  const pageArea = Math.max(1, (pageWorld.maxX - pageWorld.minX) * (pageWorld.maxY - pageWorld.minY))
+  const areaRatio = (fpW * fpH) / pageArea
+  const cx = outer.minX + fpW / 2
+  const cy = outer.minY + fpH / 2
+  const innerHalfW = fpW * 0.42
+  const innerHalfH = fpH * 0.42
+  let coreHits = 0
+  for (const line of candidates) {
+    const m = wave2Midpoint(line)
+    if (Math.abs(m.x - cx) <= innerHalfW && Math.abs(m.y - cy) <= innerHalfH) coreHits += 1
+  }
+  return { areaRatio, coreFrac: coreHits / Math.max(1, candidates.length) }
 }
 
 function wave2TouchesExteriorBoundary(
@@ -1738,13 +1798,21 @@ export function runWave2WallExtractionFromAdapted(params: {
     wallCandidatesRaw: params.adaptedLines.filter((l) => l.orthogonal).length,
     wallCandidatesFiltered: 0,
     sanitizeStats: params.sanitizeStats,
+    orthogonalLongCandidatesPreMargin: 0,
+    worldMarginArtifactRemovedCount: 0,
+    classifiedSegmentsTotal: 0,
   })
 
   const wallCandidatesRaw = params.adaptedLines.filter((l) => l.orthogonal && l.lengthFt >= 1.5).length
   const pageWorld = computeWorldPageBoundsFromPayload(params.payload, params.scale)
-  let candidates = params.adaptedLines.filter((l) => l.orthogonal && l.lengthFt >= 1.75)
+  const lengthGated = params.adaptedLines.filter((l) => l.orthogonal && l.lengthFt >= 1.75)
+  const orthogonalLongCandidatesPreMargin = lengthGated.length
+  let candidates = lengthGated
+  let worldMarginArtifactRemovedCount = 0
   if (pageWorld) {
-    candidates = filterWorldMarginArtifactLines(candidates, pageWorld)
+    const afterMargin = filterWorldMarginArtifactLines(candidates, pageWorld)
+    worldMarginArtifactRemovedCount = Math.max(0, candidates.length - afterMargin.length)
+    candidates = afterMargin
   }
 
   const wallCandidatesFiltered = candidates.length
@@ -1753,12 +1821,20 @@ export function runWave2WallExtractionFromAdapted(params: {
       ...reject('insufficient_filtered_wall_segments'),
       wallCandidatesRaw,
       wallCandidatesFiltered,
+      orthogonalLongCandidatesPreMargin,
+      worldMarginArtifactRemovedCount,
     }
   }
 
   const outer = detectOuterFootprint(candidates)
   if (!outer) {
-    return { ...reject('no_footprint_bbox_from_candidates'), wallCandidatesRaw, wallCandidatesFiltered }
+    return {
+      ...reject('no_footprint_bbox_from_candidates'),
+      wallCandidatesRaw,
+      wallCandidatesFiltered,
+      orthogonalLongCandidatesPreMargin,
+      worldMarginArtifactRemovedCount,
+    }
   }
 
   const B = outer
@@ -1781,11 +1857,9 @@ export function runWave2WallExtractionFromAdapted(params: {
     areaRatio = bArea / pageArea
   }
 
-  const isLikelyPageFrame = areaRatio > 0.88 && wallCandidatesFiltered >= 8
-  if (isLikelyPageFrame) {
-    blockers.push('footprint_covers_sheet_bleed_likely_page_frame')
-  }
-
+  // A real floor plan often fills most of the sheet; treat "full bleed" as a
+  // page frame only when the trace also lacks mid-sheet structure (otherwise
+  // we false-positive and reject valid tenant plans).
   let coreHits = 0
   const cx = fp.x + fp.width / 2
   const cy = fp.y + fp.height / 2
@@ -1796,7 +1870,15 @@ export function runWave2WallExtractionFromAdapted(params: {
     if (Math.abs(m.x - cx) <= innerHalfW && Math.abs(m.y - cy) <= innerHalfH) coreHits += 1
   }
   const coreFrac = coreHits / Math.max(1, candidates.length)
-  if (coreFrac < 0.1 && candidates.length > 24 && areaRatio > 0.78) {
+  const interiorActivity = coreHits >= 3
+  const isLikelyPageFrame =
+    areaRatio > 0.93 && wallCandidatesFiltered >= 10 && !interiorActivity
+  if (isLikelyPageFrame) {
+    blockers.push('footprint_covers_sheet_bleed_likely_page_frame')
+  }
+
+  // Require a clearer margin-ring pattern before rejecting dense perimeter plans.
+  if (coreFrac < 0.04 && candidates.length > 40 && areaRatio > 0.82) {
     blockers.push('wall_geometry_concentrated_at_margins_not_building_core')
   }
 
@@ -1838,10 +1920,10 @@ export function runWave2WallExtractionFromAdapted(params: {
   const interiorCount = classified.filter((c) => c.cls === 'interior').length
   const partitionCount = classified.filter((c) => c.cls === 'partition').length
 
-  if (exteriorCount < 2 && classified.length < 12) {
+  if (exteriorCount < 2 && classified.length < 10) {
     blockers.push('weak_exterior_shell_relative_to_segment_count')
   }
-  if (classified.length < 6) {
+  if (classified.length < 5) {
     blockers.push('too_few_classified_wall_segments')
   }
 
@@ -1892,6 +1974,9 @@ export function runWave2WallExtractionFromAdapted(params: {
       wallCandidatesRaw,
       wallCandidatesFiltered,
       sanitizeStats: params.sanitizeStats,
+      orthogonalLongCandidatesPreMargin,
+      worldMarginArtifactRemovedCount,
+      classifiedSegmentsTotal: classified.length,
     }
   }
 
@@ -1972,7 +2057,62 @@ export function runWave2WallExtractionFromAdapted(params: {
     wallCandidatesRaw,
     wallCandidatesFiltered,
     sanitizeStats: params.sanitizeStats,
+    orthogonalLongCandidatesPreMargin,
+    worldMarginArtifactRemovedCount,
+    classifiedSegmentsTotal: classified.length,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 extraction telemetry + ranked-page preview (full-set driver pick)
+// ---------------------------------------------------------------------------
+
+function inferVectorMixFromPayload(payload: PdfTracePayload | null | undefined): NonNullable<
+  BlueprintPlanScanResult['traceDebugCounts']
+>['vectorMix'] {
+  if (!payload) return 'empty'
+  const geom =
+    (payload.lines?.length || 0) +
+    (payload.rects?.length || 0) +
+    (payload.polylines?.length || 0) +
+    (payload.arcs?.length || 0)
+  const text = payload.textRuns?.length || 0
+  if (geom === 0 && text > 0) return 'text-only'
+  if (geom > 0 && text === 0) return 'vector'
+  if (geom > 0) return 'mixed'
+  return 'empty'
+}
+
+function previewWave2WallExtractionForTracePayload(trace: PdfTracePayload | null): {
+  accepted: boolean
+  blockers: string[]
+  wallCandidatesFiltered: number
+} {
+  if (!trace) return { accepted: false, blockers: ['no_trace_payload'], wallCandidatesFiltered: 0 }
+  const pdfSanitize = filterPdfTracePayloadForWallExtraction(trace)
+  const tracePayloadForWave: PdfTracePayload | null = pdfSanitize.payload ?? trace
+  const adapted = adaptPdfTraceToPlanLines(tracePayloadForWave)
+  const pageNum = Math.max(1, Math.floor(Number(trace.pageNumber) || 1))
+  const wave2 = runWave2WallExtractionFromAdapted({
+    adaptedLines: adapted.lines,
+    scale: adapted.scale,
+    payload: tracePayloadForWave,
+    sanitizeStats: pdfSanitize.stats,
+    pageNumber: pageNum,
+  })
+  return {
+    accepted: wave2.accepted,
+    blockers: wave2.blockers,
+    wallCandidatesFiltered: wave2.wallCandidatesFiltered,
+  }
+}
+
+function logBlueprintExtractionAuditOnce(key: string, audit: Record<string, unknown>): void {
+  const g = globalThis as unknown as { __BLUEPRINT_VR_EXTRACTION_AUDIT_KEYS?: Set<string> }
+  if (!g.__BLUEPRINT_VR_EXTRACTION_AUDIT_KEYS) g.__BLUEPRINT_VR_EXTRACTION_AUDIT_KEYS = new Set()
+  if (g.__BLUEPRINT_VR_EXTRACTION_AUDIT_KEYS.has(key)) return
+  g.__BLUEPRINT_VR_EXTRACTION_AUDIT_KEYS.add(key)
+  console.info('[Blueprint VR] extraction audit (one-time per project/page key)', audit)
 }
 
 // ---------------------------------------------------------------------------
@@ -2006,15 +2146,26 @@ export function scanBlueprintPlan(
   }
 
   // 1. Sanitize PDF vectors (sheet frame / title clutter), then adapt to plan lines.
+  const rawPayload = input.tracePayload
+  const rawPayloadLines = Array.isArray(rawPayload?.lines) ? rawPayload!.lines.length : 0
+  const rawPayloadRects = Array.isArray(rawPayload?.rects) ? rawPayload!.rects.length : 0
+  const rawPayloadPolylines = Array.isArray(rawPayload?.polylines) ? rawPayload!.polylines.length : 0
+  const rawPayloadArcs = Array.isArray(rawPayload?.arcs) ? rawPayload!.arcs.length : 0
+
   const pdfSanitize = filterPdfTracePayloadForWallExtraction(input.tracePayload)
   const tracePayloadForWave: PdfTracePayload | null = pdfSanitize.payload ?? input.tracePayload ?? null
+  const sanitizedPayloadLines = Array.isArray(tracePayloadForWave?.lines)
+    ? tracePayloadForWave!.lines.length
+    : 0
   const adapted: AdaptedTrace = adaptPdfTraceToPlanLines(tracePayloadForWave)
   const traceLines = adapted.lines
   const traceTextRuns: PdfTraceTextRun[] = input.tracePayload?.textRuns || []
   const geometrySourcePageNumbers: number[] =
-    input.tracePayload?.pageNumber != null
-      ? [Math.max(1, Math.floor(Number(input.tracePayload.pageNumber)))]
-      : []
+    input.activePageNumber != null
+      ? [Math.max(1, Math.floor(Number(input.activePageNumber)))]
+      : input.tracePayload?.pageNumber != null
+        ? [Math.max(1, Math.floor(Number(input.tracePayload.pageNumber)))]
+        : []
   const wave2 = runWave2WallExtractionFromAdapted({
     adaptedLines: adapted.lines,
     scale: adapted.scale,
@@ -2031,9 +2182,14 @@ export function scanBlueprintPlan(
         : 'unknown'
   const operatorListStatus = input.tracePayload?.runtime?.operatorListStatus || 'unknown'
   const textContentStatus = input.tracePayload?.runtime?.textContentStatus || 'unknown'
-  const rawRectCount = Array.isArray(input.tracePayload?.rects) ? input.tracePayload!.rects.length : 0
-  const rawPolylineCount = Array.isArray(input.tracePayload?.polylines) ? input.tracePayload!.polylines.length : 0
   const rawTextRunCount = traceTextRuns.length
+
+  const w2FootprintDiag = computeWave2FootprintDiagnostics(
+    wave2.filteredTraceLines,
+    tracePayloadForWave,
+    adapted.scale,
+  )
+  const vectorMix = inferVectorMixFromPayload(input.tracePayload)
 
   // 2. Legacy trace inference (pre–Wave-2 room graph) — still used as secondary path.
   let inferredFootprint = inferBuildingFootprintFromTraceLines(traceLines)
@@ -2317,6 +2473,51 @@ export function scanBlueprintPlan(
     })),
   ]
 
+  const extractionFallbackReason = isFallback
+    ? !traceAvailable
+      ? 'deterministic_fallback:no_vector_primitives'
+      : wallExtractionBlockers.length > 0
+        ? `deterministic_fallback:wave2_blockers:${wallExtractionBlockers.join(',')}`
+        : `deterministic_fallback:legacy_trace_not_usable(inferred_walls=${inferredWalls.length},rooms=${inferredRooms.length},adapted_lines=${traceLines.length})`
+    : undefined
+
+  logBlueprintExtractionAuditOnce(
+    [
+      input.projectName || '',
+      input.blueprintTitle || '',
+      String(input.activePageNumber ?? ''),
+      String(geometrySourcePageNumbers[0] ?? ''),
+    ].join('|'),
+    {
+      version: 'wave2.1',
+      geometrySourcePage: geometrySourcePageNumbers[0] ?? null,
+      tracePayloadPage: input.tracePayload?.pageNumber ?? null,
+      vectorMix,
+      pdfSanitizeStats: pdfSanitize.stats,
+      rawPayloadLines,
+      rawPayloadRects,
+      rawPayloadPolylines,
+      rawPayloadArcs,
+      rawTextRuns: rawTextRunCount,
+      sanitizedPayloadLines,
+      adaptedMergedTraceLines: traceLines.length,
+      wave2Accepted: wave2.accepted,
+      wave2Blockers: wallExtractionBlockers,
+      wave2CandidatesRaw: wave2.wallCandidatesRaw,
+      wave2CandidatesFiltered: wave2.wallCandidatesFiltered,
+      wave2PreMarginCandidates: wave2.orthogonalLongCandidatesPreMargin,
+      wave2WorldMarginRemoved: wave2.worldMarginArtifactRemovedCount,
+      wave2ClassifiedSegments: wave2.classifiedSegmentsTotal,
+      wave2FootprintAreaRatio: w2FootprintDiag.areaRatio,
+      wave2CoreSampleFraction: w2FootprintDiag.coreFrac,
+      traceAvailable,
+      traceUsable,
+      isFallback,
+      extractionFallbackReason,
+      confidenceCapReason,
+    },
+  )
+
   return {
     footprint,
     walls,
@@ -2358,10 +2559,24 @@ export function scanBlueprintPlan(
     wallExtractionConfidence,
     geometrySourcePageNumbers,
     traceDebugCounts: {
-      rawLines: traceLines.length,
-      rawRects: rawRectCount,
-      rawPolylines: rawPolylineCount,
+      rawLines: rawPayloadLines,
+      rawRects: rawPayloadRects,
+      rawPolylines: rawPayloadPolylines,
       rawTextRuns: rawTextRunCount,
+      rawPayloadLines,
+      rawPayloadRects,
+      rawPayloadPolylines,
+      rawPayloadArcs,
+      sanitizedPayloadLines,
+      adaptedMergedTraceLines: traceLines.length,
+      wave2PreMarginCandidates: wave2.orthogonalLongCandidatesPreMargin,
+      wave2WorldMarginRemoved: wave2.worldMarginArtifactRemovedCount,
+      wave2ClassifiedSegments: wave2.classifiedSegmentsTotal,
+      wave2FootprintAreaRatio: w2FootprintDiag.areaRatio,
+      wave2CoreSampleFraction: w2FootprintDiag.coreFrac,
+      vectorMix,
+      extractionFallbackReason,
+      extractionBlockerCodes: wallExtractionBlockers.length ? [...wallExtractionBlockers] : undefined,
       runtimeProviderStatus,
       runtimeProviderMatchTier: input.tracePayload?.runtime?.providerMatchTier,
       operatorListStatus,
@@ -4145,7 +4360,7 @@ export function scanBlueprintFullSet(
     geometryDriverPage && input.multiPageTraces && geometryDriverPage > 0
       ? input.multiPageTraces[geometryDriverPage] ?? null
       : null
-  const bestTrace = bestTraceFromMap ?? bestFloorPlanSourceSheet?.tracePayload ?? null
+  let bestTrace = bestTraceFromMap ?? bestFloorPlanSourceSheet?.tracePayload ?? null
   const traceAttempted = Boolean(
     (geometryDriverPage &&
       input.multiPageTraces &&
@@ -4154,38 +4369,93 @@ export function scanBlueprintFullSet(
       bestFloorPlanSourceSheet?.tracePayload,
   )
 
-  const planScan = scanBlueprintPlan({
+  let effectiveDriverPage: number | null = geometryDriverPage
+  let effectiveFloorPlanSourceSheet = bestFloorPlanSourceSheet
+  let effectiveFloorPlanSheet: SelectedFloorPlanSheet | null = bestFloorPlanSheet
+
+  let planScan = scanBlueprintPlan({
     projectName: input.projectName || input.sourceSet?.projectName,
     blueprintTitle: input.sourceSet?.name,
-    fileName: input.sourceSet?.filePath || bestFloorPlanSourceSheet?.fileName,
-    activePageNumber: geometryDriverPage ?? undefined,
+    fileName: input.sourceSet?.filePath || effectiveFloorPlanSourceSheet?.fileName,
+    activePageNumber: effectiveDriverPage ?? undefined,
     totalPages: totalPagesScanned,
     extractedText: input.extractedText,
     annotationsSummary: input.annotationsSummary,
     sheetIndex,
     tracePayload: bestTrace,
     traceAttempted,
-    traceWarnings: bestFloorPlanSourceSheet?.traceWarnings || [],
+    traceWarnings: effectiveFloorPlanSourceSheet?.traceWarnings || [],
   })
+
+  if (
+    planScan.isFallback &&
+    input.multiPageTraces &&
+    rankedWallPlanCandidates.length > 0 &&
+    effectiveDriverPage != null
+  ) {
+    for (const cand of rankedWallPlanCandidates) {
+      if (cand.pageNumber === effectiveDriverPage) continue
+      const altTrace = input.multiPageTraces[cand.pageNumber]
+      if (!altTrace) continue
+      if (!previewWave2WallExtractionForTracePayload(altTrace).accepted) continue
+      const altSheet = expandedSheets.find((s) => s.pageNumber === cand.pageNumber) || null
+      const rescanned = scanBlueprintPlan({
+        projectName: input.projectName || input.sourceSet?.projectName,
+        blueprintTitle: input.sourceSet?.name,
+        fileName: input.sourceSet?.filePath || altSheet?.fileName,
+        activePageNumber: cand.pageNumber,
+        totalPages: totalPagesScanned,
+        extractedText: input.extractedText,
+        annotationsSummary: input.annotationsSummary,
+        sheetIndex,
+        tracePayload: altTrace,
+        traceAttempted: true,
+        traceWarnings: altSheet?.traceWarnings || [],
+      })
+      if (!rescanned.isFallback) {
+        planScan = rescanned
+        bestTrace = altTrace
+        effectiveDriverPage = cand.pageNumber
+        effectiveFloorPlanSourceSheet = altSheet
+        effectiveFloorPlanSheet = {
+          pageNumber: cand.pageNumber,
+          sheetNumber: cand.sheetNumber || altSheet?.sheetLabel || altSheet?.label,
+          sheetTitle: cand.sheetTitle || altSheet?.sheetTitle,
+          confidence: selection.confidence,
+          reason: `wave2_vector_accepted_ranked_wall_plan_fallback_from_page_${geometryDriverPage}`,
+        }
+        warnings.push({
+          code: 'GEOMETRY_DRIVER_PAGE_SWITCH',
+          message:
+            `Wall extraction switched to ranked wall-plan page ${cand.pageNumber} (Wave 2 accepted) ` +
+            `after canonical driver page ${geometryDriverPage} failed validation.`,
+        })
+        break
+      }
+    }
+  }
+
   const confidenceBreakdown = buildConfidenceBreakdown({
     sourceSetSelected: Boolean(input.sourceSet?.id),
     classifiedKnownSheets,
-    floorPlanSheet: bestFloorPlanSheet,
+    floorPlanSheet: effectiveFloorPlanSheet,
     planScan,
     roleCounts,
     bestElectricalSheets,
   })
   const canonicalGeomPages =
-    canonicalWallPlanPages.length > 0
-      ? Array.from(new Set(canonicalWallPlanPages.map((c) => c.pageNumber))).sort((a, b) => a - b)
-      : planScan.geometrySourcePageNumbers ?? []
+    !planScan.isFallback && (planScan.geometrySourcePageNumbers?.length ?? 0) > 0
+      ? planScan.geometrySourcePageNumbers!
+      : canonicalWallPlanPages.length > 0
+        ? Array.from(new Set(canonicalWallPlanPages.map((c) => c.pageNumber))).sort((a, b) => a - b)
+        : planScan.geometrySourcePageNumbers ?? []
 
   const enrichedPlanScan: BlueprintPlanScanResult = {
     ...planScan,
     geometrySourcePageNumbers: canonicalGeomPages,
     confidence: Math.max(0.35, Math.min(0.95, confidenceBreakdown.totalPercent / 100)),
     confidenceBreakdown,
-    selectedFloorPlanSheet: bestFloorPlanSheet,
+    selectedFloorPlanSheet: effectiveFloorPlanSheet,
     traceStatus: planScan.traceStatus,
     traceAttempted: planScan.traceAttempted,
     traceAvailable: planScan.traceAvailable,
@@ -4212,6 +4482,22 @@ export function scanBlueprintFullSet(
           : 'fallback',
   }
 
+  logBlueprintExtractionAuditOnce(
+    `fullset|${input.sourceSet?.id ?? 'unknown'}`,
+    {
+      version: 'wave2.1-fullset',
+      sourceSetId: input.sourceSet?.id,
+      sourceSetName: input.sourceSet?.name,
+      canonicalWallPlanPageNumbers: canonicalWallPlanPages.map((c) => c.pageNumber),
+      initialGeometryDriverPage: geometryDriverPage,
+      effectiveGeometryDriverPage: effectiveDriverPage,
+      geometrySourcePageNumbers: canonicalGeomPages,
+      planScanFallback: enrichedPlanScan.isFallback,
+      wave2Blockers: enrichedPlanScan.wallExtractionBlockers,
+      rankedWallPlanPages: rankedWallPlanCandidates.map((r) => r.pageNumber),
+    },
+  )
+
   const projectHint = extractProjectStyleHints(input)
   const equipmentHints = extractEquipmentHints(enrichedPlanScan)
   const doorHints = extractDoorAndOpeningHints(enrichedPlanScan)
@@ -4223,7 +4509,8 @@ export function scanBlueprintFullSet(
       `Full-set scan classified ${totalPagesScanned} page(s); ` +
       `${rankedWallPlanCandidates.length} eligible wall-plan candidate(s); ` +
       `canonical page(s): ${canonicalWallPlanPages.length ? canonicalWallPlanPages.map((c) => c.pageNumber).join(',') : 'none'}. ` +
-      `Geometry driver page ${geometryDriverPage ?? 'n/a'}. Confidence ${confidenceBreakdown.totalPercent}%.`,
+      `Geometry driver page ${effectiveDriverPage ?? geometryDriverPage ?? 'n/a'} ` +
+      `(initial canonical driver ${geometryDriverPage ?? 'n/a'}). Confidence ${confidenceBreakdown.totalPercent}%.`,
   })
 
   const pageRoleCounts = countPageRoles(pageClassifications)
@@ -4240,7 +4527,7 @@ export function scanBlueprintFullSet(
     canonicalSelectionConfidence: selection.confidence,
     canonicalSelectionAmbiguous: selection.ambiguous,
     pageRoleCounts,
-    bestFloorPlanSheet,
+    bestFloorPlanSheet: effectiveFloorPlanSheet,
     bestElectricalSheets,
     bestRenderingSheets,
     equipmentHints,

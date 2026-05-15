@@ -38,8 +38,12 @@ export interface RuntimeTraceForSheetInput extends BlueprintPdfRuntimeLookup {
   existingPayload?: PdfTracePayload | null
 }
 
+export type PdfRuntimeProviderMatchTier = 'exact' | 'partial' | 'none'
+
 export interface RuntimeTraceForSheetResult {
-  providerStatus: 'available' | 'missing' | 'error'
+  providerStatus: 'available' | 'partial' | 'missing' | 'error'
+  /** How the active runtime registry entry relates to the requested lookup key. */
+  providerMatchTier: PdfRuntimeProviderMatchTier
   providerKey?: string
   providerRequestedKey?: string
   providerRegisteredKeys?: string[]
@@ -194,6 +198,7 @@ export function getBlueprintPdfRuntimeProviderDebug(
   registeredKeys: string[]
   registrySize: number
   matched: boolean
+  matchTier: PdfRuntimeProviderMatchTier
   matchReason: string
   matchedKey?: string
   providerAgeSec?: number
@@ -217,6 +222,7 @@ export function getBlueprintPdfRuntimeProviderDebug(
       registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
       registrySize: runtimeProviders.size,
       matched: true,
+      matchTier: 'exact',
       matchReason: 'exact_key_match',
       matchedKey: exact.key,
       providerAgeSec: ageSec,
@@ -227,6 +233,8 @@ export function getBlueprintPdfRuntimeProviderDebug(
         hasGetPage: typeof exact.provider.getPage === 'function',
         pdfDocReady: exact.provider.metadata?.pdfDocReady,
         lastUnregisterReason: lastUnregisterInfo?.reason,
+        registrySize: runtimeProviders.size,
+        matchTier: 'exact',
       },
     }
   }
@@ -248,6 +256,7 @@ export function getBlueprintPdfRuntimeProviderDebug(
       registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
       registrySize: runtimeProviders.size,
       matched: false,
+      matchTier: 'none',
       matchReason: bestReason,
       lastUnregisterReason: lastUnregisterInfo?.reason,
     }
@@ -266,6 +275,7 @@ export function getBlueprintPdfRuntimeProviderDebug(
     registeredKeys: listBlueprintPdfRuntimeProviderKeys(),
     registrySize: runtimeProviders.size,
     matched: true,
+    matchTier: 'partial',
     matchReason: bestReason,
     matchedKey: best.key,
     providerAgeSec: bestAgeSec,
@@ -276,6 +286,8 @@ export function getBlueprintPdfRuntimeProviderDebug(
       hasGetPage: typeof best.provider.getPage === 'function',
       pdfDocReady: best.provider.metadata?.pdfDocReady,
       lastUnregisterReason: lastUnregisterInfo?.reason,
+      registrySize: runtimeProviders.size,
+      matchTier: 'partial',
     },
   }
 }
@@ -319,6 +331,7 @@ export async function extractTraceForBlueprintSheet(
       ? {
           ...fallback.payload,
           runtime: {
+            providerMatchTier: 'none',
             providerStatus: 'missing',
             providerRequestedKey: runtimeDebug.requestedKey,
             providerRegisteredKeys: runtimeDebug.registeredKeys,
@@ -332,6 +345,7 @@ export async function extractTraceForBlueprintSheet(
       : null
     return {
       providerStatus: 'missing',
+      providerMatchTier: 'none',
       providerRequestedKey: runtimeDebug.requestedKey,
       providerRegisteredKeys: runtimeDebug.registeredKeys,
       providerMatchReason: runtimeDebug.matchReason,
@@ -348,7 +362,9 @@ export async function extractTraceForBlueprintSheet(
   }
 
   const { provider, key } = runtimeMatch
-  let providerStatus: RuntimeTraceForSheetResult['providerStatus'] = 'available'
+  const matchTier = runtimeDebug.matchTier
+  let providerStatus: RuntimeTraceForSheetResult['providerStatus'] =
+    matchTier === 'exact' ? 'available' : 'partial'
   let operatorListStatus: RuntimeTraceForSheetResult['operatorListStatus'] = 'unknown'
   let textContentStatus: RuntimeTraceForSheetResult['textContentStatus'] = 'unknown'
 
@@ -403,10 +419,21 @@ export async function extractTraceForBlueprintSheet(
       expectedAdapterFields: ['provider.getPage', 'page.getOperatorList', 'page.getTextContent'],
     })
 
+    let mergedWarnings = extracted.warnings
+    if (providerStatus === 'partial') {
+      mergedWarnings = addWarning(
+        mergedWarnings,
+        'RUNTIME_PROVIDER_PARTIAL_MATCH',
+        `Runtime PDF provider matched by partial identity only (${runtimeDebug.matchReason}). ` +
+          `Registered key "${key}" does not exactly equal requested key "${runtimeDebug.requestedKey}".`,
+      )
+    }
+
     const payload: PdfTracePayload | null = extracted.payload
       ? {
           ...extracted.payload,
           runtime: {
+            providerMatchTier: matchTier,
             providerStatus,
             providerKey: key,
             providerRequestedKey: runtimeDebug.requestedKey,
@@ -418,12 +445,13 @@ export async function extractTraceForBlueprintSheet(
             textContentStatus,
             opsSource: extracted.opsSource,
           },
-          warnings: extracted.warnings,
+          warnings: mergedWarnings,
         }
       : null
 
     return {
       providerStatus,
+      providerMatchTier: matchTier,
       providerKey: key,
       providerRequestedKey: runtimeDebug.requestedKey,
       providerRegisteredKeys: runtimeDebug.registeredKeys,
@@ -435,7 +463,7 @@ export async function extractTraceForBlueprintSheet(
       result: {
         success: hasUsableTracePayload(payload),
         payload,
-        warnings: extracted.warnings,
+        warnings: mergedWarnings,
       },
     }
   } catch (error: any) {
@@ -459,6 +487,7 @@ export async function extractTraceForBlueprintSheet(
       ? {
           ...extracted.payload,
           runtime: {
+            providerMatchTier: matchTier,
             providerStatus,
             providerKey: key,
             providerRequestedKey: runtimeDebug.requestedKey,
@@ -476,6 +505,7 @@ export async function extractTraceForBlueprintSheet(
 
     return {
       providerStatus,
+      providerMatchTier: matchTier,
       providerKey: key,
       providerRequestedKey: runtimeDebug.requestedKey,
       providerRegisteredKeys: runtimeDebug.registeredKeys,
