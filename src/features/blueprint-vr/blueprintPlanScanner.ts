@@ -2079,8 +2079,9 @@ export function runWave2WallExtractionFromAdapted(params: {
     })
   }
 
-  const rooms: PlanRoomCandidate[] = [
-    {
+  const rooms: PlanRoomCandidate[] = inferRoomsFromEnclosedOrGridLayout(walls, fp)
+  if (rooms.length === 0) {
+    rooms.push({
       id: WAVE2_EXTRACTED_SUITE_ROOM_ID,
       label: 'Extracted plan (vector)',
       type: 'other',
@@ -2089,13 +2090,25 @@ export function runWave2WallExtractionFromAdapted(params: {
         max: { x: fp.x + fp.width, y: fp.y + fp.height },
       },
       confidence: fpConfidence,
-    },
-  ]
+    })
+  }
 
   const confidence = Math.min(
     0.86,
     Math.max(0.48, fpConfidence * 0.55 + Math.min(0.35, classified.length * 0.012)),
   )
+
+  if (rooms.length > 25) {
+    return {
+      ...reject('implausible_room_count_likely_table_grid'),
+      wallCandidatesRaw,
+      wallCandidatesFiltered,
+      orthogonalLongCandidatesPreMargin,
+      worldMarginArtifactRemovedCount,
+      classifiedSegmentsTotal: classified.length,
+      wallNetworkFilter,
+    }
+  }
 
   return {
     accepted: true,
@@ -3163,6 +3176,14 @@ function scorePageForWallPlanRanking(
   const grid = pageTableGridAnalysisForTrace(trace)
   const evidence = vectorEvidenceScore(trace)
   const semanticBoost = floorPlanSemanticBoostFromPage(page)
+
+  if (grid.isLikelyTableGrid && semanticBoost < 0.5) {
+    return { sortScore: -Infinity, grid, semanticBoost }
+  }
+
+  if (!evidence.wave2Accepted && evidence.geomCount < 100) {
+    return { sortScore: -Infinity, grid, semanticBoost }
+  }
 
   let sortScore = 0
   if (evidence.wave2Accepted) sortScore += 1200
