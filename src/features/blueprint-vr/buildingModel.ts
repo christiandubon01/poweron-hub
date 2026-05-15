@@ -132,6 +132,34 @@ export interface BuildingWallModel {
   confidence?: number
 }
 
+/**
+ * Canonical 2D segment extracted from vector plan traces (Wave 2 wall model).
+ * Coordinates are plan/world feet consistent with {@link BlueprintBuildingModel}.
+ */
+export interface ExtractedWallPlanSegment {
+  id: string
+  start: Point2D
+  end: Point2D
+  classification: 'exterior' | 'interior' | 'partition'
+  /** Inferred from double-line spacing when available. */
+  inferredThicknessFt?: number
+  confidence: number
+  /** 1-based PDF page when geometry is merged from multiple canonical sheets. */
+  sourcePageNumber?: number
+}
+
+/**
+ * Detected building outline on a sheet — distinct from the physical page border.
+ */
+export interface DetectedPlanFootprint {
+  /** Ordered boundary corners when a simple rect is recovered; may be empty. */
+  boundaryPoints: Point2D[]
+  boundingRect: Rectangle
+  confidence: number
+  /** True when the recovered outline tracks the sheet bleed box too closely. */
+  isLikelyPageFrame: boolean
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Electrical Anchors and Panel Locations
 // ─────────────────────────────────────────────────────────────────────────────

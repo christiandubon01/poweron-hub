@@ -26,7 +26,7 @@ import {
 import { getCatalogItemsByStage } from './electricalCatalog'
 import type { ElectricalCatalogItem } from './electricalCatalog'
 import Blueprint3DSpaceViewer, { computeBlueprintVRViewportPixels } from './Blueprint3DSpaceViewer'
-import MeasuredPlanViewer from './MeasuredPlanViewer'
+import MeasuredPlanViewer, { MeasuredPlanViewerBadgeHud } from './MeasuredPlanViewer'
 import BlueprintRoomInteriorView from './BlueprintRoomInteriorView'
 import BlueprintVRSourceSelector from './BlueprintVRSourceSelector'
 import type { SourceScanAccuracy } from './BlueprintVRSourceSelector'
@@ -178,6 +178,8 @@ interface BvrMeasuredPlanScrollHostProps {
   onPlanClickCapture?: (e: React.MouseEvent<HTMLDivElement>) => void
   /** Extra top inset so floating chrome (e.g. Proposed Walls header) does not cover the plan. */
   reserveTopPx?: number
+  /** Rendered above the plan, outside the zoom/pan transform (viewport-fixed HUD). */
+  viewportBadgeHud?: React.ReactNode
   children: (dims: { w: number; h: number }) => React.ReactNode
 }
 
@@ -189,6 +191,7 @@ function BvrMeasuredPlanScrollHost({
   onPanMouseDown,
   onPlanClickCapture,
   reserveTopPx = 0,
+  viewportBadgeHud,
   children,
 }: BvrMeasuredPlanScrollHostProps) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -271,6 +274,18 @@ function BvrMeasuredPlanScrollHost({
           >
             {children(dims)}
           </div>
+          {viewportBadgeHud ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                zIndex: 6,
+              }}
+            >
+              {viewportBadgeHud}
+            </div>
+          ) : null}
         </div>
       )}
     </div>
@@ -856,6 +871,17 @@ function ScanStatusBanner({
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
         Wall candidates {debug?.mergedWalls ?? scan.walls.length} · Room candidates {debug?.roomCandidates ?? scan.rooms.length}
       </div>
+      {debug?.wallCandidatesRaw != null && (
+        <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(170,235,210,0.92)' }}>
+          W2 extract: cand {debug.wallCandidatesRaw}→{debug.wallCandidatesFiltered ?? '—'} · fp conf{' '}
+          {debug.footprintConfidence != null ? `${Math.round(debug.footprintConfidence * 100)}%` : '—'} · ext/int/part{' '}
+          {debug.wave2ExteriorCount ?? 0}/{debug.wave2InteriorCount ?? 0}/{debug.wave2PartitionCount ?? 0}
+          {scan.geometrySourcePageNumbers?.length ? ` · geom p${scan.geometrySourcePageNumbers.join(',')}` : ''}
+          {scan.wallExtractionBlockers?.length
+            ? ` · blk ${scan.wallExtractionBlockers.slice(0, 2).join('; ')}`
+            : ''}
+        </div>
+      )}
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(255,200,145,0.95)' }}>
         Confidence cap reason: {confidenceCapReason}
       </div>
@@ -2465,6 +2491,13 @@ export default function BlueprintVRExperiencePanel({
                     onWheelZoom={handlePlanWheelZoom}
                     onPanMouseDown={handlePlanPanMouseDown}
                     onPlanClickCapture={handlePlanClickCapture}
+                    viewportBadgeHud={
+                      <MeasuredPlanViewerBadgeHud
+                        model={buildingModel}
+                        wallOnlyMode
+                        traceDebug={scanResult.traceDebugCounts || null}
+                      />
+                    }
                   >
                     {(dims) => (
                       <MeasuredPlanViewer
@@ -2481,6 +2514,7 @@ export default function BlueprintVRExperiencePanel({
                         activeStage={activeStage}
                         roomInteractionStyle="subtle"
                         traceDebug={scanResult.traceDebugCounts || null}
+                        renderBadgesInTransformedLayer={false}
                       />
                     )}
                   </BvrMeasuredPlanScrollHost>
@@ -2496,6 +2530,13 @@ export default function BlueprintVRExperiencePanel({
                 onWheelZoom={handlePlanWheelZoom}
                 onPanMouseDown={handlePlanPanMouseDown}
                 onPlanClickCapture={handlePlanClickCapture}
+                viewportBadgeHud={
+                  <MeasuredPlanViewerBadgeHud
+                    model={buildingModel}
+                    wallOnlyMode={false}
+                    traceDebug={scanResult.traceDebugCounts || null}
+                  />
+                }
               >
                 {(dims) => (
                   <MeasuredPlanViewer
@@ -2511,6 +2552,7 @@ export default function BlueprintVRExperiencePanel({
                     showElectrical={showElectrical}
                     roomInteractionStyle="subtle"
                     traceDebug={scanResult.traceDebugCounts || null}
+                    renderBadgesInTransformedLayer={false}
                   />
                 )}
               </BvrMeasuredPlanScrollHost>

@@ -64,9 +64,18 @@ export interface MeasuredPlanViewerProps {
     openings: number
     roomCandidates: number
     runtimeProviderStatus?: string
+    runtimeProviderMatchTier?: string
     operatorListStatus?: string
     textContentStatus?: string
     confidenceCapReason?: string
+    wallCandidatesRaw?: number
+    wallCandidatesFiltered?: number
+    footprintConfidence?: number
+    wave2ExteriorCount?: number
+    wave2InteriorCount?: number
+    wave2PartitionCount?: number
+    wallExtractionBlockersPreview?: string
+    geometrySourcePageNumbers?: number[]
   } | null
   /**
    * 2D Plan / Proposed Walls: subtler room fills and titles when using subtle
@@ -74,6 +83,118 @@ export interface MeasuredPlanViewerProps {
    * omitted (legacy); VR panel passes entry intent so only green dots navigate.
    */
   roomInteractionStyle?: 'default' | 'subtle'
+  /**
+   * When false, badges are omitted from this component’s DOM so a parent can
+   * render {@link MeasuredPlanViewerBadgeHud} in a non-transformed viewport
+   * overlay (zoom/pan hosts).
+   */
+  renderBadgesInTransformedLayer?: boolean
+}
+
+export interface MeasuredPlanViewerBadgeHudProps {
+  model: BlueprintBuildingModel
+  showBadges?: boolean
+  wallOnlyMode?: boolean
+  traceDebug?: MeasuredPlanViewerProps['traceDebug']
+}
+
+/** Viewport-fixed badge strip; use outside CSS zoom/pan transforms. */
+export function MeasuredPlanViewerBadgeHud({
+  model,
+  showBadges = true,
+  wallOnlyMode = false,
+  traceDebug = null,
+}: MeasuredPlanViewerBadgeHudProps): JSX.Element | null {
+  if (!showBadges) return null
+  if (!model || model.footprint.width === 0 || model.footprint.height === 0) return null
+
+  const allRooms: BuildingRoomModel[] = model.levels.flatMap((l) => l.rooms)
+  const allWalls: Array<{ wall: BuildingWallModel; room: BuildingRoomModel }> =
+    allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
+  const isFallback = model.metadata.source === 'fallback'
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 10,
+        left: 10,
+        display: 'flex',
+        gap: 8,
+        flexWrap: 'wrap',
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: 'rgba(42,63,95,0.95)',
+          color: '#a0d8ff',
+          padding: '3px 7px',
+          borderRadius: 4,
+          fontSize: 10,
+          border: '1px solid #4a90e2',
+          fontFamily: 'monospace',
+        }}
+      >
+        Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
+      </div>
+      {wallOnlyMode ? (
+        <div
+          style={{
+            backgroundColor: isFallback ? 'rgba(95,42,42,0.95)' : 'rgba(20,60,48,0.95)',
+            color: isFallback ? '#FF9999' : '#7BE5D8',
+            padding: '3px 7px',
+            borderRadius: 4,
+            fontSize: 10,
+            border: isFallback ? '1px solid #FF5555' : '1px solid #00ddcc',
+            fontFamily: 'monospace',
+            letterSpacing: 0.5,
+          }}
+        >
+          {isFallback
+            ? 'WALL EXTRACTION FAILED · FALLBACK TEMPLATE'
+            : `FULL-SET PROPOSED WALL LAYOUT · ${allWalls.length} walls · ${allWalls.reduce((n, { wall }) => n + wall.openings.length, 0)} openings`}
+        </div>
+      ) : (
+        <div
+          style={{
+            backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
+            color: isFallback ? '#ffd0a0' : '#a0ffa0',
+            padding: '3px 7px',
+            borderRadius: 4,
+            fontSize: 10,
+            border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
+            fontFamily: 'monospace',
+          }}
+        >
+          {isFallback ? 'FALLBACK LAYOUT (NOT MEASURED)' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
+        </div>
+      )}
+      {traceDebug && (
+        <div
+          style={{
+            backgroundColor: 'rgba(20,28,38,0.95)',
+            color: '#9ec7f9',
+            padding: '3px 7px',
+            borderRadius: 4,
+            fontSize: 10,
+            border: '1px solid rgba(158,199,249,0.45)',
+            fontFamily: 'monospace',
+          }}
+        >
+          TRACE DEBUG · raw {traceDebug.rawLines} · walls {traceDebug.mergedWalls} · opn {traceDebug.openings} · rooms {traceDebug.roomCandidates}
+          {traceDebug.wallCandidatesRaw != null ? ` · cand ${traceDebug.wallCandidatesRaw}→${traceDebug.wallCandidatesFiltered ?? '?'}` : ''}
+          {traceDebug.footprintConfidence != null ? ` · fp ${Math.round(traceDebug.footprintConfidence * 100)}%` : ''}
+          {traceDebug.wave2ExteriorCount != null
+            ? ` · ext/int/part ${traceDebug.wave2ExteriorCount}/${traceDebug.wave2InteriorCount ?? 0}/${traceDebug.wave2PartitionCount ?? 0}`
+            : ''}
+          {traceDebug.geometrySourcePageNumbers?.length ? ` · src p${traceDebug.geometrySourcePageNumbers.join(',')}` : ''}
+          {traceDebug.wallExtractionBlockersPreview ? ` · blk ${traceDebug.wallExtractionBlockersPreview}` : ''}
+          {traceDebug.runtimeProviderMatchTier ? ` · tier ${traceDebug.runtimeProviderMatchTier}` : ''}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -461,6 +582,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   traceDebug = null,
   className,
   roomInteractionStyle = 'default',
+  renderBadgesInTransformedLayer = true,
 }) => {
   const canvasSize = useMemo(
     () => ({ width: width || 760, height: height || 430 }),
@@ -523,7 +645,6 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
 
   const accent = STAGE_PLAN_ACCENT[activeStage]
-  const isFallback = model.metadata.source === 'fallback'
 
   const planRoomVisualMode: PlanRoomVisualMode =
     wallOnlyMode && onPlanRoomEntryIntent
@@ -836,79 +957,12 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
 
       </svg>
 
-      {showBadges && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 10,
-            left: 10,
-            display: 'flex',
-            gap: 8,
-            flexWrap: 'wrap',
-            pointerEvents: 'none',
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: 'rgba(42,63,95,0.95)',
-              color: '#a0d8ff',
-              padding: '3px 7px',
-              borderRadius: 4,
-              fontSize: 10,
-              border: '1px solid #4a90e2',
-              fontFamily: 'monospace',
-            }}
-          >
-            Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
-          </div>
-          {wallOnlyMode ? (
-            <div
-              style={{
-                backgroundColor: isFallback ? 'rgba(95,42,42,0.95)' : 'rgba(20,60,48,0.95)',
-                color: isFallback ? '#FF9999' : '#7BE5D8',
-                padding: '3px 7px',
-                borderRadius: 4,
-                fontSize: 10,
-                border: isFallback ? '1px solid #FF5555' : '1px solid #00ddcc',
-                fontFamily: 'monospace',
-                letterSpacing: 0.5,
-              }}
-            >
-              {isFallback
-                ? 'WALL EXTRACTION FAILED'
-                : `FULL-SET PROPOSED WALL LAYOUT · ${allWalls.length} walls · ${allWalls.reduce((n, {wall}) => n + wall.openings.length, 0)} openings`}
-            </div>
-          ) : (
-            <div
-              style={{
-                backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
-                color: isFallback ? '#ffd0a0' : '#a0ffa0',
-                padding: '3px 7px',
-                borderRadius: 4,
-                fontSize: 10,
-                border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
-                fontFamily: 'monospace',
-              }}
-            >
-              {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
-            </div>
-          )}
-          {traceDebug && (
-            <div
-              style={{
-                backgroundColor: 'rgba(20,28,38,0.95)',
-                color: '#9ec7f9',
-                padding: '3px 7px',
-                borderRadius: 4,
-                fontSize: 10,
-                border: '1px solid rgba(158,199,249,0.45)',
-                fontFamily: 'monospace',
-              }}
-            >
-              TRACE DEBUG · raw {traceDebug.rawLines} · walls {traceDebug.mergedWalls} · openings {traceDebug.openings} · rooms {traceDebug.roomCandidates}
-            </div>
-          )}
-        </div>
+      {showBadges && renderBadgesInTransformedLayer && (
+        <MeasuredPlanViewerBadgeHud
+          model={model}
+          wallOnlyMode={wallOnlyMode}
+          traceDebug={traceDebug}
+        />
       )}
     </div>
   )

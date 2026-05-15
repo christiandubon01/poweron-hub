@@ -113,6 +113,8 @@ export type {
   BuildingLevelModel,
   BuildingRoomModel,
   BuildingWallModel,
+  ExtractedWallPlanSegment,
+  DetectedPlanFootprint,
   BuildingOpeningModel,
   BuildingDimensionModel,
   ElectricalAnchorType,
@@ -327,6 +329,8 @@ export {
   validateRoomCandidates,
   convertRoomCandidatesToBuildingModel,
   chooseSalonSuiteFallbackFromBlueprintContext,
+  WAVE2_EXTRACTED_SUITE_ROOM_ID,
+  runWave2WallExtractionFromAdapted,
   // Full-set scan functions
   scanBlueprintFullSet,
   classifySheetRole,

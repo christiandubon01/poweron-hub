@@ -20,7 +20,9 @@ import type {
   PdfTraceArc,
   PdfTraceLine,
   PdfTracePayload,
+  PdfTracePoint,
   PdfTracePolyline,
+  PdfTraceRect,
   PdfTraceScaleHint,
   PdfTraceTextRun,
   WorldPoint2D,
@@ -451,4 +453,162 @@ export function inferScaleFromTraceText(textRuns: PdfTraceTextRun[]): PdfTraceSc
     source: 'trace-text',
     raw: m[0],
   }
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 — PDF-space sheet artifact filtering (canonical wall-plan traces)
+// ---------------------------------------------------------------------------
+
+export interface PdfTraceWallSanitizeStats {
+  removedPageFrameRects: number
+  removedMarginEdgeLines: number
+  removedTitleBlockShortLines: number
+  removedShortTicks: number
+}
+
+function clonePayloadShell(payload: PdfTracePayload): PdfTracePayload {
+  return {
+    ...payload,
+    lines: [...(payload.lines || [])],
+    rects: [...(payload.rects || [])],
+    polylines: [...(payload.polylines || [])],
+    arcs: [...(payload.arcs || [])],
+    textRuns: [...(payload.textRuns || [])],
+    scaleHints: [...(payload.scaleHints || [])],
+    warnings: [...(payload.warnings || [])],
+  }
+}
+
+function isInTitleBlockPdfRegion(p: PdfTracePoint, W: number, H: number): boolean {
+  const x = p.x
+  const y = p.y
+  const lowerRight = x > W * 0.66 && y > H * 0.55
+  const lowerLeft = x < W * 0.2 && y > H * 0.48
+  return lowerRight || lowerLeft
+}
+
+function nearPdfPageEdge(p: PdfTracePoint, W: number, H: number, margin: number): boolean {
+  return p.x <= margin || p.x >= W - margin || p.y <= margin || p.y >= H - margin
+}
+
+function segmentPdfLength(a: PdfTracePoint, b: PdfTracePoint): number {
+  return Math.hypot(b.x - a.x, b.y - a.y)
+}
+
+function isLikelyPageFrameRect(r: PdfTraceRect, W: number, H: number, margin: number): boolean {
+  if (r.width <= 0 || r.height <= 0) return false
+  const covers =
+    r.width >= W * 0.88 &&
+    r.height >= H * 0.88 &&
+    r.x <= margin * 3 &&
+    r.y <= margin * 3 &&
+    r.x + r.width >= W - margin * 3 &&
+    r.y + r.height >= H - margin * 3
+  return covers
+}
+
+/**
+ * Remove sheet border, oversized page frame rectangles, title-block clutter,
+ * and very short ticks before vector→world adaptation for wall extraction.
+ */
+export function filterPdfTracePayloadForWallExtraction(
+  payload: PdfTracePayload | null | undefined,
+): { payload: PdfTracePayload | null; stats: PdfTraceWallSanitizeStats } {
+  const emptyStats: PdfTraceWallSanitizeStats = {
+    removedPageFrameRects: 0,
+    removedMarginEdgeLines: 0,
+    removedTitleBlockShortLines: 0,
+    removedShortTicks: 0,
+  }
+  if (!payload) return { payload: null, stats: emptyStats }
+  const W = Math.max(1, Number(payload.pageBounds?.width) || 1)
+  const H = Math.max(1, Number(payload.pageBounds?.height) || 1)
+  const margin = Math.max(6, Math.min(W, H) * 0.014)
+  const diag = Math.hypot(W, H)
+  const out = clonePayloadShell(payload)
+  const stats: PdfTraceWallSanitizeStats = { ...emptyStats }
+
+  const keptRects: PdfTraceRect[] = []
+  for (const r of out.rects || []) {
+    if (isLikelyPageFrameRect(r, W, H, margin)) {
+      stats.removedPageFrameRects += 1
+      continue
+    }
+    keptRects.push(r)
+  }
+  out.rects = keptRects
+
+  const filterLine = (line: PdfTraceLine): boolean => {
+    const len = segmentPdfLength(line.start, line.end)
+    const mid = { x: (line.start.x + line.end.x) / 2, y: (line.start.y + line.end.y) / 2 }
+    const edgeA = nearPdfPageEdge(line.start, W, H, margin)
+    const edgeB = nearPdfPageEdge(line.end, W, H, margin)
+    if (len < diag * 0.006) {
+      stats.removedShortTicks += 1
+      return false
+    }
+    if (edgeA && edgeB && len >= Math.min(W, H) * 0.82) {
+      stats.removedMarginEdgeLines += 1
+      return false
+    }
+    if (isInTitleBlockPdfRegion(mid, W, H) && len < diag * 0.14) {
+      stats.removedTitleBlockShortLines += 1
+      return false
+    }
+    return true
+  }
+
+  out.lines = (out.lines || []).filter(filterLine)
+
+  out.polylines = [...(out.polylines || [])]
+
+  return { payload: out, stats }
+}
+
+/**
+ * Page bounds in the same world units as {@link PlanTraceLine} (feet-like trace space).
+ */
+export function computeWorldPageBoundsFromPayload(
+  payload: PdfTracePayload | null | undefined,
+  scale: PdfTraceScaleHint | null,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (!payload?.pageBounds) return null
+  const s =
+    scale && scale.pixelsPerFoot > 0
+      ? scale
+      : { pixelsPerFoot: 1, confidence: 0.1, source: 'default' as const }
+  const factor = s.pixelsPerFoot > 0 ? 1 / s.pixelsPerFoot : 1
+  const maxX = payload.pageBounds.width * factor
+  const maxY = payload.pageBounds.height * factor
+  return { minX: 0, minY: 0, maxX, maxY: maxY }
+}
+
+/**
+ * Drop segments that still hug the physical sheet edge in world units (bleed/frame).
+ */
+export function filterWorldMarginArtifactLines(
+  lines: PlanTraceLine[],
+  page: { minX: number; minY: number; maxX: number; maxY: number },
+): PlanTraceLine[] {
+  const pw = page.maxX - page.minX
+  const ph = page.maxY - page.minY
+  if (pw < 1 || ph < 1) return lines
+  const m = Math.max(0.35, Math.min(pw, ph) * 0.012)
+  const onSameOuterEdge = (a: WorldPoint2D, b: WorldPoint2D): 'n' | 's' | 'e' | 'w' | null => {
+    const tol = m * 1.2
+    const near = (v: number, t: number) => Math.abs(v - t) <= tol
+    if (near(a.y, page.minY) && near(b.y, page.minY)) return 'n'
+    if (near(a.y, page.maxY) && near(b.y, page.maxY)) return 's'
+    if (near(a.x, page.minX) && near(b.x, page.minX)) return 'w'
+    if (near(a.x, page.maxX) && near(b.x, page.maxX)) return 'e'
+    return null
+  }
+  return lines.filter((line) => {
+    const len = line.lengthFt
+    if (len < Math.min(pw, ph) * 0.75) return true
+    const edge = onSameOuterEdge(line.start, line.end)
+    if (!edge) return true
+    if (len >= Math.min(pw, ph) * 0.78) return false
+    return true
+  })
 }
