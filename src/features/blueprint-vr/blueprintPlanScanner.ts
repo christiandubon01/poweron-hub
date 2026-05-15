@@ -391,6 +391,12 @@ export interface BlueprintPlanScanResult {
     removedFurnitureNoiseSegments?: number
     finalWallNetworkSegments?: number
     rejectedTinyCoreComponents?: number
+    rejectedEmptyFrameComponents?: number
+    selectedPlanCoreComponentScore?: number
+    selectedPlanCoreDensity?: number
+    selectedPlanCoreInternalSegments?: number
+    selectedPlanCorePerimeterRatio?: number
+    removedEmptyFrameSegments?: number
     keptWallNetworkComponents?: number
     /** Wave 2 — detected building footprint confidence (0–1). */
     footprintConfidence?: number
@@ -2682,6 +2688,12 @@ export function scanBlueprintPlan(
       removedFurnitureNoiseSegments: wave2.wallNetworkFilter?.removedFurnitureNoiseSegments,
       finalWallNetworkSegments: wave2.wallNetworkFilter?.finalWallNetworkSegments,
       rejectedTinyCoreComponents: wave2.wallNetworkFilter?.rejectedTinyCoreComponents,
+      rejectedEmptyFrameComponents: wave2.wallNetworkFilter?.rejectedEmptyFrameComponents,
+      selectedPlanCoreComponentScore: wave2.wallNetworkFilter?.selectedPlanCoreComponentScore,
+      selectedPlanCoreDensity: wave2.wallNetworkFilter?.selectedPlanCoreDensity,
+      selectedPlanCoreInternalSegments: wave2.wallNetworkFilter?.selectedPlanCoreInternalSegments,
+      selectedPlanCorePerimeterRatio: wave2.wallNetworkFilter?.selectedPlanCorePerimeterRatio,
+      removedEmptyFrameSegments: wave2.wallNetworkFilter?.removedEmptyFrameSegments,
       keptWallNetworkComponents: wave2.wallNetworkFilter?.keptWallNetworkComponents,
       footprintConfidence: wave2.detectedFootprint.confidence,
       wave2ExteriorCount: exteriorWallSegments.length,

@@ -700,6 +700,12 @@ export interface WallNetworkFilterStats {
   removedFurnitureNoiseSegments: number
   finalWallNetworkSegments: number
   rejectedTinyCoreComponents: number
+  rejectedEmptyFrameComponents: number
+  selectedPlanCoreComponentScore: number
+  selectedPlanCoreDensity: number
+  selectedPlanCoreInternalSegments: number
+  selectedPlanCorePerimeterRatio: number
+  removedEmptyFrameSegments: number
   keptWallNetworkComponents: number
 }
 
@@ -910,7 +916,8 @@ export function detectPlanCoreBounds(
       peakIdx = i
     }
   }
-  const componentCoreEarly = detectPlanCoreFromRankedComponents(densitySource, page, outer)
+  const componentSelectionEarly = selectDensePlanCoreFromComponents(densitySource, page, outer)
+  const componentCoreEarly = componentSelectionEarly.bounds
   if (peak < 1.2) {
     if (componentCoreEarly) return componentCoreEarly
     return shrinkBoundsInset(outer, 0.12)
@@ -958,22 +965,27 @@ export function detectPlanCoreBounds(
   }
 
   const gridCoreSegments = countSegmentsInsideBounds(densitySource, gridCore, 0)
-  const gridCoreArea = boundsArea(gridCore)
-  const componentCore = componentCoreEarly ?? detectPlanCoreFromRankedComponents(densitySource, page, outer)
+  const gridDensity = coreDensityScore(gridCore, densitySource)
+  const componentSelection =
+    componentSelectionEarly.bounds != null
+      ? componentSelectionEarly
+      : selectDensePlanCoreFromComponents(densitySource, page, outer)
+  const componentCore = componentSelection.bounds
   if (componentCore) {
     const compSegments = countSegmentsInsideBounds(lines, componentCore, 0)
-    const compArea = boundsArea(componentCore)
+    const compDensity = componentSelection.selectedPlanCoreDensity || coreDensityScore(componentCore, densitySource)
     const gridTooSmall =
       gridCoreSegments < MIN_MEANINGFUL_CORE_SEGMENTS &&
       compSegments >= MIN_MEANINGFUL_CORE_SEGMENTS
-    const compMuchLarger =
-      compSegments >= gridCoreSegments * 1.35 && compArea >= gridCoreArea * 0.55
-    if (gridTooSmall || compMuchLarger) return componentCore
+    const compDenser = compDensity >= gridDensity * 1.15
+    const gridLooksHollow = gridDensity < 0.055 && compDensity >= 0.07
+    if (gridTooSmall || compDenser || gridLooksHollow) return componentCore
   }
 
   if (gridCoreSegments < MIN_MEANINGFUL_CORE_SEGMENTS && componentCore) {
     return componentCore
   }
+  if (gridDensity < 0.05 && componentCore) return componentCore
   return gridCore
 }
 
@@ -984,9 +996,23 @@ interface WallComponentMetrics {
   totalLength: number
   orthogonalCount: number
   intersectionHits: number
-  avgDistFromSheetBorder: number
-  perimeterRingRatio: number
+  endpointConnections: number
+  internalSegmentCount: number
+  internalSegmentDensity: number
+  perimeterLengthRatio: number
+  roomLikeScore: number
+  isEmptyFrame: boolean
   isTitleBlockLike: boolean
+}
+
+interface PlanCoreSelectionResult {
+  bounds: PlanCoreBounds | null
+  rejectedEmptyFrameComponents: number
+  selectedPlanCoreComponentScore: number
+  selectedPlanCoreDensity: number
+  selectedPlanCoreInternalSegments: number
+  selectedPlanCorePerimeterRatio: number
+  emptyFrameLineIds: Set<string>
 }
 
 function buildLineAdjacency(lines: PlanTraceLine[]): Map<string, Set<string>> {
@@ -1046,12 +1072,113 @@ function connectedComponentsFromAdjacency(
       totalLength,
       orthogonalCount,
       intersectionHits: 0,
-      avgDistFromSheetBorder: 0,
-      perimeterRingRatio: 0,
+      endpointConnections: 0,
+      internalSegmentCount: 0,
+      internalSegmentDensity: 0,
+      perimeterLengthRatio: 0,
+      roomLikeScore: 0,
+      isEmptyFrame: false,
       isTitleBlockLike: false,
     })
   }
   return out
+}
+
+function lineMidpointOnComponentPerimeter(line: PlanTraceLine, b: PlanCoreBounds, margin: number): boolean {
+  const mid = traceLineMidpoint(line)
+  return isNearBoundsEdge(mid, b, margin)
+}
+
+function enrichWallComponentMetrics(comp: WallComponentMetrics, compLines: PlanTraceLine[]): void {
+  if (!compLines.length) return
+  const bw = comp.bounds.maxX - comp.bounds.minX
+  const bh = comp.bounds.maxY - comp.bounds.minY
+  const area = boundsArea(comp.bounds)
+  const edgeMargin = Math.max(0.35, Math.min(bw, bh) * 0.04)
+  const insetBounds = shrinkBoundsInset(comp.bounds, 0.12)
+
+  let perimeterLength = 0
+  let internalCount = 0
+  let interiorOrthogonal = 0
+  for (const line of compLines) {
+    if (lineMidpointOnComponentPerimeter(line, comp.bounds, edgeMargin)) {
+      perimeterLength += line.lengthFt
+    }
+    if (segmentMidpointInsideBounds(line, insetBounds, 0)) {
+      internalCount += 1
+      if (line.orthogonal && !lineMidpointOnComponentPerimeter(line, comp.bounds, edgeMargin * 1.2)) {
+        interiorOrthogonal += 1
+      }
+    }
+  }
+
+  const endpointBuckets = new Map<string, number>()
+  const bucketKey = (p: WorldPoint2D) =>
+    `${Math.round(p.x / (ENDPOINT_SNAP_FT * 0.5))}:${Math.round(p.y / (ENDPOINT_SNAP_FT * 0.5))}`
+  for (const line of compLines) {
+    const k1 = bucketKey(line.start)
+    const k2 = bucketKey(line.end)
+    endpointBuckets.set(k1, (endpointBuckets.get(k1) || 0) + 1)
+    endpointBuckets.set(k2, (endpointBuckets.get(k2) || 0) + 1)
+  }
+  let intersectionHits = 0
+  let endpointConnections = 0
+  for (const count of endpointBuckets.values()) {
+    if (count >= 2) intersectionHits += count - 1
+    if (count >= 2) endpointConnections += 1
+  }
+
+  const insetArea = boundsArea(insetBounds)
+  const internalSegmentDensity = internalCount / Math.max(1, insetArea)
+  const perimeterLengthRatio = comp.totalLength > 0 ? perimeterLength / comp.totalLength : 0
+  const orthoRatio = comp.orthogonalCount / Math.max(1, comp.segmentCount)
+  const interiorRatio = interiorOrthogonal / Math.max(1, comp.segmentCount)
+  const roomLikeScore = Math.min(
+    1,
+    interiorRatio * 0.42 +
+      Math.min(1, intersectionHits / 18) * 0.34 +
+      Math.min(1, internalSegmentDensity * 55) * 0.24,
+  )
+
+  comp.internalSegmentCount = internalCount
+  comp.internalSegmentDensity = internalSegmentDensity
+  comp.perimeterLengthRatio = perimeterLengthRatio
+  comp.intersectionHits = intersectionHits
+  comp.endpointConnections = endpointConnections
+  comp.roomLikeScore = roomLikeScore
+
+  const aspect = bw > 0 && bh > 0 ? Math.min(bw, bh) / Math.max(bw, bh) : 0
+  const mostlyPerimeter = perimeterLengthRatio >= 0.58 && internalCount <= Math.max(2, comp.segmentCount * 0.28)
+  const fewCorners = intersectionHits <= Math.max(1, Math.floor(comp.segmentCount * 0.2))
+  const largeHollowBox = area >= 120 && internalSegmentDensity < 0.07 && comp.segmentCount <= 14
+  const fourEdgeRing =
+    comp.segmentCount <= 8 &&
+    perimeterLengthRatio >= 0.68 &&
+    intersectionHits <= 3 &&
+    orthoRatio >= 0.85
+  const tallEmptyFrame =
+    aspect <= 0.42 &&
+    area >= 180 &&
+    internalCount <= 4 &&
+    perimeterLengthRatio >= 0.52
+  const wideEmptyFrame =
+    aspect >= 0.85 &&
+    area >= 220 &&
+    internalCount <= 5 &&
+    interiorOrthogonal <= 2 &&
+    perimeterLengthRatio >= 0.5
+
+  comp.isEmptyFrame =
+    mostlyPerimeter ||
+    fourEdgeRing ||
+    largeHollowBox ||
+    tallEmptyFrame ||
+    wideEmptyFrame ||
+    (fewCorners && internalSegmentDensity < 0.045 && area >= 90)
+}
+
+function isEmptyFrameComponent(comp: WallComponentMetrics): boolean {
+  return comp.isEmptyFrame
 }
 
 function scoreWallComponent(
@@ -1062,15 +1189,29 @@ function scoreWallComponent(
   linesById?: Map<string, PlanTraceLine>,
 ): number {
   if (comp.segmentCount < 3) return -1
+  if (linesById) {
+    const compLines = comp.ids.map((id) => linesById.get(id)).filter(Boolean) as PlanTraceLine[]
+    enrichWallComponentMetrics(comp, compLines)
+  }
+  if (comp.isEmptyFrame || isEmptyFrameComponent(comp)) return -1
+
   const orthoRatio = comp.orthogonalCount / Math.max(1, comp.segmentCount)
-  let score = Math.min(1.4, comp.segmentCount / 42) * 0.32
-  score += Math.min(1.2, comp.totalLength / 220) * 0.28
-  score += orthoRatio * 0.22
+  let score = Math.min(1.4, comp.segmentCount / 42) * 0.18
+  score += Math.min(1.2, comp.totalLength / 220) * 0.14
+  score += orthoRatio * 0.1
+  score += comp.roomLikeScore * 0.32
+  score += Math.min(1, comp.internalSegmentDensity * 70) * 0.26
+  score += Math.min(1, comp.intersectionHits / 22) * 0.2
+  score += Math.min(1, comp.endpointConnections / 14) * 0.08
+  score -= comp.perimeterLengthRatio * 0.38
+  if (comp.internalSegmentCount < 4 && boundsArea(comp.bounds) > 100) score -= 0.42
+  if (comp.perimeterLengthRatio >= 0.62 && comp.internalSegmentCount <= 3) score -= 0.55
+
   const bw = comp.bounds.maxX - comp.bounds.minX
   const bh = comp.bounds.maxY - comp.bounds.minY
   const aspect = bw > 0 && bh > 0 ? Math.min(bw, bh) / Math.max(bw, bh) : 0
-  if (aspect >= 0.12 && aspect <= 0.95) score += 0.08
-  if (bw >= 8 && bh >= 8 && bw <= 220 && bh <= 220) score += 0.1
+  if (aspect >= 0.12 && aspect <= 0.95) score += 0.06
+  if (bw >= 8 && bh >= 8 && bw <= 220 && bh <= 220) score += 0.05
 
   if (page) {
     const pw = page.maxX - page.minX
@@ -1113,26 +1254,45 @@ function scoreWallComponent(
   return score
 }
 
-function detectPlanCoreFromRankedComponents(
+function selectDensePlanCoreFromComponents(
   lines: PlanTraceLine[],
   page: { minX: number; minY: number; maxX: number; maxY: number } | null,
   outer: PlanCoreBounds,
-): PlanCoreBounds | null {
+): PlanCoreSelectionResult {
+  const empty: PlanCoreSelectionResult = {
+    bounds: null,
+    rejectedEmptyFrameComponents: 0,
+    selectedPlanCoreComponentScore: 0,
+    selectedPlanCoreDensity: 0,
+    selectedPlanCoreInternalSegments: 0,
+    selectedPlanCorePerimeterRatio: 0,
+    emptyFrameLineIds: new Set(),
+  }
   const wallish = lines.filter((l) => l.orthogonal && l.lengthFt >= 1.5)
-  if (wallish.length < 6) return null
+  if (wallish.length < 6) return empty
   const adj = buildLineAdjacency(wallish)
   const components = connectedComponentsFromAdjacency(wallish, adj)
-  if (!components.length) return null
+  if (!components.length) return empty
   const drawingBounds = boundsFromLines(wallish) || outer
   const medianLen = medianWallLength(wallish)
-  let best: WallComponentMetrics | null = null
-  let bestScore = -Infinity
-  let largestCount = 0
   const linesById = new Map(wallish.map((l) => [l.id, l]))
+  let largestCount = 0
+  let rejectedEmptyFrameComponents = 0
+  const emptyFrameLineIds = new Set<string>()
   for (const comp of components) {
     largestCount = Math.max(largestCount, comp.segmentCount)
+    const compLines = comp.ids.map((id) => linesById.get(id)).filter(Boolean) as PlanTraceLine[]
+    enrichWallComponentMetrics(comp, compLines)
+    if (comp.isEmptyFrame) {
+      rejectedEmptyFrameComponents += 1
+      for (const id of comp.ids) emptyFrameLineIds.add(id)
+    }
   }
+
+  let best: WallComponentMetrics | null = null
+  let bestScore = -Infinity
   for (const comp of components) {
+    if (comp.isEmptyFrame) continue
     if (comp.segmentCount < MIN_COMPONENT_SEGMENTS_WHEN_LARGER_EXISTS && largestCount >= MIN_MEANINGFUL_CORE_SEGMENTS) {
       comp.isTitleBlockLike = true
     }
@@ -1142,14 +1302,38 @@ function detectPlanCoreFromRankedComponents(
       best = comp
     }
   }
-  if (!best || bestScore < 0.15) return null
+  if (!best || bestScore < 0.22) return { ...empty, rejectedEmptyFrameComponents, emptyFrameLineIds }
+
   const pad = Math.max(0.8, Math.min(best.bounds.maxX - best.bounds.minX, best.bounds.maxY - best.bounds.minY) * 0.06)
   return {
-    minX: best.bounds.minX - pad,
-    minY: best.bounds.minY - pad,
-    maxX: best.bounds.maxX + pad,
-    maxY: best.bounds.maxY + pad,
+    bounds: {
+      minX: best.bounds.minX - pad,
+      minY: best.bounds.minY - pad,
+      maxX: best.bounds.maxX + pad,
+      maxY: best.bounds.maxY + pad,
+    },
+    rejectedEmptyFrameComponents,
+    selectedPlanCoreComponentScore: bestScore,
+    selectedPlanCoreDensity: best.internalSegmentDensity,
+    selectedPlanCoreInternalSegments: best.internalSegmentCount,
+    selectedPlanCorePerimeterRatio: best.perimeterLengthRatio,
+    emptyFrameLineIds,
   }
+}
+
+function detectPlanCoreFromRankedComponents(
+  lines: PlanTraceLine[],
+  page: { minX: number; minY: number; maxX: number; maxY: number } | null,
+  outer: PlanCoreBounds,
+): PlanCoreBounds | null {
+  return selectDensePlanCoreFromComponents(lines, page, outer).bounds
+}
+
+function coreDensityScore(bounds: PlanCoreBounds, sourceLines: PlanTraceLine[]): number {
+  const inset = shrinkBoundsInset(bounds, 0.1)
+  const internal = countSegmentsInsideBounds(sourceLines, inset, 0)
+  const area = boundsArea(bounds)
+  return internal / Math.max(1, area)
 }
 
 function isNearBoundsEdge(
@@ -1402,10 +1586,17 @@ function isLikelySheetFrameComponent(
   page: { minX: number; minY: number; maxX: number; maxY: number } | null,
   drawingBounds: PlanCoreBounds | null,
   medianLen: number,
+  linesById?: Map<string, PlanTraceLine>,
 ): boolean {
-  if (comp.segmentCount > 14) return false
+  if (linesById) {
+    const compLines = comp.ids.map((id) => linesById.get(id)).filter(Boolean) as PlanTraceLine[]
+    enrichWallComponentMetrics(comp, compLines)
+  }
+  if (comp.isEmptyFrame || isEmptyFrameComponent(comp)) return true
+  if (comp.perimeterLengthRatio >= 0.62 && comp.internalSegmentCount <= 4) return true
+  if (comp.segmentCount > 24 && comp.internalSegmentDensity >= 0.08) return false
   const avgLen = comp.totalLength / Math.max(1, comp.segmentCount)
-  if (avgLen < medianLen * 1.6) return false
+  if (avgLen < medianLen * 1.6 && comp.segmentCount > 10) return false
   if (!drawingBounds) return false
   const dw = drawingBounds.maxX - drawingBounds.minX
   const dh = drawingBounds.maxY - drawingBounds.minY
@@ -1448,9 +1639,9 @@ function keepRankedWallNetworkComponents(
     .map((comp) => ({
       comp,
       score: scoreWallComponent(comp, page, drawingBounds, medianLen, linesById),
-      frame: isLikelySheetFrameComponent(comp, page, drawingBounds, medianLen),
+      frame: isLikelySheetFrameComponent(comp, page, drawingBounds, medianLen, linesById),
     }))
-    .filter((r) => !r.frame && r.score >= 0.12)
+    .filter((r) => !r.frame && !r.comp.isEmptyFrame && r.score >= 0.12)
     .sort((a, b) => b.score - a.score)
 
   let rejectedTinyCoreComponents = 0
@@ -1556,6 +1747,12 @@ export function filterWallCandidatesToWallNetwork(
     removedFurnitureNoiseSegments: 0,
     finalWallNetworkSegments: 0,
     rejectedTinyCoreComponents: 0,
+    rejectedEmptyFrameComponents: 0,
+    selectedPlanCoreComponentScore: 0,
+    selectedPlanCoreDensity: 0,
+    selectedPlanCoreInternalSegments: 0,
+    selectedPlanCorePerimeterRatio: 0,
+    removedEmptyFrameSegments: 0,
     keptWallNetworkComponents: 0,
   })
 
@@ -1568,9 +1765,35 @@ export function filterWallCandidatesToWallNetwork(
     boundsFromLines(filterLinesForCoreDetection(lines, page, medianLen)) ||
     boundsFromLines(lines.filter((l) => l.orthogonal && l.lengthFt >= 1.5)) ||
     boundsFromLines(lines)
-  const core = detectPlanCoreBounds(lines, page)
+  const outer = detectOuterFootprint(lines) || drawingBounds
+  const coreSelection = outer
+    ? selectDensePlanCoreFromComponents(
+        filterLinesForCoreDetection(lines, page, medianLen).length >= 6
+          ? filterLinesForCoreDetection(lines, page, medianLen)
+          : lines.filter((l) => l.orthogonal && l.lengthFt >= 1.5),
+        page,
+        outer,
+      )
+    : {
+        bounds: detectPlanCoreBounds(lines, page),
+        rejectedEmptyFrameComponents: 0,
+        selectedPlanCoreComponentScore: 0,
+        selectedPlanCoreDensity: 0,
+        selectedPlanCoreInternalSegments: 0,
+        selectedPlanCorePerimeterRatio: 0,
+        emptyFrameLineIds: new Set<string>(),
+      }
+  const core = coreSelection.bounds ?? detectPlanCoreBounds(lines, page)
   const finalCropBounds = core ? computeFinalCropBounds(core) : null
   let pool = [...lines]
+  let removedEmptyFrameSegments = 0
+  if (coreSelection.emptyFrameLineIds.size > 0) {
+    pool = pool.filter((line) => {
+      if (!coreSelection.emptyFrameLineIds.has(line.id)) return true
+      removedEmptyFrameSegments += 1
+      return false
+    })
+  }
   let removedFrameSegments = 0
   let removedSheetFrameSegments = 0
 
@@ -1718,6 +1941,12 @@ export function filterWallCandidatesToWallNetwork(
     removedFurnitureNoiseSegments,
     finalWallNetworkSegments,
     rejectedTinyCoreComponents: rankedNetwork.rejectedTinyCoreComponents,
+    rejectedEmptyFrameComponents: coreSelection.rejectedEmptyFrameComponents,
+    selectedPlanCoreComponentScore: coreSelection.selectedPlanCoreComponentScore,
+    selectedPlanCoreDensity: coreSelection.selectedPlanCoreDensity,
+    selectedPlanCoreInternalSegments: coreSelection.selectedPlanCoreInternalSegments,
+    selectedPlanCorePerimeterRatio: coreSelection.selectedPlanCorePerimeterRatio,
+    removedEmptyFrameSegments,
     keptWallNetworkComponents: rankedNetwork.keptWallNetworkComponents,
   }
 

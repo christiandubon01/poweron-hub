@@ -180,6 +180,12 @@ export interface PdfTraceWallNetworkFilterStats {
   removedDetailRegionSegments?: number
   removedOutsideCoreSegments?: number
   finalWallNetworkSegments?: number
+  rejectedEmptyFrameComponents?: number
+  selectedPlanCoreComponentScore?: number
+  selectedPlanCoreDensity?: number
+  selectedPlanCoreInternalSegments?: number
+  selectedPlanCorePerimeterRatio?: number
+  removedEmptyFrameSegments?: number
   keptWallNetworkComponents?: number
 }
 
