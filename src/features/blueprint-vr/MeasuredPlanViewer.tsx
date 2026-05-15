@@ -11,7 +11,8 @@
  *    openings rendered as transparent glass bands
  *  - Room fills, labels, area labels, dimension annotations
  *  - Source / confidence badges including a clear "Inferred Source" mark
- *  - Selected room highlight and click → enter Room View
+ *  - Optional small green room-entry dots (VR panel) with parent-handled
+ *    confirmation before switching to Room View
  *
  * The viewer is auto-sizing — it fills the parent width but locks the modal-
  * friendly aspect ratio so the long Beauty Salon plan does not leave wide
@@ -38,6 +39,11 @@ export interface MeasuredPlanViewerProps {
   className?: string
   selectedRoomId?: string | null
   onRoomSelect?: (roomId: string) => void
+  /**
+   * When set, the plan body does not navigate on click; small green dots call
+   * this instead (parent shows confirmation, then runs room navigation).
+   */
+  onPlanRoomEntryIntent?: (roomId: string) => void
   activeStage?: VRStage
   showElectrical?: boolean
   /**
@@ -63,8 +69,9 @@ export interface MeasuredPlanViewerProps {
     confidenceCapReason?: string
   } | null
   /**
-   * 2D Plan / Proposed Walls: subtler room fills, smaller titles, top hit layer
-   * for clicks so picks stay usable without covering walls or dimensions.
+   * 2D Plan / Proposed Walls: subtler room fills and titles when using subtle
+   * mode. Full-room hit targets are only used when onPlanRoomEntryIntent is
+   * omitted (legacy); VR panel passes entry intent so only green dots navigate.
    */
   roomInteractionStyle?: 'default' | 'subtle'
 }
@@ -190,6 +197,27 @@ function styleForWall(wall: BuildingWallModel, selected: boolean): WallStyle {
   return { stroke: '#b6c0cc', strokeWidth: 2 }
 }
 
+/** Model-space point for the room-view entry dot (nudged from center, clamped inside bounds). */
+function planRoomEntryDotFt(
+  room: BuildingRoomModel,
+  footprint: { width: number; height: number },
+): { x: number; y: number } {
+  const { min, max } = room.bounds
+  const cx = (min.x + max.x) / 2
+  const cy = (min.y + max.y) / 2
+  const fcx = footprint.width / 2
+  const fcy = footprint.height / 2
+  const t = 0.14
+  let x = cx + (fcx - cx) * t
+  let y = cy + (fcy - cy) * t
+  const w = max.x - min.x
+  const h = max.y - min.y
+  const pad = Math.min(0.45, w * 0.1, h * 0.1, w / 2 - 0.05, h / 2 - 0.05)
+  x = Math.max(min.x + pad, Math.min(max.x - pad, x))
+  y = Math.max(min.y + pad, Math.min(max.y - pad, y))
+  return { x, y }
+}
+
 // ─── opening rendering ───────────────────────────────────────────────────
 
 function renderOpening(
@@ -307,6 +335,8 @@ function renderOpening(
 
 // ─── room ───────────────────────────────────────────────────────────────
 
+type PlanRoomVisualMode = 'default' | 'subtle' | 'boundary'
+
 function RoomElement({
   room,
   scalePerFoot,
@@ -317,7 +347,7 @@ function RoomElement({
   showAreaLabels,
   onRoomSelect,
   accent,
-  interactionStyle = 'default',
+  roomMode = 'default',
 }: {
   room: BuildingRoomModel
   scalePerFoot: number
@@ -328,7 +358,7 @@ function RoomElement({
   showAreaLabels: boolean
   onRoomSelect?: (roomId: string) => void
   accent: string
-  interactionStyle?: 'default' | 'subtle'
+  roomMode?: PlanRoomVisualMode
 }): JSX.Element {
   const { bounds, area, label } = room
   const { min, max } = bounds
@@ -336,10 +366,14 @@ function RoomElement({
   const y1 = offsetY + min.y * scalePerFoot
   const width = (max.x - min.x) * scalePerFoot
   const height = (max.y - min.y) * scalePerFoot
-  const subtle = interactionStyle === 'subtle'
-  const titleSize = subtle
-    ? Math.max(7, Math.min(10, width / 22))
-    : Math.max(9, Math.min(13, width / 16))
+  const subtle = roomMode === 'subtle'
+  const boundary = roomMode === 'boundary'
+  const nonInteractive = subtle || boundary
+  const titleSize = boundary
+    ? Math.max(7, Math.min(10, width / 24))
+    : subtle
+      ? Math.max(7, Math.min(10, width / 22))
+      : Math.max(9, Math.min(13, width / 16))
 
   return (
     <g>
@@ -349,20 +383,32 @@ function RoomElement({
         width={width}
         height={height}
         fill={
-          subtle
-            ? isSelected
-              ? `${accent}28`
-              : 'rgba(42,63,95,0.16)'
-            : isSelected
-              ? `${accent}33`
-              : 'rgba(42,63,95,0.42)'
+          boundary
+            ? 'transparent'
+            : subtle
+              ? isSelected
+                ? `${accent}28`
+                : 'rgba(42,63,95,0.16)'
+              : isSelected
+                ? `${accent}33`
+                : 'rgba(42,63,95,0.42)'
         }
-        fillOpacity={subtle ? (isSelected ? 0.42 : 0.28) : isSelected ? 0.55 : 0.45}
-        stroke={isSelected ? accent : subtle ? 'rgba(74,144,226,0.35)' : 'rgba(74,144,226,0.55)'}
-        strokeWidth={subtle ? (isSelected ? 1.35 : 0.85) : isSelected ? 2.6 : 1.4}
-        rx={subtle ? 2 : 3}
-        style={subtle ? { pointerEvents: 'none' } : { cursor: 'pointer' }}
-        onClick={subtle ? undefined : () => onRoomSelect?.(room.id)}
+        fillOpacity={boundary ? 0 : subtle ? (isSelected ? 0.42 : 0.28) : isSelected ? 0.55 : 0.45}
+        stroke={
+          boundary
+            ? isSelected
+              ? accent
+              : 'rgba(120,140,168,0.42)'
+            : isSelected
+              ? accent
+              : subtle
+                ? 'rgba(74,144,226,0.35)'
+                : 'rgba(74,144,226,0.55)'
+        }
+        strokeWidth={boundary ? (isSelected ? 1.25 : 0.75) : subtle ? (isSelected ? 1.35 : 0.85) : isSelected ? 2.6 : 1.4}
+        rx={subtle || boundary ? 2 : 3}
+        style={nonInteractive ? { pointerEvents: 'none' } : { cursor: 'pointer' }}
+        onClick={nonInteractive ? undefined : () => onRoomSelect?.(room.id)}
       />
       {showRoomLabels && (
         <text
@@ -389,18 +435,6 @@ function RoomElement({
           {Math.round(area)} sq ft
         </text>
       )}
-      {subtle && onRoomSelect && width > 18 && height > 18 && (
-        <g style={{ pointerEvents: 'none' }} aria-hidden>
-          <circle
-            cx={x1 + width - 7}
-            cy={y1 + height - 7}
-            r={3.2}
-            fill="rgba(0,221,204,0.12)"
-            stroke={isSelected ? accent : 'rgba(0,221,204,0.45)'}
-            strokeWidth={0.9}
-          />
-        </g>
-      )}
     </g>
   )
 }
@@ -417,6 +451,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   showBadges = true,
   selectedRoomId = null,
   onRoomSelect,
+  onPlanRoomEntryIntent,
   activeStage = 'roughIn',
   showElectrical = true,
   wallOnlyMode = false,
@@ -490,6 +525,13 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   const accent = STAGE_PLAN_ACCENT[activeStage]
   const isFallback = model.metadata.source === 'fallback'
 
+  const planRoomVisualMode: PlanRoomVisualMode =
+    wallOnlyMode && onPlanRoomEntryIntent
+      ? 'boundary'
+      : roomInteractionStyle === 'subtle'
+        ? 'subtle'
+        : 'default'
+
   // De-duplicate walls by canonical key so partition walls shared between two
   // rooms render once. Use endpoints as key.
   const dedupedWalls = new Map<string, { wall: BuildingWallModel; room: BuildingRoomModel; selected: boolean }>()
@@ -539,7 +581,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
             showAreaLabels={showAreaLabels}
             onRoomSelect={onRoomSelect}
             accent={accent}
-            interactionStyle={roomInteractionStyle}
+            roomMode={planRoomVisualMode}
           />
         ))}
 
@@ -726,9 +768,10 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
             )
           })}
 
-        {/* Top pick layer — subtle 2D mode so walls/dims stay readable */}
+        {/* Full-room hit layer — only when subtle mode still uses rect navigation */}
         {onRoomSelect &&
           roomInteractionStyle === 'subtle' &&
+          !onPlanRoomEntryIntent &&
           allRooms.map((room) => {
             const { min, max } = room.bounds
             const rx1 = offsetX + min.x * scalePerFoot
@@ -750,6 +793,44 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
                 style={{ cursor: 'pointer' }}
                 onClick={() => onRoomSelect(room.id)}
               />
+            )
+          })}
+
+        {/* Room View entry targets — small green dots; only these start navigation */}
+        {onPlanRoomEntryIntent &&
+          allRooms.map((room) => {
+            const { x, y } = planRoomEntryDotFt(room, model.footprint)
+            const px = offsetX + x * scalePerFoot
+            const py = offsetY + y * scalePerFoot
+            const rw = (room.bounds.max.x - room.bounds.min.x) * scalePerFoot
+            const rh = (room.bounds.max.y - room.bounds.min.y) * scalePerFoot
+            if (rw < 14 || rh < 14) return null
+            return (
+              <g key={`room-entry-${room.id}`}>
+                <circle
+                  cx={px}
+                  cy={py}
+                  r={14}
+                  fill="transparent"
+                  stroke="none"
+                  style={{ cursor: 'pointer' }}
+                  aria-label={`Room view entry for ${room.label}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    onPlanRoomEntryIntent(room.id)
+                  }}
+                />
+                <circle
+                  cx={px}
+                  cy={py}
+                  r={3.6}
+                  fill="#22c55e"
+                  stroke="#052e16"
+                  strokeWidth={0.85}
+                  pointerEvents="none"
+                />
+              </g>
             )
           })}
 

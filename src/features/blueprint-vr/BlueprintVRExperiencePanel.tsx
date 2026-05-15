@@ -933,6 +933,8 @@ export default function BlueprintVRExperiencePanel({
   const [wallTransparencyOpen, setWallTransparencyOpen] = useState(false)
   const wallTransparencyButtonRef = useRef<HTMLButtonElement>(null)
   const wallTransparencyPopoverRef = useRef<HTMLDivElement>(null)
+  const roomEntryModalRef = useRef<HTMLDivElement>(null)
+  const [roomEntryConfirm, setRoomEntryConfirm] = useState<{ roomId: string; label: string } | null>(null)
   const [planZoomScale, setPlanZoomScale] = useState(1)
   const [planPan, setPlanPan] = useState({ x: 0, y: 0 })
   const [planDragging, setPlanDragging] = useState(false)
@@ -1374,7 +1376,7 @@ export default function BlueprintVRExperiencePanel({
   const handleRoomSelect = useCallback((roomId: string) => {
     setSelectedRoomId(roomId)
     // From the 3D dollhouse, room click should focus that room without forcing
-    // the user out of 3D. Plan view → click moves into Room View.
+    // the user out of 3D.
     setCameraPreset((prev) => (prev === 'top' ? 'room' : prev === 'room' ? 'room' : 'room'))
     setViewMode((prev) => (prev === 'plan' ? 'room' : prev === 'room' ? 'room' : 'dollhouse'))
   }, [])
@@ -1384,6 +1386,12 @@ export default function BlueprintVRExperiencePanel({
     setViewMode('room')
     setCameraPreset('room')
   }, [])
+
+  const handlePlanRoomEntryIntent = useCallback((roomId: string) => {
+    const room = buildingModel.levels.flatMap((l) => l.rooms).find((r) => r.id === roomId)
+    const label = room?.label?.trim() || 'This room'
+    setRoomEntryConfirm({ roomId, label })
+  }, [buildingModel])
 
   const handleResetView = useCallback(() => {
     setViewMode('dollhouse')
@@ -1395,6 +1403,10 @@ export default function BlueprintVRExperiencePanel({
   useEffect(() => {
     setPlanZoomScale(1)
     setPlanPan({ x: 0, y: 0 })
+  }, [viewMode])
+
+  useEffect(() => {
+    setRoomEntryConfirm(null)
   }, [viewMode])
 
   useEffect(() => {
@@ -1430,9 +1442,24 @@ export default function BlueprintVRExperiencePanel({
   }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen])
 
   useEffect(() => {
-    if (!viewMenuOpen && !labelsMenuOpen && !wallTransparencyOpen) return
+    if (!roomEntryConfirm) return
+    const onDocMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (roomEntryModalRef.current?.contains(t)) return
+      setRoomEntryConfirm(null)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [roomEntryConfirm])
+
+  useEffect(() => {
+    if (!viewMenuOpen && !labelsMenuOpen && !wallTransparencyOpen && !roomEntryConfirm) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (roomEntryConfirm) {
+          setRoomEntryConfirm(null)
+          return
+        }
         setViewMenuOpen(false)
         setLabelsMenuOpen(false)
         setWallTransparencyOpen(false)
@@ -1440,7 +1467,7 @@ export default function BlueprintVRExperiencePanel({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen])
+  }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen, roomEntryConfirm])
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
@@ -2262,12 +2289,13 @@ export default function BlueprintVRExperiencePanel({
                         width={dims.w}
                         height={dims.h}
                         selectedRoomId={selectedRoomId}
-                        onRoomSelect={handleRoomEnter}
+                        onPlanRoomEntryIntent={handlePlanRoomEntryIntent}
                         showDimensions={showDimensions}
                         showRoomLabels={showLabels}
                         showAreaLabels={false}
                         showElectrical={false}
                         wallOnlyMode={true}
+                        activeStage={activeStage}
                         roomInteractionStyle="subtle"
                         traceDebug={scanResult.traceDebugCounts || null}
                       />
@@ -2292,7 +2320,7 @@ export default function BlueprintVRExperiencePanel({
                     width={dims.w}
                     height={dims.h}
                     selectedRoomId={selectedRoomId}
-                    onRoomSelect={handleRoomEnter}
+                    onPlanRoomEntryIntent={handlePlanRoomEntryIntent}
                     activeStage={activeStage}
                     showDimensions={showDimensions}
                     showRoomLabels={showLabels}
@@ -2303,6 +2331,73 @@ export default function BlueprintVRExperiencePanel({
                   />
                 )}
               </BvrMeasuredPlanScrollHost>
+            )}
+
+            {roomEntryConfirm && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 1500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(2,6,12,0.48)',
+                }}
+                onMouseDown={(e) => {
+                  if (e.target === e.currentTarget) setRoomEntryConfirm(null)
+                }}
+              >
+                <div
+                  ref={roomEntryModalRef}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="bvr-room-entry-title"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  style={{
+                    minWidth: 268,
+                    maxWidth: 340,
+                    padding: '16px 18px',
+                    borderRadius: 8,
+                    background: 'rgba(10,18,28,0.98)',
+                    border: '1px solid rgba(0,229,204,0.38)',
+                    boxShadow: '0 16px 48px rgba(0,0,0,0.75)',
+                  }}
+                >
+                  <div
+                    id="bvr-room-entry-title"
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: 'rgba(232,240,255,0.95)',
+                      marginBottom: 4,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Open Room View for{' '}
+                    <span style={{ color: '#00ddcc', fontWeight: 700 }}>&quot;{roomEntryConfirm.label}&quot;</span>?
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => setRoomEntryConfirm(null)}
+                      style={{ ...controlButtonStyle(false), padding: '8px 14px', fontSize: 11 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleRoomEnter(roomEntryConfirm.roomId)
+                        setRoomEntryConfirm(null)
+                      }}
+                      style={{ ...controlButtonStyle(true), padding: '8px 14px', fontSize: 11 }}
+                    >
+                      Take me there
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {viewMode === 'dollhouse' && (
