@@ -1,9 +1,10 @@
 // @ts-nocheck
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights, resolveProjectBucket, getProjectFinancials } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
+import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 
@@ -41,7 +42,17 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   // Part 4 — Version History
   const [showVersionHistory, setShowVersionHistory] = useState(false)
 
-  const [showInternalBreakdown, setShowInternalBreakdown] = useState(true)
+  const [showInternalBreakdown, setShowInternalBreakdown] = useState(() => {
+    const prefs = loadInnerProjectViewPrefs(projectId)
+    if (prefs.estimate?.showInternalBreakdown === undefined) return true
+    return !!prefs.estimate.showInternalBreakdown
+  })
+
+  useEffect(() => {
+    const prefs = loadInnerProjectViewPrefs(projectId)
+    if (prefs.estimate?.showInternalBreakdown === undefined) setShowInternalBreakdown(true)
+    else setShowInternalBreakdown(!!prefs.estimate.showInternalBreakdown)
+  }, [projectId])
 
   // Service Call form state
   const [scCust, setScCust] = useState('')
@@ -1858,7 +1869,13 @@ Return ONLY valid JSON, no other text.`
 
         <button
           type="button"
-          onClick={() => setShowInternalBreakdown(v => !v)}
+          onClick={() => {
+            setShowInternalBreakdown(v => {
+              const next = !v
+              mergeInnerProjectViewPrefs(projectId, { estimate: { showInternalBreakdown: next } })
+              return next
+            })
+          }}
           style={{
             marginTop: '12px',
             width: '100%',

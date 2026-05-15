@@ -2,6 +2,12 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { getBackupData, saveBackupData, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import {
+  loadInnerProjectViewPrefs,
+  mergeInnerProjectViewPrefs,
+  removeProgressPhaseViewKeys,
+  phaseExpandedFromCollapsedPhases,
+} from '@/utils/v15rViewPrefs'
 
 function parseDateLocal(dateStr?: string): Date | null {
   if (!dateStr) return null
@@ -101,13 +107,24 @@ function computedPhaseProgressFromTasks(project: any, ph: string): number {
   return Math.min(100, Math.max(0, Math.round(sum / tasks.length)))
 }
 
-function isProgressPhaseManualOverride(project: any, ph: string): boolean {
+function isProgressPhaseManualOverride(
+  project: any,
+  ph: string,
+  lsOverride?: Record<string, boolean>,
+): boolean {
+  if (lsOverride != null && Object.prototype.hasOwnProperty.call(lsOverride, ph)) {
+    return lsOverride[ph] === true
+  }
   return project.progressPhaseOverrideEnabled?.[ph] === true
 }
 
 /** Header / rollup: manual stored value only when override toggle is explicitly on; otherwise task average */
-function effectivePhaseProgressPct(project: any, ph: string): number {
-  if (isProgressPhaseManualOverride(project, ph)) {
+function effectivePhaseProgressPct(
+  project: any,
+  ph: string,
+  lsOverride?: Record<string, boolean>,
+): number {
+  if (isProgressPhaseManualOverride(project, ph, lsOverride)) {
     const raw = (project.phases || {})[ph]
     return Math.min(100, Math.max(0, num(raw ?? 0)))
   }
@@ -135,7 +152,15 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const [newPhaseName, setNewPhaseName] = useState('')
 
   /** false = collapsed; missing or true = expanded */
-  const [phaseExpanded, setPhaseExpanded] = useState<Record<string, boolean>>({})
+  const [phaseExpanded, setPhaseExpanded] = useState<Record<string, boolean>>(() =>
+    phaseExpandedFromCollapsedPhases(loadInnerProjectViewPrefs(projectId).progress?.collapsedPhases),
+  )
+
+  useEffect(() => {
+    setPhaseExpanded(
+      phaseExpandedFromCollapsedPhases(loadInnerProjectViewPrefs(projectId).progress?.collapsedPhases),
+    )
+  }, [projectId])
 
   const dragInfo = useRef<{ ph: string; id: string } | null>(null)
   const dragOverId = useRef<string | null>(null)
@@ -158,6 +183,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
+
+  const innerViewPrefs = loadInnerProjectViewPrefs(projectId)
 
   const w = getPhaseWeights(backup)
   const daysSinceMove = daysSince(p.lastMove)
@@ -183,10 +210,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const orderedPhaseEntries = orderPhaseEntries(combinedPhaseEntries)
 
   const togglePhaseBucket = (ph: string) => {
-    setPhaseExpanded(prev => ({
-      ...prev,
-      [ph]: !(prev[ph] !== false),
-    }))
+    setPhaseExpanded(prev => {
+      const wasOpen = prev[ph] !== false
+      const nowOpen = !wasOpen
+      mergeInnerProjectViewPrefs(projectId, {
+        progress: { collapsedPhases: { [ph]: !nowOpen } },
+      })
+      return { ...prev, [ph]: nowOpen }
+    })
   }
 
   const persistProgressPhaseColor = (ph: string, rawHex: string) => {
@@ -306,6 +337,9 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     if (!p.progressPhaseOverrideEnabled) p.progressPhaseOverrideEnabled = {}
     p.progressPhaseOverrideEnabled[ph] = !!enabled
     saveBackupData(backup)
+    mergeInnerProjectViewPrefs(projectId, {
+      progress: { overrideEnabled: { [ph]: !!enabled } },
+    })
     forceUpdate()
   }
 
@@ -346,6 +380,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     if (p.tasks) delete p.tasks[ph]
     if (p.progressPhaseColors) delete p.progressPhaseColors[ph]
     if (p.progressPhaseOverrideEnabled) delete p.progressPhaseOverrideEnabled[ph]
+    removeProgressPhaseViewKeys(projectId, ph)
     saveBackupData(backup)
     forceUpdate()
   }
@@ -392,7 +427,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const overallCompletion = Math.round(
     Object.entries(w).reduce((s, [ph, wt]) => {
       const tot = Object.values(w).reduce((sum, v) => sum + v, 0) || 100
-      const pct = effectivePhaseProgressPct(p, ph)
+      const pct = effectivePhaseProgressPct(p, ph, innerViewPrefs.progress?.overrideEnabled)
       return s + (pct * wt / tot)
     }, 0)
   )
@@ -539,8 +574,16 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
           const tasks = (p.tasks || {})[ph] || []
           const clrSaved = resolvePhaseHeaderColor(ph, p.progressPhaseColors)
           const clrDisplay = normalizeColorPickerValue(phaseColorDraft[ph] ?? clrSaved)
-          const phaseEffectivePct = effectivePhaseProgressPct(p, ph)
-          const overrideOn = isProgressPhaseManualOverride(p, ph)
+          const phaseEffectivePct = effectivePhaseProgressPct(
+            p,
+            ph,
+            innerViewPrefs.progress?.overrideEnabled,
+          )
+          const overrideOn = isProgressPhaseManualOverride(
+            p,
+            ph,
+            innerViewPrefs.progress?.overrideEnabled,
+          )
           const storedManualPct = Math.min(100, Math.max(0, num((p.phases || {})[ph] ?? 0)))
           const isCustom = Array.isArray(p.customPhases) && p.customPhases.includes(ph)
           const isOpen = phaseExpanded[ph] !== false
@@ -863,15 +906,21 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                     alignItems: 'center',
                     gap: '6px',
                     fontSize: '11px',
-                    color: 'var(--t3)',
+                    color: overrideOn ? '#a855f7' : 'var(--t3)',
+                    fontWeight: overrideOn ? '700' : '500',
                     cursor: 'pointer',
                     userSelect: 'none',
+                    padding: overrideOn ? '4px 10px' : '2px 0',
+                    borderRadius: '6px',
+                    backgroundColor: overrideOn ? 'rgba(168,85,247,0.14)' : 'transparent',
+                    border: overrideOn ? '1px solid rgba(168,85,247,0.45)' : '1px solid transparent',
+                    boxShadow: overrideOn ? '0 0 0 1px rgba(168,85,247,0.12)' : 'none',
                   }}>
                     <input
                       type="checkbox"
                       checked={overrideOn}
                       onChange={e => setPhaseProgressOverrideEnabled(ph, e.target.checked)}
-                      style={{ accentColor: '#3b82f6', cursor: 'pointer' }}
+                      style={{ accentColor: overrideOn ? '#a855f7' : '#3b82f6', cursor: 'pointer' }}
                     />
                     Override phase %
                   </label>
