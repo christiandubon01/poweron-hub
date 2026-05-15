@@ -188,6 +188,8 @@ export interface BackupProject {
   estimateReference?: BackupEstimateRef; phaseEstimateRows?: any[]
   lastEstimateSyncAt?: string; completionPromptSig?: string; completionDeclinedSig?: string
   plannedStart?: string; plannedEnd?: string
+  /** Progress tab header accent colors per phase name (project-local, optional) */
+  progressPhaseColors?: Record<string, string>
 }
 
 export interface BackupPriceBookItem {
