@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { getBackupData, saveBackupData, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 
@@ -93,6 +93,40 @@ function orderPhaseEntries(combined: [string, number][]): [string, number][] {
   return ordered
 }
 
+/** Simple average of task pct values; 0 when there are no tasks */
+function computedPhaseProgressFromTasks(project: any, ph: string): number {
+  const tasks = (project.tasks || {})[ph] || []
+  if (!tasks.length) return 0
+  const sum = tasks.reduce((s: number, t: any) => s + num(t?.pct ?? 0), 0)
+  return Math.min(100, Math.max(0, Math.round(sum / tasks.length)))
+}
+
+function isProgressPhaseManualOverride(project: any, ph: string): boolean {
+  return project.progressPhaseOverrideEnabled?.[ph] === true
+}
+
+/** Header / rollup: manual stored value only when override toggle is explicitly on; otherwise task average */
+function effectivePhaseProgressPct(project: any, ph: string): number {
+  if (isProgressPhaseManualOverride(project, ph)) {
+    const raw = (project.phases || {})[ph]
+    return Math.min(100, Math.max(0, num(raw ?? 0)))
+  }
+  return computedPhaseProgressFromTasks(project, ph)
+}
+
+const PHASE_COLOR_DEBOUNCE_MS = 220
+
+const taskRowGrid: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) minmax(260px, 38%) 90px 24px',
+  alignItems: 'center',
+  gap: '12px',
+}
+
+const taskRowCell: React.CSSProperties = {
+  minWidth: 0,
+}
+
 export default function V15rProgressTab({ projectId, onUpdate, backup: initialBackup }: V15rProgressTabProps) {
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -106,6 +140,18 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const dragInfo = useRef<{ ph: string; id: string } | null>(null)
   const dragOverId = useRef<string | null>(null)
   const [dragActive, setDragActive] = useState<string | null>(null)
+
+  /** In-memory color during native picker interaction; persists after debounce / blur / pointer-up */
+  const [phaseColorDraft, setPhaseColorDraft] = useState<Record<string, string>>({})
+  const phaseColorDraftRef = useRef<Record<string, string>>({})
+  const phaseColorCommitTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
+  useEffect(() => {
+    const timers = phaseColorCommitTimersRef.current
+    return () => {
+      Object.values(timers).forEach(t => clearTimeout(t))
+    }
+  }, [])
 
   const backup = initialBackup || getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
@@ -143,12 +189,59 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     }))
   }
 
-  const setProgressPhaseColor = (ph: string, hex: string) => {
+  const persistProgressPhaseColor = (ph: string, rawHex: string) => {
+    const hex = normalizeColorPickerValue(rawHex)
+    const b = initialBackup ?? getBackupData()
+    if (!b) return
+    const proj = b.projects?.find(x => x.id === projectId)
+    if (!proj) return
+    const prev = proj.progressPhaseColors?.[ph]
+    const prevNorm = prev ? normalizeColorPickerValue(prev) : null
+    if (prevNorm === hex) return
     pushState()
-    if (!p.progressPhaseColors) p.progressPhaseColors = {}
-    p.progressPhaseColors[ph] = normalizeColorPickerValue(hex)
-    saveBackupData(backup)
+    if (!proj.progressPhaseColors) proj.progressPhaseColors = {}
+    proj.progressPhaseColors[ph] = hex
+    saveBackupData(b)
+    onUpdate?.()
     forceUpdate()
+  }
+
+  const clearPhaseColorDebounceTimer = (ph: string) => {
+    const t = phaseColorCommitTimersRef.current[ph]
+    if (t) clearTimeout(t)
+    delete phaseColorCommitTimersRef.current[ph]
+  }
+
+  /** Schedule disk persist; avoids saveBackupData on every pointer move inside the picker */
+  const scheduleProgressPhaseColorCommit = (ph: string, rawHex: string) => {
+    const hex = normalizeColorPickerValue(rawHex)
+    phaseColorDraftRef.current[ph] = hex
+    setPhaseColorDraft(d => (d[ph] === hex ? d : { ...d, [ph]: hex }))
+    clearPhaseColorDebounceTimer(ph)
+    phaseColorCommitTimersRef.current[ph] = setTimeout(() => {
+      persistProgressPhaseColor(ph, phaseColorDraftRef.current[ph] ?? hex)
+      delete phaseColorDraftRef.current[ph]
+      delete phaseColorCommitTimersRef.current[ph]
+      setPhaseColorDraft(d => {
+        if (d[ph] === undefined) return d
+        const next = { ...d }
+        delete next[ph]
+        return next
+      })
+    }, PHASE_COLOR_DEBOUNCE_MS)
+  }
+
+  const flushProgressPhaseColor = (ph: string) => {
+    clearPhaseColorDebounceTimer(ph)
+    const hex = phaseColorDraftRef.current[ph]
+    if (hex !== undefined) persistProgressPhaseColor(ph, hex)
+    delete phaseColorDraftRef.current[ph]
+    setPhaseColorDraft(d => {
+      if (d[ph] === undefined) return d
+      const next = { ...d }
+      delete next[ph]
+      return next
+    })
   }
 
   const stagnancyColor = () => {
@@ -208,6 +301,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     forceUpdate()
   }
 
+  const setPhaseProgressOverrideEnabled = (ph: string, enabled: boolean) => {
+    pushState()
+    if (!p.progressPhaseOverrideEnabled) p.progressPhaseOverrideEnabled = {}
+    p.progressPhaseOverrideEnabled[ph] = !!enabled
+    saveBackupData(backup)
+    forceUpdate()
+  }
+
   const confirmAddCustomPhase = () => {
     const trimmed = newPhaseName.trim()
     if (!trimmed) return
@@ -220,6 +321,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     if (!p.customPhases) p.customPhases = []
     if (!p.phases) p.phases = {}
     if (!p.tasks) p.tasks = {}
+    if (!p.progressPhaseOverrideEnabled) p.progressPhaseOverrideEnabled = {}
+    p.progressPhaseOverrideEnabled[trimmed] = false
     p.customPhases.push(trimmed)
     p.phases[trimmed] = 0
     if (!p.tasks[trimmed]) p.tasks[trimmed] = []
@@ -242,6 +345,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     if (p.phases) delete p.phases[ph]
     if (p.tasks) delete p.tasks[ph]
     if (p.progressPhaseColors) delete p.progressPhaseColors[ph]
+    if (p.progressPhaseOverrideEnabled) delete p.progressPhaseOverrideEnabled[ph]
     saveBackupData(backup)
     forceUpdate()
   }
@@ -288,8 +392,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const overallCompletion = Math.round(
     Object.entries(w).reduce((s, [ph, wt]) => {
       const tot = Object.values(w).reduce((sum, v) => sum + v, 0) || 100
-      const phases = p.phases || {}
-      return s + (num(phases[ph]) * wt / tot)
+      const pct = effectivePhaseProgressPct(p, ph)
+      return s + (pct * wt / tot)
     }, 0)
   )
 
@@ -432,9 +536,12 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
         </div>
 
         {orderedPhaseEntries.map(([ph, wt]) => {
-          const v = num((p.phases || {})[ph] || 0)
           const tasks = (p.tasks || {})[ph] || []
-          const clr = resolvePhaseHeaderColor(ph, p.progressPhaseColors)
+          const clrSaved = resolvePhaseHeaderColor(ph, p.progressPhaseColors)
+          const clrDisplay = normalizeColorPickerValue(phaseColorDraft[ph] ?? clrSaved)
+          const phaseEffectivePct = effectivePhaseProgressPct(p, ph)
+          const overrideOn = isProgressPhaseManualOverride(p, ph)
+          const storedManualPct = Math.min(100, Math.max(0, num((p.phases || {})[ph] ?? 0)))
           const isCustom = Array.isArray(p.customPhases) && p.customPhases.includes(ph)
           const isOpen = phaseExpanded[ph] !== false
 
@@ -451,7 +558,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                   }
                 }}
                 style={{
-                  backgroundColor: clr + '18',
+                  backgroundColor: clrDisplay + '18',
                   padding: '12px 16px',
                   display: 'flex',
                   alignItems: 'center',
@@ -467,13 +574,18 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                 <input
                   type="color"
                   aria-label={`Color for phase ${ph}`}
-                  value={clr}
+                  value={clrDisplay}
                   onClick={e => e.stopPropagation()}
                   onMouseDown={e => e.stopPropagation()}
                   onKeyDown={e => e.stopPropagation()}
                   onChange={e => {
                     e.stopPropagation()
-                    setProgressPhaseColor(ph, e.target.value)
+                    scheduleProgressPhaseColorCommit(ph, e.target.value)
+                  }}
+                  onBlur={() => flushProgressPhaseColor(ph)}
+                  onMouseUp={e => {
+                    e.stopPropagation()
+                    flushProgressPhaseColor(ph)
                   }}
                   style={{
                     width: '28px',
@@ -486,7 +598,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                     flexShrink: 0,
                   }}
                 />
-                <div style={{ width: '3px', height: '18px', borderRadius: '2px', backgroundColor: clr, flexShrink: 0 }} />
+                <div style={{ width: '3px', height: '18px', borderRadius: '2px', backgroundColor: clrDisplay, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '14px', marginBottom: '2px' }}>
                     {ph}
@@ -506,21 +618,22 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                     )}
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
+                    {overrideOn ? 'Manual override · ' : 'From tasks · '}
                     {wt > 0 ? `${wt}% weight · ` : ''}{tasks.length} task{tasks.length !== 1 ? 's' : ''}
                   </div>
                 </div>
                 <div style={{ width: '80px', height: '4px', backgroundColor: '#1e2130', borderRadius: '2px', overflow: 'hidden', flexShrink: 0 }}>
                   <div
                     style={{
-                      width: v + '%',
+                      width: phaseEffectivePct + '%',
                       height: '100%',
-                      backgroundColor: clr,
+                      backgroundColor: clrDisplay,
                       transition: 'width 0.3s',
                     }}
                   />
                 </div>
-                <div style={{ color: clr, fontWeight: '600', minWidth: '36px', textAlign: 'right', fontFamily: 'monospace', flexShrink: 0 }}>
-                  {v}%
+                <div style={{ color: clrDisplay, fontWeight: '600', minWidth: '36px', textAlign: 'right', fontFamily: 'monospace', flexShrink: 0 }}>
+                  {phaseEffectivePct}%
                 </div>
                 {isCustom && (
                   <button
@@ -548,7 +661,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
               <div style={{ padding: '12px 16px' }}>
                 {tasks.length === 0 ? (
                   <div style={{ fontSize: '12px', color: 'var(--t3)', marginBottom: '12px' }}>
-                    No tasks yet — add one below. Phase % can also be set directly.
+                    No tasks yet — add one below. Turn <strong style={{ color: 'var(--t2)' }}>Override</strong> on to set this phase manually.
                   </div>
                 ) : (
                   <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -564,11 +677,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           padding: '8px 10px',
                           backgroundColor: dragActive === t.id ? '#2a2d40' : '#1e2130',
                           borderRadius: '6px',
-                          display: 'flex',
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: '10px',
-                          minHeight: '52px',
+                          ...taskRowGrid,
+                          minHeight: '48px',
                           cursor: 'grab',
                           opacity: dragActive === t.id ? 0.55 : 1,
                           border: dragActive === t.id
@@ -576,84 +686,108 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             : '1px solid transparent',
                           transition: 'opacity 0.15s, border-color 0.15s',
                           userSelect: 'none',
+                          boxSizing: 'border-box',
                         }}
                       >
                         <div
                           style={{
-                            width: '20px',
-                            flexShrink: 0,
+                            ...taskRowCell,
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            alignSelf: 'stretch',
-                            cursor: 'grab',
+                            gap: '8px',
                           }}
-                          title="Drag to reorder"
                         >
-                          <span style={{ color: 'var(--t3)', fontSize: '14px', opacity: 0.6, lineHeight: '1' }}>⠿</span>
+                          <div
+                            style={{
+                              width: '20px',
+                              flexShrink: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'grab',
+                              color: 'var(--t3)',
+                            }}
+                            title="Drag to reorder"
+                          >
+                            <span style={{ fontSize: '14px', opacity: 0.6, lineHeight: '1' }}>⠿</span>
+                          </div>
+
+                          <input
+                            type="text"
+                            value={t.desc || ''}
+                            onChange={e => editTask(ph, t.id, 'desc', e.target.value)}
+                            onMouseDown={e => e.stopPropagation()}
+                            placeholder="Task description"
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              background: 'transparent',
+                              border: 'none',
+                              borderBottom: '1px solid rgba(255,255,255,0.08)',
+                              color: 'var(--t1)',
+                              fontSize: '13px',
+                              fontFamily: 'inherit',
+                              outline: 'none',
+                              textAlign: 'left',
+                              cursor: 'text',
+                              height: '28px',
+                            }}
+                          />
                         </div>
 
-                        <input
-                          type="text"
-                          value={t.desc || ''}
-                          onChange={e => editTask(ph, t.id, 'desc', e.target.value)}
-                          onMouseDown={e => e.stopPropagation()}
-                          placeholder="Task description"
+                        <div
                           style={{
-                            flex: '1 1 140px',
-                            minWidth: '100px',
-                            background: 'transparent',
-                            border: 'none',
-                            borderBottom: '1px solid rgba(255,255,255,0.08)',
-                            color: 'var(--t1)',
-                            fontSize: '13px',
-                            fontFamily: 'inherit',
-                            outline: 'none',
-                            textAlign: 'left',
-                            cursor: 'text',
+                            ...taskRowCell,
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: '10px',
+                            minWidth: 0,
                           }}
-                        />
-
-                        <div style={{
-                          flex: '1.25 1 180px',
-                          minWidth: '140px',
-                          maxWidth: '320px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'stretch',
-                          gap: '4px',
-                        }}>
+                        >
                           <input
                             type="range"
                             min="0"
                             max="100"
-                            value={t.pct || 0}
+                            value={t.pct ?? 0}
                             onChange={e => editTask(ph, t.id, 'pct', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
-                            style={{ width: '100%', accentColor: clr }}
+                            style={{ flex: '1 1 auto', minWidth: 0, width: '100%', accentColor: clrSaved }}
                           />
                           <span style={{
+                            width: '40px',
+                            flexShrink: 0,
                             fontSize: '11px',
                             fontFamily: 'monospace',
                             fontWeight: '600',
-                            color: clr,
-                            textAlign: 'center',
+                            color: clrSaved,
+                            textAlign: 'right',
                           }}>
-                            {t.pct || 0}%
+                            {(t.pct ?? 0)}%
                           </span>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                        <div style={{
+                          ...taskRowCell,
+                          width: '100%',
+                          justifySelf: 'stretch',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'flex-end',
+                          gap: '4px',
+                        }}>
                           <input
                             type="number"
-                            value={t.hrs || 0}
+                            value={t.hrs ?? 0}
                             onChange={e => editTask(ph, t.id, 'hrs', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
                             step="0.5"
                             min="0"
                             style={{
                               width: '52px',
-                              padding: '4px 6px',
+                              padding: '4px 4px',
                               backgroundColor: '#0f1117',
                               border: '1px solid var(--bdr2)',
                               color: 'var(--t1)',
@@ -661,9 +795,13 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                               borderRadius: '4px',
                               fontSize: '12px',
                               textAlign: 'center',
+                              boxSizing: 'border-box',
+                              height: '30px',
                             }}
                           />
-                          <span style={{ fontSize: '11px', color: 'var(--t3)', flexShrink: 0 }}>hrs</span>
+                          <span style={{ fontSize: '11px', color: 'var(--t3)', flexShrink: 0, width: '22px', textAlign: 'left' }}>
+                            hrs
+                          </span>
                         </div>
 
                         <button
@@ -671,13 +809,18 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           onClick={() => delTask(ph, t.id)}
                           title="Remove task"
                           style={{
-                            flexShrink: 0,
+                            width: '24px',
+                            height: '28px',
+                            padding: '0',
+                            justifySelf: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
                             background: 'none',
                             border: 'none',
                             color: 'rgba(239,68,68,0.85)',
                             cursor: 'pointer',
-                            fontSize: '14px',
-                            padding: '4px 6px',
+                            fontSize: '16px',
                             lineHeight: 1,
                             opacity: 0.85,
                           }}
@@ -689,7 +832,15 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--bdr2)' }}>
+                <div style={{
+                  display: 'flex',
+                  gap: '10px',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  rowGap: '8px',
+                  paddingTop: '8px',
+                  borderTop: '1px solid var(--bdr2)',
+                }}>
                   <button
                     type="button"
                     onClick={() => addTask(ph)}
@@ -707,26 +858,57 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                     + Add Task
                   </button>
 
-                  <span style={{ fontSize: '10px', color: 'var(--t3)' }}>Override:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={v}
-                    onChange={e => overridePhase(ph, e.target.value)}
-                    style={{
-                      width: '54px',
-                      padding: '4px 6px',
-                      backgroundColor: '#0f1117',
-                      border: '1px solid var(--bdr2)',
-                      borderRadius: '4px',
-                      color: 'var(--t1)',
-                      fontFamily: 'monospace',
-                      fontSize: '11px',
-                      textAlign: 'center',
-                    }}
-                  />
-                  <span style={{ fontSize: '10px', color: 'var(--t3)' }}>%</span>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '11px',
+                    color: 'var(--t3)',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={overrideOn}
+                      onChange={e => setPhaseProgressOverrideEnabled(ph, e.target.checked)}
+                      style={{ accentColor: '#3b82f6', cursor: 'pointer' }}
+                    />
+                    Override phase %
+                  </label>
+
+                  {overrideOn && (
+                    <>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={storedManualPct}
+                        onChange={e => overridePhase(ph, e.target.value)}
+                        style={{ flex: '1 1 120px', minWidth: '100px', maxWidth: '200px', accentColor: clrSaved }}
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={storedManualPct}
+                        onChange={e => overridePhase(ph, e.target.value)}
+                        style={{
+                          width: '52px',
+                          padding: '4px 6px',
+                          backgroundColor: '#0f1117',
+                          border: '1px solid var(--bdr2)',
+                          borderRadius: '4px',
+                          color: 'var(--t1)',
+                          fontFamily: 'monospace',
+                          fontSize: '11px',
+                          textAlign: 'center',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--t3)' }}>% manual</span>
+                    </>
+                  )}
                 </div>
               </div>
               )}
