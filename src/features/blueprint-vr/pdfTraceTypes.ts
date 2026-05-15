@@ -1,66 +1,19 @@
 /**
  * src/features/blueprint-vr/pdfTraceTypes.ts
  *
- * Pure type definitions for future PDF / blueprint vector trace input.
- *
- * These types describe what a deterministic line/polyline extractor would emit
- * after walking the active blueprint page (PDF.js path operators, vector
- * commands, or future OCR-derived line candidates).
- *
- * No runtime extraction is performed here — this is the contract that the
- * Blueprint plan scanner consumes when trace data is available. When it is not,
- * the scanner falls back to a deterministic suite layout based on blueprint
- * project context (e.g. Beauty Salon, tenant improvement).
+ * Library-agnostic contracts for PDF/vector trace extraction.
  */
 
-// ---------------------------------------------------------------------------
-// Coordinate / scale primitives
-// ---------------------------------------------------------------------------
-
-/**
- * A 2-D point in PDF page coordinates (raw, pre-scale).
- */
 export interface PdfTracePoint {
-  /** Horizontal page coordinate, paper units (typically PDF points). */
   x: number
-  /** Vertical page coordinate, paper units. */
   y: number
 }
 
-/**
- * A 2-D point in real-world building coordinates (feet).
- */
 export interface WorldPoint2D {
   x: number
   y: number
 }
 
-/**
- * Scale information used to convert PDF / paper coordinates into world feet.
- *
- * pixelsPerFoot tells the scanner: "this many PDF units equal one real foot".
- * When the scale was inferred (not measured directly on a scale bar), confidence
- * should reflect that.
- */
-export interface PdfTraceScale {
-  /** PDF units per real foot. */
-  pixelsPerFoot: number
-  /** Confidence in the scale, 0–1. */
-  confidence: number
-  /** Where the scale came from. */
-  source: 'scale-bar' | 'dimension-label' | 'inferred' | 'default'
-  /** Optional raw notation, e.g. "1/4\" = 1'-0\"". */
-  raw?: string
-}
-
-// ---------------------------------------------------------------------------
-// Geometry primitives describing what a vector extractor would yield
-// ---------------------------------------------------------------------------
-
-/**
- * Tags describing how a line was classified after geometry analysis.
- * Used by the scanner to bias wall/room/opening inference.
- */
 export type PdfTraceLineRole =
   | 'unknown'
   | 'exterior-wall'
@@ -72,77 +25,208 @@ export type PdfTraceLineRole =
   | 'hatch'
   | 'symbol'
 
-/**
- * A single straight line in the PDF page, already classified.
- *
- * Coordinates are still in PDF units. World conversion happens during scan,
- * using the active scale (see PdfTraceScale).
- */
 export interface PdfTraceLine {
   id: string
   start: PdfTracePoint
   end: PdfTracePoint
-  /** Estimated stroke weight in PDF units. */
   weight?: number
-  /** Page index this line belongs to (zero-based). */
   pageIndex?: number
-  /** Layer / class name if known. */
   layer?: string
-  /** Pre-classified role from upstream extractors. */
   role?: PdfTraceLineRole
-  /** Extraction confidence, 0–1. */
   confidence?: number
 }
 
-/**
- * A polyline grouping (e.g. closed perimeter, door swing arc, hatch).
- */
+export interface PdfTraceRect {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  weight?: number
+  role?: PdfTraceLineRole
+  confidence?: number
+}
+
 export interface PdfTracePolyline {
   id: string
+  /** Vertices in PDF space; often derived from constructPath / stroked polygons. */
   points: PdfTracePoint[]
   closed?: boolean
   role?: PdfTraceLineRole
   confidence?: number
 }
 
-/**
- * A piece of text recovered from the PDF that may contribute a dimension.
- */
-export interface PdfTraceTextNote {
+export interface PdfTraceArc {
+  id: string
+  center: PdfTracePoint
+  radius: number
+  startAngleDeg: number
+  endAngleDeg: number
+  clockwise?: boolean
+  role?: PdfTraceLineRole
+  confidence?: number
+}
+
+export interface PdfTraceTextRun {
   id: string
   text: string
   origin: PdfTracePoint
-  /** Bounds of the text block, if known. */
   bounds?: { min: PdfTracePoint; max: PdfTracePoint }
-  /** Page index this text belongs to. */
   pageIndex?: number
+  confidence?: number
 }
 
-// ---------------------------------------------------------------------------
-// Top-level trace payload that the scanner consumes
-// ---------------------------------------------------------------------------
+export interface PdfTracePageBounds {
+  width: number
+  height: number
+}
 
-/**
- * The full vector trace payload for a single blueprint page.
- *
- * This is what a deterministic PDF vector extractor (e.g. pdf.js operator
- * walker) would build. The Blueprint plan scanner consumes this shape; when
- * absent, the scanner falls back to context-based defaults.
- */
-export interface PdfTracePagePayload {
-  pageIndex: number
-  pageLabel?: string
-  pageDiscipline?: string
-  /** Active scale for this page, if known. */
-  scale?: PdfTraceScale
-  /** Page width in PDF units, if known. */
-  pageWidth?: number
-  /** Page height in PDF units, if known. */
-  pageHeight?: number
-  /** Raw line list. */
+export interface PdfTraceViewport {
+  scale: number
+  width: number
+  height: number
+  rotation?: number
+  offsetX?: number
+  offsetY?: number
+}
+
+export interface PdfTraceScaleHint {
+  pixelsPerFoot: number
+  confidence: number
+  source: 'scale-bar' | 'dimension-label' | 'trace-text' | 'inferred' | 'default'
+  raw?: string
+}
+
+export interface PdfTracePayload {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  coordinateSpace: 'pdf-points' | 'viewer-pixels' | 'normalized'
+  pageBounds: PdfTracePageBounds
+  viewport?: PdfTraceViewport
   lines: PdfTraceLine[]
-  /** Closed polylines / arc groupings. */
-  polylines?: PdfTracePolyline[]
-  /** Text notes (dimension labels, room labels, etc.). */
-  textNotes?: PdfTraceTextNote[]
+  rects: PdfTraceRect[]
+  polylines: PdfTracePolyline[]
+  arcs: PdfTraceArc[]
+  textRuns: PdfTraceTextRun[]
+  scaleHints: PdfTraceScaleHint[]
+  runtime?: {
+    /** exact = registry key matches request; partial = scored fallback provider; none = missing. */
+    providerMatchTier?: 'exact' | 'partial' | 'none'
+    providerStatus?: 'available' | 'partial' | 'missing' | 'error' | 'unknown'
+    providerKey?: string
+    providerRequestedKey?: string
+    providerRegisteredKeys?: string[]
+    providerMatchReason?: string
+    providerMetadata?: Record<string, any>
+    selectedPageNumber?: number
+    operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'
+    opsSource?: 'provider' | 'dynamic-import' | 'missing'
+    /** Operator-list decode telemetry from {@link extractPdfVectorTraceFromPage}. */
+    extractionStats?: PdfTraceExtractionStats
+  }
+  warnings: PdfTraceExtractionWarning[]
 }
+
+export interface PdfTraceExtractionWarning {
+  code:
+    | 'MISSING_PAGE_ACCESS'
+    | 'MISSING_OPERATOR_LIST'
+    | 'MISSING_TEXT_CONTENT'
+    | 'MISSING_VIEWPORT'
+    | 'EMPTY_TRACE_GEOMETRY'
+    | 'UNSUPPORTED_OPERATOR_SEQUENCE'
+    | 'ADAPTER_REQUIRED'
+    | 'RUNTIME_PROVIDER_MISSING'
+    | 'RUNTIME_PROVIDER_PARTIAL_MATCH'
+    | 'RUNTIME_PROVIDER_ERROR'
+    | 'EXTRACTION_ERROR'
+  message: string
+}
+
+export interface PdfTraceExtractionStats {
+  operatorListLength?: number
+  pathOpsSeen?: number
+  strokeOpsSeen?: number
+  transformOpsSeen?: number
+  constructPathOpsSeen?: number
+  rawPayloadLines?: number
+  rawPayloadRects?: number
+  rawPayloadPolylines?: number
+  rawTextRuns?: number
+  extractionWarnings?: string[]
+}
+
+/** World-space plan core bbox from measured-trace wall-network filtering (feet). */
+export interface PdfTracePlanCoreBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/** Wall-network filter telemetry surfaced on scan debug HUD. */
+export interface PdfTraceWallNetworkFilterStats {
+  wallCandidatesRaw?: number
+  wallCandidatesAfterFrameFilter?: number
+  wallCandidatesAfterTitleBlockFilter?: number
+  wallCandidatesAfterNoiseFilter?: number
+  wallCandidatesAfterCoreCrop?: number
+  drawingBounds?: PdfTracePlanCoreBounds | null
+  detectedPlanCoreBounds?: PdfTracePlanCoreBounds | null
+  finalCropBounds?: PdfTracePlanCoreBounds | null
+  removedSheetFrameSegments?: number
+  removedDetailRegionSegments?: number
+  removedOutsideCoreSegments?: number
+  finalWallNetworkSegments?: number
+  rejectedEmptyFrameComponents?: number
+  selectedPlanCoreComponentScore?: number
+  selectedPlanCoreDensity?: number
+  selectedPlanCoreInternalSegments?: number
+  selectedPlanCorePerimeterRatio?: number
+  removedEmptyFrameSegments?: number
+  keptWallNetworkComponents?: number
+}
+
+/** Per-page table/schedule grid vs floor-plan wall geometry signals. */
+export interface PdfTracePageTableGridAnalysis {
+  tableGridScore: number
+  wallLikeIrregularityScore: number
+  uniformRowSpacingScore: number
+  uniformColSpacingScore: number
+  parallelHorizontalCount: number
+  parallelVerticalCount: number
+  shortCellSegmentRatio: number
+  isLikelyTableGrid: boolean
+  reasons: string[]
+}
+
+/** Full-set geometry driver selection telemetry. */
+export interface PdfTraceGeometryDriverDebug {
+  selectedGeometryDriverPage?: number | null
+  pageTableGridScore?: number
+  rejectedTableGridPages?: number[]
+  selectedFloorPlanPageScore?: number
+  topWallPlanCandidatePages?: number[]
+  geometryDriverSelectionReason?: string
+  tableGridPenaltyApplied?: boolean
+}
+
+export interface PdfTraceExtractionResult {
+  success: boolean
+  payload: PdfTracePayload | null
+  warnings: PdfTraceExtractionWarning[]
+  opsSource?: 'provider' | 'dynamic-import' | 'missing'
+  extractionStats?: PdfTraceExtractionStats
+}
+
+// ---------------------------------------------------------------------------
+// Blueprint VR Wave 1B page roles live in blueprintPlanScanner.ts
+// (BlueprintPageClassificationRole, BlueprintPageClassification, etc.).
+// ---------------------------------------------------------------------------
+
+// Backward-compatible aliases used by scanner/adapter code.
+export type PdfTraceScale = PdfTraceScaleHint
+export type PdfTraceTextNote = PdfTraceTextRun
+export type PdfTracePagePayload = PdfTracePayload

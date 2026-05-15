@@ -163,8 +163,12 @@ export default function BlueprintAI() {
           sheetNumber: row.sheetNumber,
           sheetTitle: row.sheetTitle,
           sheetLabel: row.sheetLabel,
+          label: row.sheetLabel || row.sheetNumber,
           discipline: row.discipline,
           fileName: item.fileName,
+          sourceSetName: item.title,
+          sourceSetType: item.type,
+          blueprintTitle: item.title,
         })),
       }
     })
@@ -181,6 +185,37 @@ export default function BlueprintAI() {
     )
     return fullSet?.id || projectVRSourceSets[0]?.id || null
   }, [projectVRSourceSets, vrSourceSetIdByProject, selectedItem?.projectId])
+  const currentVRSourceSet = useMemo(
+    () => projectVRSourceSets.find((s) => s.id === currentVRSourceSetId) || null,
+    [projectVRSourceSets, currentVRSourceSetId],
+  )
+
+  const runtimeSourceIdentity = useMemo(
+    () => ({
+      projectId: selectedItem?.projectId,
+      blueprintId: selectedItem?.id,
+      sourceSetId: selectedItem?.id,
+      sourceSetName: selectedItem?.title || selectedItem?.fileName,
+      fileName: selectedItem?.fileName || selectedItem?.storagePath,
+      currentPageNumber: currentViewerPage,
+      pageCount:
+        selectedItem?.pageCount != null && Number(selectedItem.pageCount) > 0
+          ? Number(selectedItem.pageCount)
+          : currentVRSourceSet?.totalPages != null && Number(currentVRSourceSet.totalPages) > 0
+            ? Number(currentVRSourceSet.totalPages)
+            : undefined,
+    }),
+    [
+      selectedItem?.projectId,
+      selectedItem?.id,
+      selectedItem?.title,
+      selectedItem?.fileName,
+      selectedItem?.storagePath,
+      selectedItem?.pageCount,
+      currentVRSourceSet?.totalPages,
+      currentViewerPage,
+    ],
+  )
 
   const filteredLibraryItems = useMemo(() => {
     const q = librarySearch.trim().toLowerCase()
@@ -1412,6 +1447,7 @@ export default function BlueprintAI() {
           projectName={selectedItem?.projectName}
           availableSourceSets={projectVRSourceSets}
           initialSourceSetId={currentVRSourceSetId}
+          runtimeSourceIdentity={runtimeSourceIdentity}
           onSelectSourceSet={(setId) => {
             if (!selectedItem?.projectId) return
             setVrSourceSetIdByProject((prev) => ({

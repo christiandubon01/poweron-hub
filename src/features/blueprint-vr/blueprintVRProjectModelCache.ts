@@ -29,20 +29,33 @@ import type {
 export interface BlueprintVRProjectCacheEntry {
   /** Cache key used to look up / store this entry. */
   key: string
-  /** Project identifier (string id, or name when no id is available). */
-  projectKey: string
-  /** Source-set identifier (blueprint set id / name, or 'auto'). */
-  sourceSetKey: string
+  /** Short stable key hash for status/debug display. */
+  keyHash: string
+  /** Full source identity used to produce this cache entry. */
+  sourceIdentity: BlueprintVRCacheIdentity
   /** Generated building model. */
   model: BlueprintBuildingModel
   /** Plan scan result that produced this model. */
   scan: BlueprintPlanScanResult
   /** Optional full-set scan result when available. */
   fullSetScan?: BlueprintFullSetScanResult
+  /** How this model was derived for scanner transparency. */
+  modelDerivation?: 'fallback-derived' | 'inferred-derived' | 'trace-derived'
   /** Display label (e.g. "Full Set", or set title). */
   sourceSetLabel?: string
   /** When the cache entry was created (ISO timestamp). */
   generatedAt: string
+}
+
+export interface BlueprintVRCacheIdentity {
+  projectId?: string | null
+  sourceSetId?: string | null
+  sourceSetName?: string | null
+  blueprintId?: string | null
+  fileName?: string | null
+  selectedFloorPlanPage?: number | null
+  pageCount?: number | null
+  scannerVersion?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -54,15 +67,51 @@ function safeKey(value: string | null | undefined): string {
   return String(value).trim().toLowerCase().replace(/\s+/g, '-')
 }
 
+function safeCount(value: number | null | undefined): string {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 'na'
+  return String(Math.floor(parsed))
+}
+
+function hashKey(input: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i)
+    hash +=
+      (hash << 1) +
+      (hash << 4) +
+      (hash << 7) +
+      (hash << 8) +
+      (hash << 24)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+export function buildBlueprintVRCacheIdentityKey(identity: BlueprintVRCacheIdentity): string {
+  return [
+    safeKey(identity.projectId || undefined),
+    safeKey(identity.sourceSetId || undefined),
+    safeKey(identity.sourceSetName || undefined),
+    safeKey(identity.blueprintId || undefined),
+    safeKey(identity.fileName || undefined),
+    safeCount(identity.selectedFloorPlanPage || undefined),
+    safeCount(identity.pageCount || undefined),
+    safeKey(identity.scannerVersion || undefined),
+  ].join('::')
+}
+
 /**
  * Build a cache key from project + source set identifiers. The same project /
  * source set pair always produces the same key.
  */
 export function getBlueprintVRCacheKey(
-  projectKey: string | null | undefined,
-  sourceSetKey: string | null | undefined,
+  identityOrProjectKey: BlueprintVRCacheIdentity | string | null | undefined,
+  sourceSetKey?: string | null | undefined,
 ): string {
-  return `${safeKey(projectKey)}::${safeKey(sourceSetKey)}`
+  if (typeof identityOrProjectKey === 'object' && identityOrProjectKey !== null) {
+    return buildBlueprintVRCacheIdentityKey(identityOrProjectKey)
+  }
+  return `${safeKey(identityOrProjectKey || undefined)}::${safeKey(sourceSetKey || undefined)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -75,10 +124,10 @@ const cache = new Map<string, BlueprintVRProjectCacheEntry>()
  * Look up a cached entry by project + source-set keys.
  */
 export function getCachedProjectModel(
-  projectKey: string | null | undefined,
-  sourceSetKey: string | null | undefined,
+  identityOrProjectKey: BlueprintVRCacheIdentity | string | null | undefined,
+  sourceSetKey?: string | null | undefined,
 ): BlueprintVRProjectCacheEntry | undefined {
-  return cache.get(getBlueprintVRCacheKey(projectKey, sourceSetKey))
+  return cache.get(getBlueprintVRCacheKey(identityOrProjectKey, sourceSetKey))
 }
 
 /**
@@ -86,22 +135,61 @@ export function getCachedProjectModel(
  * existing entry with the same key.
  */
 export function setCachedProjectModel(
-  projectKey: string | null | undefined,
-  sourceSetKey: string | null | undefined,
-  entry: Omit<BlueprintVRProjectCacheEntry, 'key' | 'projectKey' | 'sourceSetKey' | 'generatedAt'> & {
+  identityOrProjectKey: BlueprintVRCacheIdentity | string | null | undefined,
+  sourceSetKeyOrEntry:
+    | string
+    | null
+    | undefined
+    | (Omit<BlueprintVRProjectCacheEntry, 'key' | 'keyHash' | 'sourceIdentity' | 'generatedAt'> & {
+        sourceSetLabel?: string
+      }),
+  entry?: Omit<BlueprintVRProjectCacheEntry, 'key' | 'keyHash' | 'sourceIdentity' | 'generatedAt'> & {
     sourceSetLabel?: string
   },
 ): BlueprintVRProjectCacheEntry {
-  const key = getBlueprintVRCacheKey(projectKey, sourceSetKey)
+  const identity: BlueprintVRCacheIdentity =
+    typeof identityOrProjectKey === 'object' && identityOrProjectKey !== null
+      ? identityOrProjectKey
+      : {
+          projectId: String(identityOrProjectKey || ''),
+          sourceSetId:
+            typeof sourceSetKeyOrEntry === 'string' || sourceSetKeyOrEntry == null
+              ? String(sourceSetKeyOrEntry || '')
+              : '',
+        }
+  const resolvedEntry =
+    typeof sourceSetKeyOrEntry === 'object' && sourceSetKeyOrEntry !== null
+      ? sourceSetKeyOrEntry
+      : entry
+  if (!resolvedEntry) {
+    throw new Error('setCachedProjectModel requires a cache entry payload.')
+  }
+  const key = getBlueprintVRCacheKey(identity)
   const stored: BlueprintVRProjectCacheEntry = {
     key,
-    projectKey: safeKey(projectKey),
-    sourceSetKey: safeKey(sourceSetKey),
+    keyHash: hashKey(key),
+    sourceIdentity: {
+      projectId: identity.projectId || null,
+      sourceSetId: identity.sourceSetId || null,
+      sourceSetName: identity.sourceSetName || null,
+      blueprintId: identity.blueprintId || null,
+      fileName: identity.fileName || null,
+      selectedFloorPlanPage:
+        Number(resolvedEntry.scan?.selectedFloorPlanSheet?.pageNumber || identity.selectedFloorPlanPage || 0) ||
+        null,
+      pageCount: Number(resolvedEntry.fullSetScan?.totalPagesScanned || identity.pageCount || 0) || null,
+      scannerVersion: identity.scannerVersion || null,
+    },
     generatedAt: new Date().toISOString(),
-    sourceSetLabel: entry.sourceSetLabel,
-    model: entry.model,
-    scan: entry.scan,
-    fullSetScan: entry.fullSetScan,
+    sourceSetLabel: resolvedEntry.sourceSetLabel,
+    model: resolvedEntry.model,
+    scan: resolvedEntry.scan,
+    fullSetScan: resolvedEntry.fullSetScan,
+    modelDerivation: resolvedEntry.scan.isFallback
+      ? 'fallback-derived'
+      : resolvedEntry.scan.scanResultKind === 'measured-trace'
+        ? 'trace-derived'
+        : 'inferred-derived',
   }
   cache.set(key, stored)
   return stored
@@ -127,10 +215,10 @@ export function clearProjectCache(projectKey: string | null | undefined): number
  * Drop a single cache entry. Returns true when something was removed.
  */
 export function clearCachedProjectModel(
-  projectKey: string | null | undefined,
-  sourceSetKey: string | null | undefined,
+  identityOrProjectKey: BlueprintVRCacheIdentity | string | null | undefined,
+  sourceSetKey?: string | null | undefined,
 ): boolean {
-  return cache.delete(getBlueprintVRCacheKey(projectKey, sourceSetKey))
+  return cache.delete(getBlueprintVRCacheKey(identityOrProjectKey, sourceSetKey))
 }
 
 /**

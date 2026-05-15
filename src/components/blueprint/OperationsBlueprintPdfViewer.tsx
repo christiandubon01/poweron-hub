@@ -51,6 +51,11 @@ import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './Tool
 import { useAuth } from '@/hooks/useAuth'
 import { createRFI } from '@/agents/blueprint/rfiManager'
 import { createCoordinationItem } from '@/agents/blueprint/coordinationTracker'
+import {
+  buildBlueprintPdfRuntimeKey,
+  registerBlueprintPdfRuntimeProvider,
+  unregisterBlueprintPdfRuntimeProvider,
+} from '@/features/blueprint-vr/blueprintPdfTraceRuntimeBridge'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -613,6 +618,84 @@ export default function OperationsBlueprintPdfViewer({
   const [submittingRfi, setSubmittingRfi] = useState(false)
   const [submittingCord, setSubmittingCord] = useState(false)
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!blueprint?.id || !pdfDoc) return
+    const resolvedPageCount = Number(numPages || pdfDoc?.numPages || blueprint?.pageCount || 0)
+    const sourceSetName = blueprint.title || blueprint.fileName
+    const fileName = blueprint.fileName || blueprint.storagePath || blueprint.title
+    const runtimeIdentity = {
+      projectId: blueprint.projectId,
+      blueprintId: blueprint.id,
+      sourceSetId: blueprint.id,
+      sourceSetName,
+      fileName,
+      pageCount: resolvedPageCount,
+    }
+    const runtimeKey = buildBlueprintPdfRuntimeKey(runtimeIdentity)
+    if (!runtimeKey) return
+    const missingFields = Object.entries(runtimeIdentity)
+      .filter(([, value]) => value === null || value === undefined || String(value).trim() === '' || String(value).trim() === '0')
+      .map(([key]) => key)
+    registerBlueprintPdfRuntimeProvider(runtimeKey, {
+      projectId: blueprint.projectId,
+      blueprintId: blueprint.id,
+      sourceSetId: blueprint.id,
+      sourceSetName,
+      fileName,
+      pageCount: resolvedPageCount,
+      metadata: {
+        ...runtimeIdentity,
+        runtimeKey,
+        registeredAt: new Date().toISOString(),
+        missingFields,
+        opsConstants: (_pdfjsLib as any)?.OPS ?? {},
+        pdfDocReady: Boolean(pdfDoc),
+        hasGetPage: true,
+        numPages: resolvedPageCount,
+      },
+      getPage: async (pageNumber: number) => {
+        const doc = pdfDocRef.current
+        if (!doc || typeof doc.getPage !== 'function') {
+          throw new Error('PDF document is not loaded in the viewer runtime.')
+        }
+        const nextPage = Math.max(1, Math.floor(Number(pageNumber) || 1))
+        return doc.getPage(nextPage)
+      },
+      getCurrentPage: async () => {
+        const doc = pdfDocRef.current
+        if (!doc || typeof doc.getPage !== 'function') {
+          throw new Error('PDF document is not loaded in the viewer runtime.')
+        }
+        return doc.getPage(Math.max(1, Math.floor(Number(currentPageRef.current) || 1)))
+      },
+      getTextContent: async (pageNumber: number) => {
+        const doc = pdfDocRef.current
+        if (!doc || typeof doc.getPage !== 'function') {
+          throw new Error('PDF document is not loaded in the viewer runtime.')
+        }
+        const page = await doc.getPage(Math.max(1, Math.floor(Number(pageNumber) || 1)))
+        if (typeof page?.getTextContent !== 'function') {
+          throw new Error('PDF page textContent is unavailable.')
+        }
+        return page.getTextContent()
+      },
+      getOperatorList: async (pageNumber: number) => {
+        const doc = pdfDocRef.current
+        if (!doc || typeof doc.getPage !== 'function') {
+          throw new Error('PDF document is not loaded in the viewer runtime.')
+        }
+        const page = await doc.getPage(Math.max(1, Math.floor(Number(pageNumber) || 1)))
+        if (typeof page?.getOperatorList !== 'function') {
+          throw new Error('PDF page operator list is unavailable.')
+        }
+        return page.getOperatorList()
+      },
+    })
+    return () => {
+      unregisterBlueprintPdfRuntimeProvider(runtimeKey, 'component-unmount-or-source-change')
+    }
+  }, [blueprint?.id, blueprint?.projectId, blueprint?.title, blueprint?.fileName, blueprint?.storagePath, blueprint?.pageCount, pdfDoc, numPages])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Pane resize state Ã¢â‚¬â€ persisted across hard reloads Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [leftPaneWidth, setLeftPaneWidth] = useState(() => {

@@ -113,6 +113,8 @@ export type {
   BuildingLevelModel,
   BuildingRoomModel,
   BuildingWallModel,
+  ExtractedWallPlanSegment,
+  DetectedPlanFootprint,
   BuildingOpeningModel,
   BuildingDimensionModel,
   ElectricalAnchorType,
@@ -222,19 +224,48 @@ export type {
   PdfTracePoint,
   WorldPoint2D,
   PdfTraceScale,
+  PdfTraceScaleHint,
   PdfTraceLineRole,
   PdfTraceLine,
+  PdfTraceRect,
   PdfTracePolyline,
+  PdfTraceArc,
   PdfTraceTextNote,
+  PdfTraceTextRun,
+  PdfTracePageBounds,
+  PdfTraceViewport,
+  PdfTracePayload,
+  PdfTraceExtractionWarning,
+  PdfTraceExtractionResult,
   PdfTracePagePayload,
 } from './pdfTraceTypes'
 
-// Trace adapter — converts upstream vector trace into world plan candidates
+export type { PlanTraceLine } from './blueprintPlanScanner'
+
+export type { PdfVectorTraceExtractorInput } from './pdfVectorTraceExtractor'
+export {
+  extractPdfVectorTraceFromPage,
+  normalizePdfTracePayload,
+  hasUsableTracePayload,
+} from './pdfVectorTraceExtractor'
+
 export type {
-  PlanTraceLine,
-  AdaptedTrace,
-} from './blueprintTraceAdapter'
-export { adaptPdfTraceToPlanLines } from './blueprintTraceAdapter'
+  BlueprintPdfRuntimeProvider,
+  BlueprintPdfRuntimeLookup,
+  RuntimeTraceForSheetInput,
+  RuntimeTraceForSheetResult,
+} from './blueprintPdfTraceRuntimeBridge'
+export {
+  buildBlueprintPdfRuntimeKey,
+  buildBlueprintPdfRuntimeProviderKey,
+  registerBlueprintPdfRuntimeProvider,
+  unregisterBlueprintPdfRuntimeProvider,
+  getBlueprintPdfRuntimeProvider,
+  getActivePdfTracePageProvider,
+  listBlueprintPdfRuntimeProviderKeys,
+  getBlueprintPdfRuntimeProviderDebug,
+  extractTraceForBlueprintSheet,
+} from './blueprintPdfTraceRuntimeBridge'
 
 // Blueprint plan scanner — deterministic floor-plan scan + fallback
 export type {
@@ -254,6 +285,12 @@ export type {
   BlueprintFullSetScanInput,
   BlueprintFullSetScanResult,
   FullSetSheetClassification,
+  SelectedFloorPlanSheet,
+  ScanConfidenceBreakdown,
+  BlueprintPageClassificationRole,
+  BlueprintPageClassification,
+  RankedWallPlanCandidate,
+  CanonicalWallPlanPage,
   ExtractedProjectHint,
   EquipmentHint,
   FinishHint,
@@ -265,14 +302,21 @@ export type {
 export {
   scanBlueprintPlan,
   convertPlanScanToBuildingModel,
+  buildScanResultFromVisionExtraction,
   inferBuildingFootprintFromTraceLines,
   inferWallsFromOrthogonalLines,
   inferOpeningsFromGaps,
   inferRoomsFromEnclosedOrGridLayout,
+  validateRoomCandidates,
+  convertRoomCandidatesToBuildingModel,
   chooseSalonSuiteFallbackFromBlueprintContext,
+  WAVE2_EXTRACTED_SUITE_ROOM_ID,
+  runWave2WallExtractionFromAdapted,
   // Full-set scan functions
   scanBlueprintFullSet,
   classifySheetRole,
+  classifyBlueprintPage,
+  enumerateFullSourceSetSheets,
   chooseBestFloorPlanSheet,
   chooseBestElectricalSheets,
   chooseBestRenderingSheets,
@@ -284,9 +328,10 @@ export {
 } from './blueprintPlanScanner'
 
 // Project model cache — keep generated models stable across page changes
-export type { BlueprintVRProjectCacheEntry } from './blueprintVRProjectModelCache'
+export type { BlueprintVRProjectCacheEntry, BlueprintVRCacheIdentity } from './blueprintVRProjectModelCache'
 export {
   getBlueprintVRCacheKey,
+  buildBlueprintVRCacheIdentityKey,
   getCachedProjectModel,
   setCachedProjectModel,
   clearCachedProjectModel,
@@ -294,6 +339,27 @@ export {
   clearAllProjectModelCache,
   listCachedProjectModels,
 } from './blueprintVRProjectModelCache'
+
+export type {
+  VisionPageClassification,
+  VisionPageRole,
+  BlueprintVisionExtractionResult,
+} from './blueprintVisionClient'
+export {
+  classifyAllPagesBatched,
+  callClassify,
+  callExtract,
+  hashFile,
+  loadPdfArrayBuffer,
+  openPdfDocument,
+  rasterizePdfPageToBase64,
+} from './blueprintVisionClient'
+export {
+  getClassification,
+  saveClassification,
+  getExtraction,
+  saveExtraction,
+} from './blueprintVisionCache'
 
 // VR source selector component
 export { default as BlueprintVRSourceSelector } from './BlueprintVRSourceSelector'
