@@ -62,6 +62,11 @@ export interface MeasuredPlanViewerProps {
     textContentStatus?: string
     confidenceCapReason?: string
   } | null
+  /**
+   * 2D Plan / Proposed Walls: subtler room fills, smaller titles, top hit layer
+   * for clicks so picks stay usable without covering walls or dimensions.
+   */
+  roomInteractionStyle?: 'default' | 'subtle'
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -312,6 +317,7 @@ function RoomElement({
   showAreaLabels,
   onRoomSelect,
   accent,
+  interactionStyle = 'default',
 }: {
   room: BuildingRoomModel
   scalePerFoot: number
@@ -322,6 +328,7 @@ function RoomElement({
   showAreaLabels: boolean
   onRoomSelect?: (roomId: string) => void
   accent: string
+  interactionStyle?: 'default' | 'subtle'
 }): JSX.Element {
   const { bounds, area, label } = room
   const { min, max } = bounds
@@ -329,6 +336,10 @@ function RoomElement({
   const y1 = offsetY + min.y * scalePerFoot
   const width = (max.x - min.x) * scalePerFoot
   const height = (max.y - min.y) * scalePerFoot
+  const subtle = interactionStyle === 'subtle'
+  const titleSize = subtle
+    ? Math.max(7, Math.min(10, width / 22))
+    : Math.max(9, Math.min(13, width / 16))
 
   return (
     <g>
@@ -337,21 +348,29 @@ function RoomElement({
         y={y1}
         width={width}
         height={height}
-        fill={isSelected ? `${accent}33` : 'rgba(42,63,95,0.42)'}
-        fillOpacity={isSelected ? 0.55 : 0.45}
-        stroke={isSelected ? accent : 'rgba(74,144,226,0.55)'}
-        strokeWidth={isSelected ? 2.6 : 1.4}
-        rx={3}
-        style={{ cursor: 'pointer' }}
-        onClick={() => onRoomSelect?.(room.id)}
+        fill={
+          subtle
+            ? isSelected
+              ? `${accent}28`
+              : 'rgba(42,63,95,0.16)'
+            : isSelected
+              ? `${accent}33`
+              : 'rgba(42,63,95,0.42)'
+        }
+        fillOpacity={subtle ? (isSelected ? 0.42 : 0.28) : isSelected ? 0.55 : 0.45}
+        stroke={isSelected ? accent : subtle ? 'rgba(74,144,226,0.35)' : 'rgba(74,144,226,0.55)'}
+        strokeWidth={subtle ? (isSelected ? 1.35 : 0.85) : isSelected ? 2.6 : 1.4}
+        rx={subtle ? 2 : 3}
+        style={subtle ? { pointerEvents: 'none' } : { cursor: 'pointer' }}
+        onClick={subtle ? undefined : () => onRoomSelect?.(room.id)}
       />
       {showRoomLabels && (
         <text
           x={x1 + width / 2}
-          y={y1 + height / 2 - 5}
+          y={y1 + height / 2 - (subtle ? 3 : 5)}
           textAnchor="middle"
           fill={isSelected ? '#fff' : '#e0e6ed'}
-          fontSize={Math.max(9, Math.min(13, width / 16))}
+          fontSize={titleSize}
           fontWeight="bold"
           style={{ pointerEvents: 'none' }}
         >
@@ -364,11 +383,23 @@ function RoomElement({
           y={y1 + height / 2 + 10}
           textAnchor="middle"
           fill="rgba(160,168,184,0.85)"
-          fontSize={9}
+          fontSize={subtle ? 8 : 9}
           style={{ pointerEvents: 'none' }}
         >
           {Math.round(area)} sq ft
         </text>
+      )}
+      {subtle && onRoomSelect && width > 18 && height > 18 && (
+        <g style={{ pointerEvents: 'none' }} aria-hidden>
+          <circle
+            cx={x1 + width - 7}
+            cy={y1 + height - 7}
+            r={3.2}
+            fill="rgba(0,221,204,0.12)"
+            stroke={isSelected ? accent : 'rgba(0,221,204,0.45)'}
+            strokeWidth={0.9}
+          />
+        </g>
       )}
     </g>
   )
@@ -394,6 +425,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   totalPages,
   traceDebug = null,
   className,
+  roomInteractionStyle = 'default',
 }) => {
   const canvasSize = useMemo(
     () => ({ width: width || 760, height: height || 430 }),
@@ -507,6 +539,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
             showAreaLabels={showAreaLabels}
             onRoomSelect={onRoomSelect}
             accent={accent}
+            interactionStyle={roomInteractionStyle}
           />
         ))}
 
@@ -690,6 +723,33 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
                   </text>
                 )}
               </g>
+            )
+          })}
+
+        {/* Top pick layer — subtle 2D mode so walls/dims stay readable */}
+        {onRoomSelect &&
+          roomInteractionStyle === 'subtle' &&
+          allRooms.map((room) => {
+            const { min, max } = room.bounds
+            const rx1 = offsetX + min.x * scalePerFoot
+            const ry1 = offsetY + min.y * scalePerFoot
+            const rw = (max.x - min.x) * scalePerFoot
+            const rh = (max.y - min.y) * scalePerFoot
+            if (rw < 4 || rh < 4) return null
+            return (
+              <rect
+                key={`room-hit-${room.id}`}
+                x={rx1}
+                y={ry1}
+                width={rw}
+                height={rh}
+                fill="#ffffff"
+                fillOpacity={0.001}
+                stroke="none"
+                pointerEvents="all"
+                style={{ cursor: 'pointer' }}
+                onClick={() => onRoomSelect(room.id)}
+              />
             )
           })}
 

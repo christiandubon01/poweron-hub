@@ -25,7 +25,7 @@ import {
 } from './stages'
 import { getCatalogItemsByStage } from './electricalCatalog'
 import type { ElectricalCatalogItem } from './electricalCatalog'
-import Blueprint3DSpaceViewer from './Blueprint3DSpaceViewer'
+import Blueprint3DSpaceViewer, { computeBlueprintVRViewportPixels } from './Blueprint3DSpaceViewer'
 import MeasuredPlanViewer from './MeasuredPlanViewer'
 import BlueprintRoomInteriorView from './BlueprintRoomInteriorView'
 import BlueprintVRSourceSelector from './BlueprintVRSourceSelector'
@@ -122,9 +122,159 @@ const smallLabelStyle: React.CSSProperties = {
 
 /** Shared preview shell height; all view modes use the same outer workspace (~1.25× prior shell). */
 const PREVIEW_SHELL_MIN_HEIGHT = 'clamp(650px, 70vh, 950px)'
-const MEASURED_PLAN_PIXEL_W = 1140
-const MEASURED_PLAN_PIXEL_H = 645
 const WALLS_VIEW_PLACEHOLDER_MIN_H = 750
+
+const PLAN_ZOOM_MIN = 0.5
+const PLAN_ZOOM_MAX = 4
+
+// ── Subcomponent: 2D plan viewport (same pixel footprint as dollhouse) ─────
+
+interface BvrMeasuredPlanScrollHostProps {
+  zoom: number
+  pan: { x: number; y: number }
+  planDragging: boolean
+  onWheelZoom: (e: WheelEvent) => void
+  onPanMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void
+  /** Extra top inset so floating chrome (e.g. Proposed Walls header) does not cover the plan. */
+  reserveTopPx?: number
+  children: (dims: { w: number; h: number }) => React.ReactNode
+}
+
+function BvrMeasuredPlanScrollHost({
+  zoom,
+  pan,
+  planDragging,
+  onWheelZoom,
+  onPanMouseDown,
+  reserveTopPx = 0,
+  children,
+}: BvrMeasuredPlanScrollHostProps) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const clampRef = useRef<HTMLDivElement>(null)
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
+
+  useEffect(() => {
+    const el = hostRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      setDims(computeBlueprintVRViewportPixels(r.width, r.height))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [reserveTopPx])
+
+  useEffect(() => {
+    const el = clampRef.current
+    if (!el) return
+    const fn = (e: WheelEvent) => {
+      if (e.ctrlKey) return
+      onWheelZoom(e)
+    }
+    el.addEventListener('wheel', fn, { passive: false })
+    return () => el.removeEventListener('wheel', fn)
+  }, [onWheelZoom, dims])
+
+  return (
+    <div
+      ref={hostRef}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxSizing: 'border-box',
+        paddingTop: reserveTopPx,
+      }}
+    >
+      {dims && (
+        <div
+          ref={clampRef}
+          onMouseDown={onPanMouseDown}
+          onContextMenu={(e) => {
+            if (e.button === 1) e.preventDefault()
+          }}
+          title="Scroll wheel: zoom. Shift+drag or middle-click to pan when zoomed."
+          style={{
+            width: dims.w,
+            height: dims.h,
+            position: 'relative',
+            overflow: 'hidden',
+            flexShrink: 0,
+            cursor: planDragging ? 'grabbing' : zoom > 1 ? 'grab' : 'default',
+            touchAction: 'none',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              width: dims.w,
+              height: dims.h,
+              marginLeft: -dims.w / 2,
+              marginTop: -dims.h / 2,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: 'center center',
+            }}
+          >
+            {children(dims)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface BvrRoomViewportFrameProps {
+  children: React.ReactNode
+}
+
+function BvrRoomViewportFrame({ children }: BvrRoomViewportFrameProps) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
+
+  useEffect(() => {
+    const el = hostRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      setDims(computeBlueprintVRViewportPixels(r.width, r.height))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={hostRef}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {dims && (
+        <div
+          style={{
+            width: dims.w,
+            height: dims.h,
+            minHeight: 0,
+            overflow: 'hidden',
+            flexShrink: 0,
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Subcomponent: Progress Region ────────────────────────────────────
 
@@ -732,6 +882,9 @@ export default function BlueprintVRExperiencePanel({
   const wallTransparencyButtonRef = useRef<HTMLButtonElement>(null)
   const wallTransparencyPopoverRef = useRef<HTMLDivElement>(null)
   const [planZoomScale, setPlanZoomScale] = useState(1)
+  const [planPan, setPlanPan] = useState({ x: 0, y: 0 })
+  const [planDragging, setPlanDragging] = useState(false)
+  const planPanSessionRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
   const [scannerStatusExpanded, setScannerStatusExpanded] = useState(false)
 
   // ── Source-set state (project-level) ──────────────────────────────────
@@ -1186,6 +1339,7 @@ export default function BlueprintVRExperiencePanel({
 
   useEffect(() => {
     setPlanZoomScale(1)
+    setPlanPan({ x: 0, y: 0 })
   }, [viewMode])
 
   useEffect(() => {
@@ -1221,6 +1375,28 @@ export default function BlueprintVRExperiencePanel({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen])
+
+  useEffect(() => {
+    if (!planDragging) return
+    const mm = (ev: MouseEvent) => {
+      const s = planPanSessionRef.current
+      if (!s) return
+      setPlanPan({
+        x: s.px + (ev.clientX - s.mx),
+        y: s.py + (ev.clientY - s.my),
+      })
+    }
+    const mu = () => {
+      planPanSessionRef.current = null
+      setPlanDragging(false)
+    }
+    window.addEventListener('mousemove', mm)
+    window.addEventListener('mouseup', mu)
+    return () => {
+      window.removeEventListener('mousemove', mm)
+      window.removeEventListener('mouseup', mu)
+    }
+  }, [planDragging])
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
@@ -1264,53 +1440,36 @@ export default function BlueprintVRExperiencePanel({
   )
 
   const handlePlanZoomIn = useCallback(() => {
-    setPlanZoomScale((z) => Math.min(4, Math.round(z * 1.15 * 100) / 100))
+    setPlanZoomScale((z) => Math.min(PLAN_ZOOM_MAX, Math.round(z * 1.15 * 100) / 100))
   }, [])
   const handlePlanZoomOut = useCallback(() => {
-    setPlanZoomScale((z) => Math.max(0.5, Math.round((z / 1.15) * 100) / 100))
+    setPlanZoomScale((z) => Math.max(PLAN_ZOOM_MIN, Math.round((z / 1.15) * 100) / 100))
   }, [])
   const handlePlanZoomReset = useCallback(() => {
     setPlanZoomScale(1)
+    setPlanPan({ x: 0, y: 0 })
   }, [])
 
-  const wrapPlanWithZoom = useCallback(
-    (planBody: React.ReactNode) => (
-      <div
-        style={{
-          overflow: 'auto',
-          width: '100%',
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <div
-          style={{
-            width: MEASURED_PLAN_PIXEL_W * planZoomScale,
-            height: MEASURED_PLAN_PIXEL_H * planZoomScale,
-            position: 'relative',
-            flexShrink: 0,
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: MEASURED_PLAN_PIXEL_W,
-              height: MEASURED_PLAN_PIXEL_H,
-              transform: `scale(${planZoomScale})`,
-              transformOrigin: '0 0',
-            }}
-          >
-            {planBody}
-          </div>
-        </div>
-      </div>
-    ),
-    [planZoomScale],
+  const handlePlanWheelZoom = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey) return
+    e.preventDefault()
+    e.stopPropagation()
+    const factor = e.deltaY < 0 ? 1.08 : 0.93
+    setPlanZoomScale((z) =>
+      Math.round(Math.min(PLAN_ZOOM_MAX, Math.max(PLAN_ZOOM_MIN, z * factor)) * 100) / 100,
+    )
+  }, [])
+
+  const handlePlanPanMouseDown = useCallback(
+    (ev: React.MouseEvent<HTMLDivElement>) => {
+      if (planZoomScale <= 1) return
+      const panMouse = ev.button === 1 || (ev.button === 0 && ev.shiftKey)
+      if (!panMouse) return
+      if (ev.button === 1) ev.preventDefault()
+      planPanSessionRef.current = { mx: ev.clientX, my: ev.clientY, px: planPan.x, py: planPan.y }
+      setPlanDragging(true)
+    },
+    [planZoomScale, planPan],
   )
 
   return (
@@ -1678,7 +1837,12 @@ export default function BlueprintVRExperiencePanel({
                       <button
                         type="button"
                         onClick={handlePlanZoomReset}
-                        style={{ ...controlButtonStyle(planZoomScale !== 1), padding: '4px 8px' }}
+                        style={{
+                          ...controlButtonStyle(
+                            planZoomScale !== 1 || planPan.x !== 0 || planPan.y !== 0,
+                          ),
+                          padding: '4px 8px',
+                        }}
                         title="Reset zoom to fit"
                       >
                         Reset
@@ -1858,43 +2022,88 @@ export default function BlueprintVRExperiencePanel({
 
               // Done — real geometry extracted
               return (
-                <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
-                  {headerRow}
-                  <div style={{ display: 'flex', justifyContent: 'center', width: '100%', background: '#0d121b', flex: 1, minHeight: 0 }}>
-                    {wrapPlanWithZoom(
+                <div
+                  style={{
+                    position: 'relative',
+                    flex: 1,
+                    minHeight: 0,
+                    width: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    border: '1px solid rgba(0,229,204,0.2)',
+                    borderRadius: 6,
+                    overflow: 'hidden',
+                    background: '#0d121b',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 6,
+                      left: 8,
+                      right: 8,
+                      zIndex: 8,
+                      display: 'flex',
+                      justifyContent: 'center',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <div style={{ pointerEvents: 'auto', width: '100%', maxWidth: 920 }}>{headerRow}</div>
+                  </div>
+                  <BvrMeasuredPlanScrollHost
+                    reserveTopPx={48}
+                    zoom={planZoomScale}
+                    pan={planPan}
+                    planDragging={planDragging}
+                    onWheelZoom={handlePlanWheelZoom}
+                    onPanMouseDown={handlePlanPanMouseDown}
+                  >
+                    {(dims) => (
                       <MeasuredPlanViewer
                         model={buildingModel}
-                        width={MEASURED_PLAN_PIXEL_W}
-                        height={MEASURED_PLAN_PIXEL_H}
+                        width={dims.w}
+                        height={dims.h}
+                        selectedRoomId={selectedRoomId}
+                        onRoomSelect={handleRoomEnter}
                         showDimensions={showDimensions}
                         showRoomLabels={showLabels}
                         showAreaLabels={false}
                         showElectrical={false}
                         wallOnlyMode={true}
+                        roomInteractionStyle="subtle"
                         traceDebug={scanResult.traceDebugCounts || null}
-                      />,
+                      />
                     )}
-                  </div>
+                  </BvrMeasuredPlanScrollHost>
                 </div>
               )
             })()}
 
             {viewMode === 'plan' && (
-              wrapPlanWithZoom(
-                <MeasuredPlanViewer
-                  model={buildingModel}
-                  width={MEASURED_PLAN_PIXEL_W}
-                  height={MEASURED_PLAN_PIXEL_H}
-                  selectedRoomId={selectedRoomId}
-                  onRoomSelect={handleRoomEnter}
-                  activeStage={activeStage}
-                  showDimensions={showDimensions}
-                  showRoomLabels={showLabels}
-                  showAreaLabels={showLabels}
-                  showElectrical={showElectrical}
-                  traceDebug={scanResult.traceDebugCounts || null}
-                />,
-              )
+              <BvrMeasuredPlanScrollHost
+                zoom={planZoomScale}
+                pan={planPan}
+                planDragging={planDragging}
+                onWheelZoom={handlePlanWheelZoom}
+                onPanMouseDown={handlePlanPanMouseDown}
+              >
+                {(dims) => (
+                  <MeasuredPlanViewer
+                    model={buildingModel}
+                    width={dims.w}
+                    height={dims.h}
+                    selectedRoomId={selectedRoomId}
+                    onRoomSelect={handleRoomEnter}
+                    activeStage={activeStage}
+                    showDimensions={showDimensions}
+                    showRoomLabels={showLabels}
+                    showAreaLabels={showLabels}
+                    showElectrical={showElectrical}
+                    roomInteractionStyle="subtle"
+                    traceDebug={scanResult.traceDebugCounts || null}
+                  />
+                )}
+              </BvrMeasuredPlanScrollHost>
             )}
 
             {viewMode === 'dollhouse' && (
@@ -1914,19 +2123,17 @@ export default function BlueprintVRExperiencePanel({
             )}
 
             {viewMode === 'room' && (
-              <div style={{ display: 'flex', justifyContent: 'center', width: '100%', flex: 1, minHeight: 0, alignItems: 'center' }}>
-                <div style={{ width: '100%', maxWidth: 960 }}>
-                  <BlueprintRoomInteriorView
-                    model={buildingModel}
-                    selectedRoomId={selectedRoomId || firstRoomId}
-                    activeStage={activeStage}
-                    showElectrical={showElectrical}
-                    showDimensions={showDimensions}
-                    showLabels={showLabels}
-                    wallOpacity={wallOpacity}
-                  />
-                </div>
-              </div>
+              <BvrRoomViewportFrame>
+                <BlueprintRoomInteriorView
+                  model={buildingModel}
+                  selectedRoomId={selectedRoomId || firstRoomId}
+                  activeStage={activeStage}
+                  showElectrical={showElectrical}
+                  showDimensions={showDimensions}
+                  showLabels={showLabels}
+                  wallOpacity={wallOpacity}
+                />
+              </BvrRoomViewportFrame>
             )}
                   </div>
                 </div>

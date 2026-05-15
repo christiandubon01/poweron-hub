@@ -53,18 +53,26 @@ const STAGE_COLOR: Record<VRStage, number> = {
 }
 
 /** Matches modal 2D / preview shell aspect so dollhouse camera sizing stays consistent across layouts. */
-const VIEWPORT_ASPECT = 1140 / 645
+export const BLUEPRINT_VR_VIEWPORT_ASPECT = 1140 / 645
 
-function computeViewportPixels(containerWidth: number, containerHeight: number): { w: number; h: number } {
+/** Shared with 2D plan / Proposed Walls hosts so all view modes use the same preview pixel footprint. */
+export function computeBlueprintVRViewportPixels(
+  containerWidth: number,
+  containerHeight: number,
+): { w: number; h: number } {
   const maxW = Math.max(280, containerWidth)
   const maxH = Math.max(240, Math.min(containerHeight || 720, 1125))
   let w = maxW
-  let h = Math.round(w / VIEWPORT_ASPECT)
+  let h = Math.round(w / BLUEPRINT_VR_VIEWPORT_ASPECT)
   if (h > maxH) {
     h = maxH
-    w = Math.round(h * VIEWPORT_ASPECT)
+    w = Math.round(h * BLUEPRINT_VR_VIEWPORT_ASPECT)
   }
   return { w: Math.max(280, w), h: Math.max(200, h) }
+}
+
+function computeViewportPixels(containerWidth: number, containerHeight: number): { w: number; h: number } {
+  return computeBlueprintVRViewportPixels(containerWidth, containerHeight)
 }
 
 // ─── Color cues by room role ─────────────────────────────────────────────────
