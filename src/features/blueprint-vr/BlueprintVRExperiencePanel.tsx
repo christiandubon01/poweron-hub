@@ -120,6 +120,12 @@ const smallLabelStyle: React.CSSProperties = {
   textTransform: 'uppercase',
 }
 
+/** Shared preview shell height; all view modes use the same outer workspace (~1.25× prior shell). */
+const PREVIEW_SHELL_MIN_HEIGHT = 'clamp(650px, 70vh, 950px)'
+const MEASURED_PLAN_PIXEL_W = 1140
+const MEASURED_PLAN_PIXEL_H = 645
+const WALLS_VIEW_PLACEHOLDER_MIN_H = 750
+
 // ── Subcomponent: Progress Region ────────────────────────────────────
 
 function ProgressRegion({ progress, status }: { progress?: number; status: string }) {
@@ -197,62 +203,76 @@ function ProgressRegion({ progress, status }: { progress?: number; status: strin
 
 // ── Subcomponent: Stage Tabs ──────────────────────────────────────────
 
-interface StageTabsProps {
+interface StageRailProps {
   stages: VRStage[]
   selectedStage: VRStage
   onSelectStage: (stage: VRStage) => void
 }
 
-function StageTabs({ stages, selectedStage, onSelectStage }: StageTabsProps) {
+function StageStageRail({ stages, selectedStage, onSelectStage }: StageRailProps) {
   return (
-    <div style={{
-      display: 'flex',
-      gap: 2,
-      padding: '10px 16px',
-      borderBottom: '1px solid rgba(0,229,204,0.15)',
-      overflowX: 'auto' as const,
-      scrollbarWidth: 'thin' as const,
-      scrollbarColor: 'rgba(0,229,204,0.2) transparent',
-    }}>
+    <nav
+      className="bvr7-stage-rail"
+      aria-label="Construction stage"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        padding: '4px 0 0',
+        border: 'none',
+        borderRadius: 0,
+        background: 'transparent',
+        minWidth: 0,
+        maxWidth: 'none',
+        width: '100%',
+        boxSizing: 'border-box',
+        alignSelf: 'stretch',
+        justifyContent: 'flex-start',
+      }}
+    >
       {stages.length === 0 ? (
         <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: 'monospace' }}>
-          No stages available
+          No stages
         </div>
       ) : (
-        stages.map(stage => {
-          const count     = getCatalogItemsByStage(stage).length
-          const isActive  = selectedStage === stage
+        stages.map((stage) => {
+          const count = getCatalogItemsByStage(stage).length
+          const isActive = selectedStage === stage
           return (
             <button
               key={stage}
+              type="button"
               onClick={() => onSelectStage(stage)}
               style={{
-                padding: '5px 11px',
+                padding: '8px 8px',
                 borderRadius: 4,
-                border: isActive ? '1px solid #00ddcc' : '1px solid rgba(0,229,204,0.25)',
-                background: isActive ? 'rgba(0,221,204,0.15)' : 'rgba(255,255,255,0.02)',
-                color: isActive ? '#00ddcc' : 'rgba(255,255,255,0.5)',
+                border: isActive ? '2px solid #00ddcc' : '1px solid rgba(0,229,204,0.25)',
+                background: isActive ? 'rgba(0,221,204,0.18)' : 'rgba(255,255,255,0.02)',
+                color: isActive ? '#00ddcc' : 'rgba(255,255,255,0.55)',
                 cursor: 'pointer',
-                fontSize: 10,
+                fontSize: 9.5,
                 fontFamily: 'monospace',
                 fontWeight: 700,
-                letterSpacing: 0.8,
+                letterSpacing: 0.6,
                 textTransform: 'uppercase' as const,
                 transition: 'all 0.15s',
-                whiteSpace: 'nowrap' as const,
-                flexShrink: 0,
+                width: '100%',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
-                gap: 5,
+                gap: 4,
+                textAlign: 'center' as const,
+                lineHeight: 1.15,
+                boxShadow: isActive ? '0 0 12px rgba(0,221,204,0.2)' : undefined,
               }}
-              onMouseEnter={e => {
+              onMouseEnter={(e) => {
                 if (!isActive) {
                   const b = e.currentTarget as HTMLButtonElement
                   b.style.backgroundColor = 'rgba(0,229,204,0.08)'
                   b.style.borderColor = 'rgba(0,229,204,0.4)'
                 }
               }}
-              onMouseLeave={e => {
+              onMouseLeave={(e) => {
                 if (!isActive) {
                   const b = e.currentTarget as HTMLButtonElement
                   b.style.backgroundColor = 'rgba(255,255,255,0.02)'
@@ -260,15 +280,17 @@ function StageTabs({ stages, selectedStage, onSelectStage }: StageTabsProps) {
                 }
               }}
             >
-              {getStageLabelByType(stage)}
+              <span>{getStageLabelByType(stage)}</span>
               {count > 0 && (
-                <span style={{
-                  fontSize: 8,
-                  opacity: 0.65,
-                  background: isActive ? 'rgba(0,221,204,0.2)' : 'rgba(255,255,255,0.08)',
-                  borderRadius: 8,
-                  padding: '1px 5px',
-                }}>
+                <span
+                  style={{
+                    fontSize: 8,
+                    opacity: 0.75,
+                    background: isActive ? 'rgba(0,221,204,0.25)' : 'rgba(255,255,255,0.08)',
+                    borderRadius: 8,
+                    padding: '1px 6px',
+                  }}
+                >
                   {count}
                 </span>
               )}
@@ -276,14 +298,23 @@ function StageTabs({ stages, selectedStage, onSelectStage }: StageTabsProps) {
           )
         })
       )}
-    </div>
+    </nav>
   )
 }
 
 // ── Subcomponent: Stage Item List ─────────────────────────────────────
 
 function StageItemList({ stage }: { stage: VRStage }) {
+  const [openBuckets, setOpenBuckets] = useState<Record<string, boolean>>({})
   const items = getCatalogItemsByStage(stage)
+
+  const toggleBucket = useCallback((category: string) => {
+    setOpenBuckets((prev) => ({ ...prev, [category]: !prev[category] }))
+  }, [])
+
+  useEffect(() => {
+    setOpenBuckets({})
+  }, [stage])
 
   if (items.length === 0) {
     return (
@@ -308,28 +339,60 @@ function StageItemList({ stage }: { stage: VRStage }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', padding: '8px 16px 12px' }}>
-      {Object.entries(grouped).map(([category, catItems]) => (
+      {Object.entries(grouped).map(([category, catItems]) => {
+        const expanded = Boolean(openBuckets[category])
+        return (
         <div key={category}>
-          {/* Category header */}
-          <div style={{
-            color: 'rgba(0,221,204,0.45)',
-            fontSize: 8.5,
-            fontFamily: 'monospace',
-            letterSpacing: 1,
-            textTransform: 'uppercase' as const,
-            marginTop: 10,
-            marginBottom: 4,
-            paddingBottom: 3,
-            borderBottom: '1px solid rgba(0,229,204,0.1)',
-          }}>
-            {category}
-            <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.2)', fontSize: 8 }}>
-              ({catItems.length})
+          <button
+            type="button"
+            onClick={() => toggleBucket(category)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 10,
+              marginTop: 10,
+              marginBottom: expanded ? 6 : 2,
+              padding: '8px 10px',
+              borderRadius: 4,
+              border: '1px solid rgba(0,229,204,0.14)',
+              background: expanded ? 'rgba(0,229,204,0.06)' : 'rgba(255,255,255,0.02)',
+              cursor: 'pointer',
+              textAlign: 'left' as const,
+            }}
+          >
+            <span
+              style={{
+                color: 'rgba(0,221,204,0.55)',
+                fontSize: 8.5,
+                fontFamily: 'monospace',
+                letterSpacing: 1,
+                textTransform: 'uppercase' as const,
+                flex: '1 1 auto',
+                minWidth: 0,
+              }}
+            >
+              {category}
+              <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.35)', fontSize: 9 }}>
+                {catItems.length}
+              </span>
             </span>
-          </div>
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.45)',
+                fontSize: 11,
+                fontFamily: 'monospace',
+                flexShrink: 0,
+              }}
+              aria-hidden
+            >
+              {expanded ? '▾' : '▸'}
+            </span>
+          </button>
 
-          {/* Items in this category */}
-          {catItems.map(item => (
+          {expanded &&
+          catItems.map(item => (
             <div
               key={item.id}
               style={{
@@ -389,7 +452,8 @@ function StageItemList({ stage }: { stage: VRStage }) {
             </div>
           ))}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -664,6 +728,10 @@ export default function BlueprintVRExperiencePanel({
   const [labelsMenuOpen, setLabelsMenuOpen] = useState(false)
   const labelsMenuRef = useRef<HTMLDivElement>(null)
   const labelsMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const [wallTransparencyOpen, setWallTransparencyOpen] = useState(false)
+  const wallTransparencyButtonRef = useRef<HTMLButtonElement>(null)
+  const wallTransparencyPopoverRef = useRef<HTMLDivElement>(null)
+  const [planZoomScale, setPlanZoomScale] = useState(1)
   const [scannerStatusExpanded, setScannerStatusExpanded] = useState(false)
 
   // ── Source-set state (project-level) ──────────────────────────────────
@@ -1117,34 +1185,42 @@ export default function BlueprintVRExperiencePanel({
   }, [firstRoomId])
 
   useEffect(() => {
-    if (!viewMenuOpen && !labelsMenuOpen) return
+    setPlanZoomScale(1)
+  }, [viewMode])
+
+  useEffect(() => {
+    if (!viewMenuOpen && !labelsMenuOpen && !wallTransparencyOpen) return
     const onDocMouseDown = (e: MouseEvent) => {
       const t = e.target as Node
       const inside =
         viewMenuRef.current?.contains(t) ||
         viewMenuButtonRef.current?.contains(t) ||
         labelsMenuRef.current?.contains(t) ||
-        labelsMenuButtonRef.current?.contains(t)
+        labelsMenuButtonRef.current?.contains(t) ||
+        wallTransparencyPopoverRef.current?.contains(t) ||
+        wallTransparencyButtonRef.current?.contains(t)
       if (!inside) {
         setViewMenuOpen(false)
         setLabelsMenuOpen(false)
+        setWallTransparencyOpen(false)
       }
     }
     document.addEventListener('mousedown', onDocMouseDown)
     return () => document.removeEventListener('mousedown', onDocMouseDown)
-  }, [viewMenuOpen, labelsMenuOpen])
+  }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen])
 
   useEffect(() => {
-    if (!viewMenuOpen && !labelsMenuOpen) return
+    if (!viewMenuOpen && !labelsMenuOpen && !wallTransparencyOpen) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setViewMenuOpen(false)
         setLabelsMenuOpen(false)
+        setWallTransparencyOpen(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewMenuOpen, labelsMenuOpen])
+  }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen])
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
@@ -1187,6 +1263,56 @@ export default function BlueprintVRExperiencePanel({
     0
   )
 
+  const handlePlanZoomIn = useCallback(() => {
+    setPlanZoomScale((z) => Math.min(4, Math.round(z * 1.15 * 100) / 100))
+  }, [])
+  const handlePlanZoomOut = useCallback(() => {
+    setPlanZoomScale((z) => Math.max(0.5, Math.round((z / 1.15) * 100) / 100))
+  }, [])
+  const handlePlanZoomReset = useCallback(() => {
+    setPlanZoomScale(1)
+  }, [])
+
+  const wrapPlanWithZoom = useCallback(
+    (planBody: React.ReactNode) => (
+      <div
+        style={{
+          overflow: 'auto',
+          width: '100%',
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div
+          style={{
+            width: MEASURED_PLAN_PIXEL_W * planZoomScale,
+            height: MEASURED_PLAN_PIXEL_H * planZoomScale,
+            position: 'relative',
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: MEASURED_PLAN_PIXEL_W,
+              height: MEASURED_PLAN_PIXEL_H,
+              transform: `scale(${planZoomScale})`,
+              transformOrigin: '0 0',
+            }}
+          >
+            {planBody}
+          </div>
+        </div>
+      </div>
+    ),
+    [planZoomScale],
+  )
+
   return (
     <>
       <style>{`
@@ -1197,6 +1323,70 @@ export default function BlueprintVRExperiencePanel({
         @keyframes bvr7-backdrop-fade {
           from { opacity: 0; }
           to   { opacity: 1; }
+        }
+        .bvr7-preview-stage-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          align-items: stretch;
+        }
+        .bvr7-preview-column {
+          flex: 1 1 320px;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .bvr7-preview-shell {
+          position: relative;
+          flex: 1;
+          width: 100%;
+          min-height: ${PREVIEW_SHELL_MIN_HEIGHT};
+          display: flex;
+          flex-direction: column;
+          align-items: stretch;
+          justify-content: center;
+          border-radius: 8px;
+          overflow: hidden;
+          background: #070b12;
+          border: 1px solid rgba(0,229,204,0.2);
+        }
+        .bvr7-right-rail {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          padding: 12px 10px;
+          border: 1px solid rgba(0,229,204,0.22);
+          border-radius: 8px;
+          background: rgba(6,12,20,0.92);
+          min-width: 108px;
+          max-width: 124px;
+          flex: 0 0 auto;
+          align-self: stretch;
+          box-sizing: border-box;
+        }
+        @media (max-width: 880px) {
+          .bvr7-right-rail {
+            flex-direction: row !important;
+            flex-wrap: wrap;
+            flex: 1 1 100% !important;
+            max-width: none !important;
+            min-width: 0 !important;
+            width: 100%;
+            justify-content: center;
+            align-self: stretch !important;
+            align-items: flex-start;
+          }
+          .bvr7-stage-rail {
+            flex-direction: row !important;
+            flex-wrap: wrap;
+            flex: 1 1 100% !important;
+            max-width: none !important;
+            min-width: 0 !important;
+            width: 100%;
+            justify-content: center;
+            align-self: stretch !important;
+          }
         }
       `}</style>
 
@@ -1356,345 +1546,8 @@ export default function BlueprintVRExperiencePanel({
           scrollbarColor: 'rgba(0,229,204,0.2) transparent',
         }}>
 
-          {/* Planner-style view controls */}
+          {/* Blueprint VR controls (source selector + scanner status + preview) */}
           <div style={{ padding: '14px 16px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <button
-                  ref={viewMenuButtonRef}
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={viewMenuOpen}
-                  onClick={() => {
-                    setLabelsMenuOpen(false)
-                    setViewMenuOpen((o) => !o)
-                  }}
-                  style={controlButtonStyle(viewMenuOpen)}
-                >
-                  View
-                </button>
-                {viewMenuOpen && (
-                  <div
-                    ref={viewMenuRef}
-                    role="menu"
-                    style={{
-                      position: 'absolute',
-                      top: '100%',
-                      left: 0,
-                      marginTop: 6,
-                      minWidth: 200,
-                      padding: '6px 0',
-                      background: 'rgba(6,12,20,0.98)',
-                      border: '1px solid rgba(0,229,204,0.35)',
-                      borderRadius: 6,
-                      boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
-                      zIndex: 1000,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setViewMode('walls')
-                        setCameraPreset('top')
-                        setViewMenuOpen(false)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: viewMode === 'walls' ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color: viewMode === 'walls' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>Proposed Walls</span>
-                      {viewMode === 'walls' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setViewMode('plan')
-                        setCameraPreset('top')
-                        setViewMenuOpen(false)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: viewMode === 'plan' ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color: viewMode === 'plan' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>2D Plan</span>
-                      {viewMode === 'plan' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setViewMode('dollhouse')
-                        setCameraPreset('iso')
-                        setViewMenuOpen(false)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: viewMode === 'dollhouse' ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color: viewMode === 'dollhouse' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>3D Dollhouse</span>
-                      {viewMode === 'dollhouse' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={!selectedRoomId && !firstRoomId}
-                      onClick={() => {
-                        setViewMode('room')
-                        setCameraPreset('room')
-                        if (!selectedRoomId) setSelectedRoomId(firstRoomId)
-                        setViewMenuOpen(false)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: viewMode === 'room' ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color:
-                          !selectedRoomId && !firstRoomId
-                            ? 'rgba(255,255,255,0.25)'
-                            : viewMode === 'room'
-                              ? '#00ddcc'
-                              : 'rgba(255,255,255,0.75)',
-                        cursor: !selectedRoomId && !firstRoomId ? 'not-allowed' : 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                        opacity: !selectedRoomId && !firstRoomId ? 0.45 : 1,
-                      }}
-                    >
-                      <span>Room View</span>
-                      {viewMode === 'room' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                    <div style={{ height: 1, margin: '4px 8px', background: 'rgba(0,229,204,0.12)' }} />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        handleResetView()
-                        setViewMenuOpen(false)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: 'transparent',
-                        color: 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>Reset View</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <button
-                  ref={labelsMenuButtonRef}
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={labelsMenuOpen}
-                  onClick={() => {
-                    setViewMenuOpen(false)
-                    setLabelsMenuOpen((o) => !o)
-                  }}
-                  style={controlButtonStyle(labelsMenuOpen)}
-                >
-                  Labels
-                </button>
-                {labelsMenuOpen && (
-                  <div
-                    ref={labelsMenuRef}
-                    role="menu"
-                    style={{
-                      position: 'absolute',
-                      top: '100%',
-                      left: 0,
-                      marginTop: 6,
-                      minWidth: 220,
-                      padding: '6px 0',
-                      background: 'rgba(6,12,20,0.98)',
-                      border: '1px solid rgba(0,229,204,0.35)',
-                      borderRadius: 6,
-                      boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
-                      zIndex: 1000,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setShowDimensions((v) => !v)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: showDimensions ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color: showDimensions ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>Show Dimensions</span>
-                      {showDimensions ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setShowElectrical((v) => !v)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: showElectrical ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color: showElectrical ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>Show Electrical</span>
-                      {showElectrical ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setShowLabels((v) => !v)
-                        setLabelsMenuOpen(false)
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: 'none',
-                        background: showLabels ? 'rgba(0,221,204,0.12)' : 'transparent',
-                        color: showLabels ? '#00ddcc' : 'rgba(255,255,255,0.75)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        letterSpacing: 0.6,
-                        textTransform: 'uppercase' as const,
-                        textAlign: 'left' as const,
-                      }}
-                    >
-                      <span>Show Labels</span>
-                      {showLabels ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={smallLabelStyle}>Wall Transparency</span>
-              <input
-                type="range"
-                min={35}
-                max={95}
-                value={Math.round(wallOpacity * 100)}
-                onChange={(e) => setWallOpacity(Number(e.target.value) / 100)}
-                style={{ flex: 1 }}
-              />
-              <span style={smallLabelStyle}>{Math.round(wallOpacity * 100)}%</span>
-              <button onClick={() => setCameraPreset('top')} style={controlButtonStyle(cameraPreset === 'top')}>Top</button>
-              <button onClick={() => setCameraPreset('iso')} style={controlButtonStyle(cameraPreset === 'iso')}>Iso</button>
-              <button onClick={() => setCameraPreset('room')} style={controlButtonStyle(cameraPreset === 'room')}>Room</button>
-            </div>
 
             {availableSets.length > 0 && (
               <BlueprintVRSourceSelector
@@ -1785,6 +1638,76 @@ export default function BlueprintVRExperiencePanel({
               )}
             </div>
 
+            <div className="bvr7-preview-stage-row">
+              <div className="bvr7-preview-column">
+                <div className="bvr7-preview-shell">
+                  {(viewMode === 'plan' || viewMode === 'walls') && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: 10,
+                        left: 10,
+                        zIndex: 12,
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 4,
+                        alignItems: 'center',
+                        padding: '4px 6px',
+                        borderRadius: 6,
+                        background: 'rgba(6,12,20,0.88)',
+                        border: '1px solid rgba(0,229,204,0.28)',
+                        pointerEvents: 'auto',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={handlePlanZoomOut}
+                        style={{ ...controlButtonStyle(false), padding: '4px 8px', minWidth: 32 }}
+                        title="Zoom out"
+                      >
+                        −
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePlanZoomIn}
+                        style={{ ...controlButtonStyle(false), padding: '4px 8px', minWidth: 32 }}
+                        title="Zoom in"
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePlanZoomReset}
+                        style={{ ...controlButtonStyle(planZoomScale !== 1), padding: '4px 8px' }}
+                        title="Reset zoom to fit"
+                      >
+                        Reset
+                      </button>
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontFamily: 'monospace',
+                          color: 'rgba(255,255,255,0.45)',
+                          padding: '0 2px',
+                          minWidth: 36,
+                          textAlign: 'center',
+                        }}
+                      >
+                        {Math.round(planZoomScale * 100)}%
+                      </span>
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      flex: 1,
+                      width: '100%',
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      justifyContent: 'center',
+                    }}
+                  >
             {viewMode === 'walls' && (() => {
               const traceCount = Object.keys(fullSetPageTraces).length
               const providerMissing = traceExtraction.providerStatus === 'missing'
@@ -1831,10 +1754,10 @@ export default function BlueprintVRExperiencePanel({
               // Extracting — show progress screen
               if (phase === 'extracting') {
                 return (
-                  <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
                     {headerRow}
                     <div style={{
-                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      minHeight: WALLS_VIEW_PLACEHOLDER_MIN_H, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
                       justifyContent: 'center', background: '#0d121b', gap: 12,
                     }}>
                       <div style={{ color: '#FFD700', fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
@@ -1864,10 +1787,10 @@ export default function BlueprintVRExperiencePanel({
               // Done — provider was missing (can't blame the PDF)
               if (phase === 'done' && providerMissing && traceCount === 0) {
                 return (
-                  <div style={{ border: '1px solid rgba(255,140,0,0.3)', borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid rgba(255,140,0,0.3)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
                     {headerRow}
                     <div style={{
-                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      minHeight: WALLS_VIEW_PLACEHOLDER_MIN_H, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
                       justifyContent: 'center', background: '#0d121b', gap: 10, padding: 24,
                     }}>
                       <div style={{ color: '#FF9966', fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
@@ -1894,10 +1817,10 @@ export default function BlueprintVRExperiencePanel({
               // Done — provider available but no vectors (rasterized PDF)
               if (phase === 'done' && !providerMissing && traceCount === 0 && isFallback) {
                 return (
-                  <div style={{ border: '1px solid rgba(255,80,80,0.3)', borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid rgba(255,80,80,0.3)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
                     {headerRow}
                     <div style={{
-                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      minHeight: WALLS_VIEW_PLACEHOLDER_MIN_H, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
                       justifyContent: 'center', background: '#0d121b', gap: 10, padding: 24,
                     }}>
                       <div style={{ color: '#FF6666', fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
@@ -1919,10 +1842,10 @@ export default function BlueprintVRExperiencePanel({
               // Still idle (extraction hasn't started yet)
               if (phase === 'idle') {
                 return (
-                  <div style={{ border: '1px solid rgba(0,229,204,0.15)', borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid rgba(0,229,204,0.15)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
                     {headerRow}
                     <div style={{
-                      height: 380, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      minHeight: WALLS_VIEW_PLACEHOLDER_MIN_H, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
                       justifyContent: 'center', background: '#0d121b', gap: 8,
                     }}>
                       <div style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'monospace', fontSize: 11 }}>
@@ -1937,29 +1860,31 @@ export default function BlueprintVRExperiencePanel({
               return (
                 <div style={{ border: '1px solid rgba(0,229,204,0.2)', borderRadius: 6, overflow: 'hidden', width: '100%' }}>
                   {headerRow}
-                  <div style={{ display: 'flex', justifyContent: 'center', width: '100%', background: '#0d121b' }}>
-                    <MeasuredPlanViewer
-                      model={buildingModel}
-                      width={760}
-                      height={380}
-                      showDimensions={showDimensions}
-                      showRoomLabels={showLabels}
-                      showAreaLabels={false}
-                      showElectrical={false}
-                      wallOnlyMode={true}
-                      traceDebug={scanResult.traceDebugCounts || null}
-                    />
+                  <div style={{ display: 'flex', justifyContent: 'center', width: '100%', background: '#0d121b', flex: 1, minHeight: 0 }}>
+                    {wrapPlanWithZoom(
+                      <MeasuredPlanViewer
+                        model={buildingModel}
+                        width={MEASURED_PLAN_PIXEL_W}
+                        height={MEASURED_PLAN_PIXEL_H}
+                        showDimensions={showDimensions}
+                        showRoomLabels={showLabels}
+                        showAreaLabels={false}
+                        showElectrical={false}
+                        wallOnlyMode={true}
+                        traceDebug={scanResult.traceDebugCounts || null}
+                      />,
+                    )}
                   </div>
                 </div>
               )
             })()}
 
             {viewMode === 'plan' && (
-              <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+              wrapPlanWithZoom(
                 <MeasuredPlanViewer
                   model={buildingModel}
-                  width={760}
-                  height={430}
+                  width={MEASURED_PLAN_PIXEL_W}
+                  height={MEASURED_PLAN_PIXEL_H}
                   selectedRoomId={selectedRoomId}
                   onRoomSelect={handleRoomEnter}
                   activeStage={activeStage}
@@ -1968,62 +1893,467 @@ export default function BlueprintVRExperiencePanel({
                   showAreaLabels={showLabels}
                   showElectrical={showElectrical}
                   traceDebug={scanResult.traceDebugCounts || null}
+                />,
+              )
+            )}
+
+            {viewMode === 'dollhouse' && (
+              <div style={{ flex: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+                <Blueprint3DSpaceViewer
+                  buildingModel={buildingModel}
+                  activeStage={activeStage}
+                  selectedRoomId={selectedRoomId}
+                  onRoomSelect={handleRoomSelect}
+                  showElectrical={showElectrical}
+                  showDimensions={showDimensions}
+                  showLabels={showLabels}
+                  wallOpacity={wallOpacity}
+                  cameraPreset={cameraPreset}
                 />
               </div>
             )}
 
-            {viewMode === 'dollhouse' && (
-              <Blueprint3DSpaceViewer
-                buildingModel={buildingModel}
-                activeStage={activeStage}
-                selectedRoomId={selectedRoomId}
-                onRoomSelect={handleRoomSelect}
-                showElectrical={showElectrical}
-                showDimensions={showDimensions}
-                showLabels={showLabels}
-                wallOpacity={wallOpacity}
-                cameraPreset={cameraPreset}
-              />
-            )}
-
             {viewMode === 'room' && (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
-                  <div style={{ width: '100%', maxWidth: 960 }}>
-                    <BlueprintRoomInteriorView
-                      model={buildingModel}
-                      selectedRoomId={selectedRoomId || firstRoomId}
-                      activeStage={activeStage}
-                      showElectrical={showElectrical}
-                      showDimensions={showDimensions}
-                      showLabels={showLabels}
-                      wallOpacity={wallOpacity}
-                    />
+              <div style={{ display: 'flex', justifyContent: 'center', width: '100%', flex: 1, minHeight: 0, alignItems: 'center' }}>
+                <div style={{ width: '100%', maxWidth: 960 }}>
+                  <BlueprintRoomInteriorView
+                    model={buildingModel}
+                    selectedRoomId={selectedRoomId || firstRoomId}
+                    activeStage={activeStage}
+                    showElectrical={showElectrical}
+                    showDimensions={showDimensions}
+                    showLabels={showLabels}
+                    wallOpacity={wallOpacity}
+                  />
+                </div>
+              </div>
+            )}
                   </div>
                 </div>
-                <RoomNavStrip
-                  rooms={buildingModel.levels[0]?.rooms || []}
-                  selectedRoomId={selectedRoomId}
-                  onSelect={(rid) => setSelectedRoomId(rid)}
-                  onBackToDollhouse={() => {
-                    setViewMode('dollhouse')
-                    setCameraPreset('iso')
-                  }}
-                  onBackToPlan={() => {
-                    setViewMode('plan')
-                    setCameraPreset('top')
-                  }}
-                />
-              </>
-            )}
-          </div>
+                {viewMode === 'room' && (
+                  <RoomNavStrip
+                    rooms={buildingModel.levels[0]?.rooms || []}
+                    selectedRoomId={selectedRoomId}
+                    onSelect={(rid) => setSelectedRoomId(rid)}
+                    onBackToDollhouse={() => {
+                      setViewMode('dollhouse')
+                      setCameraPreset('iso')
+                    }}
+                    onBackToPlan={() => {
+                      setViewMode('plan')
+                      setCameraPreset('top')
+                    }}
+                  />
+                )}
+              </div>
+              <aside className="bvr7-right-rail" aria-label="Blueprint VR view and stage controls">
+                <div style={{ position: 'relative', width: '100%' }}>
+                  <button
+                    ref={viewMenuButtonRef}
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={viewMenuOpen}
+                    onClick={() => {
+                      setLabelsMenuOpen(false)
+                      setWallTransparencyOpen(false)
+                      setViewMenuOpen((o) => !o)
+                    }}
+                    style={{ ...controlButtonStyle(viewMenuOpen), width: '100%', boxSizing: 'border-box' }}
+                  >
+                    View
+                  </button>
+                  {viewMenuOpen && (
+                    <div
+                      ref={viewMenuRef}
+                      role="menu"
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        right: 0,
+                        left: 'auto',
+                        marginTop: 6,
+                        minWidth: 200,
+                        padding: '6px 0',
+                        background: 'rgba(6,12,20,0.98)',
+                        border: '1px solid rgba(0,229,204,0.35)',
+                        borderRadius: 6,
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+                        zIndex: 1001,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setViewMode('walls')
+                          setCameraPreset('top')
+                          setViewMenuOpen(false)
+                          setLabelsMenuOpen(false)
+                          setWallTransparencyOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: viewMode === 'walls' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color: viewMode === 'walls' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>Proposed Walls</span>
+                        {viewMode === 'walls' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setViewMode('plan')
+                          setCameraPreset('top')
+                          setViewMenuOpen(false)
+                          setLabelsMenuOpen(false)
+                          setWallTransparencyOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: viewMode === 'plan' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color: viewMode === 'plan' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>2D Plan</span>
+                        {viewMode === 'plan' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setViewMode('dollhouse')
+                          setCameraPreset('iso')
+                          setViewMenuOpen(false)
+                          setLabelsMenuOpen(false)
+                          setWallTransparencyOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: viewMode === 'dollhouse' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color: viewMode === 'dollhouse' ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>3D Dollhouse</span>
+                        {viewMode === 'dollhouse' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!selectedRoomId && !firstRoomId}
+                        onClick={() => {
+                          setViewMode('room')
+                          setCameraPreset('room')
+                          if (!selectedRoomId) setSelectedRoomId(firstRoomId)
+                          setViewMenuOpen(false)
+                          setLabelsMenuOpen(false)
+                          setWallTransparencyOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: viewMode === 'room' ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color:
+                            !selectedRoomId && !firstRoomId
+                              ? 'rgba(255,255,255,0.25)'
+                              : viewMode === 'room'
+                                ? '#00ddcc'
+                                : 'rgba(255,255,255,0.75)',
+                          cursor: !selectedRoomId && !firstRoomId ? 'not-allowed' : 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                          opacity: !selectedRoomId && !firstRoomId ? 0.45 : 1,
+                        }}
+                      >
+                        <span>Room View</span>
+                        {viewMode === 'room' ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                      <div style={{ height: 1, margin: '4px 8px', background: 'rgba(0,229,204,0.12)' }} />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          handleResetView()
+                          setViewMenuOpen(false)
+                          setLabelsMenuOpen(false)
+                          setWallTransparencyOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: 'transparent',
+                          color: 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>Reset View</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-          {/* Stage tabs */}
-          <StageTabs
-            stages={visibleStages}
-            selectedStage={activeStage}
-            onSelectStage={setActiveStage}
-          />
+                <div style={{ position: 'relative', width: '100%' }}>
+                  <button
+                    ref={labelsMenuButtonRef}
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={labelsMenuOpen}
+                    onClick={() => {
+                      setViewMenuOpen(false)
+                      setWallTransparencyOpen(false)
+                      setLabelsMenuOpen((o) => !o)
+                    }}
+                    style={{ ...controlButtonStyle(labelsMenuOpen), width: '100%', boxSizing: 'border-box' }}
+                  >
+                    Labels
+                  </button>
+                  {labelsMenuOpen && (
+                    <div
+                      ref={labelsMenuRef}
+                      role="menu"
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        right: 0,
+                        left: 'auto',
+                        marginTop: 6,
+                        minWidth: 220,
+                        padding: '6px 0',
+                        background: 'rgba(6,12,20,0.98)',
+                        border: '1px solid rgba(0,229,204,0.35)',
+                        borderRadius: 6,
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+                        zIndex: 1001,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setShowDimensions((v) => !v)
+                          setLabelsMenuOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: showDimensions ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color: showDimensions ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>Show Dimensions</span>
+                        {showDimensions ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setShowElectrical((v) => !v)
+                          setLabelsMenuOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: showElectrical ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color: showElectrical ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>Show Electrical</span>
+                        {showElectrical ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setShowLabels((v) => !v)
+                          setLabelsMenuOpen(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: 'none',
+                          background: showLabels ? 'rgba(0,221,204,0.12)' : 'transparent',
+                          color: showLabels ? '#00ddcc' : 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          letterSpacing: 0.6,
+                          textTransform: 'uppercase' as const,
+                          textAlign: 'left' as const,
+                        }}
+                      >
+                        <span>Show Labels</span>
+                        {showLabels ? <span aria-hidden>✓</span> : <span style={{ opacity: 0.25 }}> </span>}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <StageStageRail
+                  stages={visibleStages}
+                  selectedStage={activeStage}
+                  onSelectStage={setActiveStage}
+                />
+
+                <div style={{ position: 'relative', width: '100%', marginTop: 'auto' }}>
+                  <button
+                    ref={wallTransparencyButtonRef}
+                    type="button"
+                    aria-expanded={wallTransparencyOpen}
+                    onClick={() => {
+                      setViewMenuOpen(false)
+                      setLabelsMenuOpen(false)
+                      setWallTransparencyOpen((o) => !o)
+                    }}
+                    style={{
+                      ...controlButtonStyle(wallTransparencyOpen),
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      whiteSpace: 'normal',
+                      lineHeight: 1.15,
+                      padding: '6px 6px',
+                    }}
+                  >
+                    Wall Transparency
+                  </button>
+                  {wallTransparencyOpen && (
+                    <div
+                      ref={wallTransparencyPopoverRef}
+                      style={{
+                        position: 'absolute',
+                        bottom: '100%',
+                        right: 0,
+                        left: 'auto',
+                        marginBottom: 6,
+                        width: 228,
+                        padding: '10px 10px 12px',
+                        background: 'rgba(6,12,20,0.98)',
+                        border: '1px solid rgba(0,229,204,0.35)',
+                        borderRadius: 6,
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+                        zIndex: 1002,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={smallLabelStyle}>Wall Transparency</span>
+                        <span style={{ ...smallLabelStyle, color: '#00ddcc' }}>{Math.round(wallOpacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={35}
+                        max={95}
+                        value={Math.round(wallOpacity * 100)}
+                        onChange={(e) => setWallOpacity(Number(e.target.value) / 100)}
+                        style={{ width: '100%' }}
+                      />
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
+                        <button type="button" onClick={() => setCameraPreset('top')} style={controlButtonStyle(cameraPreset === 'top')}>
+                          Top
+                        </button>
+                        <button type="button" onClick={() => setCameraPreset('iso')} style={controlButtonStyle(cameraPreset === 'iso')}>
+                          Iso
+                        </button>
+                        <button type="button" onClick={() => setCameraPreset('room')} style={controlButtonStyle(cameraPreset === 'room')}>
+                          Room
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </div>
 
           {/* Stage description */}
           <div style={{

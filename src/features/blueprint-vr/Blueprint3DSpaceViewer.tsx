@@ -52,12 +52,12 @@ const STAGE_COLOR: Record<VRStage, number> = {
   finished: 0x06b6d4,
 }
 
-/** Matches modal 2D embed (760×440) so the dollhouse camera aspect stays natural in wide layouts. */
-const VIEWPORT_ASPECT = 760 / 440
+/** Matches modal 2D / preview shell aspect so dollhouse camera sizing stays consistent across layouts. */
+const VIEWPORT_ASPECT = 1140 / 645
 
 function computeViewportPixels(containerWidth: number, containerHeight: number): { w: number; h: number } {
   const maxW = Math.max(280, containerWidth)
-  const maxH = Math.max(240, Math.min(containerHeight || 480, 560))
+  const maxH = Math.max(240, Math.min(containerHeight || 720, 1125))
   let w = maxW
   let h = Math.round(w / VIEWPORT_ASPECT)
   if (h > maxH) {
@@ -865,6 +865,11 @@ export default function Blueprint3DSpaceViewer({
         borderRadius: 8,
         overflow: 'hidden',
         background: '#070b12',
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
       <div
@@ -872,8 +877,8 @@ export default function Blueprint3DSpaceViewer({
         style={{
           position: 'relative',
           width: '100%',
-          minHeight: 400,
-          height: 'min(520px, max(400px, 48vh))',
+          flex: 1,
+          minHeight: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
