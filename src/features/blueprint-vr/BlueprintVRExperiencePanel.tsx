@@ -112,6 +112,32 @@ function controlButtonStyle(active: boolean): React.CSSProperties {
   }
 }
 
+/** Larger square-style chrome actions (Change Source / Rescan / header Rescan). */
+function vrSquareChromeButtonStyle(): React.CSSProperties {
+  return {
+    minHeight: 42,
+    minWidth: 44,
+    padding: '0 16px',
+    boxSizing: 'border-box',
+    borderRadius: 6,
+    border: '1px solid rgba(0,221,204,0.35)',
+    background: 'rgba(0,221,204,0.08)',
+    color: 'rgba(245,250,255,0.92)',
+    cursor: 'pointer',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    fontWeight: 800,
+    letterSpacing: 0.65,
+    textTransform: 'uppercase' as const,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1.1,
+    transition: 'background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease',
+    boxShadow: '0 0 0 0 transparent',
+  }
+}
+
 const smallLabelStyle: React.CSSProperties = {
   color: 'rgba(255,255,255,0.55)',
   fontSize: 9.5,
@@ -126,6 +152,19 @@ const WALLS_VIEW_PLACEHOLDER_MIN_H = 750
 
 const PLAN_ZOOM_MIN = 0.5
 const PLAN_ZOOM_MAX = 4
+/** Pixels of movement before a primary-button drag is treated as pan (room clicks use short drags). */
+const PLAN_PAN_DRAG_THRESHOLD_PX = 5
+
+type PlanPanPointerSession =
+  | { mode: 'pending'; startX: number; startY: number; originPanX: number; originPanY: number }
+  | {
+      mode: 'active'
+      anchorX: number
+      anchorY: number
+      originPanX: number
+      originPanY: number
+      moved: boolean
+    }
 
 // ── Subcomponent: 2D plan viewport (same pixel footprint as dollhouse) ─────
 
@@ -135,6 +174,8 @@ interface BvrMeasuredPlanScrollHostProps {
   planDragging: boolean
   onWheelZoom: (e: WheelEvent) => void
   onPanMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void
+  /** Swallow room clicks after a pan gesture (capture phase, same pattern as PDF viewer suppression). */
+  onPlanClickCapture?: (e: React.MouseEvent<HTMLDivElement>) => void
   /** Extra top inset so floating chrome (e.g. Proposed Walls header) does not cover the plan. */
   reserveTopPx?: number
   children: (dims: { w: number; h: number }) => React.ReactNode
@@ -146,6 +187,7 @@ function BvrMeasuredPlanScrollHost({
   planDragging,
   onWheelZoom,
   onPanMouseDown,
+  onPlanClickCapture,
   reserveTopPx = 0,
   children,
 }: BvrMeasuredPlanScrollHostProps) {
@@ -168,12 +210,16 @@ function BvrMeasuredPlanScrollHost({
     const el = clampRef.current
     if (!el) return
     const fn = (e: WheelEvent) => {
-      if (e.ctrlKey) return
+      // Match Blueprint PDF viewer: own the wheel over the plan so the modal/page
+      // does not scroll; wheel zoom uses non-passive preventDefault.
       onWheelZoom(e)
     }
     el.addEventListener('wheel', fn, { passive: false })
     return () => el.removeEventListener('wheel', fn)
   }, [onWheelZoom, dims])
+
+  const pannable =
+    zoom !== 1 || Math.abs(pan.x) > 0.5 || Math.abs(pan.y) > 0.5
 
   return (
     <div
@@ -193,18 +239,20 @@ function BvrMeasuredPlanScrollHost({
         <div
           ref={clampRef}
           onMouseDown={onPanMouseDown}
+          onClickCapture={onPlanClickCapture}
           onContextMenu={(e) => {
             if (e.button === 1) e.preventDefault()
           }}
-          title="Scroll wheel: zoom. Shift+drag or middle-click to pan when zoomed."
+          title="Scroll wheel: zoom in/out. Click-drag to pan when zoomed. Shift+drag or middle mouse also pans."
           style={{
             width: dims.w,
             height: dims.h,
             position: 'relative',
             overflow: 'hidden',
             flexShrink: 0,
-            cursor: planDragging ? 'grabbing' : zoom > 1 ? 'grab' : 'default',
+            cursor: planDragging ? 'grabbing' : pannable ? 'grab' : 'default',
             touchAction: 'none',
+            userSelect: 'none' as const,
           }}
         >
           <div
@@ -218,6 +266,7 @@ function BvrMeasuredPlanScrollHost({
               marginTop: -dims.h / 2,
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: 'center center',
+              pointerEvents: planDragging ? 'none' : 'auto',
             }}
           >
             {children(dims)}
@@ -296,13 +345,15 @@ function ProgressRegion({ progress, status }: { progress?: number; status: strin
       flexDirection: 'column',
       gap: 6,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <span style={{
-          color: 'rgba(255,255,255,0.55)',
-          fontSize: 10,
+          color: 'rgba(255,255,255,0.96)',
+          fontSize: 13,
           fontFamily: 'monospace',
-          letterSpacing: 0.8,
+          fontWeight: 800,
+          letterSpacing: 1.1,
           textTransform: 'uppercase' as const,
+          lineHeight: 1.25,
         }}>
           Generation Progress
         </span>
@@ -319,6 +370,7 @@ function ProgressRegion({ progress, status }: { progress?: number; status: strin
 
       {/* Progress bar */}
       <div style={{
+        marginTop: 10,
         width: '100%', height: 6, borderRadius: 3,
         background: 'rgba(255,255,255,0.05)',
         border: '1px solid rgba(0,229,204,0.2)',
@@ -884,7 +936,10 @@ export default function BlueprintVRExperiencePanel({
   const [planZoomScale, setPlanZoomScale] = useState(1)
   const [planPan, setPlanPan] = useState({ x: 0, y: 0 })
   const [planDragging, setPlanDragging] = useState(false)
-  const planPanSessionRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
+  const planPanSessionRef = useRef<PlanPanPointerSession | null>(null)
+  const planPanRef = useRef(planPan)
+  const planPanWindowCleanupRef = useRef<null | (() => void)>(null)
+  const roomClickSuppressRef = useRef(false)
   const [scannerStatusExpanded, setScannerStatusExpanded] = useState(false)
 
   // ── Source-set state (project-level) ──────────────────────────────────
@@ -1343,6 +1398,17 @@ export default function BlueprintVRExperiencePanel({
   }, [viewMode])
 
   useEffect(() => {
+    planPanRef.current = planPan
+  }, [planPan])
+
+  useEffect(() => {
+    return () => {
+      planPanWindowCleanupRef.current?.()
+      planPanWindowCleanupRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     if (!viewMenuOpen && !labelsMenuOpen && !wallTransparencyOpen) return
     const onDocMouseDown = (e: MouseEvent) => {
       const t = e.target as Node
@@ -1375,28 +1441,6 @@ export default function BlueprintVRExperiencePanel({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [viewMenuOpen, labelsMenuOpen, wallTransparencyOpen])
-
-  useEffect(() => {
-    if (!planDragging) return
-    const mm = (ev: MouseEvent) => {
-      const s = planPanSessionRef.current
-      if (!s) return
-      setPlanPan({
-        x: s.px + (ev.clientX - s.mx),
-        y: s.py + (ev.clientY - s.my),
-      })
-    }
-    const mu = () => {
-      planPanSessionRef.current = null
-      setPlanDragging(false)
-    }
-    window.addEventListener('mousemove', mm)
-    window.addEventListener('mouseup', mu)
-    return () => {
-      window.removeEventListener('mousemove', mm)
-      window.removeEventListener('mouseup', mu)
-    }
-  }, [planDragging])
 
   // Compute honest scan accuracy classification for the source selector.
   const scanAccuracy: SourceScanAccuracy = useMemo(() => {
@@ -1451,25 +1495,132 @@ export default function BlueprintVRExperiencePanel({
   }, [])
 
   const handlePlanWheelZoom = useCallback((e: WheelEvent) => {
-    if (e.ctrlKey) return
     e.preventDefault()
     e.stopPropagation()
+    const el = e.currentTarget as HTMLElement
+    const rect = el.getBoundingClientRect()
+    const px = e.clientX - rect.left
+    const py = e.clientY - rect.top
+    const cx = rect.width / 2
+    const cy = rect.height / 2
     const factor = e.deltaY < 0 ? 1.08 : 0.93
-    setPlanZoomScale((z) =>
-      Math.round(Math.min(PLAN_ZOOM_MAX, Math.max(PLAN_ZOOM_MIN, z * factor)) * 100) / 100,
-    )
+    setPlanZoomScale((prevZ) => {
+      const nextZ =
+        Math.round(Math.min(PLAN_ZOOM_MAX, Math.max(PLAN_ZOOM_MIN, prevZ * factor)) * 100) / 100
+      if (Math.abs(nextZ - prevZ) < 0.00001) return prevZ
+      setPlanPan((prevPan) => ({
+        x: prevPan.x + (px - cx) * (1 - nextZ / prevZ),
+        y: prevPan.y + (py - cy) * (1 - nextZ / prevZ),
+      }))
+      return nextZ
+    })
+  }, [])
+
+  const handlePlanClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!roomClickSuppressRef.current) return
+    roomClickSuppressRef.current = false
+    e.stopPropagation()
   }, [])
 
   const handlePlanPanMouseDown = useCallback(
     (ev: React.MouseEvent<HTMLDivElement>) => {
-      if (planZoomScale <= 1) return
-      const panMouse = ev.button === 1 || (ev.button === 0 && ev.shiftKey)
-      if (!panMouse) return
+      planPanWindowCleanupRef.current?.()
+      planPanWindowCleanupRef.current = null
+
       if (ev.button === 1) ev.preventDefault()
-      planPanSessionRef.current = { mx: ev.clientX, my: ev.clientY, px: planPan.x, py: planPan.y }
-      setPlanDragging(true)
+
+      const ox = planPanRef.current.x
+      const oy = planPanRef.current.y
+
+      const armWindowPan = () => {
+        const onMove = (e: MouseEvent) => {
+          const s = planPanSessionRef.current
+          if (!s) return
+          if (s.mode === 'pending') {
+            if (Math.hypot(e.clientX - s.startX, e.clientY - s.startY) < PLAN_PAN_DRAG_THRESHOLD_PX) return
+            const nextPan = {
+              x: s.originPanX + (e.clientX - s.startX),
+              y: s.originPanY + (e.clientY - s.startY),
+            }
+            planPanSessionRef.current = {
+              mode: 'active',
+              anchorX: s.startX,
+              anchorY: s.startY,
+              originPanX: s.originPanX,
+              originPanY: s.originPanY,
+              moved: true,
+            }
+            planPanRef.current = nextPan
+            setPlanPan(nextPan)
+            setPlanDragging(true)
+            return
+          }
+          const a = planPanSessionRef.current
+          if (!a || a.mode !== 'active') return
+          const nextPan = {
+            x: a.originPanX + (e.clientX - a.anchorX),
+            y: a.originPanY + (e.clientY - a.anchorY),
+          }
+          if (
+            !a.moved &&
+            (Math.abs(nextPan.x - planPanRef.current.x) > 1.5 ||
+              Math.abs(nextPan.y - planPanRef.current.y) > 1.5)
+          ) {
+            a.moved = true
+          }
+          planPanRef.current = nextPan
+          setPlanPan(nextPan)
+        }
+        const onUp = () => {
+          const s = planPanSessionRef.current
+          if (s?.mode === 'active' && s.moved) {
+            roomClickSuppressRef.current = true
+          }
+          planPanSessionRef.current = null
+          setPlanDragging(false)
+          planPanWindowCleanupRef.current?.()
+          planPanWindowCleanupRef.current = null
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+        planPanWindowCleanupRef.current = () => {
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+        }
+      }
+
+      if (ev.button === 1 || (ev.button === 0 && ev.shiftKey)) {
+        planPanSessionRef.current = {
+          mode: 'active',
+          anchorX: ev.clientX,
+          anchorY: ev.clientY,
+          originPanX: ox,
+          originPanY: oy,
+          moved: false,
+        }
+        setPlanDragging(true)
+        armWindowPan()
+        return
+      }
+
+      if (ev.button !== 0) return
+
+      const canPrimary =
+        planZoomScale !== 1 ||
+        Math.abs(planPan.x) > 0.5 ||
+        Math.abs(planPan.y) > 0.5
+      if (!canPrimary) return
+
+      planPanSessionRef.current = {
+        mode: 'pending',
+        startX: ev.clientX,
+        startY: ev.clientY,
+        originPanX: ox,
+        originPanY: oy,
+      }
+      armWindowPan()
     },
-    [planZoomScale, planPan],
+    [planZoomScale, planPan.x, planPan.y],
   )
 
   return (
@@ -1821,7 +1972,7 @@ export default function BlueprintVRExperiencePanel({
                       <button
                         type="button"
                         onClick={handlePlanZoomOut}
-                        style={{ ...controlButtonStyle(false), padding: '4px 8px', minWidth: 32 }}
+                        style={{ ...controlButtonStyle(false), padding: '8px 12px', minWidth: 40, minHeight: 40 }}
                         title="Zoom out"
                       >
                         −
@@ -1829,7 +1980,7 @@ export default function BlueprintVRExperiencePanel({
                       <button
                         type="button"
                         onClick={handlePlanZoomIn}
-                        style={{ ...controlButtonStyle(false), padding: '4px 8px', minWidth: 32 }}
+                        style={{ ...controlButtonStyle(false), padding: '8px 12px', minWidth: 40, minHeight: 40 }}
                         title="Zoom in"
                       >
                         +
@@ -1841,11 +1992,15 @@ export default function BlueprintVRExperiencePanel({
                           ...controlButtonStyle(
                             planZoomScale !== 1 || planPan.x !== 0 || planPan.y !== 0,
                           ),
-                          padding: '4px 8px',
+                          padding: '8px 10px',
+                          minHeight: 40,
+                          minWidth: 72,
+                          fontSize: 9,
+                          lineHeight: 1.15,
                         }}
-                        title="Reset zoom to fit"
+                        title="Reset zoom to fit and center"
                       >
-                        Reset
+                        Reset Zoom
                       </button>
                       <span
                         style={{
@@ -1911,7 +2066,29 @@ export default function BlueprintVRExperiencePanel({
                       </span>
                     )}
                   </div>
-                  <button onClick={handleRescan} style={controlButtonStyle(false)}>Rescan</button>
+                  <button
+                    type="button"
+                    onClick={handleRescan}
+                    style={vrSquareChromeButtonStyle()}
+                    onMouseEnter={(e) => {
+                      const t = e.currentTarget
+                      t.style.background = 'rgba(0,221,204,0.16)'
+                      t.style.borderColor = 'rgba(0,255,230,0.55)'
+                      t.style.color = '#fff'
+                    }}
+                    onMouseLeave={(e) => {
+                      const t = e.currentTarget
+                      Object.assign(t.style, vrSquareChromeButtonStyle())
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 0 2px rgba(0,221,204,0.45)'
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 0 0 transparent'
+                    }}
+                  >
+                    Rescan
+                  </button>
                 </div>
               )
 
@@ -1970,7 +2147,27 @@ export default function BlueprintVRExperiencePanel({
                       <div style={{ color: 'rgba(200,210,220,0.5)', fontFamily: 'monospace', fontSize: 9.5, textAlign: 'center', maxWidth: 440 }}>
                         Registered keys: {traceExtraction.registeredKeys?.length ? traceExtraction.registeredKeys.join(' | ') : 'none'}
                       </div>
-                      <button onClick={handleRescan} style={{ ...controlButtonStyle(false), marginTop: 12, fontSize: 11 }}>
+                      <button
+                        type="button"
+                        onClick={handleRescan}
+                        style={{ ...vrSquareChromeButtonStyle(), marginTop: 12 }}
+                        onMouseEnter={(e) => {
+                          const t = e.currentTarget
+                          t.style.background = 'rgba(0,221,204,0.16)'
+                          t.style.borderColor = 'rgba(0,255,230,0.55)'
+                          t.style.color = '#fff'
+                        }}
+                        onMouseLeave={(e) => {
+                          const t = e.currentTarget
+                          Object.assign(t.style, { ...vrSquareChromeButtonStyle(), marginTop: 12 })
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.boxShadow = '0 0 0 2px rgba(0,221,204,0.45)'
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.boxShadow = '0 0 0 0 transparent'
+                        }}
+                      >
                         Rescan
                       </button>
                     </div>
@@ -2057,6 +2254,7 @@ export default function BlueprintVRExperiencePanel({
                     planDragging={planDragging}
                     onWheelZoom={handlePlanWheelZoom}
                     onPanMouseDown={handlePlanPanMouseDown}
+                    onPlanClickCapture={handlePlanClickCapture}
                   >
                     {(dims) => (
                       <MeasuredPlanViewer
@@ -2086,6 +2284,7 @@ export default function BlueprintVRExperiencePanel({
                 planDragging={planDragging}
                 onWheelZoom={handlePlanWheelZoom}
                 onPanMouseDown={handlePlanPanMouseDown}
+                onPlanClickCapture={handlePlanClickCapture}
               >
                 {(dims) => (
                   <MeasuredPlanViewer

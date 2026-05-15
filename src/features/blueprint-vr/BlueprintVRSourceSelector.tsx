@@ -209,18 +209,52 @@ export default function BlueprintVRSourceSelector({
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {fullSetCandidate && fullSetCandidate.id !== selected.id && (
             <button
+              type="button"
               onClick={() => handlePick(fullSetCandidate.id)}
               style={primaryButton(accent, accentSoft)}
               title="Use the project's Full Set as the VR source"
+              onMouseEnter={neonButtonHoverIn}
+              onMouseLeave={(e) => neonButtonHoverOutPrimary(accent, accentSoft, e)}
+              onFocus={(e) => {
+                e.currentTarget.style.boxShadow = '0 0 0 2px rgba(0,221,204,0.45)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.boxShadow = 'none'
+              }}
             >
               Use Full Set
             </button>
           )}
-          <button onClick={handleToggle} style={secondaryButton()}>
+          <button
+            type="button"
+            onClick={handleToggle}
+            style={secondaryButton()}
+            onMouseEnter={neonButtonHoverIn}
+            onMouseLeave={neonButtonHoverOutSecondary}
+            onFocus={(e) => {
+              e.currentTarget.style.boxShadow = '0 0 0 2px rgba(0,221,204,0.45)'
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
             {expanded ? 'Hide Sources' : 'Change Source'}
           </button>
           {onRegenerate && (
-            <button onClick={onRegenerate} style={secondaryButton()} title="Rescan from this source set">
+            <button
+              type="button"
+              onClick={onRegenerate}
+              style={secondaryButton()}
+              title="Rescan from this source set"
+              onMouseEnter={neonButtonHoverIn}
+              onMouseLeave={neonButtonHoverOutSecondary}
+              onFocus={(e) => {
+                e.currentTarget.style.boxShadow = '0 0 0 2px rgba(0,221,204,0.45)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            >
               Rescan
             </button>
           )}
@@ -282,32 +316,63 @@ export default function BlueprintVRSourceSelector({
 
 function primaryButton(accent: string, soft: string): React.CSSProperties {
   return {
-    padding: '4px 9px',
-    borderRadius: 4,
+    minHeight: 42,
+    minWidth: 44,
+    padding: '0 16px',
+    boxSizing: 'border-box',
+    borderRadius: 6,
     border: `1px solid ${accent}`,
     background: soft,
     color: accent,
     cursor: 'pointer',
     fontFamily: 'monospace',
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing: 0.6,
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: 0.65,
     textTransform: 'uppercase',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1.1,
+    transition: 'background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease',
   }
 }
 
 function secondaryButton(): React.CSSProperties {
   return {
-    padding: '4px 9px',
-    borderRadius: 4,
-    border: '1px solid rgba(255,255,255,0.18)',
-    background: 'rgba(255,255,255,0.04)',
-    color: 'rgba(255,255,255,0.7)',
+    minHeight: 42,
+    minWidth: 44,
+    padding: '0 16px',
+    boxSizing: 'border-box',
+    borderRadius: 6,
+    border: '1px solid rgba(0,221,204,0.32)',
+    background: 'rgba(0,221,204,0.08)',
+    color: 'rgba(245,250,255,0.9)',
     cursor: 'pointer',
     fontFamily: 'monospace',
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing: 0.6,
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: 0.65,
     textTransform: 'uppercase',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1.1,
+    transition: 'background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease',
   }
+}
+
+function neonButtonHoverIn(e: React.MouseEvent<HTMLElement>) {
+  const t = e.currentTarget
+  t.style.background = 'rgba(0,221,204,0.16)'
+  t.style.borderColor = 'rgba(0,255,230,0.55)'
+  t.style.color = '#fff'
+}
+
+function neonButtonHoverOutSecondary(e: React.MouseEvent<HTMLElement>) {
+  Object.assign(e.currentTarget.style, secondaryButton())
+}
+
+function neonButtonHoverOutPrimary(accent: string, soft: string, e: React.MouseEvent<HTMLElement>) {
+  Object.assign(e.currentTarget.style, primaryButton(accent, soft))
 }
