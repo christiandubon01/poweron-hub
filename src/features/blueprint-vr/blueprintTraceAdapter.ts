@@ -524,6 +524,47 @@ export function extractRasterLinesFromImageData(
   return lines
 }
 
+/**
+ * Drop trace segments whose midpoints fall in the outer margin of the page
+ * bounding box (title blocks, revision strips, sheet borders).
+ */
+export function cropPlanTraceLinesToInnerFootprint(
+  lines: PlanTraceLine[],
+  outer: { minX: number; minY: number; maxX: number; maxY: number },
+  marginRatio = 0.07,
+): PlanTraceLine[] {
+  const w = outer.maxX - outer.minX
+  const h = outer.maxY - outer.minY
+  if (w < 1 || h < 1) return lines
+  const mx = w * marginRatio
+  const my = h * marginRatio
+  const ix0 = outer.minX + mx
+  const iy0 = outer.minY + my
+  const ix1 = outer.maxX - mx
+  const iy1 = outer.maxY - my
+  const midIn = (p: WorldPoint2D): boolean =>
+    p.x >= ix0 && p.x <= ix1 && p.y >= iy0 && p.y <= iy1
+  return lines.filter((line) => midIn(midpoint(line.start, line.end)))
+}
+
+export function convertPdfArcsToWorldFeet(
+  arcs: PdfTraceArc[],
+  scale: PdfTraceScaleHint | null,
+): Array<{
+  center: WorldPoint2D
+  radiusFt: number
+  startAngleDeg: number
+  endAngleDeg: number
+}> {
+  const factor = scale && scale.pixelsPerFoot > 0 ? 1 / scale.pixelsPerFoot : 1
+  return (arcs || []).map((arc) => ({
+    center: { x: arc.center.x * factor, y: arc.center.y * factor },
+    radiusFt: Math.max(0.1, arc.radius * factor),
+    startAngleDeg: arc.startAngleDeg || 0,
+    endAngleDeg: arc.endAngleDeg || 0,
+  }))
+}
+
 export function buildTracePayloadFromPageSnapshot(
   snapshot: {
     currentPageNumber: number
@@ -569,107 +610,6 @@ export function buildTracePayloadFromPageSnapshot(
     },
     warnings: [...(existingPayload?.warnings || []), ...warnings],
   }
-}
-
-export interface TracePlanUsabilityInput {
-  traceDebug: {
-    rawLines: number
-    mergedWalls: number
-    openings: number
-    roomCandidates: number
-  }
-  inferredDimensions: {
-    widthFt: number
-    depthFt: number
-  }
-  filteredPlanLines: number
-  pageBounds?: { width: number; height: number } | null
-  footprint?: { width: number; height: number } | null
-}
-
-export interface TracePlanUsabilityResult {
-  usable: boolean
-  reason?: string
-}
-
-/**
- * Decide whether direct PDF trace is good enough to drive the user-facing 2D plan.
- * Rejects noisy sheet-border traces that do not resemble the AP-01 salon suite.
- */
-export function isTracePlanUsableForPrimary2D(
-  input: TracePlanUsabilityInput,
-): TracePlanUsabilityResult {
-  const {
-    traceDebug,
-    inferredDimensions,
-    filteredPlanLines,
-    pageBounds,
-    footprint,
-  } = input
-  const { rawLines, mergedWalls, openings, roomCandidates } = traceDebug
-  const { widthFt, depthFt } = inferredDimensions
-
-  const pageBorderLikely =
-  (pageBounds &&
-    footprint &&
-    pageBounds.width > 0 &&
-    pageBounds.height > 0 &&
-    footprint.width / pageBounds.width >= 0.9 &&
-    footprint.height / pageBounds.height >= 0.9) ||
-  depthFt > 65 ||
-  widthFt > 25
-
-  const notEnoughRoomsOrOpenings = roomCandidates < 5 || openings < 2
-
-  if (rawLines <= 0) {
-    return { usable: false, reason: 'Trace rejected: no raw vector lines were extracted.' }
-  }
-  if (filteredPlanLines <= 20) {
-    return {
-      usable: false,
-      reason: 'Trace rejected: filtered plan lines are too sparse for a tenant suite.',
-    }
-  }
-  if (notEnoughRoomsOrOpenings) {
-    return {
-      usable: false,
-      reason:
-        'Trace rejected: detected page/sheet boundary but not enough rooms/openings.',
-    }
-  }
-  if (widthFt < 15 || widthFt > 25) {
-    return {
-      usable: false,
-      reason: `Trace rejected: suite width ${widthFt.toFixed(1)} ft is outside the 15–25 ft salon band.`,
-    }
-  }
-  if (depthFt < 40 || depthFt > 65) {
-    return {
-      usable: false,
-      reason: `Trace rejected: suite depth ${depthFt.toFixed(1)} ft is outside the 40–65 ft salon band.`,
-    }
-  }
-  if (pageBorderLikely) {
-    return {
-      usable: false,
-      reason:
-        'Trace rejected: detected page/sheet boundary but not enough rooms/openings.',
-    }
-  }
-  if (depthFt / Math.max(widthFt, 0.1) < 2) {
-    return {
-      usable: false,
-      reason: 'Trace rejected: extracted geometry does not resemble a long narrow tenant suite.',
-    }
-  }
-  if (mergedWalls < 4) {
-    return {
-      usable: false,
-      reason: 'Trace rejected: wall graph is too weak to form a reliable salon layout.',
-    }
-  }
-
-  return { usable: true }
 }
 
 export function inferScaleFromTraceText(textRuns: PdfTraceTextRun[]): PdfTraceScaleHint | null {

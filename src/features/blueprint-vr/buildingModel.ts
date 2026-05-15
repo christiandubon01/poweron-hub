@@ -277,6 +277,71 @@ export interface BuildingRoomModel {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Full-set proposed wall layout (2D wall-only, no rooms / furniture / electrical)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Line-based wall segment in world feet for the 2D wall-layout viewer. */
+export interface ProposedWallLayoutSegment {
+  id: string
+  start: Point2D
+  end: Point2D
+  exterior: boolean
+  kind: WallKind
+  /** Wall thickness in inches when known or inferred. */
+  thicknessInches?: number
+  sourcePageNumber?: number
+}
+
+export interface ProposedWallLayoutOpening {
+  id: string
+  wallSegmentId: string
+  positionAlongWallFt: number
+  widthFt: number
+  type: 'door' | 'window'
+  swing?: DoorSwingDirection
+  swingDegrees?: number
+  subtype?: OpeningSubtype
+}
+
+export interface ProposedWallLayoutDoorSwingArc {
+  id: string
+  hinge: Point2D
+  radiusFt: number
+  startAngleDeg: number
+  endAngleDeg: number
+  sourcePageNumber?: number
+}
+
+export interface ProposedWallLayoutDimension {
+  id: string
+  start: Point2D
+  end: Point2D
+  label: string
+}
+
+export interface ProposedWallLayoutLabel {
+  id: string
+  position: Point2D
+  text: string
+  sourcePageNumber?: number
+}
+
+/**
+ * Project-level wall geometry extracted from proposed plan sheet(s) in a full PDF set.
+ * Used exclusively by the 2D Plan wall-layout renderer (no room fills, no MEP).
+ */
+export interface BlueprintProposedWallLayout {
+  bounds: Rectangle
+  segments: ProposedWallLayoutSegment[]
+  openings: ProposedWallLayoutOpening[]
+  doorSwingArcs: ProposedWallLayoutDoorSwingArc[]
+  dimensions: ProposedWallLayoutDimension[]
+  labels: ProposedWallLayoutLabel[]
+  /** Primary sheet page number whose trace produced this layout (if known). */
+  primarySourcePageNumber?: number
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Horizontal Dimension Models
 // ─────────────────────────────────────────────────────────────────────────────
 

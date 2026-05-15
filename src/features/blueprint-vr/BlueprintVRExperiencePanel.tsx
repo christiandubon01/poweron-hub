@@ -36,7 +36,8 @@ import {
   convertPlanScanToBuildingModel,
   scanBlueprintFullSet,
   mergeFullSetScanIntoBuildingModel,
-  chooseBestFloorPlanSheet,
+  expandSourceSheetsForFullSetPages,
+  selectProposedPlanSheetsForWallLayout,
 } from './blueprintPlanScanner'
 import type {
   BlueprintPlanScanResult,
@@ -442,7 +443,8 @@ function ScanStatusBanner({
   plan2DScan?: BlueprintPlanScanResult
 }) {
   const top = scan.warnings.slice(0, 5)
-  const plan2DSourceMode = plan2DScan?.plan2DSourceMode || scan.plan2DSourceMode
+  const plan2DSourceMode =
+    fullSetScan?.plan2DSourceMode ?? plan2DScan?.plan2DSourceMode ?? scan.plan2DSourceMode
   const traceRejectionReason = plan2DScan?.traceRejectionReason || scan.traceRejectionReason
   const resultKind = scan.scanResultKind || (scan.isFallback ? 'fallback' : 'measured-trace')
   const resultLabel =
@@ -498,6 +500,24 @@ function ScanStatusBanner({
           : 'Not selected (missing reliable floor-plan sheet metadata)'}
       </div>
 
+      {fullSetScan && (
+        <div style={{ opacity: 0.78, fontSize: 9.5, color: 'rgba(200,230,240,0.95)' }}>
+          Full-set scan: classified {fullSetScan.classifications.length} sheet row(s), expanded to {fullSetScan.pageCount} PDF page(s).
+          {fullSetScan.fullSetPlanSelectionSummary ? ` ${fullSetScan.fullSetPlanSelectionSummary}` : ''}
+        </div>
+      )}
+      {fullSetScan && (
+        <div style={{ opacity: 0.78, fontSize: 9.5, color: 'rgba(200,230,240,0.95)' }}>
+          Selected proposed plan page(s) for wall trace:{' '}
+          {fullSetScan.selectedPlanPages?.length ? fullSetScan.selectedPlanPages.join(', ') : '—'}
+        </div>
+      )}
+      {fullSetScan?.fullSetWallDebug?.rejectedPageRoles?.length ? (
+        <div style={{ opacity: 0.68, fontSize: 9.2, color: 'rgba(180,210,230,0.88)' }}>
+          Rejected / skipped wall roles (sample): {fullSetScan.fullSetWallDebug.rejectedPageRoles.join(', ')}
+        </div>
+      ) : null}
+
       {sheetCounts && (
         <div style={{ opacity: 0.7, fontSize: 9.5, lineHeight: 1.45 }}>
           Roles: floor plan {sheetCounts.floorPlan} · electrical/power {sheetCounts.electricalPower} · rendering {sheetCounts.rendering} · interior elevation {sheetCounts.interiorElevation} · finish/material {sheetCounts.finishMaterial} · schedule {sheetCounts.schedule} · unknown {sheetCounts.unknown}
@@ -509,21 +529,24 @@ function ScanStatusBanner({
       </div>
       {plan2DSourceMode && (
         <div style={{ opacity: 0.78, fontSize: 9.4, lineHeight: 1.45, color: 'rgba(255,216,160,0.95)' }}>
-          Primary 2D source: {plan2DSourceMode === 'ap01-calibrated-model' ? 'AP-01 calibrated model' : 'Direct PDF trace'}
+          Primary 2D source:{' '}
+          {plan2DSourceMode === 'full-set-proposed-wall-layout'
+            ? 'Full-set proposed wall layout'
+            : plan2DSourceMode === 'full-set-wall-trace-failed'
+              ? 'Full-set wall trace failed'
+              : String(plan2DSourceMode)}
         </div>
       )}
-      {traceRejectionReason && plan2DSourceMode === 'ap01-calibrated-model' && (
+      {traceRejectionReason && plan2DSourceMode === 'full-set-wall-trace-failed' && (
         <div style={{ opacity: 0.78, fontSize: 9.4, lineHeight: 1.45, color: 'rgba(255,200,145,0.95)' }}>
-          Direct PDF trace available but rejected for primary plan: {traceRejectionReason}
-        </div>
-      )}
-      {plan2DSourceMode === 'ap01-calibrated-model' && (
-        <div style={{ opacity: 0.78, fontSize: 9.4, lineHeight: 1.45, color: 'rgba(255,216,160,0.95)' }}>
-          Using AP-01 calibrated model.
+          Wall trace note: {traceRejectionReason}
         </div>
       )}
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
-        Runtime provider: {traceRuntime?.providerStatus || debug?.runtimeProviderStatus || 'missing'} · Selected trace page: {traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
+        Runtime provider: {traceRuntime?.providerStatus || debug?.runtimeProviderStatus || 'missing'} · Wall trace page(s):{' '}
+        {fullSetScan?.selectedPlanPages?.length
+          ? fullSetScan.selectedPlanPages.join(', ')
+          : traceRuntime?.selectedPageNumber || selectedFloorPlan?.pageNumber || 'n/a'}
       </div>
       <div style={{ opacity: 0.72, fontSize: 9.1, lineHeight: 1.45, color: 'rgba(180,225,240,0.9)' }}>
         Operator list: {traceRuntime?.operatorListStatus || debug?.operatorListStatus || 'unknown'} · Text content: {traceRuntime?.textContentStatus || debug?.textContentStatus || 'unknown'}
@@ -697,6 +720,7 @@ export default function BlueprintVRExperiencePanel({
   const [rescanToken, setRescanToken] = useState(0)
   const [rescanCount, setRescanCount] = useState(0)
   const [lastScanAt, setLastScanAt] = useState<string | null>(null)
+  const [fullSetPageTraces, setFullSetPageTraces] = useState<Record<number, PdfTracePayload | null>>({})
   const [traceExtraction, setTraceExtraction] = useState<{
     selectedPageNumber: number | null
     payload: PdfTracePayload | null
@@ -736,7 +760,7 @@ export default function BlueprintVRExperiencePanel({
     return availableSets.find((s) => s.id === selectedSourceSetId) || availableSets[0]
   }, [availableSets, selectedSourceSetId])
 
-  const scannerVersion = 'W3.10D'
+  const scannerVersion = 'W3.10H'
 
   const runtimeIdentityKey = [
     runtimeSourceIdentity?.projectId || '',
@@ -751,6 +775,7 @@ export default function BlueprintVRExperiencePanel({
   useEffect(() => {
     let disposed = false
     if (!selectedSourceSet) {
+      setFullSetPageTraces({})
       setTraceExtraction({
         selectedPageNumber: null,
         payload: null,
@@ -768,38 +793,47 @@ export default function BlueprintVRExperiencePanel({
       })
       return
     }
-    const best = chooseBestFloorPlanSheet(selectedSourceSet.sheets || [])
-    const bestSourceSheet = best
-      ? selectedSourceSet.sheets.find((s) => s.pageNumber === best.pageNumber) || null
-      : null
-    if (!best || !bestSourceSheet) {
-      setTraceExtraction({
-        selectedPageNumber: null,
-        payload: null,
-        attempted: false,
-        available: false,
-        providerStatus: 'missing',
-        operatorListStatus: 'unknown',
-        textContentStatus: 'unknown',
-        requestedKey: undefined,
-        registeredKeys: [],
-        matchReason: undefined,
-        providerKey: undefined,
-        providerMetadata: undefined,
-        warnings: [{ code: 'NO_FLOOR_PLAN_SHEET', message: 'No canonical floor-plan sheet selected for trace extraction.' }],
-      })
-      return
-    }
+
+    const expanded = expandSourceSheetsForFullSetPages(selectedSourceSet)
+    const targets = selectProposedPlanSheetsForWallLayout(expanded)
+
     const runtimeRequestIdentity = {
       projectId: runtimeSourceIdentity?.projectId || selectedSourceSet.projectId || projectId,
       blueprintId: runtimeSourceIdentity?.blueprintId || selectedSourceSet.id || sourceBlueprint.id,
       sourceSetId: runtimeSourceIdentity?.sourceSetId || selectedSourceSet.id,
       sourceSetName: runtimeSourceIdentity?.sourceSetName || selectedSourceSet.name,
-      fileName: runtimeSourceIdentity?.fileName || selectedSourceSet.filePath || bestSourceSheet.fileName,
+      fileName: runtimeSourceIdentity?.fileName || selectedSourceSet.filePath || selectedSourceSet.sheets[0]?.fileName,
       pageCount: runtimeSourceIdentity?.pageCount || selectedSourceSet.totalPages,
     }
     const requestedRuntimeKey = buildBlueprintPdfRuntimeKey(runtimeRequestIdentity)
     setLastScanAt(new Date().toISOString())
+    setFullSetPageTraces({})
+
+    if (targets.length === 0) {
+      setTraceExtraction({
+        selectedPageNumber: null,
+        payload: null,
+        attempted: true,
+        available: false,
+        providerStatus: 'missing',
+        operatorListStatus: 'unknown',
+        textContentStatus: 'unknown',
+        requestedKey: requestedRuntimeKey,
+        registeredKeys: [],
+        matchReason: undefined,
+        providerKey: undefined,
+        providerMetadata: undefined,
+        warnings: [
+          {
+            code: 'NO_PROPOSED_PLAN_TARGETS',
+            message:
+              'No proposed dimensioned / floor / wall plan pages found in metadata for full-set vector trace.',
+          },
+        ],
+      })
+      return
+    }
+
     setTraceExtraction((prev) => ({
       ...prev,
       attempted: false,
@@ -807,44 +841,73 @@ export default function BlueprintVRExperiencePanel({
       registeredKeys: prev.registeredKeys || [],
       matchReason: prev.matchReason,
       providerMetadata: prev.providerMetadata,
-      selectedPageNumber: best.pageNumber,
+      selectedPageNumber: targets[0].pageNumber,
     }))
-    void (async () => {
+
+    const extractWithRetries = async (sheet: (typeof targets)[number]) => {
       const traceArgs = {
         ...runtimeRequestIdentity,
-        pageNumber: best.pageNumber,
-        sheetNumber: best.sheetNumber,
-        sheetTitle: best.sheetTitle,
-        existingPayload: bestSourceSheet.tracePayload || null,
+        pageNumber: sheet.pageNumber,
+        sheetNumber: sheet.sheetNumber,
+        sheetTitle: sheet.sheetTitle,
+        existingPayload: sheet.tracePayload || null,
       }
       let runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
       if (!disposed && runtimeTrace.providerStatus === 'missing') {
         await new Promise<void>((r) => setTimeout(r, 150))
-        if (disposed) return
+        if (disposed) return runtimeTrace
         runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
       }
       if (!disposed && runtimeTrace.providerStatus === 'missing') {
         await new Promise<void>((r) => setTimeout(r, 300))
-        if (disposed) return
+        if (disposed) return runtimeTrace
         runtimeTrace = await extractTraceForBlueprintSheet(traceArgs)
       }
+      return runtimeTrace
+    }
+
+    void (async () => {
+      const results = await Promise.all(
+        targets.map(async (sheet) => ({ sheet, runtimeTrace: await extractWithRetries(sheet) })),
+      )
       if (disposed) return
+
+      const byPage: Record<number, PdfTracePayload | null> = {}
+      const allWarnings: Array<{ code: string; message: string }> = []
+      let firstPayload: PdfTracePayload | null = null
+      let anySuccess = false
+      let firstRt = results[0]?.runtimeTrace
+
+      for (const { sheet, runtimeTrace } of results) {
+        if (runtimeTrace.result.success && runtimeTrace.result.payload) {
+          byPage[sheet.pageNumber] = runtimeTrace.result.payload
+          anySuccess = true
+          if (!firstPayload) firstPayload = runtimeTrace.result.payload
+        } else {
+          byPage[sheet.pageNumber] = null
+        }
+        allWarnings.push(...runtimeTrace.result.warnings)
+        if (!firstRt) firstRt = runtimeTrace
+      }
+
+      setFullSetPageTraces(byPage)
       setTraceExtraction({
-        selectedPageNumber: runtimeTrace.selectedPageNumber,
-        payload: runtimeTrace.result.payload,
+        selectedPageNumber: targets[0]?.pageNumber ?? null,
+        payload: firstPayload,
         attempted: true,
-        available: Boolean(runtimeTrace.result.success),
-        providerStatus: runtimeTrace.providerStatus,
-        operatorListStatus: runtimeTrace.operatorListStatus,
-        textContentStatus: runtimeTrace.textContentStatus,
-        requestedKey: runtimeTrace.providerRequestedKey || requestedRuntimeKey,
-        registeredKeys: runtimeTrace.providerRegisteredKeys || [],
-        matchReason: runtimeTrace.providerMatchReason,
-        providerKey: runtimeTrace.providerKey,
-        providerMetadata: runtimeTrace.providerMetadata,
-        warnings: runtimeTrace.result.warnings,
+        available: anySuccess,
+        providerStatus: firstRt?.providerStatus || 'missing',
+        operatorListStatus: firstRt?.operatorListStatus || 'unknown',
+        textContentStatus: firstRt?.textContentStatus || 'unknown',
+        requestedKey: firstRt?.providerRequestedKey || requestedRuntimeKey,
+        registeredKeys: firstRt?.providerRegisteredKeys || [],
+        matchReason: firstRt?.providerMatchReason,
+        providerKey: firstRt?.providerKey,
+        providerMetadata: firstRt?.providerMetadata,
+        warnings: allWarnings,
       })
     })()
+
     return () => {
       disposed = true
     }
@@ -927,20 +990,29 @@ export default function BlueprintVRExperiencePanel({
     let model: BlueprintBuildingModel
 
     const sourceSetForScan = selectedSourceSet
-      ? {
-          ...selectedSourceSet,
-          sheets: selectedSourceSet.sheets.map((sheet) =>
-            traceExtraction.selectedPageNumber &&
-            sheet.pageNumber === traceExtraction.selectedPageNumber
-              ? {
-                  ...sheet,
-                  tracePayload: traceExtraction.payload,
-                  traceAttempted: traceExtraction.attempted,
-                  traceWarnings: traceExtraction.warnings,
-                }
-              : sheet,
-          ),
-        }
+      ? (() => {
+          const expanded = expandSourceSheetsForFullSetPages(selectedSourceSet)
+          const sheets = expanded.map((p) => {
+            const orig =
+              selectedSourceSet.sheets.find((s) => s.pageNumber === p.pageNumber) || p
+            const base = {
+              ...orig,
+              sourceSetName: orig.sourceSetName || selectedSourceSet.name,
+              sourceSetType: orig.sourceSetType || selectedSourceSet.type,
+            }
+            const injected = fullSetPageTraces[p.pageNumber]
+            if (injected) {
+              return {
+                ...base,
+                tracePayload: injected,
+                traceAttempted: true,
+                traceWarnings: base.traceWarnings,
+              }
+            }
+            return base
+          })
+          return { ...selectedSourceSet, sheets }
+        })()
       : null
 
     if (sourceSetForScan) {
@@ -983,7 +1055,7 @@ export default function BlueprintVRExperiencePanel({
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKeyParts, traceExtraction, sourceCacheIdentity, rescanCount])
+  }, [cacheKeyParts, traceExtraction, fullSetPageTraces, sourceCacheIdentity, rescanCount])
 
   const plan2DScan = useMemo<BlueprintPlanScanResult>(() => {
     const sheetIndex = (selectedSourceSet?.sheets || []).map((sheet) => ({
@@ -1048,6 +1120,7 @@ export default function BlueprintVRExperiencePanel({
     clearCachedProjectModel(sourceCacheIdentity)
     setLastScanAt(new Date().toISOString())
     setRescanCount((n) => n + 1)
+    setFullSetPageTraces({})
     setTraceExtraction((prev) => ({
       ...prev,
       attempted: false,
@@ -1101,6 +1174,19 @@ export default function BlueprintVRExperiencePanel({
     const rooms = scanResult.rooms.length
     return `${scanResult.layoutContext.replace(/-/g, ' ')} · ${w}'-0" W × ${d}'-0" D · ${rooms} rooms`
   }, [scanResult])
+
+  const measuredPlanFullSetWallProps = useMemo(() => {
+    if (!selectedSourceSet || !fullSetScan) return null
+    const failed =
+      !fullSetScan.proposedWallLayout && fullSetScan.plan2DSourceMode === 'full-set-wall-trace-failed'
+        ? 'Full-set wall layout extraction failed. No proposed wall model available yet.'
+        : null
+    return {
+      proposedWallLayout: fullSetScan.proposedWallLayout,
+      wallLayoutFailureMessage: failed,
+      fullSetWallDebug: fullSetScan.fullSetWallDebug,
+    }
+  }, [selectedSourceSet, fullSetScan])
 
   // Always show all 4 stages from STAGE_ORDER — no dependency on manifest
   const visibleStages = [...STAGE_ORDER] as VRStage[]
@@ -1383,6 +1469,7 @@ export default function BlueprintVRExperiencePanel({
             {viewMode === 'plan' && (
               <MeasuredPlanViewer
                 model={plan2DBuildingModel}
+                {...(measuredPlanFullSetWallProps || {})}
                 width={760}
                 height={430}
                 selectedRoomId={selectedRoomId}
@@ -1392,9 +1479,10 @@ export default function BlueprintVRExperiencePanel({
                 showRoomLabels={showLabels}
                 showAreaLabels={showLabels}
                 showElectrical={showElectrical}
-                plan2DSourceMode={plan2DScan.plan2DSourceMode}
+                plan2DSourceMode={fullSetScan?.plan2DSourceMode ?? plan2DScan.plan2DSourceMode}
                 calibratedSourceNote={plan2DScan.calibratedSourceNote}
-                traceDebug={plan2DScan.traceDebugCounts || null}
+                traceDebug={fullSetScan?.fullSetWallDebug ? null : plan2DScan.traceDebugCounts || null}
+                suppressLegacyPlan2D={Boolean(selectedSourceSet && fullSetScan && !traceExtraction.attempted)}
               />
             )}
 

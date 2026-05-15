@@ -24,12 +24,22 @@ import type {
   BuildingRoomModel,
   BuildingWallModel,
   BuildingOpeningModel,
+  BlueprintProposedWallLayout,
+  ProposedWallLayoutSegment,
+  ProposedWallLayoutOpening,
 } from './buildingModel'
-import type { BlueprintPlan2DSourceMode } from './blueprintPlanScanner'
+import type { BlueprintPlan2DSourceMode, FullSetWallLayoutDebug } from './blueprintPlanScanner'
 import type { VRStage } from './types'
 
 export interface MeasuredPlanViewerProps {
   model?: BlueprintBuildingModel | null
+  /** Full-set proposed wall layout (2D Plan wall-only mode). */
+  proposedWallLayout?: BlueprintProposedWallLayout | null
+  /** When wall extraction failed, show this instead of geometry. */
+  wallLayoutFailureMessage?: string | null
+  fullSetWallDebug?: FullSetWallLayoutDebug | null
+  /** When true, do not render legacy room/electrical plan until wall props resolve. */
+  suppressLegacyPlan2D?: boolean
   width?: number
   height?: number
   showDimensions?: boolean
@@ -363,8 +373,52 @@ function RoomElement({
 
 // ─── component ───────────────────────────────────────────────────────────
 
+function wallStyleFromSegment(seg: ProposedWallLayoutSegment, selected: boolean): WallStyle {
+  const kind = seg.kind || 'partition'
+  if (kind === 'exterior') {
+    return { stroke: selected ? '#fff' : '#e8eef5', strokeWidth: 4.2 }
+  }
+  if (kind === 'glass') {
+    return { stroke: '#9ec7f9', strokeWidth: 2.4, dash: '6 2' }
+  }
+  if (kind === 'divider') {
+    return { stroke: '#9aa5b2', strokeWidth: 1.3, dash: '4 2' }
+  }
+  return { stroke: selected ? '#dde7f3' : '#b6c0cc', strokeWidth: 2.2 }
+}
+
+function tempWallFromSegment(seg: ProposedWallLayoutSegment): BuildingWallModel {
+  const th = (seg.thicknessInches || (seg.exterior ? 6 : 4)) / 12
+  return {
+    id: seg.id,
+    start: seg.start,
+    end: seg.end,
+    thickness: { value: th, unit: 'ft', display: '', confidence: 0.5, source: 'scanner' },
+    height: { value: 9, unit: 'ft', display: "9'", confidence: 0.5, source: 'scanner' },
+    openings: [],
+    kind: seg.kind,
+  }
+}
+
+function tempOpeningFromProposed(o: ProposedWallLayoutOpening): BuildingOpeningModel {
+  return {
+    id: o.id,
+    type: o.type,
+    positionAlongWall: { value: o.positionAlongWallFt, unit: 'ft', display: '', confidence: 0.5, source: 'scanner' },
+    width: { value: o.widthFt, unit: 'ft', display: '', confidence: 0.5, source: 'scanner' },
+    height: { value: o.type === 'window' ? 6 : 7, unit: 'ft', display: '', confidence: 0.5, source: 'scanner' },
+    swing: o.swing,
+    swingDegrees: o.swingDegrees ?? (o.type === 'door' ? 90 : 0),
+    subtype: o.subtype,
+  }
+}
+
 export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   model,
+  proposedWallLayout = null,
+  wallLayoutFailureMessage = null,
+  fullSetWallDebug = null,
+  suppressLegacyPlan2D = false,
   width = 760,
   height = 430,
   showDimensions = true,
@@ -384,6 +438,271 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     () => ({ width: width || 760, height: height || 430 }),
     [width, height],
   )
+
+  const accent = STAGE_PLAN_ACCENT[activeStage]
+
+  if (suppressLegacyPlan2D && !proposedWallLayout && !wallLayoutFailureMessage) {
+    return (
+      <div className={className} style={{ position: 'relative', width: '100%' }}>
+        <div
+          style={{
+            width: canvasSize.width,
+            height: canvasSize.height,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#0d121b',
+            borderRadius: 8,
+            border: '1px solid rgba(0,229,204,0.18)',
+            color: '#a8c4dc',
+            fontFamily: 'monospace',
+            fontSize: 12,
+            textAlign: 'center',
+            padding: 20,
+          }}
+        >
+          Scanning proposed plan sheet(s) across the full PDF set for wall vectors…
+        </div>
+      </div>
+    )
+  }
+
+  if (wallLayoutFailureMessage && !proposedWallLayout) {
+    return (
+      <div className={className} style={{ position: 'relative', width: '100%' }}>
+        <div
+          style={{
+            width: canvasSize.width,
+            height: canvasSize.height,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#0d121b',
+            borderRadius: 8,
+            border: '1px solid rgba(0,229,204,0.18)',
+            color: '#e0e6ed',
+            padding: 20,
+            textAlign: 'center',
+            fontFamily: 'monospace',
+            fontSize: 12,
+          }}
+        >
+          <p style={{ margin: '0 0 10px', color: '#ffb347' }}>{wallLayoutFailureMessage}</p>
+          {fullSetWallDebug && (
+            <div style={{ fontSize: 10, color: 'rgba(180,210,230,0.85)', lineHeight: 1.5, textAlign: 'left', maxWidth: 520 }}>
+              <div>Pages scanned: {fullSetWallDebug.pagesScanned}</div>
+              <div>Selected proposed plan pages: {fullSetWallDebug.selectedPlanPages.join(', ') || '—'}</div>
+              <div>Raw lines: {fullSetWallDebug.rawLines} · Filtered wall lines: {fullSetWallDebug.filteredWallLines}</div>
+              <div>Openings: {fullSetWallDebug.openings} · Doors: {fullSetWallDebug.doors} · Door swings: {fullSetWallDebug.doorSwings}</div>
+              {fullSetWallDebug.rejectionReason && <div>Reason: {fullSetWallDebug.rejectionReason}</div>}
+              {fullSetWallDebug.rejectedPageRoles?.length ? (
+                <div>Rejected page roles (sample): {fullSetWallDebug.rejectedPageRoles.join(', ')}</div>
+              ) : null}
+            </div>
+          )}
+        </div>
+        {showElectrical && (
+          <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,200,145,0.9)', fontFamily: 'monospace' }}>
+            Electrical hidden in wall-layout mode.
+          </div>
+        )}
+        {showBadges && (
+          <div style={{ position: 'absolute', bottom: 10, left: 10, pointerEvents: 'none' }}>
+            <div
+              style={{
+                backgroundColor: 'rgba(90,30,30,0.95)',
+                color: '#ffb3b3',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: '1px solid rgba(255,120,120,0.5)',
+                fontFamily: 'monospace',
+              }}
+            >
+              2D SOURCE: FULL-SET WALL TRACE FAILED
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (proposedWallLayout) {
+    const b = proposedWallLayout.bounds
+    const { scalePerFoot, offsetX, offsetY } = calculateCanvasScale(b.width, b.height, canvasSize.width, canvasSize.height)
+    const wx = (x: number) => offsetX + (x - b.x) * scalePerFoot
+    const wy = (y: number) => offsetY + (y - b.y) * scalePerFoot
+    const segById = new Map(proposedWallLayout.segments.map((s) => [s.id, s]))
+    const resolvedMode = plan2DSourceMode || 'full-set-proposed-wall-layout'
+    const isOk = resolvedMode === 'full-set-proposed-wall-layout'
+
+    return (
+      <div className={className} style={{ position: 'relative', display: 'block', width: '100%' }}>
+        {showElectrical && (
+          <div
+            style={{
+              marginBottom: 6,
+              fontSize: 10,
+              color: 'rgba(255,200,145,0.95)',
+              fontFamily: 'monospace',
+            }}
+          >
+            Electrical hidden in wall-layout mode.
+          </div>
+        )}
+        <svg
+          width="100%"
+          height={canvasSize.height}
+          viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
+          preserveAspectRatio="xMidYMid meet"
+          style={{ backgroundColor: '#0d121b', borderRadius: 8, border: '1px solid rgba(0,229,204,0.18)', display: 'block' }}
+        >
+          <rect
+            x={wx(b.x) - 2}
+            y={wy(b.y) - 2}
+            width={b.width * scalePerFoot + 4}
+            height={b.height * scalePerFoot + 4}
+            fill="rgba(74,90,114,0.12)"
+            stroke="#5a6a7e"
+            strokeWidth={1.5}
+            rx={2}
+          />
+          {proposedWallLayout.segments.map((seg) => {
+            const style = wallStyleFromSegment(seg, false)
+            return (
+              <line
+                key={seg.id}
+                x1={wx(seg.start.x)}
+                y1={wy(seg.start.y)}
+                x2={wx(seg.end.x)}
+                y2={wy(seg.end.y)}
+                stroke={style.stroke}
+                strokeWidth={style.strokeWidth}
+                strokeDasharray={style.dash}
+                strokeLinecap="round"
+              />
+            )
+          })}
+          {proposedWallLayout.openings.map((o) => {
+            const seg = segById.get(o.wallSegmentId)
+            if (!seg) return null
+            const wall = tempWallFromSegment(seg)
+            const opening = tempOpeningFromProposed(o)
+            const ox = offsetX - b.x * scalePerFoot
+            const oy = offsetY - b.y * scalePerFoot
+            return <g key={o.id}>{renderOpening(opening, wall, scalePerFoot, ox, oy, accent)}</g>
+          })}
+          {proposedWallLayout.doorSwingArcs.map((arc) => {
+            const cx = wx(arc.hinge.x)
+            const cy = wy(arc.hinge.y)
+            const rPx = arc.radiusFt * scalePerFoot
+            const sr = (arc.startAngleDeg * Math.PI) / 180
+            const er = (arc.endAngleDeg * Math.PI) / 180
+            const sx = cx + rPx * Math.cos(sr)
+            const sy = cy + rPx * Math.sin(sr)
+            const ex = cx + rPx * Math.cos(er)
+            const ey = cy + rPx * Math.sin(er)
+            const delta = ((er - sr + Math.PI * 3) % (Math.PI * 2)) - Math.PI
+            const largeArc = Math.abs(delta) > Math.PI ? 1 : 0
+            const sweep = delta > 0 ? 1 : 0
+            return (
+              <path
+                key={arc.id}
+                d={`M ${sx} ${sy} A ${rPx} ${rPx} 0 ${largeArc} ${sweep} ${ex} ${ey}`}
+                fill="none"
+                stroke={accent}
+                strokeWidth={0.9}
+                strokeDasharray="2 2"
+                opacity={0.75}
+              />
+            )
+          })}
+          {showDimensions &&
+            proposedWallLayout.dimensions.map((d) => (
+              <g key={d.id}>
+                <line
+                  x1={wx(d.start.x)}
+                  y1={wy(d.start.y)}
+                  x2={wx(d.end.x)}
+                  y2={wy(d.end.y)}
+                  stroke={accent}
+                  strokeWidth={1}
+                />
+                <text
+                  x={(wx(d.start.x) + wx(d.end.x)) / 2}
+                  y={wy(d.start.y) - 4}
+                  textAnchor="middle"
+                  fill={accent}
+                  fontSize={9}
+                  fontFamily="monospace"
+                >
+                  {d.label}
+                </text>
+              </g>
+            ))}
+          {(showRoomLabels || showAreaLabels) &&
+            proposedWallLayout.labels.map((lb) => (
+              <text
+                key={lb.id}
+                x={wx(lb.position.x)}
+                y={wy(lb.position.y)}
+                fill="#e0e6ed"
+                fontSize={10}
+                fontFamily="monospace"
+                style={{ pointerEvents: 'none' }}
+              >
+                {lb.text}
+              </text>
+            ))}
+        </svg>
+        {showBadges && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 10,
+              left: 10,
+              display: 'flex',
+              gap: 8,
+              flexWrap: 'wrap',
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: isOk ? 'rgba(26,74,42,0.95)' : 'rgba(90,30,30,0.95)',
+                color: isOk ? '#a0ffa0' : '#ffb3b3',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: isOk ? '1px solid #4aff4a' : '1px solid rgba(255,120,120,0.5)',
+                fontFamily: 'monospace',
+              }}
+            >
+              {isOk ? '2D SOURCE: FULL-SET PROPOSED WALL LAYOUT' : '2D SOURCE: FULL-SET WALL TRACE FAILED'}
+            </div>
+            {fullSetWallDebug && (
+              <div
+                style={{
+                  backgroundColor: 'rgba(20,28,38,0.95)',
+                  color: '#9ec7f9',
+                  padding: '3px 7px',
+                  borderRadius: 4,
+                  fontSize: 9,
+                  border: '1px solid rgba(158,199,249,0.45)',
+                  fontFamily: 'monospace',
+                }}
+              >
+                DEBUG · pages {fullSetWallDebug.pagesScanned} · sel [{fullSetWallDebug.selectedPlanPages.join(',')}] · raw{' '}
+                {fullSetWallDebug.rawLines} · walls {fullSetWallDebug.filteredWallLines} · op {fullSetWallDebug.openings} ·
+                swings {fullSetWallDebug.doorSwings}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (!model || model.footprint.width === 0 || model.footprint.height === 0) {
     return (
@@ -425,11 +744,9 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     allRooms.flatMap((room) => room.walls.map((wall) => ({ wall, room })))
 
   const accent = STAGE_PLAN_ACCENT[activeStage]
-  const resolvedPlan2DSourceMode =
-    plan2DSourceMode ||
-    (model.metadata.source === 'calibrated' ? 'ap01-calibrated-model' : model.metadata.source === 'extraction' ? 'direct-pdf-trace' : undefined)
-  const isCalibratedSource = resolvedPlan2DSourceMode === 'ap01-calibrated-model'
-  const isDirectTraceSource = resolvedPlan2DSourceMode === 'direct-pdf-trace'
+  const resolvedPlan2DSourceMode = plan2DSourceMode
+  const isFullSetWallOk = resolvedPlan2DSourceMode === 'full-set-proposed-wall-layout'
+  const isFullSetWallFailed = resolvedPlan2DSourceMode === 'full-set-wall-trace-failed'
 
   // De-duplicate walls by canonical key so partition walls shared between two
   // rooms render once. Use endpoints as key.
@@ -684,49 +1001,42 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
         >
           <div
             style={{
-              backgroundColor: isCalibratedSource ? 'rgba(74,58,26,0.95)' : isDirectTraceSource ? 'rgba(26,74,42,0.95)' : 'rgba(42,63,95,0.95)',
-              color: isCalibratedSource ? '#ffd8a0' : isDirectTraceSource ? '#a0ffa0' : '#a0d8ff',
+              backgroundColor: isFullSetWallOk
+                ? 'rgba(26,74,42,0.95)'
+                : isFullSetWallFailed
+                  ? 'rgba(90,30,30,0.95)'
+                  : 'rgba(42,63,95,0.95)',
+              color: isFullSetWallOk ? '#a0ffa0' : isFullSetWallFailed ? '#ffb3b3' : '#a0d8ff',
               padding: '3px 7px',
               borderRadius: 4,
               fontSize: 10,
-              border: isCalibratedSource ? '1px solid #d4a24a' : isDirectTraceSource ? '1px solid #4aff4a' : '1px solid #4a90e2',
+              border: isFullSetWallOk
+                ? '1px solid #4aff4a'
+                : isFullSetWallFailed
+                  ? '1px solid rgba(255,120,120,0.5)'
+                  : '1px solid #4a90e2',
               fontFamily: 'monospace',
             }}
           >
-            {isDirectTraceSource
-              ? '2D SOURCE: DIRECT PDF TRACE'
-              : isCalibratedSource
-                ? '2D SOURCE: AP-01 CALIBRATED MODEL'
-                : '2D SOURCE: UNRESOLVED'}
+            {isFullSetWallOk
+              ? '2D SOURCE: FULL-SET PROPOSED WALL LAYOUT'
+              : isFullSetWallFailed
+                ? '2D SOURCE: FULL-SET WALL TRACE FAILED'
+                : '2D SOURCE: DEFAULT BUILDING MODEL'}
           </div>
-          {isCalibratedSource && calibratedSourceNote && (
+          {calibratedSourceNote && (
             <div
               style={{
-                backgroundColor: 'rgba(74,58,26,0.95)',
-                color: '#ffd8a0',
+                backgroundColor: 'rgba(42,63,95,0.95)',
+                color: '#cfe8ff',
                 padding: '3px 7px',
                 borderRadius: 4,
-                fontSize: 10,
-                border: '1px solid #d4a24a',
+                fontSize: 9,
+                border: '1px solid rgba(158,199,249,0.45)',
                 fontFamily: 'monospace',
               }}
             >
               {calibratedSourceNote}
-            </div>
-          )}
-          {isDirectTraceSource && (
-            <div
-              style={{
-                backgroundColor: 'rgba(42,95,42,0.95)',
-                color: '#a0ffa0',
-                padding: '3px 7px',
-                borderRadius: 4,
-                fontSize: 10,
-                border: '1px solid #4aff4a',
-                fontFamily: 'monospace',
-              }}
-            >
-              MEASURED · {Math.round((model.confidence ?? 0) * 100)}%
             </div>
           )}
           {traceDebug && (

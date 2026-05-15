@@ -18,11 +18,7 @@
  */
 
 import type { BlueprintBuildingModel } from './buildingModel'
-import {
-  buildAp01CalibratedSalonPlanScan,
-  scanBlueprintPlan,
-  convertPlanScanToBuildingModel,
-} from './blueprintPlanScanner'
+import { scanBlueprintPlan, convertPlanScanToBuildingModel } from './blueprintPlanScanner'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout Type Detection
@@ -176,20 +172,12 @@ export function createAutoDetectedDefaultModel(
 }
 
 /**
- * Deterministic AP-01 Beauty Salon calibrated plan used when direct PDF trace
- * is unavailable for the Proposed Dimensioned Plan sheet.
+ * Back-compat entry point: returns the same salon suite as {@link createDefaultBuildingModel}
+ * via the shared scanner path (no sheet-specific calibrated geometry).
  */
 export function createAp01CalibratedSalonBuildingModel(
   title?: string,
   projectName?: string,
 ): BlueprintBuildingModel {
-  const scan = buildAp01CalibratedSalonPlanScan({
-    projectName: projectName || 'Beauty Salon',
-    blueprintTitle: title || 'AP-01 Proposed Dimensioned Plan',
-    sheetIndex: [{ pageNumber: 1, sheetTitle: 'AP-01 Proposed Dimensioned Plan' }],
-  })
-  const model = convertPlanScanToBuildingModel(scan)
-  model.name = title ? `${title} (AP-01 Calibrated)` : 'AP-01 Calibrated Beauty Salon Suite'
-  model.metadata.displayLabel = `${projectName || 'Project'} – AP-01 Calibrated Suite`
-  return model
+  return createDefaultBuildingModel('salon', title, projectName)
 }

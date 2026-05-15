@@ -21,12 +21,18 @@
 
 import type {
   BlueprintBuildingModel,
+  BlueprintProposedWallLayout,
   BuildingLevelModel,
   BuildingRoomModel,
   BuildingWallModel,
   BuildingOpeningModel,
   BuildingElectricalAnchorModel,
   ElectricalAnchorType,
+  ProposedWallLayoutDimension,
+  ProposedWallLayoutDoorSwingArc,
+  ProposedWallLayoutLabel,
+  ProposedWallLayoutOpening,
+  ProposedWallLayoutSegment,
   Point2D,
   Rectangle,
   Bounds2D,
@@ -45,6 +51,8 @@ import type {
 import {
   adaptPdfTraceToPlanLines,
   buildTracePayloadFromPageSnapshot,
+  convertPdfArcsToWorldFeet,
+  cropPlanTraceLinesToInnerFootprint,
   detectOuterFootprint,
   inferDimensionCandidatesFromText,
   inferDoorCandidatesFromArcs,
@@ -52,7 +60,8 @@ import {
   inferOpeningCandidatesFromGaps,
   inferScaleFromTraceText,
   inferWallCandidatesFromTrace,
-  isTracePlanUsableForPrimary2D,
+  mergeCollinearSegments,
+  filterNoiseLines,
 } from './blueprintTraceAdapter'
 import type { PdfTraceLine, PdfTracePayload, PdfTraceTextRun } from './pdfTraceTypes'
 
@@ -89,7 +98,9 @@ export interface BlueprintActivePageScanSnapshot {
   extractionWarnings?: Array<{ code: string; message: string }>
 }
 
-export type BlueprintPlan2DSourceMode = 'direct-pdf-trace' | 'ap01-calibrated-model'
+export type BlueprintPlan2DSourceMode =
+  | 'full-set-proposed-wall-layout'
+  | 'full-set-wall-trace-failed'
 
 /**
  * Input shape consumed by scanBlueprintPlan().
@@ -356,7 +367,7 @@ export interface BlueprintPlanScanResult {
   /** Point-by-point confidence explanation for scanner status panel. */
   confidenceBreakdown?: ScanConfidenceBreakdown
   /** Honest scan result status for UI labels. */
-  scanResultKind?: 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace' | 'ap01-calibrated'
+  scanResultKind?: 'fallback' | 'inferred' | 'cached-inferred' | 'measured-trace'
   /** Explicit 2D plan source mode for the measured plan viewer. */
   plan2DSourceMode?: BlueprintPlan2DSourceMode
   /** Human-readable note when the calibrated AP-01 model is used. */
@@ -505,6 +516,115 @@ export function inferOpeningsFromGaps(
       subtype: o.type === 'window' ? 'window-standard' : 'door-swing',
     }
   })
+}
+
+/**
+ * Build a line-based proposed wall layout from a single page trace (world feet).
+ * Ignores room grids — walls, openings, and door swing arcs only.
+ */
+export function buildProposedWallLayoutFromTracePayload(
+  payload: PdfTracePayload | null | undefined,
+  sourcePageNumber?: number,
+): {
+  layout: BlueprintProposedWallLayout | null
+  debug: { rawLines: number; filteredWallLines: number; openings: number; doorSwings: number }
+} {
+  const emptyDebug = { rawLines: 0, filteredWallLines: 0, openings: 0, doorSwings: 0 }
+  if (!payload) {
+    return { layout: null, debug: emptyDebug }
+  }
+  const adapted = adaptPdfTraceToPlanLines(payload)
+  let lines = mergeCollinearSegments(filterNoiseLines(adapted.lines))
+  const outer = detectOuterFootprint(lines)
+  if (!outer) {
+    return { layout: null, debug: { ...emptyDebug, rawLines: adapted.lines.length } }
+  }
+  lines = cropPlanTraceLinesToInnerFootprint(lines, outer, 0.07)
+  lines = mergeCollinearSegments(filterNoiseLines(lines))
+  let walls = inferWallsFromOrthogonalLines(lines, 2.2)
+  if (walls.length < 8) {
+    walls = inferWallsFromOrthogonalLines(lines, 1.75)
+  }
+  const rawLines = adapted.lines.length
+  if (walls.length < 6) {
+    return {
+      layout: null,
+      debug: { rawLines, filteredWallLines: lines.length, openings: 0, doorSwings: 0 },
+    }
+  }
+  const openingsList = inferOpeningsFromGaps(walls, lines)
+  const arcsW = convertPdfArcsToWorldFeet(payload.arcs || [], adapted.scale)
+  const doorSwingArcs: ProposedWallLayoutDoorSwingArc[] = arcsW
+    .filter((a) => Math.abs(a.endAngleDeg - a.startAngleDeg) >= 45 && a.radiusFt < 6 && a.radiusFt > 0.3)
+    .slice(0, 48)
+    .map((a, i) => ({
+      id: `swing-${sourcePageNumber ?? 0}-${i}`,
+      hinge: a.center,
+      radiusFt: a.radiusFt,
+      startAngleDeg: a.startAngleDeg,
+      endAngleDeg: a.endAngleDeg,
+      sourcePageNumber,
+    }))
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const w of walls) {
+    minX = Math.min(minX, w.start.x, w.end.x)
+    minY = Math.min(minY, w.start.y, w.end.y)
+    maxX = Math.max(maxX, w.start.x, w.end.x)
+    maxY = Math.max(maxY, w.start.y, w.end.y)
+  }
+  const bounds: Rectangle = {
+    x: minX - 1,
+    y: minY - 1,
+    width: maxX - minX + 2,
+    height: maxY - minY + 2,
+  }
+  const dimsFromText = inferDimensionCandidatesFromText(payload.textRuns || [])
+  const dimensions: ProposedWallLayoutDimension[] = dimsFromText.slice(0, 14).map((d, i) => ({
+    id: `dim-${sourcePageNumber ?? 0}-${i}`,
+    start: { x: bounds.x, y: bounds.y + bounds.height + 2 + i * 0.4 },
+    end: { x: bounds.x + Math.min(bounds.width, d.feet), y: bounds.y + bounds.height + 2 + i * 0.4 },
+    label: d.text,
+  }))
+  const segments: ProposedWallLayoutSegment[] = walls.map((w) => ({
+    id: w.id,
+    start: w.start,
+    end: w.end,
+    exterior: w.exterior,
+    kind: (w.kind as WallKind) || (w.exterior ? 'exterior' : 'partition'),
+    thicknessInches: (w.thicknessFt || (w.exterior ? 0.5 : 0.34)) * 12,
+    sourcePageNumber,
+  }))
+  const openings: ProposedWallLayoutOpening[] = openingsList.map((o, i) => ({
+    id: o.id || `op-${sourcePageNumber ?? 0}-${i}`,
+    wallSegmentId: o.wallId,
+    positionAlongWallFt: o.positionFt,
+    widthFt: o.widthFt,
+    type: o.type,
+    swing: o.swing,
+    swingDegrees: o.swingDegrees,
+    subtype: o.subtype,
+  }))
+  const labels: ProposedWallLayoutLabel[] = []
+  return {
+    layout: {
+      bounds,
+      segments,
+      openings,
+      doorSwingArcs,
+      dimensions,
+      labels,
+      primarySourcePageNumber: sourcePageNumber,
+    },
+    debug: {
+      rawLines,
+      filteredWallLines: lines.length,
+      openings: openingsList.length,
+      doorSwings: doorSwingArcs.length,
+    },
+  }
 }
 
 /**
@@ -1047,178 +1167,6 @@ export function chooseSalonSuiteFallbackFromBlueprintContext(
     default:
       return buildGenericLayoutRaw()
   }
-}
-
-function buildCalibratedSalonScanFromFallback(
-  input: BlueprintPlanScanInput,
-  options?: {
-    traceRejectionReason?: string
-    traceDebugCounts?: BlueprintPlanScanResult['traceDebugCounts']
-    traceAvailable?: boolean
-    traceAttempted?: boolean
-    traceWarnings?: Array<{ code: string; message: string }>
-    activePageNumber?: number
-  },
-): BlueprintPlanScanResult {
-  const layoutContext: BlueprintPlanScanResult['layoutContext'] = 'salon-tenant-suite'
-  const projectHint = projectHintForContext(layoutContext)
-  const fb = buildSalonSuiteLayoutRaw()
-  const rooms: PlanRoomCandidate[] = fb.rooms.map((r) => ({
-    id: r.id,
-    label: r.label,
-    type: r.type,
-    bounds: r.bounds,
-    confidence: 0.72,
-    roleHint: r.role,
-  }))
-  const wallsOpenings = buildWallsAndOpeningsFromRooms(
-    fb.footprint,
-    fb.rooms,
-    projectHint.wallThicknessDefaults,
-  )
-  const hintsBundle = buildHintsForContext(layoutContext, fb.rooms)
-  const doorHints: DoorHint[] = wallsOpenings.openings
-    .filter((op) => op.type === 'door')
-    .map((op) => ({
-      id: `${op.id}_hint`,
-      roomId: op.wallId.split('_wall_')[0],
-      widthFt: op.widthFt,
-      swing: op.swing,
-      swingDegrees: op.swingDegrees,
-      confidence: op.confidence,
-    }))
-  const wallHints: WallHint[] = wallsOpenings.walls.map((w) => ({
-    id: `${w.id}_hint`,
-    start: w.start,
-    end: w.end,
-    thicknessFt: w.thicknessFt,
-    kind: w.kind,
-    confidence: w.confidence,
-  }))
-  const confidence = 0.72
-  const dimensions: PlanDimensionCandidate[] = [
-    {
-      id: 'dim-overall-width',
-      start: { x: fb.footprint.x, y: fb.footprint.y + fb.footprint.height + 2 },
-      end: { x: fb.footprint.x + fb.footprint.width, y: fb.footprint.y + fb.footprint.height + 2 },
-      valueFt: fb.footprint.width,
-      label: `18'-0" SUITE WIDTH`,
-      confidence,
-    },
-    {
-      id: 'dim-overall-depth',
-      start: { x: fb.footprint.x + fb.footprint.width + 2, y: fb.footprint.y },
-      end: { x: fb.footprint.x + fb.footprint.width + 2, y: fb.footprint.y + fb.footprint.height },
-      valueFt: fb.footprint.height,
-      label: `50'-0" SUITE DEPTH`,
-      confidence,
-    },
-  ]
-  const warnings: PlanScanWarning[] = [
-    {
-      code: 'SALON_CONTEXT_DETECTED',
-      message:
-        'Using AP-01 calibrated Beauty Salon suite (18 ft × 50 ft) with reception, styling floor, ' +
-        'hair wash, circulation, treatment/back service, restroom, storage, and utility/panel zones.',
-    },
-    {
-      code: 'NARROW_SUITE_ASSUMED',
-      message: 'Suite shape calibrated to the AP-01 Proposed Dimensioned Plan tenant footprint.',
-    },
-  ]
-  if (options?.traceRejectionReason) {
-    warnings.unshift({
-      code: 'AMBIGUOUS_SUITE_SHAPE',
-      message:
-        `Direct PDF trace available but rejected for primary plan: ${options.traceRejectionReason} ` +
-        'Using AP-01 calibrated model.',
-    })
-  }
-  return {
-    footprint: fb.footprint,
-    walls: wallsOpenings.walls,
-    openings: wallsOpenings.openings,
-    rooms,
-    dimensions,
-    warnings,
-    traceLines: [],
-    isFallback: true,
-    confidence,
-    layoutContext,
-    equipmentHints: hintsBundle.equipment,
-    finishHints: hintsBundle.finishes,
-    electricalHints: hintsBundle.electrical,
-    doorHints,
-    wallHints,
-    projectHint,
-    metadata: {
-      projectName: input.projectName,
-      blueprintTitle: input.blueprintTitle,
-      activePageNumber: options?.activePageNumber || input.activePageNumber,
-      totalPages: input.totalPages,
-      generatedAt: new Date().toISOString(),
-    },
-    scanResultKind: 'ap01-calibrated',
-    plan2DSourceMode: 'ap01-calibrated-model',
-    calibratedSourceNote: options?.traceRejectionReason
-      ? 'Using AP-01 calibrated model.'
-      : 'AP-01 calibrated model — PDF trace unavailable',
-    traceRejectionReason: options?.traceRejectionReason,
-    traceStatus: options?.traceAvailable ? 'provided' : 'missing',
-    traceAttempted: options?.traceAttempted,
-    traceAvailable: options?.traceAvailable,
-    traceWarnings: options?.traceWarnings,
-    traceDebugCounts: options?.traceDebugCounts,
-    scaleStatus: 'default',
-    confidenceBreakdown: {
-      totalPoints: Math.round(confidence * 100),
-      totalPercent: Math.round(confidence * 100),
-      confidenceCapReason: options?.traceRejectionReason
-        ? 'Direct PDF trace rejected; AP-01 calibrated model used for primary 2D plan.'
-        : 'AP-01 calibrated model used for primary 2D plan.',
-      items: {
-        sourceSetSelected: 0,
-        sheetsClassified: 0,
-        floorPlanSheetSelected: 0,
-        scaleDetected: 0,
-        dimensionsDetected: 10,
-        vectorTraceAvailable: options?.traceAvailable ? 5 : 0,
-        wallCandidatesFound: 10,
-        openingsFound: 10,
-        roomsValidated: 10,
-        elevationsMatched: 0,
-        electricalSheetsMatched: 0,
-      },
-      reasons: {
-        sourceSetSelected: 'Calibrated AP-01 salon layout.',
-        sheetsClassified: 'Calibrated AP-01 salon layout.',
-        floorPlanSheetSelected: 'Calibrated AP-01 salon layout.',
-        scaleDetected: 'Calibrated suite dimensions (18 ft × 50 ft).',
-        dimensionsDetected: 'Suite and major room dimensions generated from calibrated layout.',
-        vectorTraceAvailable: options?.traceAvailable
-          ? 'Vector trace present but rejected for primary 2D plan.'
-          : 'No vector trace payload provided.',
-        wallCandidatesFound: `Generated ${wallsOpenings.walls.length} wall candidates.`,
-        openingsFound: `Generated ${wallsOpenings.openings.length} opening candidates.`,
-        roomsValidated: `Generated ${rooms.length} room candidates.`,
-        elevationsMatched: 'Not applicable in calibrated single-sheet scan.',
-        electricalSheetsMatched: 'Not applicable in calibrated single-sheet scan.',
-      },
-    },
-  }
-}
-
-/**
- * Deterministic AP-01 Beauty Salon calibrated scan for the Proposed Dimensioned Plan.
- */
-export function buildAp01CalibratedSalonPlanScan(
-  input: BlueprintPlanScanInput = {},
-): BlueprintPlanScanResult {
-  return buildCalibratedSalonScanFromFallback({
-    projectName: input.projectName || 'Beauty Salon',
-    blueprintTitle: input.blueprintTitle || 'AP-01 Proposed Dimensioned Plan',
-    ...input,
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -1834,17 +1782,17 @@ export function scanBlueprintPlan(
   const warnings: PlanScanWarning[] = []
   const layoutContext = detectLayoutContext(input)
   const generatedAt = new Date().toISOString()
-  const ap01Target = selectAp01FloorPlanTarget({
-    visiblePageNumber: input.pageSnapshot?.currentPageNumber || input.activePageNumber,
-    visibleSheetTitle: input.pageSnapshot?.sheetTitle,
-    sourceSetName: input.pageSnapshot?.sourceSetName || input.blueprintTitle,
-    pageCount: input.pageSnapshot?.pageCount || input.totalPages,
-    sheetIndex: input.sheetIndex,
-  })
   const activePageNumber =
-    ap01Target?.pageNumber ||
-    input.pageSnapshot?.currentPageNumber ||
-    input.activePageNumber
+    Math.max(
+      1,
+      Math.floor(
+        Number(
+          input.activePageNumber ||
+            input.pageSnapshot?.currentPageNumber ||
+            input.sheetIndex?.[0]?.pageNumber,
+        ) || 1,
+      ),
+    )
   const snapshotPayload = input.pageSnapshot
     ? buildTracePayloadFromPageSnapshot(input.pageSnapshot, input.tracePayload)
     : null
@@ -1927,37 +1875,12 @@ export function scanBlueprintPlan(
     openings: inferredOpenings.length,
     roomCandidates: inferredRooms.length,
   }
-  const traceGate = isTracePlanUsableForPrimary2D({
-    traceDebug: traceDebugCounts,
-    inferredDimensions: {
-      widthFt: inferredFootprint?.width ?? 0,
-      depthFt: inferredFootprint?.height ?? 0,
-    },
-    filteredPlanLines: traceLines.length,
-    pageBounds: mergedTracePayload?.pageBounds,
-    footprint: inferredFootprint
-      ? { width: inferredFootprint.width, height: inferredFootprint.height }
-      : null,
-  })
-  const traceUsable = traceGate.usable
+  const traceUsable =
+    !!inferredFootprint &&
+    inferredFootprint.width > 5 &&
+    inferredFootprint.height > 5 &&
+    inferredWalls.length >= 6
   const traceAvailable = traceLines.length > 0
-  const useAp01CalibratedPrimary =
-    layoutContext === 'salon-tenant-suite' &&
-    (!traceUsable || !traceAvailable)
-
-  if (useAp01CalibratedPrimary && traceAvailable && traceGate.reason) {
-    return buildCalibratedSalonScanFromFallback(input, {
-      traceRejectionReason: traceGate.reason,
-      traceDebugCounts: {
-        ...traceDebugCounts,
-        confidenceCapReason: traceGate.reason,
-      },
-      traceAvailable,
-      traceAttempted,
-      traceWarnings,
-      activePageNumber,
-    })
-  }
 
   // 4. If trace not usable, fall back to context layout.
   let footprint: Rectangle
@@ -1967,7 +1890,7 @@ export function scanBlueprintPlan(
   let isFallback: boolean
   let confidence: number
   let confidenceCapReason = 'No confidence cap applied.'
-  let plan2DSourceMode: BlueprintPlan2DSourceMode = 'ap01-calibrated-model'
+  let plan2DSourceMode: BlueprintPlan2DSourceMode = 'full-set-wall-trace-failed'
   let calibratedSourceNote: string | undefined
   let scanResultKind: BlueprintPlanScanResult['scanResultKind'] = 'fallback'
 
@@ -1985,7 +1908,7 @@ export function scanBlueprintPlan(
     openings = inferredOpenings
     rooms = inferredRooms
     isFallback = false
-    plan2DSourceMode = 'direct-pdf-trace'
+    plan2DSourceMode = 'full-set-proposed-wall-layout'
     scanResultKind = 'measured-trace'
     confidence = Math.min(
       0.82,
@@ -2057,18 +1980,9 @@ export function scanBlueprintPlan(
     }))
 
     isFallback = true
-    confidence = layoutContext === 'salon-tenant-suite' ? 0.72 : 0.35
-    if (layoutContext === 'salon-tenant-suite') {
-      plan2DSourceMode = 'ap01-calibrated-model'
-      scanResultKind = 'ap01-calibrated'
-      calibratedSourceNote = traceAvailable
-        ? traceGate.reason
-          ? 'Using AP-01 calibrated model.'
-          : 'AP-01 calibrated model — PDF trace unavailable'
-        : 'AP-01 calibrated model — PDF trace unavailable'
-    } else {
-      scanResultKind = 'fallback'
-    }
+    confidence = 0.35
+    scanResultKind = 'fallback'
+    calibratedSourceNote = undefined
     if (runtimeProviderStatus !== 'available') {
       confidenceCapReason = 'Runtime PDF provider missing; cap remains below 60%.'
     } else if (!traceAvailable && rawTextRunCount > 0) {
@@ -2182,7 +2096,10 @@ export function scanBlueprintPlan(
     scanResultKind: isFallback ? scanResultKind : 'measured-trace',
     plan2DSourceMode,
     calibratedSourceNote,
-    traceRejectionReason: traceAvailable && !traceUsable ? traceGate.reason : undefined,
+    traceRejectionReason:
+      traceAvailable && !traceUsable
+        ? 'Trace geometry did not meet minimum wall footprint gates for a proposed plan.'
+        : undefined,
     traceStatus: traceAvailable ? (isFallback ? 'provided' : 'extracted') : 'missing',
     traceAttempted,
     traceAvailable,
@@ -2475,20 +2392,16 @@ export function convertPlanScanToBuildingModel(
       createdAt: now,
       updatedAt: now,
       source:
-        scan.scanResultKind === 'ap01-calibrated'
-          ? 'calibrated'
-          : scan.isFallback
-            ? 'fallback'
-            : 'extraction',
+        scan.isFallback
+          ? 'fallback'
+          : 'extraction',
       sourceBlueprint: scan.metadata.blueprintTitle,
       sourceProject: scan.metadata.projectName,
       sourcePage: scan.metadata.activePageNumber,
       notes:
-        scan.scanResultKind === 'ap01-calibrated'
-          ? scan.calibratedSourceNote || 'AP-01 calibrated model — PDF trace unavailable'
-          : scan.isFallback
-            ? `Scan-ready fallback: ${scan.layoutContext}. ${scan.warnings.length} warning(s).`
-            : `Scanned floor plan: ${scan.layoutContext}. Confidence ${(scan.confidence * 100).toFixed(0)}%.`,
+        scan.isFallback
+          ? `Scan-ready fallback: ${scan.layoutContext}. ${scan.warnings.length} warning(s).`
+          : `Scanned floor plan: ${scan.layoutContext}. Confidence ${(scan.confidence * 100).toFixed(0)}%.`,
       displayLabel,
     },
   }
@@ -2620,6 +2533,46 @@ export interface BlueprintVRSourceSet {
 /**
  * Input shape consumed by scanBlueprintFullSet().
  */
+// ---------------------------------------------------------------------------
+// Full-set page roles (wall extraction) — metadata-driven classification
+// ---------------------------------------------------------------------------
+
+export type PlanPageWallRole =
+  | 'proposed_floor_plan'
+  | 'proposed_dimensioned_plan'
+  | 'proposed_wall_plan'
+  | 'electrical_plan'
+  | 'lighting_plan'
+  | 'interior_elevation'
+  | 'rendering'
+  | 'schedule'
+  | 'notes'
+  | 'title_block_only'
+  | 'demo_existing'
+  | 'unknown'
+
+export interface FullSetPageWallClassification {
+  pageNumber: number
+  sheetNumber?: string
+  sheetTitle?: string
+  primaryRole: PlanPageWallRole
+  /** When this page was not used for wall geometry, why it was skipped. */
+  skipReason?: string
+}
+
+export interface FullSetWallLayoutDebug {
+  pagesScanned: number
+  selectedPlanPages: number[]
+  rejectedPageRoles: PlanPageWallRole[]
+  rawLines: number
+  filteredWallLines: number
+  openings: number
+  doors: number
+  doorSwings: number
+  rejectionReason?: string
+  planSelectionSummary?: string
+}
+
 export interface BlueprintFullSetScanInput {
   projectName?: string
   /** The blueprint set selected as the VR source. */
@@ -2663,8 +2616,22 @@ export interface SelectedFloorPlanSheet {
 export interface BlueprintFullSetScanResult {
   /** Underlying plan scan that drove the geometry. */
   planScan: BlueprintPlanScanResult
-  /** Per-sheet role classifications. */
+  /** Per-sheet role classifications (legacy coarse roles). */
   classifications: FullSetSheetClassification[]
+  /** Per-page wall-extraction role (full set). */
+  pageClassifications: FullSetPageWallClassification[]
+  /** Page numbers chosen for proposed wall / floor trace merge. */
+  selectedPlanPages: number[]
+  /** Pages explicitly rejected for wall extraction (role + reason). */
+  rejectedPages: Array<{ pageNumber: number; primaryRole: PlanPageWallRole; reason: string }>
+  /** One project-level proposed wall model from the full set (2D Plan). */
+  proposedWallLayout: BlueprintProposedWallLayout | null
+  /** Human-readable selection line for scanner status. */
+  fullSetPlanSelectionSummary?: string
+  /** Diagnostics for wall-only extraction. */
+  fullSetWallDebug: FullSetWallLayoutDebug
+  /** Primary badge mode for the 2D Plan viewer. */
+  plan2DSourceMode: BlueprintPlan2DSourceMode
   /** Best floor-plan sheet chosen from the set (if any). */
   bestFloorPlanSheet: SelectedFloorPlanSheet | null
   /** Best electrical sheets in priority order. */
@@ -2700,7 +2667,14 @@ export interface BlueprintFullSetScanResult {
     projectName?: string
     sheetCount: number
     generatedAt: string
+    fileName?: string
+    pageCount?: number
   }
+  /** Flat identity (mirrors metadata for consumers). */
+  sourceSetId: string
+  sourceSetName: string
+  fileName?: string
+  pageCount: number
 }
 
 // ---------------------------------------------------------------------------
@@ -2950,88 +2924,183 @@ function classifyAllSheets(
   })
 }
 
-function ap01TitleSignal(text: string): boolean {
-  const normalized = normalizeText([text])
-  return (
-    normalized.includes('ap-01') ||
-    normalized.includes('ap01') ||
-    normalized.includes('ap100') ||
-    normalized.includes('proposed dimensioned plan') ||
-    normalized.includes('dimensioned plan') ||
-    normalized.includes('floor plan')
-  )
+/** Expand sheet rows to one entry per PDF page for full-set classification. */
+export function expandSourceSheetsForFullSetPages(sourceSet: BlueprintVRSourceSet): BlueprintVRSourceSheet[] {
+  const sheets = [...(sourceSet.sheets || [])].sort((a, b) => a.pageNumber - b.pageNumber)
+  const maxFromSheets = sheets.length ? Math.max(...sheets.map((s) => s.pageNumber)) : 0
+  const total = Math.max(sourceSet.totalPages || 0, maxFromSheets)
+  if (total <= 0) return sheets
+  const byPage = new Map<number, BlueprintVRSourceSheet>()
+  for (const s of sheets) {
+    byPage.set(s.pageNumber, { ...s, sourceSetName: s.sourceSetName || sourceSet.name, sourceSetType: s.sourceSetType || sourceSet.type })
+  }
+  const out: BlueprintVRSourceSheet[] = []
+  for (let p = 1; p <= total; p += 1) {
+    out.push(
+      byPage.get(p) || {
+        pageNumber: p,
+        sheetTitle: `Page ${p}`,
+        sourceSetName: sourceSet.name,
+        sourceSetType: sourceSet.type,
+      },
+    )
+  }
+  return out
 }
 
-export function selectAp01FloorPlanTarget(params: {
-  visiblePageNumber?: number
-  visibleSheetTitle?: string
-  sourceSetName?: string
-  pageCount?: number
-  sheetIndex?: BlueprintPlanScanSheetHint[]
-}): { pageNumber: number; sheetTitle?: string; reason: string } | null {
-  const visiblePage = Math.max(1, Math.floor(Number(params.visiblePageNumber) || 1))
-  const visibleTitle = String(params.visibleSheetTitle || '')
-  if (ap01TitleSignal(visibleTitle)) {
-    return {
-      pageNumber: visiblePage,
-      sheetTitle: visibleTitle || undefined,
-      reason: 'Visible page title matches AP-01 / Proposed Dimensioned Plan.',
-    }
-  }
+/** Classify a page for proposed-wall extraction using sheet metadata only. */
+export function classifyPlanPageWallRole(sheet: BlueprintVRSourceSheet): PlanPageWallRole {
+  const t = normalizeText([
+    sheet.sheetTitle,
+    sheet.sheetLabel,
+    sheet.sheetNumber,
+    sheet.label,
+    sheet.discipline,
+    sheet.extractedText,
+  ])
+  if ((t.includes('sheet list') || t.includes('drawing list')) && t.includes('index')) return 'title_block_only'
+  if (t.includes('cover sheet') || (t.includes('cover') && !t.includes('plan'))) return 'title_block_only'
+  if (t.includes('rendering') || t.includes('perspective') || t.includes('3d view') || t.includes('photo')) return 'rendering'
+  if (t.includes('electrical') && t.includes('plan')) return 'electrical_plan'
+  if (t.includes('power plan') || (t.includes('power') && t.includes('plan'))) return 'electrical_plan'
+  if (t.includes('lighting') && t.includes('plan')) return 'lighting_plan'
+  if (t.includes('panel') && t.includes('schedule')) return 'schedule'
+  if (t.includes('door') && t.includes('schedule')) return 'schedule'
+  if (t.includes('schedule') && !t.includes('plan')) return 'schedule'
+  if (t.includes('general notes') || (t.includes('notes') && !t.includes('plan'))) return 'notes'
+  if (t.includes('demolition') || t.includes(' demo') || t.includes('demo plan') || t.includes('remove')) return 'demo_existing'
+  if (t.includes('existing') && (t.includes('plan') || t.includes('conditions'))) return 'demo_existing'
+  if (t.includes('interior elevation') || (t.includes('elevation') && t.includes('interior'))) return 'interior_elevation'
+  if (t.includes('partition') || t.includes('wall plan') || (t.includes('reflected') && t.includes('ceiling'))) return 'proposed_wall_plan'
+  if (t.includes('proposed dimensioned plan') || (t.includes('dimensioned') && t.includes('proposed'))) return 'proposed_dimensioned_plan'
+  if (t.includes('dimensioned plan')) return 'proposed_dimensioned_plan'
+  if (t.includes('proposed floor') || (t.includes('tenant') && t.includes('plan'))) return 'proposed_floor_plan'
+  if (t.includes('floor plan') && !t.includes('electrical') && !t.includes('power') && !t.includes('lighting')) return 'proposed_floor_plan'
+  if (t.includes('architectural') && t.includes('plan')) return 'proposed_floor_plan'
+  if (t.includes('construction') && t.includes('plan')) return 'proposed_floor_plan'
+  return 'unknown'
+}
 
-  const sheets = params.sheetIndex || []
-  let best: { pageNumber: number; sheetTitle?: string; score: number; reason: string } | null = null
-  for (const sheet of sheets) {
-    const text = [sheet.sheetNumber, sheet.sheetTitle, sheet.sheetLabel, sheet.discipline].join(' ')
-    const normalized = normalizeText([text])
-    let score = 0
-    const reasons: string[] = []
-    if (normalized.includes('ap-01') || normalized.includes('ap01')) {
-      score += 1.4
-      reasons.push('matches AP-01')
-    }
-    if (/\bap[\s\-]?100(?:\.\d+)?\b/i.test(text)) {
-      score += 1.1
-      reasons.push('matches AP100')
-    }
-    if (normalized.includes('proposed dimensioned plan')) {
-      score += 1.2
-      reasons.push('contains Proposed Dimensioned Plan')
-    } else if (normalized.includes('dimensioned plan')) {
-      score += 0.8
-      reasons.push('contains Dimensioned Plan')
-    } else if (normalized.includes('floor plan')) {
-      score += 0.55
-      reasons.push('contains Floor Plan')
-    }
-    if (!best || score > best.score) {
-      best = {
-        pageNumber: sheet.pageNumber,
-        sheetTitle: sheet.sheetTitle,
-        score,
-        reason: reasons.length > 0 ? reasons.join('; ') : 'Best AP-01 candidate from sheet metadata.',
+function proposedWallPlanRolePriority(role: PlanPageWallRole): number {
+  switch (role) {
+    case 'proposed_dimensioned_plan':
+      return 100
+    case 'proposed_floor_plan':
+      return 88
+    case 'proposed_wall_plan':
+      return 76
+    case 'unknown':
+      return 8
+    default:
+      return 0
+  }
+}
+
+/** Pick up to three proposed architectural plan sheets for wall vector extraction. */
+export function selectProposedPlanSheetsForWallLayout(sheets: BlueprintVRSourceSheet[]): BlueprintVRSourceSheet[] {
+  const ranked = sheets
+    .map((sheet) => ({
+      sheet,
+      role: classifyPlanPageWallRole(sheet),
+      priority: proposedWallPlanRolePriority(classifyPlanPageWallRole(sheet)),
+    }))
+    .filter((row) => {
+      const r = row.role
+      if (
+        r === 'electrical_plan' ||
+        r === 'lighting_plan' ||
+        r === 'rendering' ||
+        r === 'interior_elevation' ||
+        r === 'schedule' ||
+        r === 'notes' ||
+        r === 'title_block_only' ||
+        r === 'demo_existing'
+      ) {
+        return false
       }
-    }
-  }
-  if (best && best.score >= 0.55) {
-    return {
-      pageNumber: best.pageNumber,
-      sheetTitle: best.sheetTitle,
-      reason: best.reason,
-    }
-  }
+      return r === 'proposed_dimensioned_plan' || r === 'proposed_floor_plan' || r === 'proposed_wall_plan'
+    })
+    .sort((a, b) => b.priority - a.priority || a.sheet.pageNumber - b.sheet.pageNumber)
+  return ranked.slice(0, 3).map((r) => r.sheet)
+}
 
-  const sourceSetName = normalizeText([params.sourceSetName])
-  const pageCount = Number(params.pageCount || 0)
-  if (visiblePage === 1 && pageCount >= 60 && sourceSetName.includes('full set')) {
-    return {
-      pageNumber: visiblePage,
-      sheetTitle: visibleTitle || 'AP-01 candidate (page 1 / Full Set)',
-      reason: 'Page identification weak; using visible page 1 of Full Set as AP-01 candidate.',
+function extractBestProposedWallLayoutFromSheets(
+  proposedSheets: BlueprintVRSourceSheet[],
+  pagesScanned: number,
+  expandedSheets: BlueprintVRSourceSheet[],
+): {
+  layout: BlueprintProposedWallLayout | null
+  debug: FullSetWallLayoutDebug
+  selectedPlanPages: number[]
+} {
+  const selectedPlanPages = proposedSheets.map((s) => s.pageNumber)
+  const rejectedRoles = Array.from(
+    new Set(
+      expandedSheets
+        .filter((s) => !selectedPlanPages.includes(s.pageNumber))
+        .map((s) => classifyPlanPageWallRole(s))
+        .filter((r) => r !== 'unknown'),
+    ),
+  )
+  let totalRaw = 0
+  let best: {
+    layout: BlueprintProposedWallLayout
+    score: number
+    dbg: { rawLines: number; filteredWallLines: number; openings: number; doorSwings: number }
+  } | null = null
+  for (const sheet of proposedSheets) {
+    const p = sheet.tracePayload
+    if (!p || (!(p.lines?.length) && !(p.polylines?.length))) continue
+    const built = buildProposedWallLayoutFromTracePayload(p, sheet.pageNumber)
+    totalRaw += built.debug.rawLines
+    if (!built.layout) continue
+    const score =
+      built.layout.segments.length * 2 + built.debug.openings * 3 + built.debug.doorSwings * 2
+    if (!best || score > best.score) {
+      best = { layout: built.layout, score, dbg: built.debug }
     }
   }
-
-  return null
+  const summary =
+    selectedPlanPages.length > 0
+      ? `Full-set scan selected ${selectedPlanPages.length} proposed plan sheet(s) from ${pagesScanned} page(s).`
+      : `Full-set scan: no proposed plan sheets matched from ${pagesScanned} page(s).`
+  if (!best) {
+    return {
+      layout: null,
+      debug: {
+        pagesScanned,
+        selectedPlanPages,
+        rejectedPageRoles: rejectedRoles,
+        rawLines: totalRaw,
+        filteredWallLines: 0,
+        openings: 0,
+        doors: 0,
+        doorSwings: 0,
+        rejectionReason:
+          proposedSheets.length === 0
+            ? 'No proposed dimensioned / floor / wall plan pages identified in the full set metadata.'
+            : 'Vector trace on selected proposed sheets did not yield enough wall segments after title-block crop and filtering.',
+        planSelectionSummary: summary,
+      },
+      selectedPlanPages,
+    }
+  }
+  const doorCount = best.layout.openings.filter((o) => o.type === 'door').length
+  return {
+    layout: best.layout,
+    debug: {
+      pagesScanned,
+      selectedPlanPages,
+      rejectedPageRoles: rejectedRoles,
+      rawLines: best.dbg.rawLines,
+      filteredWallLines: best.dbg.filteredWallLines,
+      openings: best.dbg.openings,
+      doors: doorCount,
+      doorSwings: best.dbg.doorSwings,
+      planSelectionSummary: summary,
+    },
+    selectedPlanPages,
+  }
 }
 
 /**
@@ -3061,13 +3130,13 @@ export function chooseBestFloorPlanSheet(
       score += 0.55
       reasons.push('contains floor-plan title keyword')
     }
-    if (text.includes('ap-01') || text.includes('ap01')) {
-      score += 1.35
-      reasons.push('matches AP-01 floor-plan numbering')
+    if (/\ba[\s\-]?\d{1,3}(?:\.\d+)?\b/i.test(text)) {
+      score += 0.35
+      reasons.push('architectural sheet numbering')
     }
     if (/\bap[\s\-]?100(?:\.\d+)?\b/i.test(text)) {
-      score += 1.1
-      reasons.push('matches AP100 floor-plan numbering')
+      score += 0.45
+      reasons.push('architectural plan series numbering')
     }
     if ((classified.roleScores.rendering || 0) >= 0.5) score -= 0.35
     if ((classified.roleScores.elevations || 0) >= 0.6) score -= 0.3
@@ -3526,6 +3595,60 @@ export function scanBlueprintFullSet(
         : 'fallback',
   }
 
+  const expandedSheets = expandSourceSheetsForFullSetPages(input.sourceSet)
+  const pageClassifications: FullSetPageWallClassification[] = expandedSheets.map((s) => {
+    const role = classifyPlanPageWallRole(s)
+    let skipReason: string | undefined
+    if (
+      role === 'electrical_plan' ||
+      role === 'lighting_plan' ||
+      role === 'rendering' ||
+      role === 'interior_elevation' ||
+      role === 'schedule' ||
+      role === 'notes' ||
+      role === 'title_block_only' ||
+      role === 'demo_existing'
+    ) {
+      skipReason =
+        'Excluded from wall geometry: not a proposed floor/wall plan (MEP / demo / rendering / notes / index).'
+    } else if (role === 'unknown') {
+      skipReason = 'Insufficient sheet title metadata to classify as proposed plan.'
+    }
+    return {
+      pageNumber: s.pageNumber,
+      sheetNumber: s.sheetNumber,
+      sheetTitle: s.sheetTitle,
+      primaryRole: role,
+      skipReason,
+    }
+  })
+  const proposedPick = selectProposedPlanSheetsForWallLayout(expandedSheets)
+  const wallExtract = extractBestProposedWallLayoutFromSheets(
+    proposedPick,
+    expandedSheets.length,
+    expandedSheets,
+  )
+  const rejectedPages = expandedSheets
+    .filter((s) => !wallExtract.selectedPlanPages.includes(s.pageNumber))
+    .map((s) => ({
+      pageNumber: s.pageNumber,
+      primaryRole: classifyPlanPageWallRole(s),
+      reason:
+        pageClassifications.find((c) => c.pageNumber === s.pageNumber)?.skipReason ||
+        'Not among the top proposed plan candidates for this scan.',
+    }))
+    .slice(0, 80)
+  const plan2DSourceModeWall: BlueprintPlan2DSourceMode = wallExtract.layout
+    ? 'full-set-proposed-wall-layout'
+    : 'full-set-wall-trace-failed'
+  if (!wallExtract.layout) {
+    warnings.push({
+      code: 'LOW_CONFIDENCE',
+      message:
+        'Full-set wall layout extraction failed. No proposed wall model available yet.',
+    })
+  }
+
   const projectHint = extractProjectStyleHints(input)
   const equipmentHints = extractEquipmentHints(enrichedPlanScan)
   const doorHints = extractDoorAndOpeningHints(enrichedPlanScan)
@@ -3542,6 +3665,13 @@ export function scanBlueprintFullSet(
   return {
     planScan: enrichedPlanScan,
     classifications,
+    pageClassifications,
+    selectedPlanPages: wallExtract.selectedPlanPages,
+    rejectedPages,
+    proposedWallLayout: wallExtract.layout,
+    fullSetPlanSelectionSummary: wallExtract.debug.planSelectionSummary,
+    fullSetWallDebug: wallExtract.debug,
+    plan2DSourceMode: plan2DSourceModeWall,
     bestFloorPlanSheet,
     bestElectricalSheets,
     bestRenderingSheets,
@@ -3558,6 +3688,12 @@ export function scanBlueprintFullSet(
       projectName: input.projectName || input.sourceSet?.projectName,
       sheetCount: sheets.length,
       generatedAt: new Date().toISOString(),
+      fileName: input.sourceSet?.filePath,
+      pageCount: expandedSheets.length,
     },
+    sourceSetId: input.sourceSet?.id || 'unknown',
+    sourceSetName: input.sourceSet?.name || 'Unknown Set',
+    fileName: input.sourceSet?.filePath,
+    pageCount: expandedSheets.length,
   }
 }
