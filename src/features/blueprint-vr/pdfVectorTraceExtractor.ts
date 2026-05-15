@@ -1,6 +1,7 @@
 import type {
   PdfTraceArc,
   PdfTraceExtractionResult,
+  PdfTraceExtractionStats,
   PdfTraceExtractionWarning,
   PdfTraceLine,
   PdfTracePayload,
@@ -25,6 +26,15 @@ type PathState = {
   closed: boolean
 }
 
+/** pdf.js v5+ interleaved path opcodes inside {@link OPS.constructPath}. */
+const DEFAULT_DRAW_OPS: Record<string, number> = {
+  moveTo: 0,
+  lineTo: 1,
+  curveTo: 2,
+  quadraticCurveTo: 3,
+  closePath: 4,
+}
+
 export interface PdfVectorTraceExtractorInput {
   page?: PdfPageLike | null
   pageNumber: number
@@ -34,6 +44,8 @@ export interface PdfVectorTraceExtractorInput {
   existingPayload?: PdfTracePayload | null
   expectedAdapterFields?: string[]
   opsConstants?: Record<string, number>
+  /** Sub-path opcodes for constructPath buffers (defaults to pdf.js DrawOPS). */
+  drawOpsConstants?: Record<string, number>
 }
 
 function warning(code: PdfTraceExtractionWarning['code'], message: string): PdfTraceExtractionWarning {
@@ -153,56 +165,139 @@ function normalizeRectFromPoints(points: PdfTracePoint[]): { x: number; y: numbe
   }
 }
 
-function decodeConstructPath(
-  pathOps: number[],
-  coords: number[],
-  ops: Record<string, number>,
+function asNumericArray(value: unknown): number[] | null {
+  if (value == null) return null
+  if (value instanceof Float32Array || value instanceof Float64Array) {
+    return Array.from(value)
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Array.from(value as unknown as ArrayLike<number>)
+  }
+  if (Array.isArray(value)) {
+    return value.map((n) => Number(n))
+  }
+  return null
+}
+
+/**
+ * Decode pdf.js v5+ constructPath buffers: flat [op, x, y, op, x, y, ...] using DrawOPS.
+ */
+function decodeDrawOpsFlatBuffer(
+  buffer: ArrayLike<number>,
+  drawOps: Record<string, number>,
   pushMoveTo: (x: number, y: number) => void,
   pushLineTo: (x: number, y: number) => void,
-  pushRect: (x: number, y: number, w: number, h: number) => void,
   pushClose: () => void,
-): number {
+): { pathOpsSeen: number; unsupported: number } {
   let index = 0
+  let pathOpsSeen = 0
   let unsupported = 0
-  for (const command of pathOps) {
-    if (opMatches(command, ops, ['moveTo'])) {
-      if (index + 1 < coords.length) pushMoveTo(Number(coords[index]), Number(coords[index + 1]))
-      index += 2
-      continue
-    }
-    if (opMatches(command, ops, ['lineTo'])) {
-      if (index + 1 < coords.length) pushLineTo(Number(coords[index]), Number(coords[index + 1]))
-      index += 2
-      continue
-    }
-    if (opMatches(command, ops, ['rectangle'])) {
-      if (index + 3 < coords.length) {
-        pushRect(Number(coords[index]), Number(coords[index + 1]), Number(coords[index + 2]), Number(coords[index + 3]))
+  const len = buffer.length
+  while (index < len) {
+    const command = Number(buffer[index++])
+    if (opMatches(command, drawOps, ['moveTo'])) {
+      if (index + 1 < len) {
+        pushMoveTo(Number(buffer[index]), Number(buffer[index + 1]))
+        index += 2
+        pathOpsSeen += 1
       }
-      index += 4
       continue
     }
-    if (opMatches(command, ops, ['closePath'])) {
+    if (opMatches(command, drawOps, ['lineTo'])) {
+      if (index + 1 < len) {
+        pushLineTo(Number(buffer[index]), Number(buffer[index + 1]))
+        index += 2
+        pathOpsSeen += 1
+      }
+      continue
+    }
+    if (opMatches(command, drawOps, ['closePath'])) {
       pushClose()
+      pathOpsSeen += 1
       continue
     }
-    if (
-      opMatches(command, ops, ['curveTo']) ||
-      opMatches(command, ops, ['curveTo2']) ||
-      opMatches(command, ops, ['curveTo3'])
-    ) {
-      index += 6
+    if (opMatches(command, drawOps, ['curveTo'])) {
+      if (index + 5 < len) index += 6
+      unsupported += 1
+      continue
+    }
+    if (opMatches(command, drawOps, ['quadraticCurveTo'])) {
+      if (index + 3 < len) index += 4
       unsupported += 1
       continue
     }
     unsupported += 1
   }
-  return unsupported
+  return { pathOpsSeen, unsupported }
+}
+
+/** Legacy pdf.js constructPath: separate path opcode list + coordinate list. */
+function decodeConstructPathLegacy(
+  pathOps: number[],
+  coords: number[],
+  ops: Record<string, number>,
+  drawOps: Record<string, number>,
+  pushMoveTo: (x: number, y: number) => void,
+  pushLineTo: (x: number, y: number) => void,
+  pushRect: (x: number, y: number, w: number, h: number) => void,
+  pushClose: () => void,
+): { pathOpsSeen: number; unsupported: number } {
+  let index = 0
+  let pathOpsSeen = 0
+  let unsupported = 0
+  for (const command of pathOps) {
+    const opTables = [drawOps, ops]
+    let matched = false
+    for (const table of opTables) {
+      if (opMatches(command, table, ['moveTo'])) {
+        if (index + 1 < coords.length) pushMoveTo(Number(coords[index]), Number(coords[index + 1]))
+        index += 2
+        pathOpsSeen += 1
+        matched = true
+        break
+      }
+      if (opMatches(command, table, ['lineTo'])) {
+        if (index + 1 < coords.length) pushLineTo(Number(coords[index]), Number(coords[index + 1]))
+        index += 2
+        pathOpsSeen += 1
+        matched = true
+        break
+      }
+      if (opMatches(command, table, ['rectangle'])) {
+        if (index + 3 < coords.length) {
+          pushRect(Number(coords[index]), Number(coords[index + 1]), Number(coords[index + 2]), Number(coords[index + 3]))
+          pathOpsSeen += 1
+        }
+        index += 4
+        matched = true
+        break
+      }
+      if (opMatches(command, table, ['closePath'])) {
+        pushClose()
+        pathOpsSeen += 1
+        matched = true
+        break
+      }
+      if (
+        opMatches(command, table, ['curveTo']) ||
+        opMatches(command, table, ['curveTo2']) ||
+        opMatches(command, table, ['curveTo3'])
+      ) {
+        index += 6
+        unsupported += 1
+        matched = true
+        break
+      }
+    }
+    if (!matched) unsupported += 1
+  }
+  return { pathOpsSeen, unsupported }
 }
 
 function extractGeometryFromOperatorList(
   operatorList: any,
   ops: Record<string, number>,
+  drawOps: Record<string, number>,
   initialWarnings: PdfTraceExtractionWarning[],
 ): {
   lines: PdfTraceLine[]
@@ -210,9 +305,17 @@ function extractGeometryFromOperatorList(
   polylines: PdfTracePolyline[]
   arcs: PdfTraceArc[]
   warnings: PdfTraceExtractionWarning[]
+  stats: PdfTraceExtractionStats
 } {
   const fnArray: number[] = Array.isArray(operatorList?.fnArray) ? operatorList.fnArray : []
   const argsArray: any[] = Array.isArray(operatorList?.argsArray) ? operatorList.argsArray : []
+  const stats: PdfTraceExtractionStats = {
+    operatorListLength: fnArray.length,
+    pathOpsSeen: 0,
+    strokeOpsSeen: 0,
+    transformOpsSeen: 0,
+    constructPathOpsSeen: 0,
+  }
   if (fnArray.length === 0 || argsArray.length === 0) {
     return {
       lines: [],
@@ -220,6 +323,7 @@ function extractGeometryFromOperatorList(
       polylines: [],
       arcs: [],
       warnings: addUniqueWarning(initialWarnings, warning('EMPTY_TRACE_GEOMETRY', 'PDF operator list returned no drawing operations.')),
+      stats,
     }
   }
 
@@ -345,6 +449,7 @@ function extractGeometryFromOperatorList(
       continue
     }
     if (opMatches(fn, ops, ['transform'])) {
+      stats.transformOpsSeen = (stats.transformOpsSeen || 0) + 1
       if (Array.isArray(args) && args.length >= 6) {
         const next: Matrix2D = [
           Number(args[0]) || 0,
@@ -376,10 +481,34 @@ function extractGeometryFromOperatorList(
       continue
     }
     if (opMatches(fn, ops, ['constructPath'])) {
+      stats.constructPathOpsSeen = (stats.constructPathOpsSeen || 0) + 1
       if (Array.isArray(args) && args.length >= 2) {
-        const pathOps = Array.isArray(args[0]) ? args[0].map((n: any) => Number(n)) : []
-        const coords = Array.isArray(args[1]) ? args[1].map((n: any) => Number(n)) : []
-        unsupportedOps += decodeConstructPath(pathOps, coords, ops, pushMoveTo, pushLineTo, pushRect, pushClose)
+        const nestedBuffer = Array.isArray(args[1]) ? args[1][0] : null
+        const flatBuffer = asNumericArray(nestedBuffer)
+        if (flatBuffer && flatBuffer.length > 0) {
+          const decoded = decodeDrawOpsFlatBuffer(flatBuffer, drawOps, pushMoveTo, pushLineTo, pushClose)
+          stats.pathOpsSeen = (stats.pathOpsSeen || 0) + decoded.pathOpsSeen
+          unsupportedOps += decoded.unsupported
+          flushPath()
+        } else if (Array.isArray(args[0]) && Array.isArray(args[1])) {
+          const pathOps = args[0].map((n: any) => Number(n))
+          const coords = args[1].map((n: any) => Number(n))
+          const decoded = decodeConstructPathLegacy(
+            pathOps,
+            coords,
+            ops,
+            drawOps,
+            pushMoveTo,
+            pushLineTo,
+            pushRect,
+            pushClose,
+          )
+          stats.pathOpsSeen = (stats.pathOpsSeen || 0) + decoded.pathOpsSeen
+          unsupportedOps += decoded.unsupported
+          flushPath()
+        } else {
+          unsupportedOps += 1
+        }
       } else {
         unsupportedOps += 1
       }
@@ -400,6 +529,7 @@ function extractGeometryFromOperatorList(
       opMatches(fn, ops, ['closeEOFillStroke']) ||
       opMatches(fn, ops, ['endPath'])
     ) {
+      stats.strokeOpsSeen = (stats.strokeOpsSeen || 0) + 1
       flushPath()
       continue
     }
@@ -417,7 +547,12 @@ function extractGeometryFromOperatorList(
     )
   }
 
-  return { lines, rects, polylines, arcs, warnings }
+  stats.rawPayloadLines = lines.length
+  stats.rawPayloadRects = rects.length
+  stats.rawPayloadPolylines = polylines.length
+  stats.extractionWarnings = warnings.map((w) => `${w.code}:${w.message}`)
+
+  return { lines, rects, polylines, arcs, warnings, stats }
 }
 
 function addUniqueWarning(
@@ -548,6 +683,10 @@ export async function extractPdfVectorTraceFromPage(
       payload.runtime.operatorListStatus = 'available'
       const operatorList = await page.getOperatorList()
       let ops: Record<string, number> = {}
+      let drawOps: Record<string, number> =
+        input.drawOpsConstants && Object.keys(input.drawOpsConstants).length > 0
+          ? input.drawOpsConstants
+          : { ...DEFAULT_DRAW_OPS }
       if (input.opsConstants && Object.keys(input.opsConstants).length > 0) {
         ops = input.opsConstants
         opsSource = 'provider'
@@ -555,6 +694,8 @@ export async function extractPdfVectorTraceFromPage(
         try {
           const pdfjsLib: any = await import(/* @vite-ignore */ 'pdfjs-dist')
           ops = (pdfjsLib?.OPS || {}) as Record<string, number>
+          const importedDraw = (pdfjsLib?.DrawOPS || {}) as Record<string, number>
+          if (Object.keys(importedDraw).length > 0) drawOps = importedDraw
           if (Object.keys(ops).length > 0) opsSource = 'dynamic-import'
         } catch {
           warnings.push(
@@ -565,12 +706,18 @@ export async function extractPdfVectorTraceFromPage(
           )
         }
       }
-      const extracted = extractGeometryFromOperatorList(operatorList, ops, warnings)
+      const extracted = extractGeometryFromOperatorList(operatorList, ops, drawOps, warnings)
       payload.lines = extracted.lines
       payload.rects = extracted.rects
       payload.polylines = extracted.polylines
       payload.arcs = extracted.arcs
       warnings.splice(0, warnings.length, ...extracted.warnings)
+      if (payload.runtime) {
+        payload.runtime.extractionStats = {
+          ...extracted.stats,
+          rawTextRuns: payload.textRuns.length,
+        }
+      }
     }
   } catch {
     payload.runtime.operatorListStatus = 'error'
@@ -599,6 +746,7 @@ export async function extractPdfVectorTraceFromPage(
     payload: normalized,
     warnings,
     opsSource,
+    extractionStats: normalized.runtime?.extractionStats,
   }
 }
 

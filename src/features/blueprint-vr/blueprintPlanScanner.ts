@@ -398,6 +398,17 @@ export interface BlueprintPlanScanResult {
     wave2WorldMarginRemoved?: number
     /** Wave 2 — classified wall segments when validation completed. */
     wave2ClassifiedSegments?: number
+    classifiedSegmentCount?: number
+    adaptedRawSegments?: number
+    adapterDroppedTiny?: number
+    adapterDroppedInvalid?: number
+    adapterDroppedNonWallLike?: number
+    adapterPolylineSegments?: number
+    adapterRectEdgeSegments?: number
+    operatorListLength?: number
+    pathOpsSeen?: number
+    constructPathOpsSeen?: number
+    extractionStage?: string
     /** Footprint bbox area ÷ page area in world units (Wave 2). */
     wave2FootprintAreaRatio?: number
     /** Mid-footprint sample density (Wave 2). */
@@ -1870,15 +1881,18 @@ export function runWave2WallExtractionFromAdapted(params: {
     if (Math.abs(m.x - cx) <= innerHalfW && Math.abs(m.y - cy) <= innerHalfH) coreHits += 1
   }
   const coreFrac = coreHits / Math.max(1, candidates.length)
-  const interiorActivity = coreHits >= 3
+  const interiorActivity = coreHits >= 4
   const isLikelyPageFrame =
-    areaRatio > 0.93 && wallCandidatesFiltered >= 10 && !interiorActivity
+    areaRatio > 0.97 &&
+    wallCandidatesFiltered >= 14 &&
+    !interiorActivity &&
+    coreFrac < 0.03
   if (isLikelyPageFrame) {
     blockers.push('footprint_covers_sheet_bleed_likely_page_frame')
   }
 
   // Require a clearer margin-ring pattern before rejecting dense perimeter plans.
-  if (coreFrac < 0.04 && candidates.length > 40 && areaRatio > 0.82) {
+  if (coreFrac < 0.03 && candidates.length > 80 && areaRatio > 0.9) {
     blockers.push('wall_geometry_concentrated_at_margins_not_building_core')
   }
 
@@ -2473,12 +2487,37 @@ export function scanBlueprintPlan(
     })),
   ]
 
+  const failureStage = inferExtractionFailureStage({
+    rawPayloadLines,
+    rawPayloadRects,
+    rawPayloadPolylines,
+    sanitizedPayloadLines,
+    adaptedMergedTraceLines: traceLines.length,
+    wave2PreMarginCandidates: wave2.orthogonalLongCandidatesPreMargin,
+    wave2WorldMarginRemoved: wave2.worldMarginArtifactRemovedCount,
+    wallCandidatesFiltered: wave2.wallCandidatesFiltered,
+    classifiedSegmentCount: wave2.classifiedSegmentsTotal,
+    wave2Accepted: wave2.accepted,
+    wave2Blockers: wallExtractionBlockers,
+    traceAvailable,
+  })
   const extractionFallbackReason = isFallback
-    ? !traceAvailable
+    ? failureStage.stage === 'payload_zero'
       ? 'deterministic_fallback:no_vector_primitives'
-      : wallExtractionBlockers.length > 0
-        ? `deterministic_fallback:wave2_blockers:${wallExtractionBlockers.join(',')}`
-        : `deterministic_fallback:legacy_trace_not_usable(inferred_walls=${inferredWalls.length},rooms=${inferredRooms.length},adapted_lines=${traceLines.length})`
+      : failureStage.stage === 'sanitize_zero'
+        ? `deterministic_fallback:filtering_failure:${failureStage.blockerCodes.join(',')}`
+        : failureStage.stage === 'adapter_zero'
+          ? `deterministic_fallback:adapter_failure:${failureStage.blockerCodes.join(',')}`
+          : failureStage.stage === 'margin_filter_zero'
+            ? `deterministic_fallback:margin_filter_failure:${failureStage.blockerCodes.join(',')}`
+            : failureStage.stage === 'wall_classifier_zero'
+              ? `deterministic_fallback:classification_failure:${failureStage.blockerCodes.join(',')}`
+              : failureStage.stage === 'wave2_rejected'
+                ? `deterministic_fallback:wave2_blockers:${wallExtractionBlockers.join(',') || failureStage.blockerCodes.join(',')}`
+                : `deterministic_fallback:legacy_trace_not_usable(inferred_walls=${inferredWalls.length},rooms=${inferredRooms.length},adapted_lines=${traceLines.length})`
+    : undefined
+  const extractionBlockerCodes = isFallback
+    ? [...new Set([...failureStage.blockerCodes, ...wallExtractionBlockers])]
     : undefined
 
   logBlueprintExtractionAuditOnce(
@@ -2569,14 +2608,25 @@ export function scanBlueprintPlan(
       rawPayloadArcs,
       sanitizedPayloadLines,
       adaptedMergedTraceLines: traceLines.length,
+      adaptedRawSegments: adapted.stats?.adaptedRawSegments,
+      adapterDroppedTiny: adapted.stats?.adapterDroppedTiny,
+      adapterDroppedInvalid: adapted.stats?.adapterDroppedInvalid,
+      adapterDroppedNonWallLike: adapted.stats?.adapterDroppedNonWallLike,
+      adapterPolylineSegments: adapted.stats?.adapterPolylineSegments,
+      adapterRectEdgeSegments: adapted.stats?.adapterRectEdgeSegments,
+      operatorListLength: input.tracePayload?.runtime?.extractionStats?.operatorListLength,
+      pathOpsSeen: input.tracePayload?.runtime?.extractionStats?.pathOpsSeen,
+      constructPathOpsSeen: input.tracePayload?.runtime?.extractionStats?.constructPathOpsSeen,
       wave2PreMarginCandidates: wave2.orthogonalLongCandidatesPreMargin,
       wave2WorldMarginRemoved: wave2.worldMarginArtifactRemovedCount,
       wave2ClassifiedSegments: wave2.classifiedSegmentsTotal,
+      classifiedSegmentCount: wave2.classifiedSegmentsTotal,
       wave2FootprintAreaRatio: w2FootprintDiag.areaRatio,
       wave2CoreSampleFraction: w2FootprintDiag.coreFrac,
       vectorMix,
       extractionFallbackReason,
-      extractionBlockerCodes: wallExtractionBlockers.length ? [...wallExtractionBlockers] : undefined,
+      extractionBlockerCodes,
+      extractionStage: failureStage.stage,
       runtimeProviderStatus,
       runtimeProviderMatchTier: input.tracePayload?.runtime?.providerMatchTier,
       operatorListStatus,
@@ -2972,13 +3022,77 @@ function traceGeometryHints(payload: PdfTracePayload | null | undefined): {
   lineCount: number
   textRunCount: number
   rectCount: number
+  polylineCount: number
+  vectorPrimitiveCount: number
 } {
-  if (!payload) return { lineCount: 0, textRunCount: 0, rectCount: 0 }
-  return {
-    lineCount: Array.isArray(payload.lines) ? payload.lines.length : 0,
-    textRunCount: Array.isArray(payload.textRuns) ? payload.textRuns.length : 0,
-    rectCount: Array.isArray(payload.rects) ? payload.rects.length : 0,
+  if (!payload) {
+    return { lineCount: 0, textRunCount: 0, rectCount: 0, polylineCount: 0, vectorPrimitiveCount: 0 }
   }
+  const lineCount = Array.isArray(payload.lines) ? payload.lines.length : 0
+  const rectCount = Array.isArray(payload.rects) ? payload.rects.length : 0
+  const polylineCount = Array.isArray(payload.polylines) ? payload.polylines.length : 0
+  return {
+    lineCount,
+    textRunCount: Array.isArray(payload.textRuns) ? payload.textRuns.length : 0,
+    rectCount,
+    polylineCount,
+    vectorPrimitiveCount: lineCount + rectCount + polylineCount,
+  }
+}
+
+function vectorEvidenceScore(
+  trace: PdfTracePayload | null | undefined,
+): { geomCount: number; wave2Filtered: number; wave2Accepted: boolean } {
+  if (!trace) return { geomCount: 0, wave2Filtered: 0, wave2Accepted: false }
+  const geom = traceGeometryHints(trace).vectorPrimitiveCount
+  const preview = previewWave2WallExtractionForTracePayload(trace)
+  return {
+    geomCount: geom,
+    wave2Filtered: preview.wallCandidatesFiltered,
+    wave2Accepted: preview.accepted,
+  }
+}
+
+function inferExtractionFailureStage(params: {
+  rawPayloadLines: number
+  rawPayloadRects: number
+  rawPayloadPolylines: number
+  sanitizedPayloadLines: number
+  adaptedMergedTraceLines: number
+  wave2PreMarginCandidates: number
+  wave2WorldMarginRemoved: number
+  wallCandidatesFiltered: number
+  classifiedSegmentCount: number
+  wave2Accepted: boolean
+  wave2Blockers: string[]
+  traceAvailable: boolean
+}): { stage: string; blockerCodes: string[] } {
+  const rawGeom = params.rawPayloadLines + params.rawPayloadRects + params.rawPayloadPolylines
+  if (!params.traceAvailable || rawGeom === 0) {
+    return { stage: 'payload_zero', blockerCodes: ['no_vector_primitives_in_payload'] }
+  }
+  if (params.adaptedMergedTraceLines === 0) {
+    if (params.sanitizedPayloadLines === 0 && rawGeom > 0) {
+      return { stage: 'sanitize_zero', blockerCodes: ['pdf_sanitize_removed_all_line_primitives'] }
+    }
+    return { stage: 'adapter_zero', blockerCodes: ['adapter_produced_no_plan_segments'] }
+  }
+  if (params.wave2PreMarginCandidates === 0) {
+    return { stage: 'margin_filter_zero', blockerCodes: ['no_orthogonal_segments_before_margin_filter'] }
+  }
+  if (params.wallCandidatesFiltered === 0) {
+    return { stage: 'margin_filter_zero', blockerCodes: ['world_margin_filter_removed_all_candidates'] }
+  }
+  if (params.classifiedSegmentCount === 0) {
+    return { stage: 'wall_classifier_zero', blockerCodes: ['no_classified_wall_segments'] }
+  }
+  if (!params.wave2Accepted) {
+    return {
+      stage: 'wave2_rejected',
+      blockerCodes: params.wave2Blockers.length ? params.wave2Blockers : ['wave2_validation_failed'],
+    }
+  }
+  return { stage: 'accepted', blockerCodes: [] }
 }
 
 type RoleKeywordRule = { term: string; weight: number }
@@ -3266,6 +3380,7 @@ function countPageRoles(
 
 function rankWallPlanCandidatesFromPages(
   pages: BlueprintPageClassification[],
+  multiPageTraces?: Record<number, PdfTracePayload | null | undefined>,
 ): RankedWallPlanCandidate[] {
   const eligible = pages.filter((p) => p.eligibleForWallSource)
   const roleRank = (role: BlueprintPageClassificationRole): number => {
@@ -3274,22 +3389,77 @@ function rankWallPlanCandidatesFromPages(
     if (role === 'partition_plan') return 2
     return 99
   }
+  const vectorRankScore = (page: BlueprintPageClassification): number => {
+    const evidence = vectorEvidenceScore(multiPageTraces?.[page.pageNumber])
+    if (evidence.wave2Accepted) return 1000 + evidence.geomCount
+    if (evidence.wave2Filtered > 0) return 200 + evidence.wave2Filtered + evidence.geomCount * 0.05
+    if (evidence.geomCount > 0) return 50 + Math.min(120, evidence.geomCount * 0.08)
+    return 0
+  }
   const sorted = [...eligible].sort((a, b) => {
+    const va = vectorRankScore(a)
+    const vb = vectorRankScore(b)
+    if (va !== vb) return vb - va
     const ra = roleRank(a.role)
     const rb = roleRank(b.role)
     if (ra !== rb) return ra - rb
     if (b.roleConfidence !== a.roleConfidence) return b.roleConfidence - a.roleConfidence
     return a.pageNumber - b.pageNumber
   })
-  return sorted.map((p, i) => ({
-    rank: i + 1,
-    pageNumber: p.pageNumber,
-    sheetNumber: p.sheetNumber,
-    sheetTitle: p.sheetTitle,
-    role: p.role,
-    score: p.roleConfidence + (roleRank(p.role) <= 2 ? (2 - roleRank(p.role)) * 0.08 : 0),
-    reasons: [...p.reasons].slice(0, 4),
-  }))
+  return sorted.map((p, i) => {
+    const evidence = vectorEvidenceScore(multiPageTraces?.[p.pageNumber])
+    const vectorBoost =
+      evidence.wave2Accepted ? 0.35 : evidence.wave2Filtered > 0 ? 0.18 : evidence.geomCount > 0 ? 0.08 : 0
+    return {
+      rank: i + 1,
+      pageNumber: p.pageNumber,
+      sheetNumber: p.sheetNumber,
+      sheetTitle: p.sheetTitle,
+      role: p.role,
+      score: p.roleConfidence + (roleRank(p.role) <= 2 ? (2 - roleRank(p.role)) * 0.08 : 0) + vectorBoost,
+      reasons: [
+        ...p.reasons,
+        evidence.wave2Accepted
+          ? 'vector:wave2_accepted'
+          : evidence.geomCount > 0
+            ? `vector:primitives=${evidence.geomCount}`
+            : 'vector:none',
+      ].slice(0, 5),
+    }
+  })
+}
+
+function pickGeometryDriverPageNumber(params: {
+  canonicalWallPlanPages: CanonicalWallPlanPage[]
+  rankedWallPlanCandidates: RankedWallPlanCandidate[]
+  multiPageTraces?: Record<number, PdfTracePayload | null | undefined>
+}): number | null {
+  const pagePool = new Set<number>()
+  for (const c of params.canonicalWallPlanPages) pagePool.add(c.pageNumber)
+  for (const r of params.rankedWallPlanCandidates) pagePool.add(r.pageNumber)
+
+  let best: { pageNumber: number; score: number } | null = null
+  for (const pageNumber of pagePool) {
+    const evidence = vectorEvidenceScore(params.multiPageTraces?.[pageNumber])
+    const roleBoost = params.canonicalWallPlanPages.some((c) => c.pageNumber === pageNumber) ? 40 : 0
+    const rankBoost =
+      params.rankedWallPlanCandidates.find((r) => r.pageNumber === pageNumber)?.score != null
+        ? (params.rankedWallPlanCandidates.find((r) => r.pageNumber === pageNumber)!.score || 0) * 10
+        : 0
+    const score =
+      roleBoost +
+      rankBoost +
+      (evidence.wave2Accepted ? 2000 : 0) +
+      evidence.wave2Filtered * 3 +
+      evidence.geomCount
+    if (!best || score > best.score) best = { pageNumber, score }
+  }
+
+  if (best) return best.pageNumber
+  if (params.canonicalWallPlanPages.length > 0) {
+    return [...params.canonicalWallPlanPages].sort((a, b) => a.pageNumber - b.pageNumber)[0]!.pageNumber
+  }
+  return params.rankedWallPlanCandidates[0]?.pageNumber ?? null
 }
 
 function selectCanonicalWallPlanPages(params: {
@@ -4256,7 +4426,10 @@ export function scanBlueprintFullSet(
     ),
   )
 
-  const rankedWallPlanCandidates = rankWallPlanCandidatesFromPages(pageClassifications)
+  const rankedWallPlanCandidates = rankWallPlanCandidatesFromPages(
+    pageClassifications,
+    input.multiPageTraces,
+  )
   const selection = selectCanonicalWallPlanPages({
     ranked: rankedWallPlanCandidates,
     pages: pageClassifications,
@@ -4269,10 +4442,15 @@ export function scanBlueprintFullSet(
   }
 
   const canonicalWallPlanPages = selection.canonical
-  const geometryDriverPage =
+  const initialCanonicalDriverPage =
     canonicalWallPlanPages.length > 0
       ? [...canonicalWallPlanPages].sort((a, b) => a.pageNumber - b.pageNumber)[0]!.pageNumber
       : rankedWallPlanCandidates[0]?.pageNumber ?? null
+  const geometryDriverPage = pickGeometryDriverPageNumber({
+    canonicalWallPlanPages,
+    rankedWallPlanCandidates,
+    multiPageTraces: input.multiPageTraces,
+  }) ?? initialCanonicalDriverPage
 
   const bestFloorPlanSourceSheet = geometryDriverPage
     ? expandedSheets.find((s) => s.pageNumber === geometryDriverPage) || null
@@ -4372,6 +4550,19 @@ export function scanBlueprintFullSet(
   let effectiveDriverPage: number | null = geometryDriverPage
   let effectiveFloorPlanSourceSheet = bestFloorPlanSourceSheet
   let effectiveFloorPlanSheet: SelectedFloorPlanSheet | null = bestFloorPlanSheet
+  const geometryDriverSwitchedFromCanonical =
+    initialCanonicalDriverPage != null &&
+    geometryDriverPage != null &&
+    initialCanonicalDriverPage !== geometryDriverPage
+
+  if (geometryDriverSwitchedFromCanonical) {
+    warnings.push({
+      code: 'GEOMETRY_DRIVER_PAGE_SWITCH',
+      message:
+        `Geometry driver page ${geometryDriverPage} selected by vector/wall evidence ` +
+        `(canonical text pick was page ${initialCanonicalDriverPage}).`,
+    })
+  }
 
   let planScan = scanBlueprintPlan({
     projectName: input.projectName || input.sourceSet?.projectName,
@@ -4393,8 +4584,9 @@ export function scanBlueprintFullSet(
     rankedWallPlanCandidates.length > 0 &&
     effectiveDriverPage != null
   ) {
+    const initialDriverForRetry = effectiveDriverPage
     for (const cand of rankedWallPlanCandidates) {
-      if (cand.pageNumber === effectiveDriverPage) continue
+      if (cand.pageNumber === initialDriverForRetry) continue
       const altTrace = input.multiPageTraces[cand.pageNumber]
       if (!altTrace) continue
       if (!previewWave2WallExtractionForTracePayload(altTrace).accepted) continue
@@ -4422,13 +4614,13 @@ export function scanBlueprintFullSet(
           sheetNumber: cand.sheetNumber || altSheet?.sheetLabel || altSheet?.label,
           sheetTitle: cand.sheetTitle || altSheet?.sheetTitle,
           confidence: selection.confidence,
-          reason: `wave2_vector_accepted_ranked_wall_plan_fallback_from_page_${geometryDriverPage}`,
+          reason: `wave2_vector_accepted_ranked_wall_plan_fallback_from_page_${initialDriverForRetry}`,
         }
         warnings.push({
           code: 'GEOMETRY_DRIVER_PAGE_SWITCH',
           message:
             `Wall extraction switched to ranked wall-plan page ${cand.pageNumber} (Wave 2 accepted) ` +
-            `after canonical driver page ${geometryDriverPage} failed validation.`,
+            `after driver page ${initialDriverForRetry} failed validation.`,
         })
         break
       }

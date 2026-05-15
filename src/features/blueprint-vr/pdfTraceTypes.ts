@@ -123,6 +123,8 @@ export interface PdfTracePayload {
     operatorListStatus?: 'available' | 'missing' | 'error' | 'unknown'
     textContentStatus?: 'available' | 'missing' | 'error' | 'unknown'
     opsSource?: 'provider' | 'dynamic-import' | 'missing'
+    /** Operator-list decode telemetry from {@link extractPdfVectorTraceFromPage}. */
+    extractionStats?: PdfTraceExtractionStats
   }
   warnings: PdfTraceExtractionWarning[]
 }
@@ -143,11 +145,25 @@ export interface PdfTraceExtractionWarning {
   message: string
 }
 
+export interface PdfTraceExtractionStats {
+  operatorListLength?: number
+  pathOpsSeen?: number
+  strokeOpsSeen?: number
+  transformOpsSeen?: number
+  constructPathOpsSeen?: number
+  rawPayloadLines?: number
+  rawPayloadRects?: number
+  rawPayloadPolylines?: number
+  rawTextRuns?: number
+  extractionWarnings?: string[]
+}
+
 export interface PdfTraceExtractionResult {
   success: boolean
   payload: PdfTracePayload | null
   warnings: PdfTraceExtractionWarning[]
   opsSource?: 'provider' | 'dynamic-import' | 'missing'
+  extractionStats?: PdfTraceExtractionStats
 }
 
 // ---------------------------------------------------------------------------

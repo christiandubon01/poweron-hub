@@ -66,7 +66,8 @@ export type LineOrientation = 'horizontal' | 'vertical' | 'angled'
 // Helpers
 // ---------------------------------------------------------------------------
 
-const ORTHO_TOLERANCE_DEG = 4
+const ORTHO_TOLERANCE_DEG = 7
+const NEAR_ORTHO_TOLERANCE_DEG = 12
 
 function normaliseAngle(deg: number): number {
   let a = deg % 180
@@ -89,6 +90,15 @@ function isOrthogonal(angleDeg: number): boolean {
   )
 }
 
+function isNearOrthogonal(angleDeg: number): boolean {
+  const a = normaliseAngle(angleDeg)
+  return (
+    a <= NEAR_ORTHO_TOLERANCE_DEG ||
+    Math.abs(a - 90) <= NEAR_ORTHO_TOLERANCE_DEG ||
+    a >= 180 - NEAR_ORTHO_TOLERANCE_DEG
+  )
+}
+
 function pdfToWorld(px: number, py: number, scale: PdfTraceScaleHint): WorldPoint2D {
   const factor = scale.pixelsPerFoot > 0 ? 1 / scale.pixelsPerFoot : 1
   return { x: px * factor, y: py * factor }
@@ -106,9 +116,20 @@ function lineLength(a: WorldPoint2D, b: WorldPoint2D): number {
 // Main conversion
 // ---------------------------------------------------------------------------
 
+export interface AdaptedTraceStats {
+  adaptedRawSegments: number
+  adaptedMergedTraceLines: number
+  adapterDroppedTiny: number
+  adapterDroppedInvalid: number
+  adapterDroppedNonWallLike: number
+  adapterPolylineSegments: number
+  adapterRectEdgeSegments: number
+}
+
 export interface AdaptedTrace {
   lines: PlanTraceLine[]
   scale: PdfTraceScaleHint | null
+  stats?: AdaptedTraceStats
 }
 
 /**
@@ -120,21 +141,20 @@ export interface AdaptedTrace {
 export function adaptPdfTraceToPlanLines(
   payload: PdfTracePayload | null | undefined,
 ): AdaptedTrace {
-  if (!payload) {
-    return { lines: [], scale: null }
+  const emptyStats: AdaptedTraceStats = {
+    adaptedRawSegments: 0,
+    adaptedMergedTraceLines: 0,
+    adapterDroppedTiny: 0,
+    adapterDroppedInvalid: 0,
+    adapterDroppedNonWallLike: 0,
+    adapterPolylineSegments: 0,
+    adapterRectEdgeSegments: 0,
   }
-  const sourceLines = normalizeTraceLines(payload)
-  if (sourceLines.length === 0) return { lines: [], scale: inferScaleFromTraceText(payload.textRuns || []) }
+  if (!payload) {
+    return { lines: [], scale: null, stats: emptyStats }
+  }
 
-  const bestScale =
-    inferScaleFromTraceText(payload.textRuns || []) ||
-    payload.scaleHints?.find((h) => h.pixelsPerFoot > 0) ||
-    null
-  const scale: PdfTraceScaleHint =
-    bestScale && bestScale.pixelsPerFoot > 0
-      ? bestScale
-      : { pixelsPerFoot: 1, confidence: 0.1, source: 'default' }
-
+  const rectEdgeSegments = Array.isArray(payload.rects) ? payload.rects.length * 4 : 0
   const polylineLines: PdfTraceLine[] = []
   if (Array.isArray(payload.polylines)) {
     payload.polylines.forEach((poly: PdfTracePolyline, polyIdx: number) => {
@@ -163,29 +183,64 @@ export function adaptPdfTraceToPlanLines(
     })
   }
 
+  const sourceLines = normalizeTraceLines(payload)
+  const adaptedRawSegments = sourceLines.length + polylineLines.length
+
+  if (adaptedRawSegments === 0) {
+    return {
+      lines: [],
+      scale: inferScaleFromTraceText(payload.textRuns || []),
+      stats: { ...emptyStats, adapterRectEdgeSegments: rectEdgeSegments },
+    }
+  }
+
+  const bestScale =
+    inferScaleFromTraceText(payload.textRuns || []) ||
+    payload.scaleHints?.find((h) => h.pixelsPerFoot > 0) ||
+    null
+  const scale: PdfTraceScaleHint =
+    bestScale && bestScale.pixelsPerFoot > 0
+      ? bestScale
+      : { pixelsPerFoot: 1, confidence: 0.1, source: 'default' }
+
   const allLines = [...sourceLines, ...polylineLines]
 
   const out: PlanTraceLine[] = []
+  let adapterDroppedTiny = 0
+  let adapterDroppedInvalid = 0
   for (const line of allLines) {
+    if (!line?.start || !line?.end) {
+      adapterDroppedInvalid += 1
+      continue
+    }
     const a = pdfToWorld(line.start.x, line.start.y, scale)
     const b = pdfToWorld(line.end.x, line.end.y, scale)
     const dx = b.x - a.x
     const dy = b.y - a.y
     const lengthFt = Math.hypot(dx, dy)
 
-    if (lengthFt < 0.5) continue
+    if (!Number.isFinite(lengthFt) || lengthFt < 0.2) {
+      adapterDroppedInvalid += 1
+      continue
+    }
+    if (lengthFt < 0.35) {
+      adapterDroppedTiny += 1
+      continue
+    }
 
     const angle = angleBetween(a.x, a.y, b.x, b.y)
     const ortho = isOrthogonal(angle)
+    const nearOrtho = isNearOrthogonal(angle)
+    const treatAsOrtho = ortho || (nearOrtho && lengthFt >= 1.2)
 
     let role: PlanTraceLine['role'] = 'unknown'
     if (line.role === 'exterior-wall' || line.role === 'interior-wall' ||
         line.role === 'door' || line.role === 'window' ||
         line.role === 'dimension') {
       role = line.role
-    } else if (ortho && lengthFt >= 6) {
+    } else if (treatAsOrtho && lengthFt >= 6) {
       role = 'exterior-wall'
-    } else if (ortho && lengthFt >= 2) {
+    } else if (treatAsOrtho && lengthFt >= 1.5) {
       role = 'interior-wall'
     }
 
@@ -195,15 +250,27 @@ export function adaptPdfTraceToPlanLines(
       end: b,
       lengthFt,
       angleDeg: angle,
-      orthogonal: ortho,
+      orthogonal: treatAsOrtho,
       role,
-      confidence: line.confidence ?? (ortho ? 0.5 : 0.25),
+      confidence: line.confidence ?? (treatAsOrtho ? 0.5 : 0.3),
     })
   }
 
-  const filtered = filterNoiseLines(out)
+  const { lines: filtered, droppedNonWallLike } = filterNoiseLinesWithStats(out)
   const merged = mergeCollinearSegments(filtered)
-  return { lines: merged, scale }
+  return {
+    lines: merged,
+    scale,
+    stats: {
+      adaptedRawSegments,
+      adaptedMergedTraceLines: merged.length,
+      adapterDroppedTiny,
+      adapterDroppedInvalid,
+      adapterDroppedNonWallLike: droppedNonWallLike,
+      adapterPolylineSegments: polylineLines.length,
+      adapterRectEdgeSegments: rectEdgeSegments,
+    },
+  }
 }
 
 export function normalizeTraceLines(payload: PdfTracePayload | null | undefined): PdfTraceLine[] {
@@ -236,11 +303,26 @@ export function classifyLineOrientation(line: PlanTraceLine): LineOrientation {
 }
 
 export function filterNoiseLines(lines: PlanTraceLine[]): PlanTraceLine[] {
-  return lines.filter((line) => {
-    if (line.lengthFt < 0.6) return false
-    if (!line.orthogonal && line.lengthFt < 2.5) return false
+  return filterNoiseLinesWithStats(lines).lines
+}
+
+export function filterNoiseLinesWithStats(lines: PlanTraceLine[]): {
+  lines: PlanTraceLine[]
+  droppedNonWallLike: number
+} {
+  let droppedNonWallLike = 0
+  const kept = lines.filter((line) => {
+    if (line.lengthFt < 0.35) {
+      droppedNonWallLike += 1
+      return false
+    }
+    if (!line.orthogonal && line.lengthFt < 1.5) {
+      droppedNonWallLike += 1
+      return false
+    }
     return true
   })
+  return { lines: kept, droppedNonWallLike }
 }
 
 export function mergeCollinearSegments(lines: PlanTraceLine[]): PlanTraceLine[] {
@@ -497,14 +579,13 @@ function segmentPdfLength(a: PdfTracePoint, b: PdfTracePoint): number {
 
 function isLikelyPageFrameRect(r: PdfTraceRect, W: number, H: number, margin: number): boolean {
   if (r.width <= 0 || r.height <= 0) return false
-  const covers =
-    r.width >= W * 0.88 &&
-    r.height >= H * 0.88 &&
-    r.x <= margin * 3 &&
-    r.y <= margin * 3 &&
-    r.x + r.width >= W - margin * 3 &&
-    r.y + r.height >= H - margin * 3
-  return covers
+  const nearSheetEdge =
+    r.x <= margin * 2 &&
+    r.y <= margin * 2 &&
+    r.x + r.width >= W - margin * 2 &&
+    r.y + r.height >= H - margin * 2
+  const coversMostOfSheet = r.width >= W * 0.94 && r.height >= H * 0.94
+  return nearSheetEdge && coversMostOfSheet
 }
 
 /**
@@ -547,7 +628,7 @@ export function filterPdfTracePayloadForWallExtraction(
       stats.removedShortTicks += 1
       return false
     }
-    if (edgeA && edgeB && len >= Math.min(W, H) * 0.82) {
+    if (edgeA && edgeB && len >= Math.min(W, H) * 0.9) {
       stats.removedMarginEdgeLines += 1
       return false
     }
