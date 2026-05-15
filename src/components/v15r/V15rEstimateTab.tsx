@@ -41,6 +41,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   // Part 4 — Version History
   const [showVersionHistory, setShowVersionHistory] = useState(false)
 
+  const [showInternalBreakdown, setShowInternalBreakdown] = useState(true)
+
   // Service Call form state
   const [scCust, setScCust] = useState('')
   const [scAddr, setScAddr] = useState('')
@@ -1854,6 +1856,31 @@ Return ONLY valid JSON, no other text.`
           </div>
         </div>
 
+        <button
+          type="button"
+          onClick={() => setShowInternalBreakdown(v => !v)}
+          style={{
+            marginTop: '12px',
+            width: '100%',
+            padding: '12px 16px',
+            backgroundColor: '#1a1f2e',
+            border: '1px solid rgba(99,102,241,0.25)',
+            borderRadius: '8px',
+            color: '#a78bfa',
+            fontWeight: '600',
+            fontSize: '13px',
+            textAlign: 'left',
+            cursor: 'pointer',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span>Internal Cost Breakdown {showInternalBreakdown ? '▲' : '▼'}</span>
+        </button>
+
+        {showInternalBreakdown && (
+        <>
         {/* SELF-PERFORM ADVANTAGE — gap between customer-rate view and internal view */}
         <div style={{
           marginTop: '12px',
@@ -1887,8 +1914,6 @@ Return ONLY valid JSON, no other text.`
           </div>
         </div>
 
-        {/* VAULT HEALTH CHECK */}
-        <div style={{ marginTop: '16px' }}>
          {/* INTERNAL DEAL OVERVIEW — mirrors top Deal Overview using internal values */}
         {hasAnyData && (
           <div style={{ backgroundColor: '#1a1f2e', borderRadius: '8px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(99,102,241,0.25)', marginTop: '16px' }}>
@@ -1975,6 +2000,11 @@ Return ONLY valid JSON, no other text.`
             </div>
           </div>
         </div>
+        </>
+        )}
+
+        {/* VAULT HEALTH CHECK */}
+        <div style={{ marginTop: '16px' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
               onClick={runVaultHealthCheck}
