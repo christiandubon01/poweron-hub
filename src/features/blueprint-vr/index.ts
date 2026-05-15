@@ -240,27 +240,7 @@ export type {
   PdfTracePagePayload,
 } from './pdfTraceTypes'
 
-// Trace adapter — converts upstream vector trace into world plan candidates
-export type {
-  PlanTraceLine,
-  LineOrientation,
-  AdaptedTrace,
-} from './blueprintTraceAdapter'
-export {
-  adaptPdfTraceToPlanLines,
-  normalizeTraceLines,
-  filterNoiseLines,
-  classifyLineOrientation,
-  mergeCollinearSegments,
-  detectDoubleLineWalls,
-  detectOuterFootprint,
-  inferWallCandidatesFromTrace,
-  inferOpeningCandidatesFromGaps,
-  inferDoorCandidatesFromArcs,
-  inferGlassStorefrontCandidates,
-  inferDimensionCandidatesFromText,
-  inferScaleFromTraceText,
-} from './blueprintTraceAdapter'
+export type { PlanTraceLine } from './blueprintPlanScanner'
 
 export type { PdfVectorTraceExtractorInput } from './pdfVectorTraceExtractor'
 export {
@@ -322,6 +302,7 @@ export type {
 export {
   scanBlueprintPlan,
   convertPlanScanToBuildingModel,
+  buildScanResultFromVisionExtraction,
   inferBuildingFootprintFromTraceLines,
   inferWallsFromOrthogonalLines,
   inferOpeningsFromGaps,
@@ -358,6 +339,27 @@ export {
   clearAllProjectModelCache,
   listCachedProjectModels,
 } from './blueprintVRProjectModelCache'
+
+export type {
+  VisionPageClassification,
+  VisionPageRole,
+  BlueprintVisionExtractionResult,
+} from './blueprintVisionClient'
+export {
+  classifyAllPagesBatched,
+  callClassify,
+  callExtract,
+  hashFile,
+  loadPdfArrayBuffer,
+  openPdfDocument,
+  rasterizePdfPageToBase64,
+} from './blueprintVisionClient'
+export {
+  getClassification,
+  saveClassification,
+  getExtraction,
+  saveExtraction,
+} from './blueprintVisionCache'
 
 // VR source selector component
 export { default as BlueprintVRSourceSelector } from './BlueprintVRSourceSelector'
