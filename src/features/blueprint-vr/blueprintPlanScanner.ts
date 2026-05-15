@@ -2290,6 +2290,15 @@ export interface BlueprintFullSetScanInput {
   extractedText?: string
   /** Optional annotation summary for the set. */
   annotationsSummary?: string
+  /**
+   * Multi-page trace results from the async PDF extraction loop.
+   * Keyed by 1-based page number. When provided, the scanner picks the best
+   * floor-plan page's trace from this map instead of relying on the sheet's
+   * pre-attached tracePayload (which may be stale or absent).
+   */
+  multiPageTraces?: Record<number, import('./pdfTraceTypes').PdfTracePayload>
+  /** Total pages that were actually scanned (for diagnostics / confidence). */
+  totalPagesScanned?: number
 }
 
 /**
@@ -3048,17 +3057,32 @@ export function scanBlueprintFullSet(
     discipline: s.discipline,
   }))
 
+  // Prefer the freshly-extracted multi-page trace for the best floor-plan page
+  // over the sheet's pre-attached tracePayload (which may be from a previous
+  // stale scan or absent entirely).
+  const bestPageNumber = bestFloorPlanSheet?.pageNumber ?? -1
+  const bestTraceFromMap =
+    input.multiPageTraces && bestPageNumber > 0
+      ? input.multiPageTraces[bestPageNumber] ?? null
+      : null
+  const bestTrace = bestTraceFromMap ?? bestFloorPlanSourceSheet?.tracePayload ?? null
+  const traceAttempted = Boolean(
+    bestTraceFromMap !== null ||
+    bestFloorPlanSourceSheet?.traceAttempted ||
+    bestFloorPlanSourceSheet?.tracePayload,
+  )
+
   const planScan = scanBlueprintPlan({
     projectName: input.projectName || input.sourceSet?.projectName,
     blueprintTitle: input.sourceSet?.name,
     fileName: input.sourceSet?.filePath || bestFloorPlanSourceSheet?.fileName,
     activePageNumber: input.activePageNumber || bestFloorPlanSheet?.pageNumber,
-    totalPages: input.sourceSet?.totalPages || sheets.length,
+    totalPages: input.totalPagesScanned || input.sourceSet?.totalPages || sheets.length,
     extractedText: input.extractedText,
     annotationsSummary: input.annotationsSummary,
     sheetIndex,
-    tracePayload: bestFloorPlanSourceSheet?.tracePayload ?? null,
-    traceAttempted: Boolean(bestFloorPlanSourceSheet?.traceAttempted || bestFloorPlanSourceSheet?.tracePayload),
+    tracePayload: bestTrace,
+    traceAttempted,
     traceWarnings: bestFloorPlanSourceSheet?.traceWarnings || [],
   })
   const confidenceBreakdown = buildConfidenceBreakdown({

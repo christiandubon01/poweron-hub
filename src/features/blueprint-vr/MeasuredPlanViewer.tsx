@@ -40,11 +40,27 @@ export interface MeasuredPlanViewerProps {
   onRoomSelect?: (roomId: string) => void
   activeStage?: VRStage
   showElectrical?: boolean
+  /**
+   * Wall-only mode: hides furniture/equipment symbols, shows PROPOSED WALL
+   * LAYOUT badge, and renders an explicit failure overlay when the model is
+   * still a fallback (no real geometry was extracted).
+   */
+  wallOnlyMode?: boolean
+  /** Phase reported by the async full-set extraction loop. */
+  extractionPhase?: 'idle' | 'extracting' | 'done'
+  /** Pages extracted so far (for progress display). */
+  pagesScanned?: number
+  /** Total pages targeted for extraction. */
+  totalPages?: number
   traceDebug?: {
     rawLines: number
     mergedWalls: number
     openings: number
     roomCandidates: number
+    runtimeProviderStatus?: string
+    operatorListStatus?: string
+    textContentStatus?: string
+    confidenceCapReason?: string
   } | null
 }
 
@@ -372,6 +388,10 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
   onRoomSelect,
   activeStage = 'roughIn',
   showElectrical = true,
+  wallOnlyMode = false,
+  extractionPhase,
+  pagesScanned,
+  totalPages,
   traceDebug = null,
   className,
 }) => {
@@ -379,6 +399,8 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
     () => ({ width: width || 760, height: height || 430 }),
     [width, height],
   )
+
+  const isExtracting = extractionPhase === 'extracting'
 
   if (!model || model.footprint.width === 0 || model.footprint.height === 0) {
     return (
@@ -390,8 +412,9 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: '#1a1f2e',
+          backgroundColor: '#0d121b',
           borderRadius: 8,
+          border: '1px solid rgba(0,229,204,0.18)',
           color: '#a0a8b8',
           fontSize: 13,
           textAlign: 'center',
@@ -399,10 +422,23 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
         }}
       >
         <div>
-          <p style={{ margin: '0 0 8px' }}>No building model available</p>
-          <p style={{ margin: 0, fontSize: 12, opacity: 0.7 }}>
-            Pick a VR Source Set to drive the measured plan
-          </p>
+          {isExtracting ? (
+            <>
+              <p style={{ margin: '0 0 8px', color: '#FFD700', fontFamily: 'monospace', fontSize: 12 }}>
+                SCANNING FULL SET — page {pagesScanned ?? 0} / {totalPages ?? '?'}
+              </p>
+              <p style={{ margin: 0, fontSize: 11, opacity: 0.6, fontFamily: 'monospace' }}>
+                Extracting vector geometry from floor-plan sheets…
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 8px' }}>No building model available</p>
+              <p style={{ margin: 0, fontSize: 12, opacity: 0.7 }}>
+                Pick a VR Source Set to drive the measured plan
+              </p>
+            </>
+          )}
         </div>
       </div>
     )
@@ -533,11 +569,9 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
               )
             })}
 
-        {/* Furniture / fixture footprint symbols. These map an equipment hint
-            to a tiny rectangle so the 2D plan reads as a CAD plan and not just
-            colored rectangles. Symbols are independent of the labels toggle —
-            their text labels follow it. */}
-        {allRooms.map((room) => {
+        {/* Furniture / fixture footprint symbols — hidden in wall-only mode so
+            the view shows only structural geometry. */}
+        {!wallOnlyMode && allRooms.map((room) => {
           const hints = room.equipmentHints || []
           if (!hints.length) return null
           const w = room.bounds.max.x - room.bounds.min.x
@@ -642,9 +676,8 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           </g>
         )}
 
-        {/* Electrical anchor markers — label respects showRoomLabels so the
-            "Show Labels" toggle hides every text annotation in the plan. */}
-        {showElectrical &&
+        {/* Electrical anchor markers — hidden in wall-only mode */}
+        {showElectrical && !wallOnlyMode &&
           model.electricalAnchors?.map((anchor) => {
             const x = offsetX + anchor.position.x * scalePerFoot
             const y = offsetY + anchor.position.y * scalePerFoot
@@ -659,6 +692,7 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
               </g>
             )
           })}
+
       </svg>
 
       {showBadges && (
@@ -686,19 +720,38 @@ export const MeasuredPlanViewer: React.FC<MeasuredPlanViewerProps> = ({
           >
             Scale {model.scale.pixelsPerUnit}px/ft · {model.scale.source}
           </div>
-          <div
-            style={{
-              backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
-              color: isFallback ? '#ffd0a0' : '#a0ffa0',
-              padding: '3px 7px',
-              borderRadius: 4,
-              fontSize: 10,
-              border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
-              fontFamily: 'monospace',
-            }}
-          >
-            {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
-          </div>
+          {wallOnlyMode ? (
+            <div
+              style={{
+                backgroundColor: isFallback ? 'rgba(95,42,42,0.95)' : 'rgba(20,60,48,0.95)',
+                color: isFallback ? '#FF9999' : '#7BE5D8',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: isFallback ? '1px solid #FF5555' : '1px solid #00ddcc',
+                fontFamily: 'monospace',
+                letterSpacing: 0.5,
+              }}
+            >
+              {isFallback
+                ? 'WALL EXTRACTION FAILED'
+                : `FULL-SET PROPOSED WALL LAYOUT · ${allWalls.length} walls · ${allWalls.reduce((n, {wall}) => n + wall.openings.length, 0)} openings`}
+            </div>
+          ) : (
+            <div
+              style={{
+                backgroundColor: isFallback ? 'rgba(95,74,42,0.95)' : 'rgba(42,95,42,0.95)',
+                color: isFallback ? '#ffd0a0' : '#a0ffa0',
+                padding: '3px 7px',
+                borderRadius: 4,
+                fontSize: 10,
+                border: isFallback ? '1px solid #ff8a4a' : '1px solid #4aff4a',
+                fontFamily: 'monospace',
+              }}
+            >
+              {isFallback ? 'INFERRED SOURCE' : `MEASURED · ${Math.round((model.confidence ?? 0) * 100)}%`}
+            </div>
+          )}
           {traceDebug && (
             <div
               style={{
