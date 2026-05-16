@@ -923,6 +923,70 @@ Return ONLY valid JSON, no other text.`
   })()
   const pipelineTotal = pipelineWon.value + pipelinePending.value + pipelineLost.value
 
+  const premiumCardGlow = (color: string, inset = '-35% auto auto 58%') => ({
+    position: 'absolute',
+    inset,
+    width: '150px',
+    height: '150px',
+    borderRadius: '999px',
+    background: color,
+    filter: 'blur(20px)',
+    pointerEvents: 'none',
+  })
+  const premiumPipelineCard = (accent: string, mid: string, border: string) => ({
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: '12px',
+    padding: '14px 16px',
+    background: `linear-gradient(135deg, ${accent}, ${mid} 52%, rgba(15,23,42,0.46))`,
+    border,
+    boxShadow: '0 14px 34px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
+    minWidth: 0,
+  })
+  const pipelineLabelStyle = (color: string) => ({
+    position: 'relative',
+    fontSize: '10px',
+    color,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    marginBottom: '8px',
+  })
+  const pipelineValueStyle = (color: string) => ({
+    position: 'relative',
+    fontSize: '28px',
+    lineHeight: 1,
+    fontWeight: 800,
+    color,
+    fontFamily: 'monospace',
+    letterSpacing: '-0.04em',
+  })
+  const sectionHeaderStyle = (accent: string, mid: string, border: string) => ({
+    position: 'relative',
+    overflow: 'hidden',
+    background: `linear-gradient(135deg, ${accent}, ${mid} 54%, rgba(15,23,42,0.5))`,
+    padding: '14px 16px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '14px',
+    borderBottom: border,
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07)',
+  })
+  const sectionTotalStyle = (color: string, bg: string, border: string) => ({
+    position: 'relative',
+    color,
+    fontWeight: 800,
+    fontFamily: 'monospace',
+    fontSize: '15px',
+    lineHeight: 1,
+    padding: '6px 10px',
+    borderRadius: '999px',
+    backgroundColor: bg,
+    border,
+    whiteSpace: 'nowrap',
+  })
+
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
 
@@ -970,22 +1034,24 @@ Return ONLY valid JSON, no other text.`
 
         {showPipelineOverview && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginBottom: '12px' }}>
               {/* Won — active projects (awarded work) + fully paid service calls */}
-              <div style={{ backgroundColor: 'rgba(16,185,129,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #10b981' }}>
-                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>✅ Won</div>
-                <div style={{ fontSize: '18px', fontWeight: '800', color: '#10b981', fontFamily: 'monospace' }}>{fmt(pipelineWon.value)}</div>
-                <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} active/awarded</div>
-                <div style={{ fontSize: '10px', color: '#6ee7b7', marginTop: '6px', lineHeight: '1.6' }}>
+              <div style={premiumPipelineCard('rgba(16,185,129,0.17)', 'rgba(34,211,238,0.08)', '1px solid rgba(16,185,129,0.26)')}>
+                <div style={premiumCardGlow('rgba(16,185,129,0.14)', '-35% auto auto 62%')} />
+                <div style={pipelineLabelStyle('#6ee7b7')}>✅ Won</div>
+                <div style={pipelineValueStyle('#10b981')}>{fmt(pipelineWon.value)}</div>
+                <div style={{ position: 'relative', fontSize: '11px', color: 'rgba(229,231,235,0.72)', marginTop: '7px' }}>{pipelineWon.count} active/awarded</div>
+                <div style={{ position: 'relative', fontSize: '10px', color: '#6ee7b7', marginTop: '8px', lineHeight: '1.6', fontFamily: 'monospace' }}>
                   <div>Projects: {fmt(pipelineWon.projectValue)} · {pipelineWon.projectCount} active</div>
                   <div>Service Calls: {fmt(pipelineWon.svcValue)} · {pipelineWon.svcCount} paid</div>
                 </div>
               </div>
               {/* Pending — coming projects + open service estimates + active calls */}
-              <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
-                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>⏳ Pending</div>
-                <div style={{ fontSize: '18px', fontWeight: '800', color: '#eab308', fontFamily: 'monospace' }}>{fmt(pipelinePending.value)}</div>
-                <div style={{ fontSize: '11px', color: '#6b7280', lineHeight: '1.6', marginTop: '4px' }}>
+              <div style={premiumPipelineCard('rgba(245,158,11,0.18)', 'rgba(234,179,8,0.08)', '1px solid rgba(245,158,11,0.28)')}>
+                <div style={premiumCardGlow('rgba(245,158,11,0.14)', '-35% auto auto 62%')} />
+                <div style={pipelineLabelStyle('#fbbf24')}>⏳ Pending</div>
+                <div style={pipelineValueStyle('#eab308')}>{fmt(pipelinePending.value)}</div>
+                <div style={{ position: 'relative', fontSize: '11px', color: 'rgba(229,231,235,0.72)', lineHeight: '1.6', marginTop: '7px' }}>
                   {pipelinePending.count === 0 ? (
                     <span>No pending items</span>
                   ) : (
@@ -1011,26 +1077,27 @@ Return ONLY valid JSON, no other text.`
                 </div>
               </div>
               {/* History / Risk — archived records, lost outcomes, and unpaid collection risk */}
-              <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
-                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost / Unpaid / Archived</div>
-                <div style={{ fontSize: '18px', fontWeight: '800', color: '#ef4444', fontFamily: 'monospace' }}>{fmt(pipelineLost.value)}</div>
-                <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+              <div style={premiumPipelineCard('rgba(239,68,68,0.16)', 'rgba(168,85,247,0.09)', '1px solid rgba(244,63,94,0.28)')}>
+                <div style={premiumCardGlow('rgba(244,63,94,0.14)', '-35% auto auto 62%')} />
+                <div style={pipelineLabelStyle('#fda4af')}>❌ Lost / Unpaid / Archived</div>
+                <div style={pipelineValueStyle('#fb7185')}>{fmt(pipelineLost.value)}</div>
+                <div style={{ position: 'relative', display: 'flex', gap: '8px', marginTop: '9px', flexWrap: 'wrap' }}>
                   {pipelineLost.archivedCount > 0 && (
-                    <span style={{ fontSize: '10px', color: '#cbd5e1', backgroundColor: 'rgba(148,163,184,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                    <span style={{ fontSize: '10px', color: '#cbd5e1', backgroundColor: 'rgba(148,163,184,0.15)', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(148,163,184,0.2)' }}>
                       Archived: {pipelineLost.archivedCount} ({fmt(pipelineLost.archivedValue)})
                     </span>
                   )}
                   {pipelineLost.lostCount > 0 && (
-                    <span style={{ fontSize: '10px', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                    <span style={{ fontSize: '10px', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(239,68,68,0.2)' }}>
                       Lost: {pipelineLost.lostCount} ({fmt(pipelineLost.lostValue)})
                     </span>
                   )}
                   {pipelineLost.unpaidCount > 0 && (
-                    <span style={{ fontSize: '10px', color: '#fb923c', backgroundColor: 'rgba(251,146,60,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                    <span style={{ fontSize: '10px', color: '#fb923c', backgroundColor: 'rgba(251,146,60,0.15)', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(251,146,60,0.2)' }}>
                       Unpaid: {pipelineLost.unpaidCount} ({fmt(pipelineLost.unpaidValue)})
                     </span>
                   )}
-                  {pipelineLost.count === 0 && <span style={{ fontSize: '11px', color: '#6b7280' }}>0 items</span>}
+                  {pipelineLost.count === 0 && <span style={{ fontSize: '11px', color: 'rgba(229,231,235,0.72)' }}>0 items</span>}
                 </div>
               </div>
             </div>
@@ -1459,17 +1526,11 @@ Return ONLY valid JSON, no other text.`
         {/* LABOR SECTION */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
           <div
-            style={{
-              backgroundColor: 'rgba(16,185,129,0.1)',
-              padding: '12px 16px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              borderBottom: '1px solid rgba(255,255,255,0.05)',
-            }}
+            style={sectionHeaderStyle('rgba(16,185,129,0.16)', 'rgba(34,211,238,0.08)', '1px solid rgba(16,185,129,0.22)')}
           >
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Labor</h4>
-            <span style={{ color: '#10b981', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.lab)}</span>
+            <div style={premiumCardGlow('rgba(16,185,129,0.12)', '-70% auto auto 68%')} />
+            <h4 style={{ position: 'relative', color: 'var(--t1)', fontWeight: '700', margin: '0', letterSpacing: '-0.01em' }}>Labor</h4>
+            <span style={sectionTotalStyle('#6ee7b7', 'rgba(16,185,129,0.13)', '1px solid rgba(16,185,129,0.24)')}>{fmt(t.lab)}</span>
           </div>
           <div style={{ padding: '12px' }}>
             <table style={{ width: '100%', fontSize: '13px', color: 'var(--t2)', borderCollapse: 'collapse' }}>
@@ -1615,17 +1676,11 @@ Return ONLY valid JSON, no other text.`
         {/* MATERIALS BY ACTIVE PHASE (from MTO) */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
           <div
-            style={{
-              backgroundColor: 'rgba(139,92,246,0.1)',
-              padding: '12px 16px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              borderBottom: '1px solid rgba(255,255,255,0.05)',
-            }}
+            style={sectionHeaderStyle('rgba(139,92,246,0.17)', 'rgba(59,130,246,0.08)', '1px solid rgba(139,92,246,0.23)')}
           >
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Materials by Phase (from MTO)</h4>
-            <span style={{ color: '#10b981', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.matSellingC)}</span>
+            <div style={premiumCardGlow('rgba(139,92,246,0.13)', '-70% auto auto 68%')} />
+            <h4 style={{ position: 'relative', color: 'var(--t1)', fontWeight: '700', margin: '0', letterSpacing: '-0.01em' }}>Materials by Phase (from MTO)</h4>
+            <span style={sectionTotalStyle('#c4b5fd', 'rgba(139,92,246,0.13)', '1px solid rgba(139,92,246,0.24)')}>{fmt(t.matSellingC)}</span>
           </div>
           <div style={{ padding: '12px', fontSize: '13px', color: 'var(--t2)' }}>
             {t.matBreakdown.length > 0 ? (
@@ -1673,17 +1728,11 @@ Return ONLY valid JSON, no other text.`
         {/* PLANNING & OVERHEAD */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
           <div
-            style={{
-              backgroundColor: 'rgba(244,114,182,0.1)',
-              padding: '12px 16px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              borderBottom: '1px solid rgba(255,255,255,0.05)',
-            }}
+            style={sectionHeaderStyle('rgba(236,72,153,0.16)', 'rgba(168,85,247,0.09)', '1px solid rgba(236,72,153,0.23)')}
           >
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Planning & Overhead</h4>
-            <span style={{ color: '#ec4899', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.oh)}</span>
+            <div style={premiumCardGlow('rgba(236,72,153,0.13)', '-70% auto auto 68%')} />
+            <h4 style={{ position: 'relative', color: 'var(--t1)', fontWeight: '700', margin: '0', letterSpacing: '-0.01em' }}>Planning & Overhead</h4>
+            <span style={sectionTotalStyle('#f9a8d4', 'rgba(236,72,153,0.13)', '1px solid rgba(236,72,153,0.24)')}>{fmt(t.oh)}</span>
           </div>
           <div style={{ padding: '12px' }}>
             <table style={{ width: '100%', fontSize: '13px', color: 'var(--t2)', borderCollapse: 'collapse' }}>
