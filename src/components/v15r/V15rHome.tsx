@@ -1282,13 +1282,13 @@ export default function V15rHome() {
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Hrs</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none text-slate-100">{num(l.hrs).toFixed(1)}</div>
                                 </div>
-                                <div className="rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
-                                  <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Miles</div>
-                                  <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#60a5fa' }}>{num(l.miles)}</div>
-                                </div>
                                 <div className="rounded-md border border-amber-300/[0.12] bg-amber-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Mat</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</div>
+                                </div>
+                                <div className="rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
+                                  <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Miles</div>
+                                  <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#60a5fa' }}>{num(l.miles)}</div>
                                 </div>
                                 <div className="rounded-md border border-emerald-300/[0.12] bg-emerald-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Coll</div>
@@ -1322,16 +1322,29 @@ export default function V15rHome() {
                             </div>
                           </div>
                         </div>
-                        <div className="bg-[var(--bg-input)] border border-gray-800 rounded px-3 py-2 text-[10px] flex justify-between gap-3 mt-1">
-                          <div className="flex gap-4 flex-wrap">
-                            <span><span className="text-gray-300">Cum Hours:</span> <span className="font-mono text-gray-300">{num(rr.cumHours).toFixed(1)}h</span></span>
-                            <span><span className="text-gray-300">Cum Mat:</span> <span className="font-mono" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span></span>
-                            <span><span className="text-gray-300">Cum Collected:</span> <span className="font-mono text-emerald-400">{fmt(num(rr.cumCollected))}</span></span>
-                            <span><span className="text-gray-300">Cum Cost:</span> <span className="font-mono text-red-400">{fmt(num(rr.cumTotalCost))}</span></span>
+                        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-md border border-white/[0.06] bg-slate-950/20 px-3 py-1.5 text-[10px] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                            <span className="inline-flex items-baseline gap-1.5">
+                              <span className="font-medium text-slate-500">Cum Hours</span>
+                              <span className="font-mono font-medium text-slate-300">{num(rr.cumHours).toFixed(1)}h</span>
+                            </span>
+                            <span className="inline-flex items-baseline gap-1.5">
+                              <span className="font-medium text-slate-500">Cum Mat</span>
+                              <span className="font-mono font-medium" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span>
+                            </span>
+                            <span className="inline-flex items-baseline gap-1.5">
+                              <span className="font-medium text-slate-500">Cum Collected</span>
+                              <span className="font-mono font-medium text-emerald-400">{fmt(num(rr.cumCollected))}</span>
+                            </span>
+                            <span className="inline-flex items-baseline gap-1.5">
+                              <span className="font-medium text-slate-500">Cum Cost</span>
+                              <span className="font-mono font-medium text-red-400">{fmt(num(rr.cumTotalCost))}</span>
+                            </span>
                           </div>
-                          <div className="flex gap-3 items-center">
-                            <span style={{ color: balanceColor, fontFamily: 'monospace', fontWeight: 700 }}>Net: {fmt(runningBalance)}</span>
-                          </div>
+                          <span className="inline-flex items-baseline gap-1.5">
+                            <span className="font-medium text-slate-400">Net</span>
+                            <span className="font-mono font-semibold" style={{ color: balanceColor }}>{fmt(runningBalance)}</span>
+                          </span>
                         </div>
                       </div>
                     )
