@@ -245,19 +245,19 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   }
 
   const statusBadgeColor = (status) => {
-    if (status === 'answered') return { bg: '#10b981', text: '#fff' }
-    if (status === 'critical') return { bg: '#ef4444', text: '#fff' }
-    return { bg: '#f59e0b', text: '#000' }
+    if (status === 'answered') return { bg: 'rgba(16,185,129,0.13)', text: '#86efac', border: 'rgba(16,185,129,0.24)' }
+    if (status === 'critical') return { bg: 'rgba(239,68,68,0.13)', text: '#fca5a5', border: 'rgba(239,68,68,0.24)' }
+    return { bg: 'rgba(245,158,11,0.13)', text: '#fbbf24', border: 'rgba(245,158,11,0.22)' }
   }
 
   const labelBadgeColor = (label: string) => {
     if (label === 'Critical') {
-      return { bg: 'rgba(239,68,68,0.16)', text: '#fca5a5', border: 'rgba(239,68,68,0.35)', glow: 'rgba(239,68,68,0.12)' }
+      return { bg: 'rgba(239,68,68,0.10)', text: '#fca5a5', border: 'rgba(239,68,68,0.22)' }
     }
     if (label === 'Other trades') {
-      return { bg: 'rgba(99,102,241,0.16)', text: '#a5b4fc', border: 'rgba(99,102,241,0.35)', glow: 'rgba(99,102,241,0.12)' }
+      return { bg: 'rgba(99,102,241,0.10)', text: '#a5b4fc', border: 'rgba(99,102,241,0.22)' }
     }
-    return { bg: 'rgba(148,163,184,0.12)', text: '#cbd5e1', border: 'rgba(148,163,184,0.22)', glow: 'rgba(148,163,184,0.06)' }
+    return { bg: 'rgba(148,163,184,0.08)', text: '#cbd5e1', border: 'rgba(148,163,184,0.16)' }
   }
 
   const displayTimestamp = (value: unknown): string => {
@@ -349,7 +349,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
             No RFIs yet. Add one to get started.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {rfis.map(r => {
               const label = getRfiLabel(r)
               const isCritical = r.status === 'critical' || r.critical === true || label === 'Critical'
@@ -373,50 +373,50 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                 <div
                   key={r.id}
                   style={{
-                    background: 'linear-gradient(145deg, rgba(35,39,56,0.98), rgba(22,25,35,0.98))',
-                    borderRadius: '14px',
-                    padding: '16px',
-                    border: '1px solid rgba(148,163,184,0.12)',
-                    borderLeft: `4px solid ${cardAccent}`,
-                    boxShadow: `0 18px 42px rgba(0,0,0,0.22), 0 0 28px ${labelColors.glow}`,
+                    background: 'linear-gradient(180deg, rgba(35,39,56,0.94), rgba(29,33,45,0.94))',
+                    borderRadius: '10px',
+                    padding: '12px 14px',
+                    border: '1px solid rgba(148,163,184,0.10)',
+                    borderLeft: `3px solid ${cardAccent}`,
+                    boxShadow: '0 10px 26px rgba(0,0,0,0.16)',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', marginBottom: '14px', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
-                      <span style={{ fontFamily: 'monospace', fontSize: '12px', color: '#e5e7eb', fontWeight: '800', letterSpacing: '0.02em' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: '12px', color: '#e5e7eb', fontWeight: '700', letterSpacing: '0.01em' }}>
                         {r.id || 'RFI'}
                       </span>
-                      <span style={{ padding: '3px 9px', backgroundColor: colors.bg, color: colors.text, borderRadius: '999px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.05em' }}>
+                      <span style={{ padding: '2px 7px', backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '999px', fontSize: '9px', fontWeight: '700', letterSpacing: '0.04em' }}>
                         {displayStatus.toUpperCase()}
                       </span>
-                      <span style={{ padding: '3px 9px', backgroundColor: labelColors.bg, color: labelColors.text, border: `1px solid ${labelColors.border}`, borderRadius: '999px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.04em' }}>
+                      <span style={{ padding: '2px 7px', backgroundColor: labelColors.bg, color: labelColors.text, border: `1px solid ${labelColors.border}`, borderRadius: '999px', fontSize: '9px', fontWeight: '700', letterSpacing: '0.03em' }}>
                         {label.toUpperCase()}
                       </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
-                      <span style={{ padding: '4px 8px', borderRadius: '999px', backgroundColor: 'rgba(15,23,42,0.42)', border: '1px solid rgba(148,163,184,0.12)', color: 'var(--t3)', fontSize: '10px', fontWeight: '700' }}>
+                      <span style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '600' }}>
                         Created {displayTimestamp(createdValue)}
                       </span>
                       {answeredValue && (
-                        <span style={{ padding: '4px 8px', borderRadius: '999px', backgroundColor: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.22)', color: '#86efac', fontSize: '10px', fontWeight: '700' }}>
+                        <span style={{ color: '#86efac', fontSize: '10px', fontWeight: '600' }}>
                           Resolved {displayTimestamp(answeredValue)}
                         </span>
                       )}
                       {daysOpen !== null && (
-                        <span style={{ padding: '4px 8px', borderRadius: '999px', backgroundColor: 'rgba(15,23,42,0.42)', border: '1px solid rgba(148,163,184,0.12)', color: daysColor, fontSize: '10px', fontWeight: '800' }}>
+                        <span style={{ color: daysColor, fontSize: '10px', fontWeight: '700' }}>
                           Open {daysOpen} {daysOpen === 1 ? 'day' : 'days'}
                         </span>
                       )}
                       <button
                         onClick={() => openEditModal(r)}
                         style={{
-                          padding: '6px 10px',
-                          backgroundColor: 'rgba(59,130,246,0.18)',
-                          color: '#60a5fa',
-                          border: '1px solid rgba(59,130,246,0.24)',
-                          borderRadius: '7px',
+                          padding: '4px 8px',
+                          backgroundColor: 'rgba(59,130,246,0.10)',
+                          color: '#93c5fd',
+                          border: '1px solid rgba(59,130,246,0.18)',
+                          borderRadius: '6px',
                           fontSize: '11px',
-                          fontWeight: '800',
+                          fontWeight: '700',
                           cursor: 'pointer',
                         }}
                       >
@@ -425,13 +425,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                       <button
                         onClick={() => delRFI(r.id)}
                         style={{
-                          padding: '6px 10px',
-                          backgroundColor: 'rgba(239,68,68,0.14)',
-                          color: '#f87171',
-                          border: '1px solid rgba(239,68,68,0.24)',
-                          borderRadius: '7px',
+                          padding: '4px 8px',
+                          backgroundColor: 'rgba(239,68,68,0.08)',
+                          color: '#fca5a5',
+                          border: '1px solid rgba(239,68,68,0.16)',
+                          borderRadius: '6px',
                           fontSize: '11px',
-                          fontWeight: '800',
+                          fontWeight: '700',
                           cursor: 'pointer',
                         }}
                       >
@@ -440,31 +440,31 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                     </div>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginBottom: '12px' }}>
-                    <div style={{ padding: '9px 11px', backgroundColor: 'rgba(15,23,42,0.34)', border: '1px solid rgba(148,163,184,0.12)', borderRadius: '10px' }}>
-                      <div style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px', marginBottom: '9px' }}>
+                    <div style={{ padding: '7px 9px', backgroundColor: 'rgba(15,23,42,0.24)', borderRadius: '7px' }}>
+                      <div style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '700', letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '2px' }}>
                         Stage Recorded
                       </div>
-                      <div style={{ color: stageRecorded === 'Not set' ? 'var(--t3)' : '#e5e7eb', fontSize: '12px', fontWeight: '800' }}>
+                      <div style={{ color: stageRecorded === 'Not set' ? 'var(--t3)' : '#dbeafe', fontSize: '12px', fontWeight: '600' }}>
                         {stageRecorded}
                       </div>
                     </div>
-                    <div style={{ padding: '9px 11px', backgroundColor: 'rgba(15,23,42,0.34)', border: '1px solid rgba(148,163,184,0.12)', borderRadius: '10px' }}>
-                      <div style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+                    <div style={{ padding: '7px 9px', backgroundColor: 'rgba(15,23,42,0.24)', borderRadius: '7px' }}>
+                      <div style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '700', letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '2px' }}>
                         Stage Applies
                       </div>
-                      <div style={{ color: stageApplies === 'Not set' ? 'var(--t3)' : '#e5e7eb', fontSize: '12px', fontWeight: '800' }}>
+                      <div style={{ color: stageApplies === 'Not set' ? 'var(--t3)' : '#dbeafe', fontSize: '12px', fontWeight: '600' }}>
                         {stageApplies}
                       </div>
                     </div>
                   </div>
 
-                  <div style={{ marginBottom: '10px', padding: '11px 12px', backgroundColor: 'rgba(15,23,42,0.42)', border: '1px solid rgba(148,163,184,0.13)', borderRadius: '11px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '7px', flexWrap: 'wrap' }}>
-                      <span style={{ color: '#bfdbfe', fontSize: '10px', fontWeight: '900', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Question</span>
+                  <div style={{ marginBottom: '8px', padding: '8px 10px', backgroundColor: 'rgba(15,23,42,0.28)', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '5px', flexWrap: 'wrap' }}>
+                      <span style={{ color: '#94a3b8', fontSize: '9px', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Question</span>
                       {createdValue && <span style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '600' }}>{displayTimestamp(createdValue)}</span>}
                     </div>
-                    <div style={{ color: r.question ? 'var(--t1)' : 'var(--t3)', fontSize: '13px', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                    <div style={{ color: r.question ? 'var(--t1)' : 'var(--t3)', fontSize: '12px', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
                       {r.question || 'No question entered.'}
                     </div>
                   </div>
@@ -477,23 +477,22 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
 
                   <div
                     style={{
-                      marginBottom: '12px',
-                      padding: '11px 12px',
-                      backgroundColor: responseText ? 'rgba(16,185,129,0.10)' : 'rgba(15,23,42,0.26)',
-                      border: responseText ? '1px solid rgba(16,185,129,0.22)' : '1px solid rgba(148,163,184,0.10)',
-                      borderRadius: '11px',
+                      marginBottom: '10px',
+                      padding: '8px 10px',
+                      backgroundColor: responseText ? 'rgba(16,185,129,0.07)' : 'rgba(15,23,42,0.20)',
+                      borderRadius: '8px',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '7px', flexWrap: 'wrap' }}>
-                      <span style={{ color: responseText ? '#86efac' : 'var(--t3)', fontSize: '10px', fontWeight: '900', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Answer</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '5px', flexWrap: 'wrap' }}>
+                      <span style={{ color: responseText ? '#86efac' : 'var(--t3)', fontSize: '9px', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Answer</span>
                       {answeredValue && <span style={{ color: responseText ? '#86efac' : 'var(--t3)', fontSize: '10px', fontWeight: '600' }}>{displayTimestamp(answeredValue)}</span>}
                     </div>
-                    <div style={{ color: responseText ? '#d1fae5' : 'var(--t3)', fontSize: '13px', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                    <div style={{ color: responseText ? '#d1fae5' : 'var(--t3)', fontSize: '12px', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
                       {responseText || 'No answer yet.'}
                     </div>
                     {r.solvedBy && (
-                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: '11px', color: 'var(--t3)' }}>
-                        Solved by: <span style={{ color: responseText ? '#86efac' : 'var(--t2)', fontWeight: '800' }}>{r.solvedBy}</span>
+                      <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--t3)' }}>
+                        Solved by <span style={{ color: responseText ? '#86efac' : 'var(--t2)', fontWeight: '700' }}>{r.solvedBy}</span>
                       </div>
                     )}
                   </div>
@@ -509,13 +508,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                           }
                         }}
                         style={{
-                          padding: '6px 12px',
-                          backgroundColor: 'rgba(34,197,94,0.2)',
-                          color: '#22c55e',
-                          border: '1px solid rgba(34,197,94,0.26)',
-                          borderRadius: '7px',
-                          fontSize: '12px',
-                          fontWeight: '800',
+                          padding: '4px 9px',
+                          backgroundColor: 'rgba(34,197,94,0.10)',
+                          color: '#86efac',
+                          border: '1px solid rgba(34,197,94,0.18)',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          fontWeight: '700',
                           cursor: 'pointer',
                         }}
                       >
@@ -525,13 +524,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                     <button
                       onClick={() => toggleCritical(r.id)}
                       style={{
-                        padding: '6px 12px',
-                        backgroundColor: 'rgba(245,158,11,0.2)',
-                        color: '#f59e0b',
-                        border: '1px solid rgba(245,158,11,0.26)',
-                        borderRadius: '7px',
-                        fontSize: '12px',
-                        fontWeight: '800',
+                        padding: '4px 9px',
+                        backgroundColor: 'rgba(245,158,11,0.10)',
+                        color: '#fbbf24',
+                        border: '1px solid rgba(245,158,11,0.18)',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        fontWeight: '700',
                         cursor: 'pointer',
                       }}
                     >
