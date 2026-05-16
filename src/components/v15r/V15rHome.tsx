@@ -1277,24 +1277,24 @@ export default function V15rHome() {
                                 {hasPay && <span className="rounded-full border border-emerald-400/20 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-emerald-300">Collected</span>}
                               </div>
                               {l.notes && <div className="w-full text-[12px] font-medium leading-relaxed text-white">{l.notes}</div>}
-                              <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-                                <div className="rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
+                              <div className="flex max-w-full flex-wrap gap-2">
+                                <div className="w-[96px] rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Hrs</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none text-slate-100">{num(l.hrs).toFixed(1)}</div>
                                 </div>
-                                <div className="rounded-md border border-amber-300/[0.12] bg-amber-400/[0.025] px-2.5 py-2">
+                                <div className="w-[122px] rounded-md border border-amber-300/[0.12] bg-amber-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Mat</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</div>
                                 </div>
-                                <div className="rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
+                                <div className="w-[98px] rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Miles</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#60a5fa' }}>{num(l.miles)}</div>
                                 </div>
-                                <div className="rounded-md border border-emerald-300/[0.12] bg-emerald-400/[0.025] px-2.5 py-2">
+                                <div className="w-[132px] rounded-md border border-emerald-300/[0.12] bg-emerald-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Coll</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#6ee7b7' }}>{fmt(num(l.collected))}</div>
                                 </div>
-                                <div className="rounded-md border border-cyan-200/[0.14] bg-slate-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:col-span-2 xl:col-span-1">
+                                <div className="w-[154px] rounded-md border border-cyan-200/[0.14] bg-slate-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Remaining</div>
                                   <div className="mt-0.5 font-mono text-[13px] font-extrabold leading-none" style={{ color: balanceColor }}>{fmt(runningBalance)}</div>
                                 </div>
