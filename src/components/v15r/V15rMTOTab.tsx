@@ -1,9 +1,10 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { Sparkles, FileText, Search } from 'lucide-react'
+import { Sparkles, FileText, Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { getBackupData, saveBackupDataAndSync, num, fmt } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { exportMaterialSummaryPDF } from '@/services/mtoExportService'
+import { loadInnerProjectViewPrefs, mergeInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
 import { getProjectPhaseNames, getLegacyPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 
 interface V15rMTOTabProps {
@@ -15,6 +16,13 @@ interface V15rMTOTabProps {
 export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup }: V15rMTOTabProps) {
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+  const [collapsedPhases, setCollapsedPhases] = useState<Record<string, boolean>>(() =>
+    loadInnerProjectViewPrefs(projectId).mto?.collapsedPhases || {},
+  )
+
+  useEffect(() => {
+    setCollapsedPhases(loadInnerProjectViewPrefs(projectId).mto?.collapsedPhases || {})
+  }, [projectId])
 
   // ── Multi-select state ──────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -184,6 +192,18 @@ React.useEffect(() => { forceUpdate() }, [projectId])
   // IMPORTANT: grouping reads ONLY from committed row data, never from localPlacements
   const hasAnyPlacement = allRows.some(r => r.placement && r.placement.trim())
   const existingPlacements: string[] = [...new Set(allRows.map(r => r.placement).filter(Boolean))]
+
+  const togglePhaseBucket = (phase: string) => {
+    setCollapsedPhases(prev => {
+      const nextCollapsed = !prev[phase]
+      mergeInnerProjectViewPrefs(projectId, {
+        mto: { collapsedPhases: { [phase]: nextCollapsed } },
+      })
+      return { ...prev, [phase]: nextCollapsed }
+    })
+  }
+
+  const formatItemCount = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`
 
   // ── Selection helpers ───────────────────────────────────────────────
   // Click handle = toggle that one row. No drag-range, no hover expansion.
@@ -714,6 +734,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     displayPhases.map(phase => {
       const isLegacyPhase = legacyPhases.includes(phase)
       const rows = allRows.filter(r => normalizePhaseName(r.phase, phases) === phase)
+      const isCollapsed = collapsedPhases[phase] === true
       let phTotal = 0
       rows.forEach(r => {
         const pbItem = getPBItem(r.matId)
@@ -726,46 +747,105 @@ React.useEffect(() => { forceUpdate() }, [projectId])
       return (
         <div
           key={phase}
-          style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}
+          style={{
+            background: 'linear-gradient(180deg, rgba(35,39,56,0.96), rgba(26,29,39,0.96))',
+            border: '1px solid rgba(148,163,184,0.12)',
+            borderRadius: '12px',
+            marginBottom: '14px',
+            overflow: 'hidden',
+            boxShadow: '0 18px 42px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.02) inset',
+          }}
         >
-          <div
+          <button
+            type="button"
+            aria-expanded={!isCollapsed}
+            onClick={() => togglePhaseBucket(phase)}
             style={{
-              backgroundColor: 'rgba(139,92,246,0.1)',
-              padding: '12px 16px',
+              width: '100%',
+              background: 'linear-gradient(135deg, rgba(79,70,229,0.26), rgba(14,165,233,0.12) 52%, rgba(15,23,42,0.38))',
+              padding: '11px 14px',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              borderBottom: '1px solid rgba(255,255,255,0.05)',
+              gap: '14px',
+              border: 'none',
+              borderBottom: isCollapsed ? 'none' : '1px solid rgba(255,255,255,0.06)',
+              boxShadow: '0 1px 0 rgba(255,255,255,0.05) inset, 0 0 24px rgba(99,102,241,0.10)',
+              cursor: 'pointer',
+              textAlign: 'left',
+              userSelect: 'none',
             }}
           >
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>
-              {isLegacyPhase ? `Unmapped / Legacy Phase: ${phase}` : phase} ({rows.length} items)
-            </h4>
-            <span style={{ color: '#10b981', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(phTotal)}</span>
-          </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '999px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#c4b5fd',
+                  background: 'rgba(255,255,255,0.07)',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  flexShrink: 0,
+                }}
+              >
+                {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+              </span>
+              <span style={{ width: '3px', height: '24px', borderRadius: '999px', background: 'linear-gradient(180deg, #a78bfa, #22d3ee)', boxShadow: '0 0 16px rgba(167,139,250,0.45)', flexShrink: 0 }} />
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--t1)', fontWeight: '800', fontSize: '14px', letterSpacing: '0.01em' }}>
+                    {isLegacyPhase ? `Unmapped / Legacy Phase: ${phase}` : phase}
+                  </span>
+                  <span
+                    style={{
+                      color: '#cbd5e1',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      padding: '2px 7px',
+                      borderRadius: '999px',
+                      background: 'rgba(15,23,42,0.36)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    {formatItemCount(rows.length)}
+                  </span>
+                </span>
+                <span style={{ display: 'block', color: 'rgba(203,213,225,0.58)', fontSize: '10px', marginTop: '2px', fontWeight: '600' }}>
+                  {isCollapsed ? 'Collapsed' : 'Expanded'}
+                </span>
+              </span>
+            </div>
+            <span style={{ color: '#10b981', fontWeight: '800', fontFamily: 'monospace', fontSize: '13px', flexShrink: 0, textShadow: '0 0 16px rgba(16,185,129,0.18)' }}>{fmt(phTotal)}</span>
+          </button>
 
-          <div style={{ padding: '12px' }}>
-            <table style={{ width: '100%', fontSize: '12px', color: 'var(--t2)', borderCollapse: 'collapse' }}>
-              {renderTableHead()}
-              <tbody>{rows.map(r => renderRow(r))}</tbody>
-            </table>
-            <button
-              onClick={() => addMTORow(phase)}
-              style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                backgroundColor: 'rgba(59,130,246,0.2)',
-                color: '#3b82f6',
-                border: '1px solid rgba(59,130,246,0.3)',
-                borderRadius: '4px',
-                fontSize: '12px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              + Add Item
-            </button>
-          </div>
+          {!isCollapsed && (
+            <div style={{ padding: '12px' }}>
+              <table style={{ width: '100%', fontSize: '12px', color: 'var(--t2)', borderCollapse: 'collapse' }}>
+                {renderTableHead()}
+                <tbody>{rows.map(r => renderRow(r))}</tbody>
+              </table>
+              <button
+                onClick={() => addMTORow(phase)}
+                style={{
+                  marginTop: '8px',
+                  padding: '6px 12px',
+                  backgroundColor: 'rgba(59,130,246,0.2)',
+                  color: '#3b82f6',
+                  border: '1px solid rgba(59,130,246,0.3)',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                }}
+              >
+                + Add Item
+              </button>
+            </div>
+          )}
         </div>
       )
     })

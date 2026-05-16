@@ -18,9 +18,15 @@ export type InnerProjectProgressView = {
   overrideEnabled?: Record<string, boolean>
 }
 
+export type InnerProjectMTOView = {
+  /** true = phase bucket is collapsed */
+  collapsedPhases?: Record<string, boolean>
+}
+
 export type InnerProjectViewPrefs = {
   estimate?: InnerProjectEstimateView
   progress?: InnerProjectProgressView
+  mto?: InnerProjectMTOView
 }
 
 export function getInnerProjectViewStorageKey(projectId: string): string | null {
@@ -85,10 +91,25 @@ export function mergeInnerProjectViewPrefs(projectId: string, patch: InnerProjec
     }
   }
 
+  let nextMto = prev.mto
+  if (patch.mto !== undefined) {
+    const collapsedPhases =
+      patch.mto.collapsedPhases !== undefined
+        ? { ...prev.mto?.collapsedPhases, ...patch.mto.collapsedPhases }
+        : prev.mto?.collapsedPhases
+
+    nextMto = {
+      ...prev.mto,
+      ...patch.mto,
+      collapsedPhases,
+    }
+  }
+
   const next: InnerProjectViewPrefs = {
     ...prev,
     estimate: nextEstimate,
     progress: nextProgress,
+    mto: nextMto,
   }
 
   writeInnerProjectViewPrefs(projectId, next)
