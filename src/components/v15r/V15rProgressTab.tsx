@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { getBackupData, saveBackupData, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
+import { getBackupData, saveBackupDataAndSync, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import {
   loadInnerProjectViewPrefs,
@@ -189,6 +189,20 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const w = getPhaseWeights(backup)
   const daysSinceMove = daysSince(p.lastMove)
 
+  const persistProjectChange = (
+    mutate: (project: any, currentBackup: any) => false | void,
+  ): boolean => {
+    const currentBackup = initialBackup ?? getBackupData()
+    const project = currentBackup?.projects?.find((x: any) => x.id === projectId)
+    if (!currentBackup || !project) return false
+    const result = mutate(project, currentBackup)
+    if (result === false) return false
+    saveBackupDataAndSync(currentBackup, 'projects')
+    onUpdate?.()
+    forceUpdate()
+    return true
+  }
+
   const sortedLegacyStandardEntries: [string, number][] = LEGACY_STANDARD_PHASE_ORDER
     .filter(ph => w[ph] !== undefined)
     .map(ph => [ph, w[ph]])
@@ -222,19 +236,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
 
   const persistProgressPhaseColor = (ph: string, rawHex: string) => {
     const hex = normalizeColorPickerValue(rawHex)
-    const b = initialBackup ?? getBackupData()
-    if (!b) return
-    const proj = b.projects?.find(x => x.id === projectId)
-    if (!proj) return
-    const prev = proj.progressPhaseColors?.[ph]
-    const prevNorm = prev ? normalizeColorPickerValue(prev) : null
-    if (prevNorm === hex) return
     pushState()
-    if (!proj.progressPhaseColors) proj.progressPhaseColors = {}
-    proj.progressPhaseColors[ph] = hex
-    saveBackupData(b)
-    onUpdate?.()
-    forceUpdate()
+    persistProjectChange(proj => {
+      const prev = proj.progressPhaseColors?.[ph]
+      const prevNorm = prev ? normalizeColorPickerValue(prev) : null
+      if (prevNorm === hex) return false
+      if (!proj.progressPhaseColors) proj.progressPhaseColors = {}
+      proj.progressPhaseColors[ph] = hex
+    })
   }
 
   const clearPhaseColorDebounceTimer = (ph: string) => {
@@ -289,58 +298,56 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
 
   const editTask = (ph, taskId, field, value) => {
     pushState()
-    const tasks = (p.tasks || {})[ph] || []
-    const task = tasks.find(t => t.id === taskId)
-    if (task) {
+    persistProjectChange(proj => {
+      const tasks = (proj.tasks || {})[ph] || []
+      const task = tasks.find(t => t.id === taskId)
+      if (!task) return false
       if (field === 'desc') task.desc = String(value)
       else if (field === 'hrs') task.hrs = num(value)
       else if (field === 'pct') task.pct = Math.min(100, Math.max(0, num(value)))
-    }
-    saveBackupData(backup)
-    forceUpdate()
+    })
   }
 
   const addTask = (ph) => {
     pushState()
-    if (!p.tasks) p.tasks = {}
-    if (!p.tasks[ph]) p.tasks[ph] = []
-    p.tasks[ph].push({
-      id: 'tsk' + Date.now(),
-      desc: 'New task',
-      hrs: 0,
-      pct: 0,
+    persistProjectChange(proj => {
+      if (!proj.tasks) proj.tasks = {}
+      if (!proj.tasks[ph]) proj.tasks[ph] = []
+      proj.tasks[ph].push({
+        id: 'tsk' + Date.now(),
+        desc: 'New task',
+        hrs: 0,
+        pct: 0,
+      })
     })
-    saveBackupData(backup)
-    forceUpdate()
   }
 
   const delTask = (ph, taskId) => {
     pushState()
-    if (p.tasks && p.tasks[ph]) {
-      p.tasks[ph] = p.tasks[ph].filter(t => t.id !== taskId)
-    }
-    saveBackupData(backup)
-    forceUpdate()
+    persistProjectChange(proj => {
+      if (!proj.tasks?.[ph]) return false
+      proj.tasks[ph] = proj.tasks[ph].filter(t => t.id !== taskId)
+    })
   }
 
   const overridePhase = (ph, value) => {
     pushState()
-    p.phases = p.phases || {}
-    p.phases[ph] = Math.min(100, Math.max(0, num(value)))
-    p.lastMove = new Date().toISOString()
-    saveBackupData(backup)
-    forceUpdate()
+    persistProjectChange(proj => {
+      proj.phases = proj.phases || {}
+      proj.phases[ph] = Math.min(100, Math.max(0, num(value)))
+      proj.lastMove = new Date().toISOString()
+    })
   }
 
   const setPhaseProgressOverrideEnabled = (ph: string, enabled: boolean) => {
     pushState()
-    if (!p.progressPhaseOverrideEnabled) p.progressPhaseOverrideEnabled = {}
-    p.progressPhaseOverrideEnabled[ph] = !!enabled
-    saveBackupData(backup)
+    persistProjectChange(proj => {
+      if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
+      proj.progressPhaseOverrideEnabled[ph] = !!enabled
+    })
     mergeInnerProjectViewPrefs(projectId, {
       progress: { overrideEnabled: { [ph]: !!enabled } },
     })
-    forceUpdate()
   }
 
   const confirmAddCustomPhase = () => {
@@ -352,18 +359,18 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
       return
     }
     pushState()
-    if (!p.customPhases) p.customPhases = []
-    if (!p.phases) p.phases = {}
-    if (!p.tasks) p.tasks = {}
-    if (!p.progressPhaseOverrideEnabled) p.progressPhaseOverrideEnabled = {}
-    p.progressPhaseOverrideEnabled[trimmed] = false
-    p.customPhases.push(trimmed)
-    p.phases[trimmed] = 0
-    if (!p.tasks[trimmed]) p.tasks[trimmed] = []
-    saveBackupData(backup)
+    persistProjectChange(proj => {
+      if (!proj.customPhases) proj.customPhases = []
+      if (!proj.phases) proj.phases = {}
+      if (!proj.tasks) proj.tasks = {}
+      if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
+      proj.progressPhaseOverrideEnabled[trimmed] = false
+      proj.customPhases.push(trimmed)
+      proj.phases[trimmed] = 0
+      if (!proj.tasks[trimmed]) proj.tasks[trimmed] = []
+    })
     setNewPhaseName('')
     setAddingPhase(false)
-    forceUpdate()
   }
 
   const deleteCustomPhase = (ph: string) => {
@@ -375,14 +382,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
       if (!ok) return
     }
     pushState()
-    if (p.customPhases) p.customPhases = p.customPhases.filter(x => x !== ph)
-    if (p.phases) delete p.phases[ph]
-    if (p.tasks) delete p.tasks[ph]
-    if (p.progressPhaseColors) delete p.progressPhaseColors[ph]
-    if (p.progressPhaseOverrideEnabled) delete p.progressPhaseOverrideEnabled[ph]
+    persistProjectChange(proj => {
+      if (proj.customPhases) proj.customPhases = proj.customPhases.filter(x => x !== ph)
+      if (proj.phases) delete proj.phases[ph]
+      if (proj.tasks) delete proj.tasks[ph]
+      if (proj.progressPhaseColors) delete proj.progressPhaseColors[ph]
+      if (proj.progressPhaseOverrideEnabled) delete proj.progressPhaseOverrideEnabled[ph]
+    })
     removeProgressPhaseViewKeys(projectId, ph)
-    saveBackupData(backup)
-    forceUpdate()
   }
 
   const onDragStart = (ph: string, taskId: string, e: React.DragEvent) => {
@@ -412,11 +419,12 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     pushState()
     const [moved] = tasks.splice(fromIdx, 1)
     tasks.splice(toIdx, 0, moved)
-    p.tasks[ph] = tasks
-    saveBackupData(backup)
+    persistProjectChange(proj => {
+      if (!proj.tasks) proj.tasks = {}
+      proj.tasks[ph] = tasks
+    })
     dragInfo.current = null
     setDragActive(null)
-    forceUpdate()
   }
 
   const onDragEnd = () => {
