@@ -5,6 +5,7 @@ import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, p
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
+import MileageProjectAddress, { MileageStreetViewPreview, type MileageAddressCommitPatch } from './MileageProjectAddress'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 
@@ -52,6 +53,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const prefs = loadInnerProjectViewPrefs(projectId)
     if (prefs.estimate?.showInternalBreakdown === undefined) setShowInternalBreakdown(true)
     else setShowInternalBreakdown(!!prefs.estimate.showInternalBreakdown)
+  }, [projectId])
+
+  const [showPipelineOverview, setShowPipelineOverview] = useState(() => {
+    const prefs = loadInnerProjectViewPrefs(projectId)
+    if (prefs.estimate?.showPipelineOverview === undefined) return true
+    return !!prefs.estimate.showPipelineOverview
+  })
+
+  useEffect(() => {
+    const prefs = loadInnerProjectViewPrefs(projectId)
+    if (prefs.estimate?.showPipelineOverview === undefined) setShowPipelineOverview(true)
+    else setShowPipelineOverview(!!prefs.estimate.showPipelineOverview)
   }, [projectId])
 
   // Service Call form state
@@ -232,6 +245,45 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     else if (field === 'miDays') p.miDays = num(value)
     saveBackupData(backup)
     forceUpdate()
+  }
+
+  /** Job site address: same persisted project fields as Edit Project modal — no local-only copy */
+  function applyProjectAddressCommit(patch: MileageAddressCommitPatch) {
+    pushState()
+
+    ;(p as { address?: string }).address = patch.address.trim()
+
+    const lat = patch.addressLat
+    const lng = patch.addressLng
+    const hasGeo =
+      typeof lat === 'number' &&
+      typeof lng === 'number' &&
+      Number.isFinite(lat) &&
+      Number.isFinite(lng)
+
+    const nextPid =
+      patch.placeId != null && String(patch.placeId).trim() !== ''
+        ? String(patch.placeId).trim()
+        : ''
+
+    if (hasGeo) {
+      p.addressLat = lat as number
+      p.addressLng = lng as number
+    } else {
+      delete (p as { addressLat?: number }).addressLat
+      delete (p as { addressLng?: number }).addressLng
+    }
+
+    if (nextPid) {
+      ;(p as { placeId?: string }).placeId = nextPid
+    } else {
+      delete (p as { placeId?: string }).placeId
+    }
+
+    saveBackupDataAndSync(backup)
+
+    forceUpdate()
+    onUpdate?.()
   }
 
   const editTax = (value) => {
@@ -784,93 +836,134 @@ Return ONLY valid JSON, no other text.`
 
       {/* G7: Deal Overview Pipeline Chart */}
       <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div style={{ fontWeight: '700', fontSize: '13px', color: '#9ca3af', textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '0.05em' }}>
-          📊 Estimate Pipeline Overview
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '12px' }}>
-          {/* Won — active projects (awarded work) + fully paid service calls */}
-          <div style={{ backgroundColor: 'rgba(16,185,129,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #10b981' }}>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>✅ Won</div>
-            <div style={{ fontSize: '18px', fontWeight: '800', color: '#10b981', fontFamily: 'monospace' }}>{fmt(pipelineWon.value)}</div>
-            <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} active/awarded</div>
-            <div style={{ fontSize: '10px', color: '#6ee7b7', marginTop: '6px', lineHeight: '1.6' }}>
-              <div>Projects: {fmt(pipelineWon.projectValue)} · {pipelineWon.projectCount} active</div>
-              <div>Service Calls: {fmt(pipelineWon.svcValue)} · {pipelineWon.svcCount} paid</div>
-            </div>
+        <button
+          type="button"
+          onClick={() => {
+            setShowPipelineOverview((v) => {
+              const next = !v
+              mergeInnerProjectViewPrefs(projectId, { estimate: { showPipelineOverview: next } })
+              return next
+            })
+          }}
+          style={{
+            width: '100%',
+            margin: '0',
+            padding: '0',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+          aria-expanded={showPipelineOverview}
+        >
+          <div
+            style={{
+              fontWeight: '700',
+              fontSize: '13px',
+              color: '#9ca3af',
+              textTransform: 'uppercase',
+              marginBottom: showPipelineOverview ? '12px' : '0',
+              letterSpacing: '0.05em',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+            }}
+          >
+            <span style={{ pointerEvents: 'none' }}>📊 Estimate Pipeline Overview</span>
+            <span style={{ pointerEvents: 'none', color: '#6b7280', fontSize: '11px', fontWeight: 700 }}>
+              {showPipelineOverview ? '▲ hide' : '▼ show'}
+            </span>
           </div>
-          {/* Pending — coming projects + open service estimates + active calls */}
-          <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>⏳ Pending</div>
-            <div style={{ fontSize: '18px', fontWeight: '800', color: '#eab308', fontFamily: 'monospace' }}>{fmt(pipelinePending.value)}</div>
-            <div style={{ fontSize: '11px', color: '#6b7280', lineHeight: '1.6', marginTop: '4px' }}>
-              {pipelinePending.count === 0 ? (
-                <span>No pending items</span>
-              ) : (
-                <>
-                  {(() => {
-                    const allProjects = backup.projects || []
-                    const comingCount = allProjects.filter(p => { const s = (p.status||'').toLowerCase(); if (s==='deleted'||s==='lost'||s==='rejected') return false; return resolveProjectBucket(p)==='coming' }).length
-                    const estCount = (backup.serviceEstimates||[]).filter(e => (e.estimateStatus||e.status||'') !== 'lost').length
-                    const activeCallCount = (backup.activeServiceCalls||[]).length
-                    const svcLogs = backup.serviceLogs||[]
-                    const partialCount = svcLogs.filter(l => { const tb = svcTotalBillable(l); return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb }).length
-                    return (
-                      <div>
-                        {comingCount > 0 && <div>{comingCount} coming project{comingCount !== 1 ? 's' : ''}</div>}
-                        {estCount > 0 && <div>{estCount} open estimate{estCount !== 1 ? 's' : ''}</div>}
-                        {activeCallCount > 0 && <div>{activeCallCount} active call{activeCallCount !== 1 ? 's' : ''}</div>}
-                        {partialCount > 0 && <div>{partialCount} partial payment{partialCount !== 1 ? 's' : ''}</div>}
-                      </div>
-                    )
-                  })()}
-                </>
-              )}
-            </div>
-          </div>
-          {/* Lost / Unpaid — split into two states */}
-          <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost / Unpaid</div>
-            <div style={{ fontSize: '18px', fontWeight: '800', color: '#ef4444', fontFamily: 'monospace' }}>{fmt(pipelineLost.value)}</div>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
-              {pipelineLost.lostCount > 0 && (
-                <span style={{ fontSize: '10px', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
-                  Lost: {pipelineLost.lostCount} ({fmt(pipelineLost.lostValue)})
-                </span>
-              )}
-              {pipelineLost.unpaidCount > 0 && (
-                <span style={{ fontSize: '10px', color: '#fb923c', backgroundColor: 'rgba(251,146,60,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
-                  Unpaid: {pipelineLost.unpaidCount} ({fmt(pipelineLost.unpaidValue)})
-                </span>
-              )}
-              {pipelineLost.count === 0 && <span style={{ fontSize: '11px', color: '#6b7280' }}>0 items</span>}
-            </div>
-          </div>
-        </div>
+        </button>
 
-        {/* Pending estimate rows with Mark as Lost */}
-       
-        {/* Pipeline bar visualization */}
-        {pipelineTotal > 0 && (
-          <div>
-            <div style={{ height: '12px', borderRadius: '6px', overflow: 'hidden', display: 'flex', gap: '1px', backgroundColor: '#1e2130' }}>
-              {pipelineWon.value > 0 && (
-                <div style={{ flex: pipelineWon.value / pipelineTotal, backgroundColor: '#10b981', minWidth: '2px' }}
-                     title={`Won: ${fmt(pipelineWon.value)}`} />
-              )}
-              {pipelinePending.value > 0 && (
-                <div style={{ flex: pipelinePending.value / pipelineTotal, backgroundColor: '#eab308', minWidth: '2px' }}
-                     title={`Pending: ${fmt(pipelinePending.value)}`} />
-              )}
-              {pipelineLost.value > 0 && (
-                <div style={{ flex: pipelineLost.value / pipelineTotal, backgroundColor: '#ef4444', minWidth: '2px' }}
-                     title={`Lost: ${fmt(pipelineLost.value)}`} />
-              )}
+        {showPipelineOverview && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '12px' }}>
+              {/* Won — active projects (awarded work) + fully paid service calls */}
+              <div style={{ backgroundColor: 'rgba(16,185,129,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #10b981' }}>
+                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>✅ Won</div>
+                <div style={{ fontSize: '18px', fontWeight: '800', color: '#10b981', fontFamily: 'monospace' }}>{fmt(pipelineWon.value)}</div>
+                <div style={{ fontSize: '11px', color: '#6b7280' }}>{pipelineWon.count} active/awarded</div>
+                <div style={{ fontSize: '10px', color: '#6ee7b7', marginTop: '6px', lineHeight: '1.6' }}>
+                  <div>Projects: {fmt(pipelineWon.projectValue)} · {pipelineWon.projectCount} active</div>
+                  <div>Service Calls: {fmt(pipelineWon.svcValue)} · {pipelineWon.svcCount} paid</div>
+                </div>
+              </div>
+              {/* Pending — coming projects + open service estimates + active calls */}
+              <div style={{ backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #eab308' }}>
+                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>⏳ Pending</div>
+                <div style={{ fontSize: '18px', fontWeight: '800', color: '#eab308', fontFamily: 'monospace' }}>{fmt(pipelinePending.value)}</div>
+                <div style={{ fontSize: '11px', color: '#6b7280', lineHeight: '1.6', marginTop: '4px' }}>
+                  {pipelinePending.count === 0 ? (
+                    <span>No pending items</span>
+                  ) : (
+                    <>
+                      {(() => {
+                        const allProjects = backup.projects || []
+                        const comingCount = allProjects.filter(p => { const s = (p.status||'').toLowerCase(); if (s==='deleted'||s==='lost'||s==='rejected') return false; return resolveProjectBucket(p)==='coming' }).length
+                        const estCount = (backup.serviceEstimates||[]).filter(e => (e.estimateStatus||e.status||'') !== 'lost').length
+                        const activeCallCount = (backup.activeServiceCalls||[]).length
+                        const svcLogs = backup.serviceLogs||[]
+                        const partialCount = svcLogs.filter(l => { const tb = svcTotalBillable(l); return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb }).length
+                        return (
+                          <div>
+                            {comingCount > 0 && <div>{comingCount} coming project{comingCount !== 1 ? 's' : ''}</div>}
+                            {estCount > 0 && <div>{estCount} open estimate{estCount !== 1 ? 's' : ''}</div>}
+                            {activeCallCount > 0 && <div>{activeCallCount} active call{activeCallCount !== 1 ? 's' : ''}</div>}
+                            {partialCount > 0 && <div>{partialCount} partial payment{partialCount !== 1 ? 's' : ''}</div>}
+                          </div>
+                        )
+                      })()}
+                    </>
+                  )}
+                </div>
+              </div>
+              {/* Lost / Unpaid — split into two states */}
+              <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
+                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost / Unpaid</div>
+                <div style={{ fontSize: '18px', fontWeight: '800', color: '#ef4444', fontFamily: 'monospace' }}>{fmt(pipelineLost.value)}</div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                  {pipelineLost.lostCount > 0 && (
+                    <span style={{ fontSize: '10px', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                      Lost: {pipelineLost.lostCount} ({fmt(pipelineLost.lostValue)})
+                    </span>
+                  )}
+                  {pipelineLost.unpaidCount > 0 && (
+                    <span style={{ fontSize: '10px', color: '#fb923c', backgroundColor: 'rgba(251,146,60,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                      Unpaid: {pipelineLost.unpaidCount} ({fmt(pipelineLost.unpaidValue)})
+                    </span>
+                  )}
+                  {pipelineLost.count === 0 && <span style={{ fontSize: '11px', color: '#6b7280' }}>0 items</span>}
+                </div>
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#4b5563', marginTop: '4px' }}>
-              <span>Total Pipeline: {fmt(pipelineTotal)}</span>
-              <span>Win Rate: {pipelineTotal > 0 ? ((pipelineWon.value / pipelineTotal) * 100).toFixed(0) : 0}%</span>
-            </div>
-          </div>
+
+            {/* Pending estimate rows with Mark as Lost */}
+
+            {/* Pipeline bar visualization */}
+            {pipelineTotal > 0 && (
+              <div>
+                <div style={{ height: '12px', borderRadius: '6px', overflow: 'hidden', display: 'flex', gap: '1px', backgroundColor: '#1e2130' }}>
+                  {pipelineWon.value > 0 && (
+                    <div style={{ flex: pipelineWon.value / pipelineTotal, backgroundColor: '#10b981', minWidth: '2px' }}
+                         title={`Won: ${fmt(pipelineWon.value)}`} />
+                  )}
+                  {pipelinePending.value > 0 && (
+                    <div style={{ flex: pipelinePending.value / pipelineTotal, backgroundColor: '#eab308', minWidth: '2px' }}
+                         title={`Pending: ${fmt(pipelinePending.value)}`} />
+                  )}
+                  {pipelineLost.value > 0 && (
+                    <div style={{ flex: pipelineLost.value / pipelineTotal, backgroundColor: '#ef4444', minWidth: '2px' }}
+                         title={`Lost: ${fmt(pipelineLost.value)}`} />
+                  )}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#4b5563', marginTop: '4px' }}>
+                  <span>Total Pipeline: {fmt(pipelineTotal)}</span>
+                  <span>Win Rate: {pipelineTotal > 0 ? ((pipelineWon.value / pipelineTotal) * 100).toFixed(0) : 0}%</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -1598,10 +1691,26 @@ Return ONLY valid JSON, no other text.`
 
         {/* MILEAGE */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden', padding: '12px 16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Mileage Calculation</h4>
-            <span style={{ color: '#f59e0b', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.mi)}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '12px', gap: '16px' }}>
+            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0', flexShrink: 0 }}>Mileage Calculation</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', minWidth: 0 }}>
+              <span style={{ color: '#f59e0b', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.mi)}</span>
+              <div style={{ width: 'min(320px, 42vw)', maxWidth: '100%' }}>
+                <MileageStreetViewPreview
+                  addressProp={String(p.address || '')}
+                  addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
+                  addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
+                />
+              </div>
+            </div>
           </div>
+          <MileageProjectAddress
+            addressProp={String(p.address || '')}
+            addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
+            addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
+            placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
+            onCommit={applyProjectAddressCommit}
+          />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', fontSize: '13px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>

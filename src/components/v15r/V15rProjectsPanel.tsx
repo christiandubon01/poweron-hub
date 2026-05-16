@@ -142,6 +142,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [epNotes, setEpNotes] = useState('')
   // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — epPlannedStart retired; "Start Date" now writes to plannedStart.
   const [epPlannedEnd, setEpPlannedEnd] = useState('')
+  /** Job site address — same persisted field as Estimate mileage section */
+  const [epAddress, setEpAddress] = useState('')
 
   useEffect(() => {
     function handleOpenSourceRecord(e: Event) {
@@ -229,6 +231,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setEpStatus(p.status || 'active')
     setEpNotes((p as any).notes || '')
     setEpPlannedEnd(p.plannedEnd || '')
+    setEpAddress(String((p as any).address || ''))
     setShowEditProject(true)
   }
 
@@ -370,6 +373,16 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" input writes to plannedStart.
     p.plannedStart = epStartDate || undefined
     p.plannedEnd = epPlannedEnd || undefined
+
+    const nextAddr = epAddress.trim()
+    const prevAddr = String((p as any).address || '').trim()
+    if (nextAddr !== prevAddr) {
+      delete (p as any).addressLat
+      delete (p as any).addressLng
+      delete (p as any).placeId
+    }
+    ;(p as any).address = nextAddr
+
     saveBackupDataAndSync(backup)
     if ((p as any).accountId) {
       void linkEntityToAccount({
@@ -1083,6 +1096,16 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                   <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Contract Amount ($)</label>
                   <input type="number" value={epContract} onChange={e => setEpContract(e.target.value)} className={inputCls} placeholder="0" />
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job site address</label>
+                <input
+                  type="text"
+                  value={epAddress}
+                  onChange={(e) => setEpAddress(e.target.value)}
+                  className={inputCls}
+                  placeholder="Street, city (matches Estimate → Mileage)"
+                />
               </div>
               {/* DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — L1 layout: dates top row, categoricals bottom row */}
               <div className="grid grid-cols-2 gap-3">

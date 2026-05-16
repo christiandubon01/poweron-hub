@@ -7,6 +7,8 @@ export const INNER_PROJECT_VIEW_LS_PREFIX = 'poweron:v15r:innerProjectView:'
 
 export type InnerProjectEstimateView = {
   showInternalBreakdown?: boolean
+  /** Estimate tab — "Estimate Pipeline Overview" section expanded when true */
+  showPipelineOverview?: boolean
 }
 
 export type InnerProjectProgressView = {

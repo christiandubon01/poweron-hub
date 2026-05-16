@@ -190,6 +190,12 @@ export interface BackupProject {
   plannedStart?: string; plannedEnd?: string
   /** Progress tab header accent colors per phase name (project-local, optional) */
   progressPhaseColors?: Record<string, string>
+  /** Job site / project address (synced backup; Estimate mileage + Edit Project) */
+  address?: string
+  addressLat?: number
+  addressLng?: number
+  /** Google Places place_id when address was picked from autocomplete */
+  placeId?: string
 }
 
 export interface BackupPriceBookItem {
