@@ -14,105 +14,336 @@ export type MileageAddressCommitPatch = {
   placeId?: string | null
 }
 
+/** Persist coords from Geocoder — same save path as address (caller uses saveBackupDataAndSync). */
+export type PersistStreetViewGeometryPayload = {
+  addressLat: number
+  addressLng: number
+  /** Optional: geocoder place_id — only consumed when caller wants to refine an empty Places id */
+  placeId?: string
+}
+
 export const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY as string) ?? ''
+
+const STREET_VIEW_IMG_SIZE = '360x180'
 
 export function streetViewThumbnailUrl(opts: {
   lat?: number | null
   lng?: number | null
-  address: string
+  panoId?: string | null
   apiKey: string
 }): string | null {
-  const { lat, lng, address, apiKey } = opts
+  const { lat, lng, panoId, apiKey } = opts
   if (!apiKey) return null
-  const size = '640x280'
-  if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
-    return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&fov=80&pitch=0&key=${encodeURIComponent(apiKey)}`
+
+  const baseParams = `size=${STREET_VIEW_IMG_SIZE}&fov=80&pitch=0&key=${encodeURIComponent(apiKey)}`
+
+  const pid = String(panoId || '').trim()
+  if (pid.length > 0) {
+    return `https://maps.googleapis.com/maps/api/streetview?${baseParams}&pano=${encodeURIComponent(pid)}`
   }
-  const a = address.trim()
-  if (a.length >= 3) {
-    return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${encodeURIComponent(a)}&fov=80&pitch=0&key=${encodeURIComponent(apiKey)}`
+
+  if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
+    return `https://maps.googleapis.com/maps/api/streetview?${baseParams}&location=${lat},${lng}`
   }
   return null
 }
 
-/** Shown directly under mileage total (+ grid): only updates preview when coords/address props change — not while typing */
+function coordsClose(a?: number | null, b?: number | null, eps = 1e-5): boolean {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false
+  return Math.abs((a as number) - (b as number)) < eps
+}
+
+function tryGetPanorama(
+  sv: google.maps.StreetViewService,
+  lat: number,
+  lng: number,
+  radius: number,
+  cb: (data: google.maps.StreetViewPanoramaData | null, status: google.maps.StreetViewStatus) => void,
+): void {
+  sv.getPanorama({ location: { lat, lng }, radius, preference: google.maps.StreetViewPreference.NEAREST }, cb)
+}
+
+function findNearestPanorama(
+  sv: google.maps.StreetViewService,
+  lat: number,
+  lng: number,
+  radii: number[],
+): Promise<{ data: google.maps.StreetViewPanoramaData | null }> {
+  return new Promise((resolve) => {
+    let idx = 0
+    function next(): void {
+      if (idx >= radii.length) {
+        resolve({ data: null })
+        return
+      }
+      tryGetPanorama(sv, lat, lng, radii[idx++]!, (_data: google.maps.StreetViewPanoramaData | null, status: google.maps.StreetViewStatus) => {
+        const g = window.google
+        if (status === g.maps.StreetViewStatus.OK && _data?.location?.latLng) {
+          resolve({ data: _data })
+          return
+        }
+        next()
+      })
+    }
+    next()
+  })
+}
+
+/** Shown under mileage total: geocodes when needed, checks Street View before showing unavailable. */
 export function MileageStreetViewPreview({
   addressProp,
   addressLatProp,
   addressLngProp,
+  placeIdProp,
+  onPersistGeometry,
+  geoRetryNonce = 0,
 }: {
   addressProp: string
   addressLatProp?: number | null
   addressLngProp?: number | null
+  /** Optional — only forwarded to geocode persist when Places didn’t supply one yet */
+  placeIdProp?: string | null
+  onPersistGeometry?: (payload: PersistStreetViewGeometryPayload) => void
+  /** Increment from parent (e.g. Save address) to re-run geocode / panorama probe */
+  geoRetryNonce?: number
 }) {
-  const previewKey = useMemo(
-    () => `${addressLatProp ?? ''}_${addressLngProp ?? ''}_${String(addressProp || '').trim()}`,
-    [addressProp, addressLatProp, addressLngProp],
-  )
+  const persistRef = useRef<typeof onPersistGeometry | undefined>(onPersistGeometry)
+  persistRef.current = onPersistGeometry
 
-  const streetViewUrl = useMemo(
-    () =>
-      streetViewThumbnailUrl({
-        lat: addressLatProp,
-        lng: addressLngProp,
-        address: String(addressProp || '').trim(),
-        apiKey: GOOGLE_MAPS_BROWSER_KEY,
-      }),
-    [addressProp, addressLatProp, addressLngProp],
-  )
+  const { isLoaded } = useJsApiLoader({
+    id: 'v15r-estimate-mileage-places',
+    googleMapsApiKey: GOOGLE_MAPS_BROWSER_KEY,
+    libraries: ['places'],
+  })
 
+  /** 'idle' | 'loading' | 'ready' | 'missing' — missing = no panorama or geocode fail */
+  const [svPhase, setSvPhase] = useState<'idle' | 'loading' | 'ready' | 'missing'>('idle')
+  const [streetViewImgUrl, setStreetViewImgUrl] = useState<string | null>(null)
   const [streetViewBroken, setStreetViewBroken] = useState(false)
-  useEffect(() => {
-    setStreetViewBroken(false)
-  }, [previewKey])
 
-  const hasAddress = String(addressProp || '').trim().length >= 3
+  const addrTrim = String(addressProp || '').trim()
+  const hasAddress = addrTrim.length >= 4
+
+  useEffect(() => {
+    let alive = true
+
+    setStreetViewBroken(false)
+
+    if (!GOOGLE_MAPS_BROWSER_KEY || !hasAddress) {
+      setStreetViewImgUrl(null)
+      setSvPhase('idle')
+      return
+    }
+
+    if (!isLoaded || typeof window === 'undefined') {
+      if (alive) setSvPhase(addrTrim.length ? 'loading' : 'idle')
+      return () => {
+        alive = false
+      }
+    }
+
+    const g = window.google
+    const hasPropCoords =
+      typeof addressLatProp === 'number' &&
+      typeof addressLngProp === 'number' &&
+      Number.isFinite(addressLatProp) &&
+      Number.isFinite(addressLngProp)
+
+    const EPS_COORD = 1e-6
+    function flushPanorama(lat: number, lng: number, panHint?: string | null): void {
+      const sv = new g.maps.StreetViewService()
+      void findNearestPanorama(sv, lat, lng, [42, 120, 380])
+        .then(({ data }) => {
+          if (!alive) return
+
+          if (!data?.location?.latLng) {
+            setStreetViewImgUrl(null)
+            setSvPhase('missing')
+            return
+          }
+
+          const ll = data.location.latLng
+          const plat = typeof ll.lat === 'function' ? ll.lat() : (ll.lat as unknown as number)
+          const plng = typeof ll.lng === 'function' ? ll.lng() : (ll.lng as unknown as number)
+          const panoFromSvc = String(data.location?.pano || '').trim()
+          const pano = panoFromSvc || (panHint ? String(panHint).trim() : '')
+
+          const url =
+            streetViewThumbnailUrl({
+              lat: plat,
+              lng: plng,
+              panoId: pano || null,
+              apiKey: GOOGLE_MAPS_BROWSER_KEY,
+            }) || null
+
+          if (!url) {
+            setStreetViewImgUrl(null)
+            setSvPhase('missing')
+            return
+          }
+
+          setStreetViewImgUrl(url)
+          setSvPhase('ready')
+        })
+        .catch(() => {
+          if (!alive) return
+          setStreetViewImgUrl(null)
+          setSvPhase('missing')
+        })
+    }
+
+    function maybePersistFromGeocoder(
+      plat: number,
+      plng: number,
+      geocoderPlaceId: string | null | undefined,
+    ): void {
+      const persist = persistRef.current
+      if (!persist) return
+
+      const gcPid = geocoderPlaceId ? String(geocoderPlaceId).trim() : ''
+      const existingPid = String(placeIdProp || '').trim()
+
+      const coordsMatchStored =
+        hasPropCoords &&
+        coordsClose(plat, addressLatProp as number, EPS_COORD) &&
+        coordsClose(plng, addressLngProp as number, EPS_COORD)
+
+      if (coordsMatchStored && !gcPid) return
+
+      if (coordsMatchStored && gcPid && !existingPid) {
+        persist({ addressLat: plat, addressLng: plng, placeId: gcPid })
+        return
+      }
+
+      if (coordsMatchStored) return
+
+      const payload = { addressLat: plat, addressLng: plng }
+
+      if (!existingPid && gcPid) payload.placeId = gcPid
+
+      persist(payload)
+    }
+
+    const run = (): void => {
+      if (!alive) return
+      setSvPhase('loading')
+      setStreetViewImgUrl(null)
+
+      /** coords already stored */
+      if (hasPropCoords) {
+        flushPanorama(addressLatProp as number, addressLngProp as number, null)
+        return
+      }
+
+      /** Geocode typed / modal-only address once per address + retry nonce */
+      const geo = new g.maps.Geocoder()
+      geo.geocode({ address: addrTrim }, (results, geoStatus) => {
+        if (!alive) return
+        if (geoStatus !== g.maps.GeocoderStatus.OK || !results?.length) {
+          setStreetViewImgUrl(null)
+          setSvPhase('missing')
+          return
+        }
+        const r0 = results[0]
+        const loc = r0?.geometry?.location
+        const plat = typeof loc.lat === 'function' ? loc.lat() : NaN
+        const plng = typeof loc.lng === 'function' ? loc.lng() : NaN
+        const pid = typeof r0?.place_id === 'string' ? r0.place_id : null
+
+        if (!Number.isFinite(plat) || !Number.isFinite(plng)) {
+          setStreetViewImgUrl(null)
+          setSvPhase('missing')
+          return
+        }
+
+        maybePersistFromGeocoder(plat, plng, pid)
+
+        flushPanorama(plat, plng, null)
+      })
+    }
+
+    run()
+
+    return () => {
+      alive = false
+    }
+    // Omit onPersistGeometry from deps — use persistRef.current
+    // geoRetryNonce: parent bumps to re-geocode Street View probe
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed for map load + coords + retries
+  }, [
+    addrTrim,
+    hasAddress,
+    isLoaded,
+    addressLatProp,
+    addressLngProp,
+    geoRetryNonce,
+    placeIdProp,
+  ])
+
+  const previewKey = useMemo(() => `${addrTrim}_${addressLatProp ?? ''}_${addressLngProp ?? ''}_${geoRetryNonce}`, [
+    addrTrim,
+    addressLatProp,
+    addressLngProp,
+    geoRetryNonce,
+  ])
+
+  const unavailableCls = (
+    <div
+      style={{
+        marginTop: '10px',
+        width: '100%',
+        padding: '14px',
+        borderRadius: '8px',
+        border: '1px dashed rgba(255,255,255,0.12)',
+        color: '#9ca3af',
+        fontSize: '12px',
+        maxWidth: '560px',
+      }}
+    >
+      Street view unavailable for this address
+    </div>
+  )
 
   if (!GOOGLE_MAPS_BROWSER_KEY) return null
 
-  if (streetViewUrl && !streetViewBroken) {
-    return (
-      <div style={{ marginTop: '10px', width: '100%' }}>
-        <img
-          key={previewKey}
-          src={streetViewUrl}
-          alt="Street preview"
-          onError={() => setStreetViewBroken(true)}
-          loading="lazy"
-          decoding="async"
-          referrerPolicy="no-referrer-when-downgrade"
-          style={{
-            width: '100%',
-            maxWidth: '560px',
-            height: 'auto',
-            aspectRatio: '640 / 280',
-            borderRadius: '8px',
-            border: '1px solid rgba(255,255,255,0.08)',
-            objectFit: 'cover',
-            display: 'block',
-          }}
-        />
-      </div>
-    )
-  }
+  if (hasAddress) {
+    if (streetViewImgUrl && svPhase === 'ready' && !streetViewBroken) {
+      return (
+        <div style={{ marginTop: '10px', width: '100%' }}>
+          <img
+            key={previewKey}
+            src={streetViewImgUrl}
+            alt="Street preview"
+            onError={() => setStreetViewBroken(true)}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer-when-downgrade"
+            style={{
+              width: '100%',
+              maxWidth: '560px',
+              height: 'auto',
+              aspectRatio: '360 / 180',
+              borderRadius: '8px',
+              border: '1px solid rgba(255,255,255,0.08)',
+              objectFit: 'cover',
+              display: 'block',
+            }}
+          />
+        </div>
+      )
+    }
 
-  if (hasAddress && streetViewBroken) {
-    return (
-      <div
-        style={{
-          marginTop: '10px',
-          width: '100%',
-          padding: '14px',
-          borderRadius: '8px',
-          border: '1px dashed rgba(255,255,255,0.12)',
-          color: '#9ca3af',
-          fontSize: '12px',
-          maxWidth: '560px',
-        }}
-      >
-        Street view unavailable for this address
-      </div>
-    )
+    /** No panorama, geocoder miss, Static image FAILED (often REQUEST_DENIED if Street View Static API unset) */
+    if (streetViewBroken || svPhase === 'missing') return unavailableCls
+
+    /** idle = first frames before geocode kicks in */
+    if (svPhase === 'loading' || svPhase === 'idle' || !isLoaded) {
+      return (
+        <div style={{ marginTop: '8px', fontSize: '10px', color: '#64748b' }}>
+          Loading street preview…
+        </div>
+      )
+    }
   }
 
   return null
@@ -124,12 +355,14 @@ export default function MileageProjectAddress({
   addressLngProp,
   placeIdProp,
   onCommit,
+  onRequestStreetViewRetry,
 }: {
   addressProp: string
   addressLatProp?: number | null
   addressLngProp?: number | null
   placeIdProp?: string | null
   onCommit: (patch: MileageAddressCommitPatch) => void
+  onRequestStreetViewRetry?: () => void
 }) {
   const [draft, setDraft] = useState(addressProp || '')
   const predictionSnapshotRef = useRef<string | null>(null)
@@ -235,10 +468,10 @@ export default function MileageProjectAddress({
     )
   }
 
-  const commitFromBlurOrExplicit = () => {
+  const commitFromBlurOrExplicit = (): boolean => {
     const trimmed = draft.trim()
     const prev = String(addressProp || '').trim()
-    if (trimmed === prev) return
+    if (trimmed === prev) return false
 
     const patch: MileageAddressCommitPatch = { address: trimmed }
 
@@ -253,6 +486,7 @@ export default function MileageProjectAddress({
     }
 
     onCommit(patch)
+    return true
   }
 
   const mapsDisabledReason = !GOOGLE_MAPS_BROWSER_KEY ? 'Maps features need VITE_GOOGLE_MAPS_BROWSER_KEY in environment.' : null
@@ -269,7 +503,8 @@ export default function MileageProjectAddress({
             onChange={(e) => handleDraftChange(e.target.value)}
             onBlur={() => {
               window.setTimeout(() => setShowList(false), 220)
-              commitFromBlurOrExplicit()
+              const committed = commitFromBlurOrExplicit()
+              if (committed) onRequestStreetViewRetry?.()
             }}
             onFocus={() => suggestions.length > 0 && GOOGLE_MAPS_BROWSER_KEY && isLoaded && setShowList(true)}
             placeholder="Street, city — suggestions when Maps is configured"
@@ -328,7 +563,10 @@ export default function MileageProjectAddress({
         </div>
         <button
           type="button"
-          onClick={() => commitFromBlurOrExplicit()}
+          onClick={() => {
+            commitFromBlurOrExplicit()
+            onRequestStreetViewRetry?.()
+          }}
           style={{
             padding: '8px 12px',
             backgroundColor: 'rgba(16,185,129,0.15)',

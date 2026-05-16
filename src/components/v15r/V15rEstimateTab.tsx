@@ -5,7 +5,11 @@ import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, p
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
-import MileageProjectAddress, { MileageStreetViewPreview, type MileageAddressCommitPatch } from './MileageProjectAddress'
+import MileageProjectAddress, {
+  MileageStreetViewPreview,
+  type MileageAddressCommitPatch,
+  type PersistStreetViewGeometryPayload,
+} from './MileageProjectAddress'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 
@@ -81,6 +85,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [scStore, setScStore] = useState('')
   const [showEstForm, setShowEstForm] = useState(false)
   const [editingEstId, setEditingEstId] = useState<string | null>(null)
+  /** Bumps MileageStreetViewPreview to retry geocode / panorama after Save address */
+  const [mileageSvRetryNonce, setMileageSvRetryNonce] = useState(0)
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
 
   const p = backup.projects.find(x => x.id === projectId)
@@ -278,6 +284,46 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       ;(p as { placeId?: string }).placeId = nextPid
     } else {
       delete (p as { placeId?: string }).placeId
+    }
+
+    saveBackupDataAndSync(backup)
+
+    forceUpdate()
+    onUpdate?.()
+  }
+
+  /** Geocoder-derived lat/lng (+ optional Google place id) uses the same synced backup write as typed address edits. */
+  function persistStreetViewGeometry(hit: PersistStreetViewGeometryPayload): void {
+    const lat = Number(hit.addressLat)
+    const lng = Number(hit.addressLng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+
+    const EPS = 1e-7
+    const prevLat =
+      typeof p.addressLat === 'number' && Number.isFinite(p.addressLat) ? p.addressLat : null
+    const prevLng =
+      typeof p.addressLng === 'number' && Number.isFinite(p.addressLng) ? p.addressLng : null
+
+    const coordsChanged =
+      prevLat == null ||
+      prevLng == null ||
+      Math.abs(prevLat - lat) > EPS ||
+      Math.abs(prevLng - lng) > EPS
+
+    const nextPid =
+      typeof hit.placeId === 'string' ? hit.placeId.trim() : ''
+    const pidRefines = nextPid.length > 0
+    const hadPid = typeof p.placeId === 'string' && String(p.placeId || '').trim() !== ''
+
+    if (!coordsChanged && !(pidRefines && !hadPid)) return
+
+    pushState()
+
+    p.addressLat = lat
+    p.addressLng = lng
+
+    if (pidRefines && !hadPid) {
+      ;(p as { placeId?: string }).placeId = nextPid
     }
 
     saveBackupDataAndSync(backup)
@@ -1700,6 +1746,9 @@ Return ONLY valid JSON, no other text.`
                   addressProp={String(p.address || '')}
                   addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
                   addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
+                  placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
+                  geoRetryNonce={mileageSvRetryNonce}
+                  onPersistGeometry={persistStreetViewGeometry}
                 />
               </div>
             </div>
@@ -1710,6 +1759,7 @@ Return ONLY valid JSON, no other text.`
             addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
             placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
             onCommit={applyProjectAddressCommit}
+            onRequestStreetViewRetry={() => setMileageSvRetryNonce((n) => n + 1)}
           />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', fontSize: '13px' }}>
             <div>
