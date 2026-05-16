@@ -42,6 +42,19 @@ function customLabelColorIndex(label: string): number {
   return hash % RFI_LABEL_COLOR_PALETTE.length
 }
 
+function nowDateTimeInputValue(): string {
+  return dateTimeInputValue(new Date().toISOString())
+}
+
+function nextRfiId(existingRfis: any[]): string {
+  const maxNum = (existingRfis || []).reduce((max, rfi) => {
+    const match = String(rfi?.id || '').match(/^RFI-(\d+)$/i)
+    if (!match) return max
+    return Math.max(max, Number(match[1]) || 0)
+  }, 0)
+  return 'RFI-' + String(maxNum + 1).padStart(3, '0')
+}
+
 function dateTimeInputValue(value: unknown): string {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -96,8 +109,20 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [addWarning, setAddWarning] = useState('')
   const [showLabelModal, setShowLabelModal] = useState(false)
   const [newLabelName, setNewLabelName] = useState('')
+  const [addForm, setAddForm] = useState({
+    question: '',
+    questionAt: '',
+    response: '',
+    answerAt: '',
+    stageRecorded: '',
+    stageApplies: '',
+    label: 'Default',
+    solvedBy: '',
+  })
   const [editForm, setEditForm] = useState({
     question: '',
     questionAt: '',
@@ -137,23 +162,59 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       .filter((name: string, idx: number, arr: string[]) => arr.findIndex(x => rfiLabelKey(x) === rfiLabelKey(name)) === idx),
   ]
 
-  const addRFI = () => {
-    pushState()
-    p.rfis = p.rfis || []
-    const rfiNum = 'RFI-' + String(p.rfis.length + 1).padStart(3, '0')
-    p.rfis.push({
-      id: rfiNum,
-      status: 'open',
+  const openAddModal = () => {
+    const firstPhase = phases[0] || ''
+    setAddWarning('')
+    setAddForm({
       question: '',
-      directedTo: '',
-      submitted: new Date().toISOString().split('T')[0],
+      questionAt: nowDateTimeInputValue(),
       response: '',
-      costImpact: '',
-      // Stage fields initialised so they always persist on first save
-      stageRecorded: '',
-      stageApplies: '',
+      answerAt: '',
+      stageRecorded: firstPhase,
+      stageApplies: firstPhase,
+      label: 'Default',
+      solvedBy: '',
     })
-    saveBackupDataAndSync(backup, 'projects')
+    setShowAddModal(true)
+  }
+
+  const closeAddModal = () => {
+    setShowAddModal(false)
+    setAddWarning('')
+  }
+
+  const createRFI = () => {
+    if (!addForm.question.trim()) {
+      setAddWarning('Question is required to create an RFI.')
+      return
+    }
+
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
+    if (!freshProject) return
+    pushState()
+
+    freshProject.rfis = freshProject.rfis || []
+    const hasAnswer = !!addForm.response.trim()
+    const isCritical = addForm.label === 'Critical'
+    freshProject.rfis.push({
+      id: nextRfiId(freshProject.rfis),
+      status: hasAnswer ? 'answered' : isCritical ? 'critical' : 'open',
+      question: addForm.question,
+      directedTo: '',
+      submitted: storedTimestampValue(addForm.questionAt, ''),
+      response: addForm.response,
+      costImpact: '',
+      resolved_at: hasAnswer ? storedTimestampValue(addForm.answerAt || nowDateTimeInputValue(), '') : '',
+      stageRecorded: normalizePhaseName(addForm.stageRecorded, phases),
+      stageApplies: normalizePhaseName(addForm.stageApplies || addForm.stageRecorded, phases),
+      label: addForm.label,
+      critical: isCritical,
+      solvedBy: addForm.solvedBy,
+    })
+    saveBackupDataAndSync(freshBackup, 'projects')
+    closeAddModal()
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -388,7 +449,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
-              onClick={addRFI}
+              onClick={openAddModal}
               style={{
                 padding: '8px 12px',
                 backgroundColor: 'rgba(34,197,94,0.2)',
@@ -648,6 +709,209 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* ADD RFI MODAL */}
+        {showAddModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.74)', backdropFilter: 'blur(4px)' }}
+            onClick={e => { if (e.target === e.currentTarget) closeAddModal() }}
+          >
+            <div
+              className="relative w-full max-w-3xl mx-4 rounded-2xl shadow-2xl flex flex-col"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid rgba(59,130,246,0.28)',
+                maxHeight: '90vh',
+                overflow: 'hidden',
+                boxShadow: '0 24px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.03) inset',
+              }}
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/60 flex-shrink-0">
+                <div>
+                  <h2 className="text-xl font-bold text-white">Add RFI</h2>
+                  <p className="text-sm text-gray-400 mt-1">Create a new request for information</p>
+                </div>
+                <button
+                  onClick={closeAddModal}
+                  className="text-gray-500 hover:text-white transition-colors leading-none"
+                  aria-label="Close add RFI modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">RFI Question</label>
+                  <textarea
+                    value={addForm.question}
+                    onChange={e => {
+                      setAddWarning('')
+                      setAddForm(prev => ({ ...prev, question: e.target.value }))
+                    }}
+                    rows={4}
+                    placeholder="Describe the question or clarification needed..."
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-y"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  />
+                  {addWarning && (
+                    <div style={{ color: '#fca5a5', fontSize: '11px', marginTop: '6px', fontWeight: '600' }}>
+                      {addWarning}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Question Timestamp</label>
+                    <input
+                      type="datetime-local"
+                      value={addForm.questionAt}
+                      onChange={e => setAddForm(prev => ({ ...prev, questionAt: e.target.value }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Answer Timestamp</label>
+                    <input
+                      type="datetime-local"
+                      value={addForm.answerAt}
+                      onChange={e => setAddForm(prev => ({ ...prev, answerAt: e.target.value }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">RFI Answer</label>
+                  <textarea
+                    value={addForm.response}
+                    onChange={e => setAddForm(prev => ({ ...prev, response: e.target.value }))}
+                    rows={4}
+                    placeholder="Optional answer, response, or resolution..."
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-y"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Stage Recorded</label>
+                    <select
+                      value={addForm.stageRecorded}
+                      onChange={e => {
+                        const nextStage = e.target.value
+                        setAddForm(prev => ({
+                          ...prev,
+                          stageRecorded: nextStage,
+                          stageApplies: prev.stageApplies || nextStage,
+                        }))
+                      }}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    >
+                      {renderPhaseOptions(addForm.stageRecorded)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Stage Applies</label>
+                    <select
+                      value={addForm.stageApplies}
+                      onChange={e => setAddForm(prev => ({ ...prev, stageApplies: e.target.value }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    >
+                      {renderPhaseOptions(addForm.stageApplies)}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Solved by</label>
+                  <input
+                    type="text"
+                    value={addForm.solvedBy}
+                    onChange={e => setAddForm(prev => ({ ...prev, solvedBy: e.target.value }))}
+                    placeholder="Optional"
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-2">Label</label>
+                  <div className="flex flex-wrap gap-2">
+                    {rfiLabelOptions.map(option => {
+                      const selected = addForm.label === option
+                      const critical = option === 'Critical'
+                      const otherTrades = option === 'Other trades'
+                      const optionColors = labelBadgeColor(option)
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => setAddForm(prev => ({ ...prev, label: option }))}
+                          className="px-3 py-2 rounded-lg text-xs font-bold transition-colors"
+                          style={{
+                            backgroundColor: selected
+                              ? critical
+                                ? 'rgba(239,68,68,0.18)'
+                                : otherTrades
+                                  ? 'rgba(99,102,241,0.16)'
+                                  : optionColors.bg
+                              : 'rgba(15,23,42,0.35)',
+                            color: selected
+                              ? critical
+                                ? '#fca5a5'
+                                : otherTrades
+                                  ? '#a5b4fc'
+                                  : optionColors.text
+                              : '#94a3b8',
+                            border: selected
+                              ? critical
+                                ? '1px solid rgba(239,68,68,0.32)'
+                                : otherTrades
+                                  ? '1px solid rgba(99,102,241,0.32)'
+                                  : `1px solid ${optionColors.border}`
+                              : '1px solid rgba(148,163,184,0.15)',
+                          }}
+                        >
+                          {option}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-700/60 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={closeAddModal}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-300 border border-gray-600 hover:text-white hover:border-gray-500 transition-colors"
+                  style={{ backgroundColor: 'rgba(15,23,42,0.35)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={createRFI}
+                  className="px-4 py-2 rounded-lg text-sm font-bold text-white transition-colors"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(37,99,235,0.95), rgba(16,185,129,0.92))',
+                    border: '1px solid rgba(96,165,250,0.35)',
+                    boxShadow: '0 10px 26px rgba(37,99,235,0.22)',
+                  }}
+                >
+                  Create RFI
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
