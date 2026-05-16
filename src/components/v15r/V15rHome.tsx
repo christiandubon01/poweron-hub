@@ -1263,7 +1263,7 @@ export default function V15rHome() {
                           style={hasPay ? { background: 'linear-gradient(180deg, rgba(48,209,88,.10), rgba(48,209,88,.04))', borderLeft: '3px solid #10b981' } : { borderLeft: '3px solid #10b981' }}
                         >
                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="min-w-0 flex-1 space-y-2.5">
+                            <div className="min-w-0 w-full space-y-2.5 lg:flex-[1_1_calc(100%-410px)]">
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                                 <span className="rounded-md border border-cyan-300/10 bg-cyan-400/[0.04] px-2 py-1 font-mono text-[10px] font-semibold text-cyan-100/70">
                                   {l.date}
@@ -1276,8 +1276,8 @@ export default function V15rHome() {
                                 <span className="text-[11px] font-semibold text-slate-400">{l.emp || 'Me'}</span>
                                 {hasPay && <span className="rounded-full border border-emerald-400/20 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-emerald-300">Collected</span>}
                               </div>
-                              {l.notes && <div className="max-w-3xl text-[12px] font-medium leading-relaxed text-white">{l.notes}</div>}
-                              <div className="grid max-w-3xl grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                              {l.notes && <div className="w-full text-[12px] font-medium leading-relaxed text-white">{l.notes}</div>}
+                              <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
                                 <div className="rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Hrs</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none text-slate-100">{num(l.hrs).toFixed(1)}</div>
@@ -1300,7 +1300,7 @@ export default function V15rHome() {
                                 </div>
                               </div>
                             </div>
-                            <div className="ml-auto flex w-full flex-wrap justify-end gap-2 lg:w-auto lg:min-w-[390px]">
+                            <div className="ml-auto flex w-full flex-wrap justify-end gap-2 lg:w-auto lg:min-w-[390px] lg:flex-none">
                               {entryTotalStats.map(({ label, amount, Icon, color, bg, border, featured }) => (
                                 <div
                                   key={label}
