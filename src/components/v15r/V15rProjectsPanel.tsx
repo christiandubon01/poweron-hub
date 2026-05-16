@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
-import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X, Archive } from 'lucide-react'
+import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X, Archive, Home, Building2, Wrench, Sun, Hammer, Store, FolderKanban } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -70,6 +70,19 @@ const JOB_TYPES = ['Residential', 'Commercial', 'Service', 'Solar', 'New Constru
 const STATUS_OPTIONS = ['active', 'coming']
 const REL_ACCOUNT_TYPES = ['General Contractor', 'Subcontractor', 'Homeowner', 'Property Manager', 'Commercial Client', 'Service Customer', 'Other']
 const DEFAULT_PHASES = { Planning: 0, Estimating: 0, 'Site Prep': 0, 'Rough-in': 0, Trim: 0, Finish: 0 }
+
+// ── Project type accent config ────────────────────────────────────────────────
+const PROJECT_TYPE_STYLE: Record<string, { icon: any; gradient: string; border: string; glow: string; iconBg: string; iconColor: string; barGradient: string }> = {
+  'Residential':      { icon: Home,         gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(13,42,30,0.6) 100%)',  border: 'rgba(45,212,191,0.22)',  glow: 'rgba(45,212,191,0.07)',  iconBg: 'rgba(45,212,191,0.13)',  iconColor: '#2dd4bf', barGradient: 'linear-gradient(90deg,rgba(45,212,191,0.6),rgba(52,211,153,1))' },
+  'Commercial':       { icon: Building2,    gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(10,25,50,0.6) 100%)',   border: 'rgba(99,179,237,0.22)',  glow: 'rgba(99,179,237,0.07)',  iconBg: 'rgba(99,179,237,0.13)',  iconColor: '#63b3ed', barGradient: 'linear-gradient(90deg,rgba(59,130,246,0.6),rgba(99,179,237,1))' },
+  'Service':          { icon: Wrench,       gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(50,20,5,0.6) 100%)',    border: 'rgba(251,146,60,0.22)',  glow: 'rgba(251,146,60,0.07)',  iconBg: 'rgba(251,146,60,0.13)',  iconColor: '#fb923c', barGradient: 'linear-gradient(90deg,rgba(251,146,60,0.6),rgba(249,115,22,1))' },
+  'Solar':            { icon: Sun,          gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(50,35,5,0.6) 100%)',    border: 'rgba(251,191,36,0.22)',  glow: 'rgba(251,191,36,0.07)',  iconBg: 'rgba(251,191,36,0.13)',  iconColor: '#fbbf24', barGradient: 'linear-gradient(90deg,rgba(251,191,36,0.6),rgba(245,158,11,1))' },
+  'New Construction': { icon: Hammer,       gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(30,10,60,0.6) 100%)',   border: 'rgba(139,92,246,0.22)',  glow: 'rgba(139,92,246,0.07)',  iconBg: 'rgba(139,92,246,0.13)', iconColor: '#8b5cf6', barGradient: 'linear-gradient(90deg,rgba(139,92,246,0.6),rgba(124,58,237,1))' },
+  'Commercial TI':    { icon: Store,        gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(5,35,50,0.6) 100%)',    border: 'rgba(34,211,238,0.22)',  glow: 'rgba(34,211,238,0.07)',  iconBg: 'rgba(34,211,238,0.13)', iconColor: '#22d3ee', barGradient: 'linear-gradient(90deg,rgba(34,211,238,0.6),rgba(6,182,212,1))' },
+}
+const PROJECT_TYPE_DEFAULT_STYLE = { icon: FolderKanban, gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(15,20,35,0.6) 100%)', border: 'rgba(148,163,184,0.18)', glow: 'rgba(148,163,184,0.06)', iconBg: 'rgba(148,163,184,0.10)', iconColor: '#94a3b8', barGradient: 'linear-gradient(90deg,rgba(52,211,153,0.6),rgba(52,211,153,1))' }
+
+const PROJ_GLARE_MS = 5200
 
 function fmtDate(dateStr?: string): string {
   if (!dateStr) return ''
@@ -811,160 +824,215 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const fin = getProjectFinancials(p, backup)
     const paidPercent = fin.contract > 0 ? Math.min(100, Math.max(0, (fin.paid / fin.contract) * 100)) : 0
 
-    // Planned timeline display
     const plannedLine = (p.plannedStart && p.plannedEnd)
       ? `Planned: ${fmtDate(p.plannedStart)} – ${fmtDate(p.plannedEnd)}`
       : null
+
+    const ts = PROJECT_TYPE_STYLE[p.type] || PROJECT_TYPE_DEFAULT_STYLE
+    const TypeIcon = ts.icon
 
     return (
       <div
         key={p.id}
         data-project-id={p.id}
-        className={`rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4 hover:border-gray-600 transition-colors ${sourceProjectHighlightId === String(p.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
+        className={`relative overflow-hidden rounded-2xl transition-all duration-300 hover:-translate-y-0.5 ${sourceProjectHighlightId === String(p.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
+        style={{
+          background: ts.gradient,
+          border: `1px solid ${ts.border}`,
+          boxShadow: `0 4px 24px ${ts.glow}, 0 1px 6px rgba(0,0,0,0.45)`,
+        }}
       >
-        {/* Header: name/type + health score */}
-        <div className="flex items-start justify-between mb-2">
+        {/* Animated glare sweep */}
+        <span
+          aria-hidden="true"
+          className="proj-card-glare pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
+          style={{ animationDelay: `-${(parseInt(p.id.slice(-4), 36) || 0) % PROJ_GLARE_MS}ms` }}
+        />
+
+        <div className="relative z-10 p-4">
+          {/* Header: icon + name/type + health */}
+          <div className="flex items-start justify-between mb-3 gap-2">
+            <div
+              className="flex items-start gap-2.5 cursor-pointer flex-1 min-w-0"
+              onClick={() => onSelectProject?.(p.id)}
+            >
+              {/* Type icon badge */}
+              <div
+                className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center mt-0.5"
+                style={{
+                  background: ts.iconBg,
+                  border: `1px solid ${ts.border}`,
+                  boxShadow: `0 0 10px ${ts.glow}`,
+                }}
+              >
+                <TypeIcon size={14} style={{ color: ts.iconColor }} />
+              </div>
+              <div className="min-w-0">
+                <div className="font-bold text-sm text-gray-100 leading-tight truncate">{p.name}</div>
+                <div className="text-[10px] mt-0.5 font-medium" style={{ color: ts.iconColor }}>{p.type}</div>
+                {plannedLine && (
+                  <div className="text-[9px] text-gray-500 mt-0.5">{plannedLine}</div>
+                )}
+              </div>
+            </div>
+            {/* Health score */}
+            <div className="text-right flex-shrink-0">
+              <div className="text-xl font-bold font-mono leading-none" style={{ color: h.clr }}>{h.sc}</div>
+              <div className="text-[9px] text-gray-500 mt-0.5">Health</div>
+            </div>
+          </div>
+
+          {/* Financial metrics */}
+          <div className="grid grid-cols-3 gap-1.5 mb-2.5 text-[10px]">
+            {[
+              { label: 'Quoted',   value: fmtK(fin.contract), color: '#e5e7eb' },
+              { label: 'Paid',     value: fmtK(fin.paid),     color: '#34d399' },
+              { label: 'Exposure', value: fmtK(fin.risk),     color: '#f87171' },
+            ].map(({ label, value, color }) => (
+              <div
+                key={label}
+                className="rounded-lg p-1.5 text-center"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
+                <div className="text-gray-500 uppercase font-bold text-[9px]">{label}</div>
+                <div className="font-mono font-semibold" style={{ color }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Premium paid progress bar */}
           <div
-            className="cursor-pointer"
-            onClick={() => onSelectProject?.(p.id)}
+            className="w-full h-1.5 rounded-full mb-2.5 overflow-hidden"
+            style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.04)' }}
           >
-            <div className="font-bold text-sm text-gray-100">{p.name}</div>
-            <div className="text-[10px] text-gray-500">{p.type}</div>
-            {plannedLine && (
-              <div className="text-[9px] text-gray-500 mt-0.5">{plannedLine}</div>
+            <div
+              className="h-full rounded-full transition-all duration-700"
+              style={{
+                width: `${paidPercent}%`,
+                background: ts.barGradient,
+                boxShadow: paidPercent > 0 ? '0 0 6px rgba(52,211,153,0.45)' : 'none',
+              }}
+            />
+          </div>
+
+          {/* Status chips */}
+          <div className="flex flex-wrap gap-1.5 mb-2.5">
+            <span className={`text-[9px] px-2 py-0.5 rounded-full font-semibold ${
+              d >= 14 ? 'bg-red-500/20 text-red-400' : d >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'
+            }`}>{d}d stale</span>
+            <span className="text-[9px] px-2 py-0.5 rounded-full font-semibold bg-blue-500/20 text-blue-400">
+              {pct(Math.round(o))}
+            </span>
+            {openR > 0 && (
+              <span className="text-[9px] px-2 py-0.5 rounded-full font-semibold bg-red-500/20 text-red-400">
+                {openR} RFI
+              </span>
+            )}
+            {bucket === 'completed' && (
+              fin.AR > 0 ? (
+                <span className="text-[9px] px-2 py-0.5 rounded-full font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                      title={`Outstanding balance: ${fmtK(fin.AR)}`}>
+                  🚨 UNPAID {fmtK(fin.AR)}
+                </span>
+              ) : (
+                <span className="text-[9px] px-2 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-400">
+                  ✓ Fully Paid
+                </span>
+              )
+            )}
+            {bucket === 'completed' && fin.contract - fin.paid > 0 && (
+              <button
+                onClick={e => { e.stopPropagation(); setCollectProject(p); setCollectPartialInput(''); setCollectLoggingPartial(false) }}
+                className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 hover:bg-yellow-400/30 transition-colors"
+              >
+                💰 Collect
+              </button>
             )}
           </div>
-          <div className="text-right">
-            <div className="text-xl font-bold font-mono" style={{ color: h.clr }}>{h.sc}</div>
-            <div className="text-[9px] text-gray-500">Health</div>
-          </div>
-        </div>
 
-        {/* Financial metrics */}
-        <div className="grid grid-cols-3 gap-2 mb-2 text-[10px]">
-          <div className="bg-[var(--bg-input)] rounded p-1.5 text-center">
-            <div className="text-gray-500 uppercase font-bold">Quoted</div>
-            <div className="font-mono text-gray-200">{fmtK(fin.contract)}</div>
-          </div>
-          <div className="bg-[var(--bg-input)] rounded p-1.5 text-center">
-            <div className="text-gray-500 uppercase font-bold">Paid</div>
-            <div className="font-mono text-emerald-400">{fmtK(fin.paid)}</div>
-          </div>
-          <div className="bg-[var(--bg-input)] rounded p-1.5 text-center">
-            <div className="text-gray-500 uppercase font-bold">Exposure</div>
-            <div className="font-mono text-red-400">{fmtK(fin.risk)}</div>
-          </div>
-        </div>
-
-        {/* Paid progress bar */}
-        <div className="w-full h-1.5 rounded-full bg-gray-700/50 overflow-hidden mb-2">
-          <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${paidPercent}%` }} />
-        </div>
-
-        {/* Chips */}
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          <span className={`text-[9px] px-2 py-0.5 rounded font-semibold ${
-            d >= 14 ? 'bg-red-500/20 text-red-400' : d >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'
-          }`}>{d}d stale</span>
-          <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-blue-500/20 text-blue-400">
-            {pct(Math.round(o))}
-          </span>
-          {openR > 0 && (
-            <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-red-500/20 text-red-400">
-              {openR} RFI
-            </span>
-          )}
-          {bucket === 'completed' && (
-            fin.AR > 0 ? (
-              <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30"
-                    title={`Outstanding balance: ${fmtK(fin.AR)}`}>
-                🚨 UNPAID {fmtK(fin.AR)}
-              </span>
-            ) : (
-              <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-emerald-500/20 text-emerald-400">
-                ✓ Fully Paid
-              </span>
-            )
-          )}
-          {bucket === 'completed' && fin.contract - fin.paid > 0 && (
-            <button
-              onClick={e => { e.stopPropagation(); setCollectProject(p); setCollectPartialInput(''); setCollectLoggingPartial(false) }}
-              className="text-[9px] px-2 py-0.5 rounded font-bold bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 hover:bg-yellow-400/30 transition-colors"
-            >
-              💰 Collect
-            </button>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-2 pt-2 border-t border-gray-700/50">
-          {bucket !== 'completed' ? (
-            <>
-              <button
-                onClick={() => openEditProjectModal(p)}
-                className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50 font-semibold"
-              >
-                <Edit3 size={10} className="inline mr-1" /> Edit
-              </button>
-              <button
-                onClick={() => onSelectProject?.(p.id)}
-                className="text-[10px] px-2 py-1.5 rounded bg-gray-700/30 text-gray-400 hover:bg-gray-600/30 font-semibold border border-gray-700/50"
-                title="Open project tabs"
-              >
-                <Eye size={10} />
-              </button>
-              <button
-                onClick={() => moveStatus(p.id, bucket === 'active' ? 'coming' : 'active')}
-                className="text-[10px] px-2 py-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold"
-              >
-                <ArrowRight size={10} className="inline mr-1" /> {bucket === 'active' ? 'Coming Up' : 'Active'}
-              </button>
-              {bucket === 'coming' && (
+          {/* Actions */}
+          <div className="flex gap-1.5 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            {bucket !== 'completed' ? (
+              <>
                 <button
-                  onClick={() => markProjectLost(p.id)}
-                  className="text-[10px] px-2 py-1.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-semibold"
+                  onClick={() => openEditProjectModal(p)}
+                  className="flex-1 text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(255,255,255,0.07)', color: '#d1d5db', border: '1px solid rgba(255,255,255,0.08)' }}
                 >
-                  Mark Lost
+                  <Edit3 size={10} className="inline mr-1" /> Edit
                 </button>
-              )}
-              <button
-                onClick={() => archiveProject(p.id)}
-                className="text-[10px] px-2 py-1.5 rounded bg-slate-500/10 text-slate-300 border border-slate-500/20 font-semibold"
-              >
-                <Archive size={10} />
-              </button>
-              <button
-                onClick={() => deleteProject(p.id)}
-                className="text-[10px] px-2 py-1.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-semibold"
-              >
-                <Trash2 size={10} />
-              </button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => onSelectProject?.(p.id)} className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50 font-semibold">
-                <Eye size={10} className="inline mr-1" /> View Project
-              </button>
-              <button
-                onClick={() => moveStatus(p.id, 'active')}
-                className="text-[10px] px-2 py-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold"
-              >
-                <RotateCcw size={10} className="inline mr-1" /> Reactivate
-              </button>
-              <button
-                onClick={() => archiveProject(p.id)}
-                className="text-[10px] px-2 py-1.5 rounded bg-slate-500/10 text-slate-300 border border-slate-500/20 font-semibold"
-              >
-                <Archive size={10} />
-              </button>
-              <button
-                onClick={() => deleteProject(p.id)}
-                className="text-[10px] px-2 py-1.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-semibold"
-              >
-                <Trash2 size={10} />
-              </button>
-            </>
-          )}
+                <button
+                  onClick={() => onSelectProject?.(p.id)}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(255,255,255,0.04)', color: '#9ca3af', border: '1px solid rgba(255,255,255,0.06)' }}
+                  title="Open project tabs"
+                >
+                  <Eye size={10} />
+                </button>
+                <button
+                  onClick={() => moveStatus(p.id, bucket === 'active' ? 'coming' : 'active')}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(99,179,237,0.10)', color: '#63b3ed', border: '1px solid rgba(99,179,237,0.20)' }}
+                >
+                  <ArrowRight size={10} className="inline mr-1" /> {bucket === 'active' ? 'Coming Up' : 'Active'}
+                </button>
+                {bucket === 'coming' && (
+                  <button
+                    onClick={() => markProjectLost(p.id)}
+                    className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                    style={{ background: 'rgba(251,191,36,0.10)', color: '#fcd34d', border: '1px solid rgba(251,191,36,0.20)' }}
+                  >
+                    Mark Lost
+                  </button>
+                )}
+                <button
+                  onClick={() => archiveProject(p.id)}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(148,163,184,0.08)', color: '#cbd5e1', border: '1px solid rgba(148,163,184,0.15)' }}
+                >
+                  <Archive size={10} />
+                </button>
+                <button
+                  onClick={() => deleteProject(p.id)}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.15)' }}
+                >
+                  <Trash2 size={10} />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => onSelectProject?.(p.id)}
+                  className="flex-1 text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(255,255,255,0.07)', color: '#d1d5db', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  <Eye size={10} className="inline mr-1" /> View Project
+                </button>
+                <button
+                  onClick={() => moveStatus(p.id, 'active')}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(99,179,237,0.10)', color: '#63b3ed', border: '1px solid rgba(99,179,237,0.20)' }}
+                >
+                  <RotateCcw size={10} className="inline mr-1" /> Reactivate
+                </button>
+                <button
+                  onClick={() => archiveProject(p.id)}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(148,163,184,0.08)', color: '#cbd5e1', border: '1px solid rgba(148,163,184,0.15)' }}
+                >
+                  <Archive size={10} />
+                </button>
+                <button
+                  onClick={() => deleteProject(p.id)}
+                  className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                  style={{ background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.15)' }}
+                >
+                  <Trash2 size={10} />
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -1002,42 +1070,64 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {archivedProjects.map(p => {
               const fin = getProjectFinancials(p, backup)
+              const ats = PROJECT_TYPE_STYLE[p.type] || PROJECT_TYPE_DEFAULT_STYLE
+              const ArchiveTypeIcon = ats.icon
               return (
-                <div key={p.id} className="rounded-lg border border-slate-700/50 bg-[var(--bg-card)] p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-bold text-gray-100">{p.name || 'Unnamed project'}</div>
-                      <div className="text-[10px] text-gray-500">{p.client || p.customer || 'No client listed'}</div>
+                <div
+                  key={p.id}
+                  className="relative overflow-hidden rounded-2xl opacity-55 hover:opacity-75 transition-opacity duration-200"
+                  style={{
+                    background: 'linear-gradient(135deg,rgba(15,23,42,0.92) 0%,rgba(2,6,23,0.96) 100%)',
+                    border: '1px solid rgba(148,163,184,0.14)',
+                    boxShadow: '0 2px 12px rgba(0,0,0,0.35)',
+                  }}
+                >
+                  <div className="relative z-10 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <div
+                          className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center mt-0.5"
+                          style={{ background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.15)' }}
+                        >
+                          <ArchiveTypeIcon size={12} style={{ color: '#64748b' }} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-gray-400 truncate">{p.name || 'Unnamed project'}</div>
+                          <div className="text-[10px] text-gray-600">{(p as any).client || (p as any).customer || 'No client listed'}</div>
+                        </div>
+                      </div>
+                      <span className="text-[9px] px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-500 font-bold border border-slate-500/20 flex-shrink-0">Archived</span>
                     </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded bg-slate-500/20 text-slate-300 font-bold">Archived</span>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-                    <div className="bg-[var(--bg-input)] rounded p-2">
-                      <div className="text-gray-500 uppercase font-bold">Quoted</div>
-                      <div className="font-mono text-gray-200">{fmtK(fin.contract || p.contract || 0)}</div>
+                    <div className="mt-2.5 grid grid-cols-2 gap-1.5 text-[10px]">
+                      <div className="rounded-lg p-1.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div className="text-gray-600 uppercase font-bold text-[9px]">Quoted</div>
+                        <div className="font-mono text-gray-500">{fmtK(fin.contract || p.contract || 0)}</div>
+                      </div>
+                      <div className="rounded-lg p-1.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div className="text-gray-600 uppercase font-bold text-[9px]">Status</div>
+                        <div className="text-gray-500">{(p as any).outcome || p.status || 'Unknown'}</div>
+                      </div>
                     </div>
-                    <div className="bg-[var(--bg-input)] rounded p-2">
-                      <div className="text-gray-500 uppercase font-bold">Status</div>
-                      <div className="text-gray-300">{p.outcome || p.status || 'Unknown'}</div>
+                    <div className="mt-1.5 space-y-0.5 text-[9px] text-gray-600">
+                      {(p as any).archivedAt && <div>Archived: {new Date((p as any).archivedAt).toLocaleString()}</div>}
+                      {(p as any).archivedReason && <div>Reason: {(p as any).archivedReason}</div>}
                     </div>
-                  </div>
-                  <div className="mt-3 space-y-1 text-[10px] text-gray-500">
-                    {(p as any).archivedAt && <div>Archived: {new Date((p as any).archivedAt).toLocaleString()}</div>}
-                    {(p as any).archivedReason && <div>Reason: {(p as any).archivedReason}</div>}
-                  </div>
-                  <div className="mt-3 flex gap-2 border-t border-gray-700/50 pt-3">
-                    <button
-                      onClick={() => restoreProject(p.id)}
-                      className="flex-1 text-[10px] px-2 py-1.5 rounded bg-emerald-600/20 text-emerald-300 border border-emerald-600/30 font-semibold"
-                    >
-                      Restore
-                    </button>
-                    <button
-                      onClick={() => deleteProject(p.id)}
-                      className="text-[10px] px-2 py-1.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-semibold"
-                    >
-                      <Trash2 size={10} />
-                    </button>
+                    <div className="mt-2.5 flex gap-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.625rem' }}>
+                      <button
+                        onClick={() => restoreProject(p.id)}
+                        className="flex-1 text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                        style={{ background: 'rgba(52,211,153,0.10)', color: '#6ee7b7', border: '1px solid rgba(52,211,153,0.18)' }}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        onClick={() => deleteProject(p.id)}
+                        className="text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                        style={{ background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.15)' }}
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -1052,6 +1142,36 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)] p-6">
+      {/* Glare sweep keyframes — same technique as Settings Hub */}
+      <style>{`
+        @keyframes proj-card-glare {
+          0%   { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+          12%  { opacity: 0.55; }
+          50%  { opacity: 0.30; }
+          88%  { opacity: 0; }
+          100% { transform: translateX(220%) skewX(-18deg); opacity: 0; }
+        }
+        .proj-card-glare::before {
+          content: '';
+          position: absolute;
+          top: 0; bottom: 0; left: 0;
+          width: 40%;
+          background: linear-gradient(
+            115deg,
+            rgba(255,255,255,0) 0%,
+            rgba(255,255,255,0.04) 35%,
+            rgba(255,255,255,0.10) 50%,
+            rgba(255,255,255,0.04) 65%,
+            rgba(255,255,255,0) 100%
+          );
+          animation: proj-card-glare ${PROJ_GLARE_MS}ms cubic-bezier(0.45,0.05,0.55,0.95) infinite;
+          animation-delay: inherit;
+          will-change: transform, opacity;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .proj-card-glare::before { animation: none; opacity: 0; }
+        }
+      `}</style>
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-sm font-bold text-gray-300 uppercase tracking-wider">Projects</h2>
