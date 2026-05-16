@@ -163,22 +163,25 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
 }
 
 // ── Home Calendar persistence strategy ───────────────────────────────────────
-// Persisted in localStorage under HOME_CALENDAR_VIEW_KEY:
-//   collapsed  — whether the calendar section is visible (boolean)
-//   height     — user-adjusted height in pixels (number, clamped to min/max)
+// The Google Calendar embed is a cross-origin iframe on calendar.google.com.
+// Its internal hour-of-day scroll position (1am vs 6am) cannot be read or set
+// — browser same-origin policy blocks contentDocument access and Google
+// exposes no postMessage scroll API.
 //
-// NOT persisted — iframe internal scroll (the "6am" vs "1am" hour position):
-//   The calendar is a Google Calendar <iframe> on calendar.google.com.
-//   Browser same-origin policy blocks all access to iframe.contentDocument,
-//   so reading or writing the internal scrollTop is not possible.
-//   Google's embed URL has no parameter to pre-scroll to a specific hour,
-//   and the embed does not expose a postMessage scroll API.
-//   To unlock hour-of-day scroll persistence, the embed would need to be
-//   replaced with a custom time-grid built on the Google Calendar REST API.
+// Workday-view approach: size the container tall enough (≥900px) that the
+// full 6am–6pm window is visible without any user scrolling. The iframe
+// renders the full 24-hour grid; a taller container reveals more of it.
+// Dragging the resize handle or a previously saved height is preserved on
+// reload; any saved height below the workday minimum is bumped automatically
+// by clampHomeCalendarHeight on next load.
+//
+// Persisted in localStorage under HOME_CALENDAR_VIEW_KEY:
+//   collapsed — whether the calendar section is visible (boolean)
+//   height    — container height in pixels (number, clamped to min/max)
 const HOME_CALENDAR_VIEW_KEY = 'poweron:v15r:homeCalendarView'
-const HOME_CALENDAR_MIN_HEIGHT = 760
-const HOME_CALENDAR_DEFAULT_HEIGHT = 820
-const HOME_CALENDAR_MAX_HEIGHT = 1000
+const HOME_CALENDAR_MIN_HEIGHT = 900
+const HOME_CALENDAR_DEFAULT_HEIGHT = 980
+const HOME_CALENDAR_MAX_HEIGHT = 1400
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
