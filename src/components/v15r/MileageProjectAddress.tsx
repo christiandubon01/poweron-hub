@@ -5,7 +5,8 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api'
+import { GoogleMap, MarkerF } from '@react-google-maps/api'
+import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
 
 export type MileageAddressCommitPatch = {
   address: string
@@ -21,8 +22,6 @@ export type PersistProjectAddressGeometryPayload = {
   /** Optional: geocoder place_id — only consumed when caller wants to refine an empty Places id */
   placeId?: string
 }
-
-export const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY as string) ?? ''
 
 const PROJECT_MARKER_Z_INDEX = 1000
 
@@ -89,11 +88,7 @@ export function MileageProjectMapPreview({
   persistRef.current = onPersistGeometry
   const mapRef = useRef<google.maps.Map | null>(null)
 
-  const { isLoaded } = useJsApiLoader({
-    id: 'v15r-estimate-mileage-places',
-    googleMapsApiKey: GOOGLE_MAPS_BROWSER_KEY,
-    libraries: ['places'],
-  })
+  const { isLoaded } = useV15rGoogleMapsLoader()
 
   const [phase, setPhase] = useState<'idle' | 'loading' | 'ready' | 'missing'>('idle')
   const [resolvedCoords, setResolvedCoords] = useState<google.maps.LatLngLiteral | null>(null)
@@ -336,11 +331,7 @@ export default function MileageProjectAddress({
     predictionSnapshotRef.current = null
   }, [addressProp])
 
-  const { isLoaded } = useJsApiLoader({
-    id: 'v15r-estimate-mileage-places',
-    googleMapsApiKey: GOOGLE_MAPS_BROWSER_KEY,
-    libraries: ['places'],
-  })
+  const { isLoaded } = useV15rGoogleMapsLoader()
 
   const [suggestions, setSuggestions] = useState([])
   const [showList, setShowList] = useState(false)

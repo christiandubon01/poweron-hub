@@ -12,9 +12,9 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams } from 'react-router-dom'
+import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
 const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
-const MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_BROWSER_KEY ?? ''
 
 const CV_CITIES = [
   'desert hot springs', 'palm springs', 'cathedral city', 'rancho mirage',
@@ -210,25 +210,8 @@ function formatTime(iso: string): string {
 }
 
 // ── Maps loader ───────────────────────────────────────────────────────────────
-let mapsLoaded = false
-let mapsLoading = false
-const mapsCallbacks: (() => void)[] = []
-
 function loadGoogleMaps(cb: () => void) {
-  if (mapsLoaded) { cb(); return }
-  mapsCallbacks.push(cb)
-  if (mapsLoading) return
-  mapsLoading = true
-  const script = document.createElement('script')
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}`
-  script.async = true
-  script.onload = () => {
-    mapsLoaded = true
-    mapsLoading = false
-    mapsCallbacks.forEach(fn => fn())
-    mapsCallbacks.length = 0
-  }
-  document.head.appendChild(script)
+  void loadV15rGoogleMapsScript().then(cb).catch(() => {})
 }
 
 // ── Map component ─────────────────────────────────────────────────────────────
@@ -249,7 +232,7 @@ function TrackingMap({
 
   // Step 1: Init map (runs once on mount)
   useEffect(() => {
-    if (!MAPS_API_KEY) return
+    if (!GOOGLE_MAPS_BROWSER_KEY) return
     loadGoogleMaps(() => {
       if (!mapRef.current || mapInstance.current) return
       const google = (window as any).google
@@ -279,7 +262,7 @@ function TrackingMap({
   // Step 2: Geocode address whenever address/city become available
   useEffect(() => {
     if (!address && !city) return
-    if (!MAPS_API_KEY) return
+    if (!GOOGLE_MAPS_BROWSER_KEY) return
 
     const doGeocode = () => {
       const google = (window as any).google
@@ -316,7 +299,7 @@ function TrackingMap({
       })
     }
 
-    if (mapsLoaded && mapInstance.current) {
+    if ((window as any).google?.maps && mapInstance.current) {
       doGeocode()
     } else {
       loadGoogleMaps(() => {
@@ -370,7 +353,7 @@ function TrackingMap({
     }
   }, [techLocation])
 
-  if (!MAPS_API_KEY) return null
+  if (!GOOGLE_MAPS_BROWSER_KEY) return null
 
   return (
     <div className="pt-map-card">

@@ -12,11 +12,10 @@
  */
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from '@react-google-maps/api'
+import { GoogleMap, MarkerF, InfoWindowF } from '@react-google-maps/api'
 import { supabase } from '@/lib/supabase'
 import type { HunterLead } from './HunterLeadCard'
-
-const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY as string) ?? ''
+import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
 
 const containerStyle: React.CSSProperties = {
   width: '100%',
@@ -210,10 +209,7 @@ function homeBaseSymbol(): google.maps.Symbol {
 }
 
 export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
-  const { isLoaded, loadError } = useJsApiLoader({
-    id: 'google-map-script',
-    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
-  })
+  const { isLoaded, loadError } = useV15rGoogleMapsLoader()
 
   const [homeBase, setHomeBase] = useState<HomeBase | null>(null)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
@@ -783,7 +779,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     [geocodedLeads, selectedLeadId]
   )
 
-  if (!GOOGLE_MAPS_API_KEY) {
+  if (!GOOGLE_MAPS_BROWSER_KEY) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-gray-500 bg-gray-900 rounded">
         VITE_GOOGLE_MAPS_BROWSER_KEY not set — add it to .env.local and restart dev server.

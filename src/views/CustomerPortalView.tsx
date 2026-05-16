@@ -17,11 +17,11 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
+import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
 const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
-const MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_BROWSER_KEY ?? ''
 
 type Tab = 'homeowner' | 'gc'
 
@@ -252,25 +252,8 @@ function formatPhone(raw: string): string {
 }
 
 // ── Google Places loader ──────────────────────────────────────────────────────
-let placesLoaded = false
-let placesLoading = false
-const placesCallbacks: (() => void)[] = []
-
 function loadPlaces(cb: () => void) {
-  if (placesLoaded) { cb(); return }
-  placesCallbacks.push(cb)
-  if (placesLoading) return
-  placesLoading = true
-  const script = document.createElement('script')
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}&libraries=places`
-  script.async = true
-  script.onload = () => {
-    placesLoaded = true
-    placesLoading = false
-    placesCallbacks.forEach(fn => fn())
-    placesCallbacks.length = 0
-  }
-  document.head.appendChild(script)
+  void loadV15rGoogleMapsScript().then(cb).catch(() => {})
 }
 
 // ── Address Autocomplete ──────────────────────────────────────────────────────
@@ -289,7 +272,7 @@ function AddressAutocomplete({
   const debounce = useRef<any>(null)
 
   useEffect(() => {
-    if (!MAPS_API_KEY) return
+    if (!GOOGLE_MAPS_BROWSER_KEY) return
     const initService = () => {
       const google = (window as any).google
       if (!google?.maps?.places) return

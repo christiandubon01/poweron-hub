@@ -33,8 +33,7 @@ import { getDemoBackupData } from '@/services/demoDataService'
 import { useHunterStore } from '@/store/hunterStore'
 import { useAuth } from '@/hooks/useAuth'
 import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
-import { useJsApiLoader } from '@react-google-maps/api'
-import { GOOGLE_MAPS_BROWSER_KEY } from './MileageProjectAddress'
+import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
@@ -160,11 +159,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     placeId: string | null
   } | null>(null)
 
-  const { isLoaded: isMapsLoaded } = useJsApiLoader({
-    id: 'v15r-estimate-mileage-places',
-    googleMapsApiKey: GOOGLE_MAPS_BROWSER_KEY,
-    libraries: ['places'],
-  })
+  const { isLoaded: isMapsLoaded } = useV15rGoogleMapsLoader()
 
   useEffect(() => {
     if (!showEditProject || !isMapsLoaded || !GOOGLE_MAPS_BROWSER_KEY || typeof window === 'undefined') return

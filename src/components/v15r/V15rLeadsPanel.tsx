@@ -13,7 +13,7 @@
 
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { Plus, Edit3, Trash2, ChevronDown, ChevronUp, ArrowRight, X, Copy, Phone, Mail, Mic } from 'lucide-react'
-import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from '@react-google-maps/api'
+import { GoogleMap, MarkerF, InfoWindowF } from '@react-google-maps/api'
 import { useAuth } from '@/hooks/useAuth'
 import {
   getBackupData,
@@ -37,6 +37,7 @@ import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
+import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
 
 // ── Phase colors ─────────────────────────────────────────────────────────────
 
@@ -59,7 +60,6 @@ const SVC_STATUS_COLORS: Record<string, string> = {
   'Converted': '#10b981',
 }
 const SVC_STATUS_CYCLE = ['Advance', 'Quoted', 'Booked', 'Park', 'Kill']
-const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY as string) ?? ''
 const MAP_CENTER = { lat: 33.7425, lng: -116.3089 }
 const REL_ACCOUNT_TYPES = [
   'General Contractor',
@@ -162,10 +162,7 @@ export default function V15rLeadsPanel() {
     notes: '',
     tags: '',
   })
-  const { isLoaded: mapLoaded, loadError: mapLoadError } = useJsApiLoader({
-    id: 'v15r-leads-map',
-    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
-  })
+  const { isLoaded: mapLoaded, loadError: mapLoadError } = useV15rGoogleMapsLoader()
 
   let authProfile: any = null
   try { authProfile = useAuth().profile } catch { /* auth not available */ }
@@ -1759,7 +1756,7 @@ export default function V15rLeadsPanel() {
               </div>
             </div>
             <div className="h-[560px] rounded-lg overflow-hidden border border-cyan-900/30">
-              {!GOOGLE_MAPS_API_KEY ? (
+              {!GOOGLE_MAPS_BROWSER_KEY ? (
                 <div className="h-full flex items-center justify-center text-xs text-gray-500 bg-gray-900">VITE_GOOGLE_MAPS_BROWSER_KEY missing.</div>
               ) : mapLoadError ? (
                 <div className="h-full flex items-center justify-center text-xs text-red-400 bg-gray-900">Map failed to load.</div>

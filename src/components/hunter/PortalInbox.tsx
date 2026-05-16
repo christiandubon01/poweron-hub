@@ -21,6 +21,7 @@ import {
   dismissPortalRequest,
   type PortalRequest,
 } from '@/services/portal/portalService'
+import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
 interface PortalInboxProps {
   onLeadConverted?: () => void
@@ -40,8 +41,6 @@ const TYPE_LABELS: Record<string, string> = {
   homeowner: 'Homeowner',
   gc:        'GC / Sub',
 }
-
-const MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_BROWSER_KEY ?? ''
 
 // Parse file URLs from notes field
 function parseFileUrls(notes: string | null): string[] {
@@ -64,31 +63,8 @@ function getFileName(url: string): string {
 }
 
 // ── Mini map component ────────────────────────────────────────────────────────
-let mapsLoaded = false
-let mapsLoading = false
-const mapsCallbacks: (() => void)[] = []
-
 function loadGoogleMaps(cb: () => void) {
-  if (mapsLoaded) { cb(); return }
-  mapsCallbacks.push(cb)
-  if (mapsLoading) return
-  mapsLoading = true
-  const existing = document.querySelector(`script[src*="maps.googleapis.com"]`)
-  if (existing) {
-    existing.addEventListener('load', () => {
-      mapsLoaded = true; mapsLoading = false
-      mapsCallbacks.forEach(fn => fn()); mapsCallbacks.length = 0
-    })
-    return
-  }
-  const script = document.createElement('script')
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}&libraries=places`
-  script.async = true
-  script.onload = () => {
-    mapsLoaded = true; mapsLoading = false
-    mapsCallbacks.forEach(fn => fn()); mapsCallbacks.length = 0
-  }
-  document.head.appendChild(script)
+  void loadV15rGoogleMapsScript().then(cb).catch(() => {})
 }
 
 function MiniMap({ address, city }: { address: string | null; city: string | null }) {
@@ -96,7 +72,7 @@ function MiniMap({ address, city }: { address: string | null; city: string | nul
   const mapInstance = useRef<any>(null)
 
   useEffect(() => {
-    if (!MAPS_API_KEY || (!address && !city)) return
+    if (!GOOGLE_MAPS_BROWSER_KEY || (!address && !city)) return
 
     const init = () => {
       if (!mapRef.current || mapInstance.current) return
@@ -148,7 +124,7 @@ function MiniMap({ address, city }: { address: string | null; city: string | nul
     }
   }, [address, city])
 
-  if (!MAPS_API_KEY || (!address && !city)) return null
+  if (!GOOGLE_MAPS_BROWSER_KEY || (!address && !city)) return null
 
   return (
     <div
