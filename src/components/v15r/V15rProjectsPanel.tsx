@@ -32,6 +32,8 @@ import { getDemoBackupData } from '@/services/demoDataService'
 import { useHunterStore } from '@/store/hunterStore'
 import { useAuth } from '@/hooks/useAuth'
 import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
+import { useJsApiLoader } from '@react-google-maps/api'
+import { GOOGLE_MAPS_BROWSER_KEY } from './MileageProjectAddress'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
@@ -144,6 +146,31 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [epPlannedEnd, setEpPlannedEnd] = useState('')
   /** Job site address — same persisted field as Estimate mileage section */
   const [epAddress, setEpAddress] = useState('')
+  const [epAddressSuggestions, setEpAddressSuggestions] = useState([])
+  const [epShowAddressSuggestions, setEpShowAddressSuggestions] = useState(false)
+  const epAutocompleteServiceRef = useRef(null)
+  const epSessionTokenRef = useRef(null)
+  const epPredictDebounceRef = useRef(null)
+  const epSelectedAddressRef = useRef<{
+    address: string
+    addressLat: number | null
+    addressLng: number | null
+    placeId: string | null
+  } | null>(null)
+
+  const { isLoaded: isMapsLoaded } = useJsApiLoader({
+    id: 'v15r-estimate-mileage-places',
+    googleMapsApiKey: GOOGLE_MAPS_BROWSER_KEY,
+    libraries: ['places'],
+  })
+
+  useEffect(() => {
+    if (!showEditProject || !isMapsLoaded || !GOOGLE_MAPS_BROWSER_KEY || typeof window === 'undefined') return
+    const g = window.google
+    if (!g?.maps?.places) return
+    epAutocompleteServiceRef.current = new g.maps.places.AutocompleteService()
+    epSessionTokenRef.current = new g.maps.places.AutocompleteSessionToken()
+  }, [showEditProject, isMapsLoaded])
 
   useEffect(() => {
     function handleOpenSourceRecord(e: Event) {
@@ -232,6 +259,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setEpNotes((p as any).notes || '')
     setEpPlannedEnd(p.plannedEnd || '')
     setEpAddress(String((p as any).address || ''))
+    epSelectedAddressRef.current = null
+    setEpAddressSuggestions([])
+    setEpShowAddressSuggestions(false)
     setShowEditProject(true)
   }
 
@@ -376,7 +406,29 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
     const nextAddr = epAddress.trim()
     const prevAddr = String((p as any).address || '').trim()
-    if (nextAddr !== prevAddr) {
+    const selectedAddress = epSelectedAddressRef.current
+    const selectedMatches =
+      !!selectedAddress &&
+      nextAddr.length > 0 &&
+      selectedAddress.address.trim() === nextAddr
+
+    if (selectedMatches) {
+      const lat = selectedAddress.addressLat
+      const lng = selectedAddress.addressLng
+      if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
+        ;(p as any).addressLat = lat
+        ;(p as any).addressLng = lng
+      } else {
+        delete (p as any).addressLat
+        delete (p as any).addressLng
+      }
+
+      if (selectedAddress.placeId) {
+        ;(p as any).placeId = selectedAddress.placeId
+      } else {
+        delete (p as any).placeId
+      }
+    } else if (nextAddr !== prevAddr) {
       delete (p as any).addressLat
       delete (p as any).addressLng
       delete (p as any).placeId
@@ -410,6 +462,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       }).catch((err) => console.warn('[V15rProjectsPanel] relationship event upsert failed', err))
     }
     setShowEditProject(false)
+    epSelectedAddressRef.current = null
+    setEpAddressSuggestions([])
+    setEpShowAddressSuggestions(false)
     setEditProjectId(null)
     forceUpdate()
   }
@@ -444,6 +499,79 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       setNpClient(selected.label)
       setNpClientEdited(false)
     }
+  }
+
+  function runEditAddressPredictions(query: string) {
+    if (!query || query.trim().length < 3 || !epAutocompleteServiceRef.current) {
+      setEpAddressSuggestions([])
+      setEpShowAddressSuggestions(false)
+      return
+    }
+
+    epAutocompleteServiceRef.current.getPlacePredictions(
+      {
+        input: query.trim(),
+        componentRestrictions: { country: 'us' },
+        sessionToken: epSessionTokenRef.current || undefined,
+      },
+      (results, status) => {
+        const g = window.google
+        if (status !== g.maps.places.PlacesServiceStatus.OK || !results?.length) {
+          setEpAddressSuggestions([])
+          setEpShowAddressSuggestions(false)
+          return
+        }
+        setEpAddressSuggestions(results)
+        setEpShowAddressSuggestions(true)
+      },
+    )
+  }
+
+  function handleEditAddressChange(value: string) {
+    epSelectedAddressRef.current = null
+    setEpAddress(value)
+    clearTimeout(epPredictDebounceRef.current)
+    if (!GOOGLE_MAPS_BROWSER_KEY || !isMapsLoaded || !epAutocompleteServiceRef.current) return
+    epPredictDebounceRef.current = window.setTimeout(() => runEditAddressPredictions(value), 200)
+  }
+
+  function selectEditAddressPrediction(prediction: google.maps.places.AutocompletePrediction) {
+    if (!prediction?.place_id || typeof window === 'undefined') return
+    const g = window.google
+    const svc = new g.maps.places.PlacesService(document.createElement('div'))
+
+    svc.getDetails(
+      {
+        placeId: prediction.place_id,
+        fields: ['formatted_address', 'geometry', 'place_id'],
+        sessionToken: epSessionTokenRef.current || undefined,
+      },
+      (place: google.maps.places.PlaceResult | null, status: string) => {
+        epSessionTokenRef.current = new g.maps.places.AutocompleteSessionToken()
+        setEpAddressSuggestions([])
+        setEpShowAddressSuggestions(false)
+
+        if (status !== g.maps.places.PlacesServiceStatus.OK || !place) return
+
+        const formatted = place.formatted_address?.trim() || prediction.description?.trim() || ''
+        const loc = place.geometry?.location
+        const lat = loc ? loc.lat() : null
+        const lng = loc ? loc.lng() : null
+        const hasCoords =
+          typeof lat === 'number' &&
+          typeof lng === 'number' &&
+          Number.isFinite(lat) &&
+          Number.isFinite(lng)
+
+        epSelectedAddressRef.current = {
+          address: formatted,
+          addressLat: hasCoords ? lat : null,
+          addressLng: hasCoords ? lng : null,
+          placeId: place.place_id ?? prediction.place_id,
+        }
+        setEpAddress(formatted)
+      },
+    )
   }
 
   function saveNewCustomerForProject() {
@@ -1099,13 +1227,36 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
               </div>
               <div>
                 <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Job site address</label>
-                <input
-                  type="text"
-                  value={epAddress}
-                  onChange={(e) => setEpAddress(e.target.value)}
-                  className={inputCls}
-                  placeholder="Street, city (matches Estimate → Mileage)"
-                />
+                {!GOOGLE_MAPS_BROWSER_KEY && (
+                  <div className="text-[10px] text-gray-500 mb-1">Maps suggestions need VITE_GOOGLE_MAPS_BROWSER_KEY.</div>
+                )}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={epAddress}
+                    onChange={(e) => handleEditAddressChange(e.target.value)}
+                    onBlur={() => window.setTimeout(() => setEpShowAddressSuggestions(false), 180)}
+                    onFocus={() => epAddressSuggestions.length > 0 && GOOGLE_MAPS_BROWSER_KEY && isMapsLoaded && setEpShowAddressSuggestions(true)}
+                    className={inputCls}
+                    placeholder="Street, city (matches Estimate → Mileage)"
+                    autoComplete="off"
+                  />
+                  {epShowAddressSuggestions && epAddressSuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 z-[70] max-h-48 overflow-y-auto rounded-md border border-gray-700 bg-gray-950 shadow-2xl">
+                      {epAddressSuggestions.map((s: google.maps.places.AutocompletePrediction) => (
+                        <button
+                          type="button"
+                          key={s.place_id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectEditAddressPrediction(s)}
+                          className="block w-full border-0 border-b border-gray-800 bg-gray-950 px-3 py-2 text-left text-xs text-gray-200 hover:bg-gray-900"
+                        >
+                          {s.description}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               {/* DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — L1 layout: dates top row, categoricals bottom row */}
               <div className="grid grid-cols-2 gap-3">
