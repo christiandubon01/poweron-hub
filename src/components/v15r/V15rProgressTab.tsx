@@ -46,9 +46,10 @@ const PREFERRED_PHASE_ORDER = ['Demo', 'Underground', 'Rough In', 'Trim', 'Finis
 
 /** Legacy weight-map order (for grouping keys from getPhaseWeights) */
 const LEGACY_STANDARD_PHASE_ORDER = ['Estimating', 'Planning', 'Site Prep', 'Rough-in', 'Trim', 'Finish']
-const LEGACY_STANDARD_PHASE_SET = new Set(LEGACY_STANDARD_PHASE_ORDER)
 
 const CUSTOM_PHASE_PALETTE = ['#f97316', '#84cc16', '#22d3ee', '#e879f9', '#fb7185', '#a3e635']
+const MOVEMENT_TIMESTAMP_FIELDS = ['createdAt', 'updatedAt', 'date', 'logDate', 'timestamp']
+const MOVEMENT_TIMESTAMP_ALIASES = ['created_at', 'updated_at', 'log_date']
 
 function customPhaseColor(name: string): string {
   let h = 0
@@ -131,6 +132,118 @@ function effectivePhaseProgressPct(
   return computedPhaseProgressFromTasks(project, ph)
 }
 
+function configuredProgressPhaseNames(project: any, weights: Record<string, number>): string[] {
+  const phases = new Set<string>()
+  Object.keys(weights || {}).forEach(ph => {
+    const clean = String(ph || '').trim()
+    if (clean) phases.add(clean)
+  })
+  ;(project?.customPhases || []).forEach((ph: string) => {
+    const clean = String(ph || '').trim()
+    if (clean) phases.add(clean)
+  })
+  Object.keys(project?.phases || {}).forEach(ph => {
+    const clean = String(ph || '').trim()
+    if (clean) phases.add(clean)
+  })
+  Object.keys(project?.tasks || {}).forEach(ph => {
+    const clean = String(ph || '').trim()
+    if (clean) phases.add(clean)
+  })
+  return Array.from(phases)
+}
+
+function phaseWeightFor(ph: string, weights: Record<string, number>, fallbackWeight: number): number {
+  if (Object.prototype.hasOwnProperty.call(weights || {}, ph)) {
+    return Math.max(0, num(weights[ph]))
+  }
+  return Math.max(0, fallbackWeight)
+}
+
+function formatPhaseWeight(wt: number): string {
+  return Number.isInteger(wt) ? String(wt) : wt.toFixed(1).replace(/\.0$/, '')
+}
+
+function weightedOverallCompletion(
+  project: any,
+  weights: Record<string, number>,
+  lsOverride?: Record<string, boolean>,
+): number {
+  const phases = configuredProgressPhaseNames(project, weights)
+  if (phases.length === 0) return 0
+  const fallbackWeight = 100 / phases.length
+  const weighted = phases.reduce((sum, ph) => {
+    const phaseProgress = effectivePhaseProgressPct(project, ph, lsOverride)
+    const phaseWeight = phaseWeightFor(ph, weights, fallbackWeight)
+    return sum + (phaseProgress * phaseWeight)
+  }, 0)
+  const totalWeight = phases.reduce(
+    (sum, ph) => sum + phaseWeightFor(ph, weights, fallbackWeight),
+    0,
+  )
+  if (totalWeight <= 0) return 0
+  return Math.round(Math.min(100, Math.max(0, weighted / totalWeight)))
+}
+
+function normalizeMatchValue(value: any): string {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function projectLogMatchesProject(log: any, project: any): boolean {
+  if (!log || !project) return false
+  const projectId = normalizeMatchValue(project.id)
+  const directIds = [
+    log.projId,
+    log.projectId,
+    log.project_id,
+    log.activeProject,
+  ].map(normalizeMatchValue).filter(Boolean)
+  if (projectId && directIds.includes(projectId)) return true
+
+  const projectName = normalizeMatchValue(project.name || project.jobName)
+  if (!projectName) return false
+  const nameFields = [
+    log.projName,
+    log.projectName,
+    log.project_name,
+    log.jobName,
+    log.job_name,
+    log.activeProject,
+  ].map(normalizeMatchValue).filter(Boolean)
+  return nameFields.includes(projectName)
+}
+
+function isArchivedOrDeletedLog(log: any): boolean {
+  if (!log) return true
+  if (log.archived === true || log.isArchived === true || log.deleted === true || log.isDeleted === true) return true
+  if (log.archivedAt || log.deletedAt) return true
+  const status = normalizeMatchValue(log.status || log.logStatus)
+  return ['archived', 'deleted', 'void'].includes(status)
+}
+
+function movementLogDate(log: any): Date | null {
+  const fields = [...MOVEMENT_TIMESTAMP_FIELDS, ...MOVEMENT_TIMESTAMP_ALIASES]
+  for (const field of fields) {
+    const raw = log?.[field]
+    if (!raw) continue
+    const d = field === 'date' || field === 'logDate' || field === 'log_date'
+      ? parseDateLocal(String(raw).slice(0, 10))
+      : new Date(raw)
+    if (d && !isNaN(d.getTime())) return d
+  }
+  return null
+}
+
+function movementLogsForProject(backup: any, project: any): any[] {
+  const sources = [
+    ...(Array.isArray(backup?.logs) ? backup.logs : []),
+    ...(Array.isArray(backup?.fieldLogs) ? backup.fieldLogs : []),
+    ...(Array.isArray(backup?.field_logs) ? backup.field_logs : []),
+    ...(Array.isArray(backup?.fieldObservationCards) ? backup.fieldObservationCards : []),
+  ]
+  return sources.filter(log => !isArchivedOrDeletedLog(log) && projectLogMatchesProject(log, project))
+}
+
 const PHASE_COLOR_DEBOUNCE_MS = 220
 
 const taskRowGrid: React.CSSProperties = {
@@ -187,7 +300,13 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const innerViewPrefs = loadInnerProjectViewPrefs(projectId)
 
   const w = getPhaseWeights(backup)
-  const daysSinceMove = daysSince(p.lastMove)
+  const movementLogs = movementLogsForProject(backup, p)
+  const movementDates = movementLogs
+    .map(movementLogDate)
+    .filter(Boolean)
+    .sort((a: Date, b: Date) => b.getTime() - a.getTime())
+  const lastMovementDate = movementDates[0] || null
+  const daysSinceMove = lastMovementDate ? daysSince(lastMovementDate.toISOString()) : null
 
   const persistProjectChange = (
     mutate: (project: any, currentBackup: any) => false | void,
@@ -203,25 +322,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     return true
   }
 
-  const sortedLegacyStandardEntries: [string, number][] = LEGACY_STANDARD_PHASE_ORDER
-    .filter(ph => w[ph] !== undefined)
-    .map(ph => [ph, w[ph]])
+  const configuredPhaseNames = configuredProgressPhaseNames(p, w)
+  const missingPhaseFallbackWeight = configuredPhaseNames.length > 0 ? 100 / configuredPhaseNames.length : 0
+  const configuredPhaseEntries: [string, number][] = configuredPhaseNames.map(ph => [
+    ph,
+    phaseWeightFor(ph, w, missingPhaseFallbackWeight),
+  ])
 
-  const extraWeightEntries: [string, number][] = Object.entries(w)
-    .filter(([ph]) => !LEGACY_STANDARD_PHASE_SET.has(ph))
-
-  const projectCustomPhases: string[] = (p.customPhases || [])
-  const customPhaseEntries: [string, number][] = projectCustomPhases
-    .filter(ph => w[ph] === undefined)
-    .map(ph => [ph, 0])
-
-  const combinedPhaseEntries: [string, number][] = [
-    ...sortedLegacyStandardEntries,
-    ...extraWeightEntries,
-    ...customPhaseEntries,
-  ]
-
-  const orderedPhaseEntries = orderPhaseEntries(combinedPhaseEntries)
+  const orderedPhaseEntries = orderPhaseEntries(configuredPhaseEntries)
 
   const togglePhaseBucket = (ph: string) => {
     setPhaseExpanded(prev => {
@@ -285,15 +393,17 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   }
 
   const stagnancyColor = () => {
+    if (daysSinceMove == null) return '#94a3b8'
     if (daysSinceMove < 7) return '#10b981'
     if (daysSinceMove < 14) return '#f59e0b'
     return '#ef4444'
   }
 
   const stagnancyLabel = () => {
-    if (daysSinceMove < 7) return '✓ Active'
-    if (daysSinceMove < 14) return '⚠ Check-in'
-    return '🔴 Call now'
+    if (daysSinceMove == null) return 'No movement logged'
+    if (daysSinceMove < 7) return 'Active'
+    if (daysSinceMove < 14) return 'Check-in'
+    return 'Call now'
   }
 
   const editTask = (ph, taskId, field, value) => {
@@ -396,6 +506,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     dragInfo.current = { ph, id: taskId }
     setDragActive(taskId)
     e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', taskId)
   }
 
   const onDragOver = (e: React.DragEvent, taskId: string) => {
@@ -415,7 +526,11 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     const tasks = [...((p.tasks || {})[ph] || [])]
     const fromIdx = tasks.findIndex(t => t.id === info.id)
     const toIdx = tasks.findIndex(t => t.id === dropTaskId)
-    if (fromIdx === -1 || toIdx === -1) return
+    if (fromIdx === -1 || toIdx === -1) {
+      dragInfo.current = null
+      setDragActive(null)
+      return
+    }
     pushState()
     const [moved] = tasks.splice(fromIdx, 1)
     tasks.splice(toIdx, 0, moved)
@@ -432,13 +547,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     setDragActive(null)
   }
 
-  const overallCompletion = Math.round(
-    Object.entries(w).reduce((s, [ph, wt]) => {
-      const tot = Object.values(w).reduce((sum, v) => sum + v, 0) || 100
-      const pct = effectivePhaseProgressPct(p, ph, innerViewPrefs.progress?.overrideEnabled)
-      return s + (pct * wt / tot)
-    }, 0)
-  )
+  const overallCompletion = weightedOverallCompletion(p, w, innerViewPrefs.progress?.overrideEnabled)
+  const openRfiCount = (p.rfis || []).filter(r => r.status !== 'answered').length
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -473,8 +583,105 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     )
   }
 
+  function renderHealthCard(opts: {
+    label: string
+    value: React.ReactNode
+    accent: string
+    micro: string
+    badge?: string
+    progressPct?: number
+  }) {
+    const progressPct = opts.progressPct == null ? null : Math.max(0, Math.min(100, opts.progressPct))
+    return (
+      <div
+        className="v15r-progress-health-card"
+        style={{
+          '--health-accent': opts.accent,
+          background: `linear-gradient(135deg, ${opts.accent}22, rgba(34,211,238,0.07) 52%, rgba(15,23,42,0.52))`,
+          border: `1px solid ${opts.accent}3f`,
+        } as React.CSSProperties}
+      >
+        <div className="v15r-progress-health-orb" />
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: opts.accent, fontSize: '10px', fontWeight: 800, letterSpacing: '0.09em', textTransform: 'uppercase', marginBottom: '8px' }}>
+              {opts.label}
+            </div>
+            <div style={{ color: 'var(--t1)', fontFamily: 'monospace', fontSize: '32px', lineHeight: 1, fontWeight: 850, letterSpacing: '-0.05em' }}>
+              {opts.value}
+            </div>
+          </div>
+          {opts.badge && (
+            <div style={{ color: opts.accent, fontSize: '10px', fontWeight: 800, padding: '4px 7px', borderRadius: '999px', backgroundColor: `${opts.accent}18`, border: `1px solid ${opts.accent}33`, whiteSpace: 'nowrap' }}>
+              {opts.badge}
+            </div>
+          )}
+        </div>
+        {progressPct !== null && (
+          <div style={{ position: 'relative', marginTop: '14px', height: '7px', borderRadius: '999px', overflow: 'hidden', backgroundColor: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ width: `${progressPct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, ${opts.accent}, rgba(255,255,255,0.72))`, transition: 'width 0.25s ease' }} />
+          </div>
+        )}
+        <div style={{ position: 'relative', color: 'rgba(229,231,235,0.72)', fontSize: '11px', marginTop: '10px', lineHeight: 1.35 }}>
+          {opts.micro}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
+      <style>{`
+        .v15r-progress-health-card {
+          position: relative;
+          overflow: hidden;
+          border-radius: 12px;
+          padding: 16px;
+          min-height: 132px;
+          box-shadow: 0 16px 38px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.08);
+          isolation: isolate;
+        }
+        .v15r-progress-health-card::after {
+          content: "";
+          position: absolute;
+          inset: -40% auto auto -45%;
+          width: 72%;
+          height: 190%;
+          background: linear-gradient(100deg, transparent, rgba(255,255,255,0.075), transparent);
+          transform: translateX(-12%) rotate(12deg);
+          animation: v15rProgressHealthSheen 9s ease-in-out infinite;
+          pointer-events: none;
+          z-index: 0;
+        }
+        .v15r-progress-health-orb {
+          position: absolute;
+          inset: -42px -28px auto auto;
+          width: 150px;
+          height: 150px;
+          border-radius: 999px;
+          background: var(--health-accent);
+          opacity: 0.14;
+          filter: blur(22px);
+          animation: v15rProgressHealthGlow 7s ease-in-out infinite;
+          pointer-events: none;
+          z-index: 0;
+        }
+        @keyframes v15rProgressHealthSheen {
+          0%, 62%, 100% { transform: translateX(-18%) rotate(12deg); opacity: 0; }
+          72% { opacity: 1; }
+          88% { transform: translateX(190%) rotate(12deg); opacity: 0; }
+        }
+        @keyframes v15rProgressHealthGlow {
+          0%, 100% { transform: scale(0.96); opacity: 0.12; }
+          50% { transform: scale(1.08); opacity: 0.2; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .v15r-progress-health-card::after,
+          .v15r-progress-health-orb {
+            animation: none;
+          }
+        }
+      `}</style>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
 
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px' }}>
@@ -526,55 +733,42 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
           )}
         </div>
 
-        <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Overall Completion</h4>
-            <span style={{ color: '#10b981', fontWeight: '700', fontSize: '20px' }}>{overallCompletion}%</span>
-          </div>
-          <div style={{ height: '8px', backgroundColor: '#1e2130', borderRadius: '4px', overflow: 'hidden' }}>
-            <div
-              style={{
-                width: overallCompletion + '%',
-                height: '100%',
-                backgroundColor: '#10b981',
-                transition: 'width 0.3s',
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px' }}>
-          <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 12px 0' }}>Project Health</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{ backgroundColor: '#232738', borderRadius: '10px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 16px 42px rgba(0,0,0,0.18)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px', marginBottom: '14px' }}>
             <div>
-              <div style={{ fontSize: '11px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600' }}>
-                Days Since Last Movement
-              </div>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: stagnancyColor(), fontFamily: 'monospace', marginBottom: '4px' }}>
-                {daysSinceMove}
-              </div>
-              <span
-                style={{
-                  display: 'inline-block',
-                  padding: '4px 8px',
-                  backgroundColor: stagnancyColor() + '20',
-                  color: stagnancyColor(),
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  fontWeight: '600',
-                }}
-              >
-                {stagnancyLabel()}
-              </span>
-            </div>
-            <div>
-              <div style={{ fontSize: '11px', color: 'var(--t3)', marginBottom: '4px', fontWeight: '600' }}>
-                Open RFIs
-              </div>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: '#ef4444', fontFamily: 'monospace' }}>
-                {(p.rfis || []).filter(r => r.status !== 'answered').length}
+              <h4 style={{ color: 'var(--t1)', fontWeight: '700', margin: '0 0 4px 0' }}>Project Health</h4>
+              <div style={{ color: 'var(--t3)', fontSize: '11px' }}>
+                Weighted progress, field movement, and RFI pressure for this project.
               </div>
             </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+            {renderHealthCard({
+              label: 'Overall Completion',
+              value: `${overallCompletion}%`,
+              accent: '#10b981',
+              micro: `Weighted by phase setup across ${configuredPhaseNames.length} phase${configuredPhaseNames.length === 1 ? '' : 's'}.`,
+              badge: 'Live',
+              progressPct: overallCompletion,
+            })}
+            {renderHealthCard({
+              label: 'Days Since Last Movement',
+              value: daysSinceMove == null ? 'None' : daysSinceMove,
+              accent: stagnancyColor(),
+              micro: lastMovementDate
+                ? `Last project log: ${fmtDateShort(lastMovementDate)}.`
+                : 'No movement logged for this project yet.',
+              badge: stagnancyLabel(),
+            })}
+            {renderHealthCard({
+              label: 'Open RFIs',
+              value: openRfiCount,
+              accent: openRfiCount > 0 ? '#ef4444' : '#38bdf8',
+              micro: openRfiCount > 0
+                ? 'Unanswered RFIs are still open.'
+                : 'No unanswered RFIs on this project.',
+              badge: openRfiCount > 0 ? 'Needs reply' : 'Clear',
+            })}
           </div>
         </div>
 
@@ -670,7 +864,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
                     {overrideOn ? 'Manual override · ' : 'From tasks · '}
-                    {wt > 0 ? `${wt}% weight · ` : ''}{tasks.length} task{tasks.length !== 1 ? 's' : ''}
+                    {wt > 0 ? `${formatPhaseWeight(wt)}% weight · ` : ''}{tasks.length} task{tasks.length !== 1 ? 's' : ''}
                   </div>
                 </div>
                 <div style={{ width: '80px', height: '4px', backgroundColor: '#1e2130', borderRadius: '2px', overflow: 'hidden', flexShrink: 0 }}>
@@ -719,24 +913,20 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                     {tasks.map(t => (
                       <div
                         key={t.id}
-                        draggable
-                        onDragStart={e => onDragStart(ph, t.id, e)}
                         onDragOver={e => onDragOver(e, t.id)}
                         onDrop={e => onDrop(ph, t.id, e)}
-                        onDragEnd={onDragEnd}
                         style={{
                           padding: '8px 10px',
                           backgroundColor: dragActive === t.id ? '#2a2d40' : '#1e2130',
                           borderRadius: '6px',
                           ...taskRowGrid,
                           minHeight: '48px',
-                          cursor: 'grab',
+                          cursor: 'default',
                           opacity: dragActive === t.id ? 0.55 : 1,
                           border: dragActive === t.id
                             ? '1px solid rgba(59,130,246,0.4)'
                             : '1px solid transparent',
                           transition: 'opacity 0.15s, border-color 0.15s',
-                          userSelect: 'none',
                           boxSizing: 'border-box',
                         }}
                       >
@@ -749,6 +939,12 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           }}
                         >
                           <div
+                            draggable
+                            onDragStart={e => {
+                              e.stopPropagation()
+                              onDragStart(ph, t.id, e)
+                            }}
+                            onDragEnd={onDragEnd}
                             style={{
                               width: '20px',
                               flexShrink: 0,
@@ -757,6 +953,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                               justifyContent: 'center',
                               cursor: 'grab',
                               color: 'var(--t3)',
+                              userSelect: 'none',
+                              touchAction: 'none',
                             }}
                             title="Drag to reorder"
                           >
@@ -768,6 +966,9 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             value={t.desc || ''}
                             onChange={e => editTask(ph, t.id, 'desc', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
+                            onPointerDown={e => e.stopPropagation()}
+                            onTouchStart={e => e.stopPropagation()}
+                            onDragStart={e => e.preventDefault()}
                             placeholder="Task description"
                             style={{
                               flex: 1,
@@ -789,6 +990,9 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                         </div>
 
                         <div
+                          onMouseDown={e => e.stopPropagation()}
+                          onPointerDown={e => e.stopPropagation()}
+                          onTouchStart={e => e.stopPropagation()}
                           style={{
                             ...taskRowCell,
                             display: 'flex',
@@ -805,6 +1009,9 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             value={t.pct ?? 0}
                             onChange={e => editTask(ph, t.id, 'pct', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
+                            onPointerDown={e => e.stopPropagation()}
+                            onTouchStart={e => e.stopPropagation()}
+                            onDragStart={e => e.preventDefault()}
                             style={{ flex: '1 1 auto', minWidth: 0, width: '100%', accentColor: clrSaved }}
                           />
                           <span style={{
@@ -834,6 +1041,9 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             value={t.hrs ?? 0}
                             onChange={e => editTask(ph, t.id, 'hrs', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
+                            onPointerDown={e => e.stopPropagation()}
+                            onTouchStart={e => e.stopPropagation()}
+                            onDragStart={e => e.preventDefault()}
                             step="0.5"
                             min="0"
                             style={{
