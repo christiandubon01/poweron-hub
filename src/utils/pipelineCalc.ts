@@ -22,6 +22,9 @@
 interface PipelineProject {
   status?: string
   contract?: number | string | null
+  archived?: boolean
+  isArchived?: boolean
+  archivedAt?: string | null
 }
 
 /** Minimal service log shape required. */
@@ -29,6 +32,9 @@ interface PipelineServiceLog {
   quoted?: number | string | null
   collected?: number | string | null
   adjustments?: Array<{ type?: string; amount?: number | string | null }>
+  archived?: boolean
+  isArchived?: boolean
+  archivedAt?: string | null
 }
 
 // ── Safe numeric coercion ─────────────────────────────────────────────────────
@@ -36,6 +42,10 @@ interface PipelineServiceLog {
 function numSafe(v: unknown): number {
   const n = Number(v)
   return isNaN(n) ? 0 : n
+}
+
+function isArchived(record: any): boolean {
+  return !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
 }
 
 // ── Project pipeline — ACTIVE ONLY ───────────────────────────────────────────
@@ -51,7 +61,7 @@ function numSafe(v: unknown): number {
  */
 export function calcPipeline(projects: PipelineProject[]): number {
   return projects
-    .filter(p => (p.status || '').toLowerCase().trim() === 'active')
+    .filter(p => !isArchived(p) && (p.status || '').toLowerCase().trim() === 'active')
     .reduce((s, p) => s + numSafe(p.contract), 0)
 }
 
@@ -70,6 +80,7 @@ export function calcPipeline(projects: PipelineProject[]): number {
  */
 export function calcServicePipeline(serviceLogs: PipelineServiceLog[]): number {
   return (serviceLogs || []).reduce((sum, l) => {
+    if (isArchived(l)) return sum
     const quoted = numSafe(l.quoted)
     const collected = numSafe(l.collected)
     const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []

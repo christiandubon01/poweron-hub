@@ -26,6 +26,7 @@ import {
   fmtK,
   daysSince,
   syncAllProjectFinanceBuckets,
+  isActiveProject,
   type BackupData,
   type BackupProject,
   type BackupServiceLog,
@@ -304,8 +305,8 @@ export default function V15rMoneyPanel() {
   }, 0)
 
   // Active vs open project money
-  const activeProjectMoney = projectMoney.filter(m => resolveProjectBucket(m.p) === 'active')
-  const openProjectMoney = projectMoney.filter(m => resolveProjectBucket(m.p) !== 'completed')
+  const activeProjectMoney = projectMoney.filter(m => isActiveProject(m.p) && resolveProjectBucket(m.p) === 'active')
+  const openProjectMoney = projectMoney.filter(m => isActiveProject(m.p) && resolveProjectBucket(m.p) !== 'completed')
 
   // Active AR with fallback logic
   const receivableFallback = (m: any) => {

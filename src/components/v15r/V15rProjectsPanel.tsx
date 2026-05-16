@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
-import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X } from 'lucide-react'
+import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X, Archive } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -23,6 +23,7 @@ import {
   pct,
   num,
   syncAllProjectFinanceBuckets,
+  isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
@@ -477,7 +478,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     )
   }
 
-  const projects = backup.projects || []
+  const allProjects = backup.projects || []
+  const projects = allProjects.filter(isActiveProject)
   const gcContacts = backup.gcContacts || []
   const accountOptions = gcContacts.map((gc: any) => ({
     id: String(gc.id || ''),
@@ -630,8 +632,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
   async function deleteProject(id: string) {
     if (!confirm('Delete this project? This cannot be undone.')) return
-    const proj = projects.find(p => p.id === id)
-    backup.projects = projects.filter(p => p.id !== id)
+    const proj = allProjects.find(p => p.id === id)
+    backup.projects = allProjects.filter(p => p.id !== id)
     backup.logs = (backup.logs || []).filter(l => l.projId !== id)
     persist()
     // Write won_archived disposition to linked hunter lead
@@ -650,10 +652,32 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   }
 
   function moveStatus(id: string, newStatus: string) {
-    const p = projects.find(x => x.id === id)
+    const p = allProjects.find(x => x.id === id)
     if (!p) return
     p.status = newStatus
     if (newStatus === 'completed') p.completedAt = new Date().toISOString()
+    persist()
+  }
+
+  function archiveProject(id: string) {
+    if (!confirm('Archive this record? It will be hidden from active views but kept for history.')) return
+    const p = allProjects.find(x => x.id === id)
+    if (!p) return
+    pushState(backup)
+    ;(p as any).archived = true
+    ;(p as any).archivedAt = new Date().toISOString()
+    ;(p as any).archivedReason = (p as any).archivedReason ?? null
+    persist()
+  }
+
+  function markProjectLost(id: string) {
+    if (!confirm('Mark this project as lost? It will leave active project queues but stay in data.')) return
+    const p = allProjects.find(x => x.id === id)
+    if (!p) return
+    pushState(backup)
+    p.status = 'lost'
+    ;(p as any).outcome = 'lost'
+    ;(p as any).lostAt = new Date().toISOString()
     persist()
   }
 
@@ -883,6 +907,20 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
               >
                 <ArrowRight size={10} className="inline mr-1" /> {bucket === 'active' ? 'Coming Up' : 'Active'}
               </button>
+              {bucket === 'coming' && (
+                <button
+                  onClick={() => markProjectLost(p.id)}
+                  className="text-[10px] px-2 py-1.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-semibold"
+                >
+                  Mark Lost
+                </button>
+              )}
+              <button
+                onClick={() => archiveProject(p.id)}
+                className="text-[10px] px-2 py-1.5 rounded bg-slate-500/10 text-slate-300 border border-slate-500/20 font-semibold"
+              >
+                <Archive size={10} />
+              </button>
               <button
                 onClick={() => deleteProject(p.id)}
                 className="text-[10px] px-2 py-1.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-semibold"
@@ -900,6 +938,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
                 className="text-[10px] px-2 py-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold"
               >
                 <RotateCcw size={10} className="inline mr-1" /> Reactivate
+              </button>
+              <button
+                onClick={() => archiveProject(p.id)}
+                className="text-[10px] px-2 py-1.5 rounded bg-slate-500/10 text-slate-300 border border-slate-500/20 font-semibold"
+              >
+                <Archive size={10} />
               </button>
               <button
                 onClick={() => deleteProject(p.id)}

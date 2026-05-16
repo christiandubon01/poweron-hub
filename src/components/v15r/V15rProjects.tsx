@@ -14,7 +14,7 @@
 
 import { useState, useMemo } from 'react'
 import { ChevronDown, ChevronUp, Filter, Zap } from 'lucide-react'
-import { getBackupData, type BackupData, type BackupProject, type BackupLog } from '@/services/backupDataService'
+import { getBackupData, isActiveProject, type BackupData, type BackupProject, type BackupLog } from '@/services/backupDataService'
 import ImportBackupButton from '@/components/ImportBackupButton'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -62,17 +62,18 @@ export default function V15rProjects() {
   const [filterStatus, setFilterStatus] = useState<string>('all')
 
   const types = useMemo(() => {
-    const t = new Set((backup.projects || []).map(p => p.type).filter(Boolean))
+    const t = new Set((backup.projects || []).filter(isActiveProject).map(p => p.type).filter(Boolean))
     return ['all', ...Array.from(t)]
   }, [backup])
 
   const statuses = useMemo(() => {
-    const s = new Set((backup.projects || []).map(p => p.status).filter(Boolean))
+    const s = new Set((backup.projects || []).filter(isActiveProject).map(p => p.status).filter(Boolean))
     return ['all', ...Array.from(s)]
   }, [backup])
 
   const filtered = useMemo(() => {
     return (backup.projects || []).filter(p => {
+      if (!isActiveProject(p)) return false
       if (filterType !== 'all' && p.type !== filterType) return false
       if (filterStatus !== 'all' && p.status !== filterStatus) return false
       return true

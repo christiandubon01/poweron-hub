@@ -28,6 +28,8 @@ import {
   getKPIs,
   projectLogsFor,
   getProjectFinancials,
+  isActiveProject,
+  isActiveServiceCall,
   type BackupData,
   type BackupLog,
   type BackupServiceLog,
@@ -457,7 +459,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     )
   }
 
-  const projects = backup.projects || []
+  const projects = (backup.projects || []).filter(isActiveProject)
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
   const gcContacts = backup.gcContacts || []
@@ -490,9 +492,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   // ── Service Estimate CRUD (3-step workflow) ──────────────────────────────────
 
   const serviceEstimates = backup.serviceEstimates || []
-  const activeServiceCalls = backup.activeServiceCalls || []
+  const activeServiceEstimates = serviceEstimates.filter(isActiveServiceCall)
+  const rawActiveServiceCalls = backup.activeServiceCalls || []
   const billRate = num(settings.billRate || 75)
   const taxRate = num(settings.tax || 0)
+  const serviceWorkflowStatus = (record: any) => String(record?.serviceStatus || record?.estimateStatus || record?.status || '').toLowerCase().trim()
 
   function resetEstimateForm() {
     setEstCust('')
@@ -738,6 +742,44 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     persist()
   }
 
+  function archiveEstimate(estimateId: string) {
+    if (!confirm('Archive this record? It will be hidden from active views but kept for history.')) return
+    pushState(backup)
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? {
+      ...e,
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      archivedReason: e.archivedReason ?? null,
+    } : e)
+    backup.activeServiceCalls = rawActiveServiceCalls.map(c => (c.id === estimateId || c.fromEstimateId === estimateId) ? {
+      ...c,
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      archivedReason: c.archivedReason ?? null,
+    } : c)
+    persist()
+  }
+
+  function markEstimateLost(estimateId: string) {
+    if (!confirm('Mark this estimate as lost? It will leave active estimate queues but stay in data.')) return
+    pushState(backup)
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? {
+      ...e,
+      status: 'lost',
+      serviceStatus: 'lost',
+      outcome: 'lost',
+      lostAt: new Date().toISOString(),
+    } : e)
+    backup.activeServiceCalls = rawActiveServiceCalls.map(c => (c.id === estimateId || c.fromEstimateId === estimateId) ? {
+      ...c,
+      status: 'lost',
+      serviceStatus: 'lost',
+      outcome: 'lost',
+      lostAt: new Date().toISOString(),
+    } : c)
+    persist()
+  }
+
   function confirmEstimateToActiveCall(estimateId: string) {
     const est = serviceEstimates.find(e => e.id === estimateId)
     if (!est) return
@@ -745,7 +787,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     est.status = 'active'
     const activeEntry: any = { ...est, status: 'active', accountId: (est as any).accountId || undefined }
     if (!Array.isArray(backup.activeServiceCalls)) backup.activeServiceCalls = []
-    backup.activeServiceCalls = [...activeServiceCalls, activeEntry]
+    backup.activeServiceCalls = [...rawActiveServiceCalls, activeEntry]
     // Note: per spec, Confirm Job does NOT mark as invoiced — that happens when work is performed
     // and service log is created. This is just a lead-confirmation milestone.
     persist()
@@ -1140,6 +1182,18 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     persist()
   }
 
+  function archiveSvcEntry(logId: string) {
+    if (!confirm('Archive this record? It will be hidden from active views but kept for history.')) return
+    pushState(backup)
+    backup.serviceLogs = serviceLogs.map(l => l.id === logId ? {
+      ...l,
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      archivedReason: (l as any).archivedReason ?? null,
+    } : l)
+    persist()
+  }
+
   /**
    * Append a statusEvent to a service log for historical exposure tracking.
    * Called from every write site that changes collected amount or invoice state.
@@ -1236,7 +1290,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   // ── Render: Project Logs (GREEN TAB) ───────────────────────────────────────
 
   function renderProjectLogs() {
-    const filtered = projFilter === 'all' ? logs : logs.filter(l => l.projId === projFilter)
+    const activeProjectIds = new Set(projects.map(p => p.id))
+    const activeProjectLogs = logs.filter(l => activeProjectIds.has(l.projId))
+    const filtered = projFilter === 'all' ? activeProjectLogs : activeProjectLogs.filter(l => l.projId === projFilter)
     const sorted = [...filtered].sort((a, b) => {
       const da = String(b.date || ''), db = String(a.date || '')
       if (da !== db) return da.localeCompare(db)
@@ -1284,7 +1340,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
                   let dataContext = ''
                   if (isServiceTab) {
-                    const logs = (backup.serviceLogs || []).slice(-20)
+                    const logs = (backup.serviceLogs || []).filter(isActiveServiceCall).slice(-20)
                     const totalCollected = logs.reduce((s, l) => s + num(l.collected || 0), 0)
                     const totalQuoted = logs.reduce((s, l) => s + num(l.quoted || 0), 0)
                     const totalMat = logs.reduce((s, l) => s + num(l.mat || 0), 0)
@@ -1475,7 +1531,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           }
 
           // Filter project logs by date range AND active project filter
+          const activeProjectIds = new Set(projects.map(p => p.id))
           const recentProjectLogs = (backup.logs || []).filter((log: any) => {
+            if (!activeProjectIds.has(log.projId)) return false
             const logDate = parseLogDate(log.date || log.logDate)
             if (!logDate) return false
             if (logDate < sevenDaysAgo) return false
@@ -1485,6 +1543,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
           // Filter service logs — excluded entirely when a specific project is filtered (service logs aren't project-bound)
           const recentServiceLogs = projFilter !== 'all' ? [] : (backup.serviceLogs || []).filter((log: any) => {
+            if (!isActiveServiceCall(log)) return false
             const logDate = parseLogDate(log.date)
             if (!logDate) return false
             return logDate >= sevenDaysAgo
@@ -1920,7 +1979,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   // ── Render: Service Logs (ORANGE TAB) ────────────────────────────────────────
 
   function renderServiceLogs() {
-    const filtered = svcFilter === 'all' ? serviceLogs : serviceLogs.filter(l => l.jtype === svcFilter)
+    const activeServiceLogs = serviceLogs.filter(isActiveServiceCall)
+    const filtered = svcFilter === 'all' ? activeServiceLogs : activeServiceLogs.filter(l => l.jtype === svcFilter)
     const sorted = [...filtered].sort((a, b) => {
       const da = String(b.date || ''), db = String(a.date || '')
       if (da !== db) return da.localeCompare(db)
@@ -2365,15 +2425,15 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         {/* STEP 2: Open Estimates Bucket */}
         {/* ═══════════════════════════════════════════════════════════════════════ */}
 
-        {serviceEstimates.filter(e => e.status === 'open').length > 0 && (
+        {activeServiceEstimates.filter(e => { const s = serviceWorkflowStatus(e); return s === '' || s === 'open' }).length > 0 && (
           <div className="bg-[var(--bg-card)] border border-blue-700/30 rounded-lg p-3 space-y-3">
             <div className="text-xs font-bold text-blue-400 uppercase">
-              Open Estimates ({serviceEstimates.filter(e => e.status === 'open').length})
+              Open Estimates ({activeServiceEstimates.filter(e => { const s = serviceWorkflowStatus(e); return s === '' || s === 'open' }).length})
             </div>
 
             <div className="space-y-2">
-              {serviceEstimates
-                .filter(e => e.status === 'open')
+              {activeServiceEstimates
+                .filter(e => { const s = serviceWorkflowStatus(e); return s === '' || s === 'open' })
                 .map(est => (
                   <div
                     key={est.id}
@@ -2408,6 +2468,18 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                         Edit
                       </button>
                       <button
+                        onClick={() => markEstimateLost(est.id)}
+                        className="text-[9px] px-2 py-1 rounded bg-amber-700/40 text-amber-300 hover:bg-amber-700/60"
+                      >
+                        Mark Lost
+                      </button>
+                      <button
+                        onClick={() => archiveEstimate(est.id)}
+                        className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60"
+                      >
+                        Archive
+                      </button>
+                      <button
                         onClick={() => deleteEstimate(est.id)}
                         className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400"
                       >
@@ -2424,15 +2496,15 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         {/* STEP 3: Active Service Calls Bucket + Completion Modal */}
         {/* ═══════════════════════════════════════════════════════════════════════ */}
 
-        {serviceEstimates.filter(e => e.status === 'active').length > 0 && (
+        {activeServiceEstimates.filter(e => serviceWorkflowStatus(e) === 'active').length > 0 && (
           <div className="bg-[var(--bg-card)] border border-emerald-700/30 rounded-lg p-3 space-y-3">
             <div className="text-xs font-bold text-emerald-400 uppercase">
-              Active Service Calls ({serviceEstimates.filter(e => e.status === 'active').length})
+              Active Service Calls ({activeServiceEstimates.filter(e => serviceWorkflowStatus(e) === 'active').length})
             </div>
 
             <div className="space-y-2">
-              {serviceEstimates
-                .filter(e => e.status === 'active')
+              {activeServiceEstimates
+                .filter(e => serviceWorkflowStatus(e) === 'active')
                 .map(est => (
                   <div
                     key={est.id}
@@ -2574,12 +2646,26 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     )}
 
                     {completingEstimateId !== est.id && (
-                      <button
-                        onClick={() => startCompleteEstimate(est.id)}
-                        className="w-full px-3 py-1.5 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50 text-xs font-semibold"
-                      >
-                        Log as Complete
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => startCompleteEstimate(est.id)}
+                          className="flex-1 px-3 py-1.5 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50 text-xs font-semibold"
+                        >
+                          Log as Complete
+                        </button>
+                        <button
+                          onClick={() => archiveEstimate(est.id)}
+                          className="px-3 py-1.5 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60 text-xs font-semibold"
+                        >
+                          Archive
+                        </button>
+                        <button
+                          onClick={() => deleteEstimate(est.id)}
+                          className="px-3 py-1.5 rounded bg-gray-700/50 text-gray-400 hover:text-red-400 text-xs font-semibold"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -2899,6 +2985,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <button onClick={() => addServiceAdjustment(l.id, 'mileage')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Mileage</button>
                     <button onClick={() => addServiceAdjustment(l.id, 'income')} className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50">+ Income</button>
                     <button onClick={() => beginSvcEditInModal(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
+                    <button onClick={() => archiveSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60">Archive</button>
                     <button onClick={() => deleteSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400">Delete</button>
                     {/* G8: Convert to Estimate — pre-fills the service estimate form */}
                     <button
@@ -2937,11 +3024,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
         {/* Running totals bar at bottom */}
         {sorted.length > 0 && (() => {
-          const totalQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
-          const totalCollected = serviceLogs.reduce((s, l) => s + num(l.collected), 0)
-          const totalProfit = serviceLogs.reduce((s, l) => s + getServiceRollup(l).projectedProfit, 0)
-          const totalMat = serviceLogs.reduce((s, l) => s + num(l.mat), 0)
-          const totalHrs = serviceLogs.reduce((s, l) => s + num(l.hrs), 0)
+          const totalQuoted = activeServiceLogs.reduce((s, l) => s + num(l.quoted), 0)
+          const totalCollected = activeServiceLogs.reduce((s, l) => s + num(l.collected), 0)
+          const totalProfit = activeServiceLogs.reduce((s, l) => s + getServiceRollup(l).projectedProfit, 0)
+          const totalMat = activeServiceLogs.reduce((s, l) => s + num(l.mat), 0)
+          const totalHrs = activeServiceLogs.reduce((s, l) => s + num(l.hrs), 0)
           const profitColor = totalProfit >= 0 ? '#10b981' : '#ef4444'
           return (
             <div style={{
@@ -2959,7 +3046,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               marginTop: '8px',
             }}>
               <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '11px' }}>
-                <span style={{ color: 'var(--t3)' }}>{serviceLogs.length} entries</span>
+                <span style={{ color: 'var(--t3)' }}>{activeServiceLogs.length} entries</span>
                 <span style={{ color: 'var(--t3)' }}>{totalHrs.toFixed(1)}h total</span>
                 <span style={{ fontFamily: 'monospace', color: '#f59e0b' }}>{fmt(totalMat)} mat</span>
                 <span style={{ fontFamily: 'monospace', color: '#f97316' }}>{fmt(totalQuoted)} quoted</span>
@@ -2979,8 +3066,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   function renderTriggers() {
     const kpis = getKPIs(backup)
-    const allProjects = backup.projects || []
-    const allSvcLogs = backup.serviceLogs || []
+    const allProjects = (backup.projects || []).filter(isActiveProject)
+    const allSvcLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
 
     // Filter trigger rules by selected bucket/job
     const filteredRules = triggerRules.filter(rule => {
@@ -3157,7 +3244,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
 
     // Check service calls for negative profit
-    const todaySvc = (backup.serviceLogs || []).filter(l => l.date === today_str)
+    const todaySvc = (backup.serviceLogs || []).filter(l => isActiveServiceCall(l) && l.date === today_str)
     const negativeProfit = todaySvc.filter(l => {
       const quoted = num(l.quoted || 0)
       const mat = num(l.mat || 0)
@@ -3217,7 +3304,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     .filter(l => (l.date || '') >= weekStart)
     .reduce((s, l) => s + num(l.collected), 0)
     + (backup.serviceLogs || [])
-    .filter(l => (l.date || '') >= weekStart)
+    .filter(l => isActiveServiceCall(l) && (l.date || '') >= weekStart)
     .reduce((s, l) => s + num(l.collected), 0)
 
   // Mat Cost This Week — from both
@@ -3225,7 +3312,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     .filter(l => (l.date || '') >= weekStart)
     .reduce((s, l) => s + num(l.mat), 0)
     + (backup.serviceLogs || [])
-    .filter(l => (l.date || '') >= weekStart)
+    .filter(l => isActiveServiceCall(l) && (l.date || '') >= weekStart)
     .reduce((s, l) => s + num(l.mat), 0)
 
   // Net This Week

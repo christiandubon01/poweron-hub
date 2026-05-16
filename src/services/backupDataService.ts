@@ -196,6 +196,13 @@ export interface BackupProject {
   addressLng?: number
   /** Google Places place_id when address was picked from autocomplete */
   placeId?: string
+  archived?: boolean
+  archivedAt?: string | null
+  archivedReason?: string | null
+  outcome?: 'active' | 'won' | 'lost' | 'completed' | 'cancelled' | null
+  lostReason?: string
+  lostNotes?: string
+  completedAt?: string
 }
 
 export interface BackupPriceBookItem {
@@ -216,6 +223,14 @@ export interface BackupServiceLog {
   collected: number; payStatus: string; balanceDue: number; detailLink?: string
   adjustments?: any[]; triggersAtSave?: string[]; compareWarnings?: string[]
   emergencyMatInfo?: string; estimateComparison?: any
+  archived?: boolean
+  archivedAt?: string | null
+  archivedReason?: string | null
+  serviceStatus?: 'open' | 'active' | 'completed' | 'paid' | 'lost' | 'cancelled' | null
+  lostReason?: string
+  lostNotes?: string
+  completedAt?: string
+  paidAt?: string
 }
 
 export interface BackupTriggerRule {
@@ -821,6 +836,28 @@ export function daysSince(d: string | undefined | null): number {
   return Math.floor((Date.now() - new Date(d).getTime()) / 86400000)
 }
 
+export function isArchivedRecord(record: any): boolean {
+  return !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
+}
+
+export function isActiveProject(record: any): boolean {
+  if (!record || isArchivedRecord(record)) return false
+  const status = String(record.status || record.projectStatus || '').toLowerCase().trim()
+  const outcome = String(record.outcome || '').toLowerCase().trim()
+  if (['deleted', 'lost', 'rejected', 'cancelled', 'canceled', 'archived'].includes(status)) return false
+  if (['lost', 'cancelled', 'canceled'].includes(outcome)) return false
+  return true
+}
+
+export function isActiveServiceCall(record: any): boolean {
+  if (!record || isArchivedRecord(record)) return false
+  const status = String(record.serviceStatus || record.estimateStatus || record.status || '').toLowerCase().trim()
+  const outcome = String(record.outcome || '').toLowerCase().trim()
+  if (['deleted', 'lost', 'rejected', 'cancelled', 'canceled', 'archived'].includes(status)) return false
+  if (['lost', 'cancelled', 'canceled'].includes(outcome)) return false
+  return true
+}
+
 /** Dollar format: $1,234.56 */
 export function fmt(v: number | undefined | null): string {
   return '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -1146,9 +1183,9 @@ export function syncAllProjectFinanceBuckets(d: BackupData): void {
 // ── KPIs (matches HTML renderHome exactly) ───────────────────────────────────
 
 export function getKPIs(d: BackupData) {
-  const projects = d.projects || []
+  const projects = (d.projects || []).filter(isActiveProject)
   const logs = d.logs || []
-  const serviceLogs = d.serviceLogs || []
+  const serviceLogs = (d.serviceLogs || []).filter(isActiveServiceCall)
   syncAllProjectFinanceBuckets(d)
   // Pipeline = active/coming project contracts + open service calls quoted
   // Excludes: completed+collected projects, deleted projects, lost/rejected estimates

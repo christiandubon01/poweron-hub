@@ -26,6 +26,8 @@ import {
   num,
   resolveCanonicalCustomerName,
   daysSince,
+  isActiveProject,
+  isActiveServiceCall,
   type BackupGCContact,
 } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
@@ -814,10 +816,10 @@ export default function V15rLeadsPanel() {
   }
 
   function getRecordsForAccount(account: any, accountList: any[] = gcContacts) {
-    const projects = (backup.projects || []).filter((p: any) => isRecordForAccount(p, account, accountList))
-    const serviceLogs = (backup.serviceLogs || []).filter((s: any) => isRecordForAccount(s, account, accountList))
-    const serviceEstimates = (backup.serviceEstimates || []).filter((s: any) => isRecordForAccount(s, account, accountList))
-    const activeServiceCalls = (backup.activeServiceCalls || []).filter((s: any) => isRecordForAccount(s, account, accountList))
+    const projects = (backup.projects || []).filter((p: any) => isActiveProject(p) && isRecordForAccount(p, account, accountList))
+    const serviceLogs = (backup.serviceLogs || []).filter((s: any) => isActiveServiceCall(s) && isRecordForAccount(s, account, accountList))
+    const serviceEstimates = (backup.serviceEstimates || []).filter((s: any) => isActiveServiceCall(s) && isRecordForAccount(s, account, accountList))
+    const activeServiceCalls = (backup.activeServiceCalls || []).filter((s: any) => isActiveServiceCall(s) && isRecordForAccount(s, account, accountList))
     const serviceLeadsForAccount = (serviceLeads || []).filter((s: any) => isRecordForAccount(s, account, accountList))
     const interactions = account.contactLog || []
 
@@ -1321,7 +1323,7 @@ export default function V15rLeadsPanel() {
       if (id) accountById.set(id, a)
     })
     const toRows = (list: any[], kind: string) => list.map((r: any) => ({ ...r, _kind: kind }))
-    const estimateRecords = (backup.serviceEstimates || []).filter((r: any) => isRelevantEstimateStatus(r?.status))
+    const estimateRecords = (backup.serviceEstimates || []).filter((r: any) => isActiveServiceCall(r) && isRelevantEstimateStatus(r?.status))
     const records = [
       ...toRows(backup.projects || [], 'project'),
       ...toRows(backup.serviceLogs || [], 'service_log'),

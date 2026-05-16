@@ -20,7 +20,7 @@ import {
   AreaChart, Area, Legend,
 } from 'recharts'
 import { callClaude, extractText } from '@/services/claudeProxy'
-import { getBackupData, getKPIs, num } from '@/services/backupDataService'
+import { getBackupData, getKPIs, num, isActiveProject, isActiveServiceCall } from '@/services/backupDataService'
 import { supabase } from '@/lib/supabase'
 import { NexusPresenceOrb } from '@/components/nexus/NexusPresenceOrb'
 import { takeDailySnapshotIfNeeded, fetchRecentSnapshots } from '@/services/dailySnapshotService'
@@ -4097,12 +4097,12 @@ function useElectricalData() {
   const d = getBackupData()
   if (!d) return { kpis: null, openProjects: [] as any[], lastLog: null as any, serviceNet: 0, activeCrew: 0 }
   const kpis = getKPIs(d)
-  const projects = d.projects || []
+  const projects = (d.projects || []).filter(isActiveProject)
   const openProjects = projects.filter((p: any) => {
     const s = (p.status || '').toLowerCase()
     return s === 'active' || s === 'coming'
   })
-  const serviceLogs = d.serviceLogs || []
+  const serviceLogs = (d.serviceLogs || []).filter(isActiveServiceCall)
   const serviceNet = serviceLogs.reduce((s: number, l: any) => s + num(l.collected) - num(l.opCost), 0)
   const activeCrew = (d.employees || []).length
   const allLogs = [...(d.logs || [])].sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')))

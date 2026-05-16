@@ -15,7 +15,7 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react'
 import * as THREE from 'three'
-import { getBackupData, health, getKPIs } from '../services/backupDataService'
+import { getBackupData, health, getKPIs, isActiveServiceCall } from '../services/backupDataService'
 import { callClaude, extractText } from '../services/claudeProxy'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -501,7 +501,7 @@ function buildSceneData(
   })
 
   // ── B66: Service call nodes (show open/active service calls) ──────────────
-  const activeCalls = data?.activeServiceCalls || []
+  const activeCalls = (data?.activeServiceCalls || []).filter(isActiveServiceCall)
   if (activeCalls.length > 0) {
     const svcClr = applyScenarioColor(0x38bdf8, scenario, 'servicecall')
     const svcIdx = nodes.length

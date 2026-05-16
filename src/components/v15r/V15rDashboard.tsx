@@ -14,7 +14,7 @@ function BarChart3Icon({ size = 24, className = '' }: { size?: number; className
 function BrainIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
-import { getBackupData, getProjectFinancials, health, num, fmtK, type BackupData } from '@/services/backupDataService'
+import { getBackupData, getProjectFinancials, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
 // BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 // BUG 3 FIX — Canonical project financials
@@ -131,7 +131,8 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
         setState({ loading: true })
 
         // Pre-calculate accurate values — active = status === 'active' ONLY
-        const activeProjects = projects.filter(p => p.status === 'active')
+        const activeProjects = projects.filter(p => isActiveProject(p) && p.status === 'active')
+        const activeServiceLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
         // BUG 2 FIX — Pipeline = active projects ONLY + uncollected service balances
         // (removed 'coming' from pipeline per owner spec)
         const activeContractTotal = activeProjects.reduce((s: number, p: any) => s + num(p.contract), 0)
@@ -140,7 +141,7 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
         const totalBilled = activeProjects.reduce((s: number, p: any) => s + num(p.billed), 0)
         const totalUnbilledInvoiced = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.billed) - num(p.paid)), 0)
         // BUG 2 FIX — use calcActivePipeline (active ONLY + open service balances)
-        const pipelineTotal = calcActivePipeline(projects, backup.serviceLogs || [])
+        const pipelineTotal = calcActivePipeline(projects.filter(isActiveProject), activeServiceLogs)
 
         // BUG 3 FIX — Canonical project financials using calculatePortfolioFinancials
         const mileRate = num(backup?.settings?.mileRate) || 0.66
@@ -163,14 +164,14 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
         })
 
         // Service logs — use collected (actual revenue), not quoted
-        const recentSvcLogs = (backup.serviceLogs || []).slice(-5).map((l: any) => ({
+        const recentSvcLogs = activeServiceLogs.slice(-5).map((l: any) => ({
           date: l.date,
           customer: l.customer,
           collected: num(l.collected),
           quoted: num(l.quoted),
           type: l.jtype,
         }))
-        const svcTotalCollected = (backup.serviceLogs || []).reduce((s: number, l: any) => s + num(l.collected), 0)
+        const svcTotalCollected = activeServiceLogs.reduce((s: number, l: any) => s + num(l.collected), 0)
 
         const dashboardContext = {
           definitions: 'Active projects = status === active ONLY (not coming/pending). Pipeline = active project contracts + open service call balances. Remaining balance = quote minus total costs (labor+material+transport), NOT quote minus collected. Collected is tracked separately. These values are pre-calculated — do not recalculate them.',
@@ -660,7 +661,7 @@ function V15rDashboardInner() {
     )
   }
 
-  const projects = backup.projects || []
+  const projects = (backup.projects || []).filter(isActiveProject)
   const weeklyData = backup.weeklyData || []
 
   // ── CFOT: Cash Flow Over Time ──
@@ -704,8 +705,8 @@ function V15rDashboardInner() {
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
     const allLogs = (backup.logs || []) as any[]
-    const allSvcLogs = (backup.serviceLogs || []) as any[]
-    const allProjects = (backup.projects || []) as any[]
+    const allSvcLogs = (backup.serviceLogs || []).filter(isActiveServiceCall) as any[]
+    const allProjects = (backup.projects || []).filter(isActiveProject) as any[]
 
     // Weekly income (unchanged from prior fix)
     const svcByWeek: Record<number, number> = {}
@@ -889,7 +890,7 @@ function V15rDashboardInner() {
   })()
 
   // ── CFOT Summary Boxes — computed directly from backup data ──
-  const serviceLogs = backup.serviceLogs || []
+  const serviceLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
   const projectLogs = backup.logs || []
   const cfotSummary = (() => {
     const activeProjects = projects.filter(p => p.status === 'active')
@@ -950,7 +951,7 @@ function V15rDashboardInner() {
     .filter(p => p.status === 'active' && (p.contract || 0) > 0 && p.name && p.name.trim())
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 10)
-  const rcaDropdownProjects = (backup.projects || []).filter((p: any) => p.name && p.name.trim())
+  const rcaDropdownProjects = (backup.projects || []).filter((p: any) => isActiveProject(p) && p.name && p.name.trim())
   const rcaFilteredProjects = (() => {
     const allLogs = backup.logs || []
     const inRange = (d: string) => {

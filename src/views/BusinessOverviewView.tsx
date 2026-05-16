@@ -19,6 +19,8 @@ import {
   fmtK,
   getProjectFinancials,
   resolveProjectBucket,
+  isActiveProject,
+  isActiveServiceCall,
   fmt,
   type BackupData,
   type BackupProject,
@@ -264,6 +266,7 @@ export default function BusinessOverviewView() {
   const recentProjects = useMemo<BackupProject[]>(() => {
     if (!backup) return []
     const all = (backup.projects || []).filter(p => {
+      if (!isActiveProject(p)) return false
       const b = resolveProjectBucket(p)
       return b === 'active' || b === 'coming'
     })
@@ -276,7 +279,7 @@ export default function BusinessOverviewView() {
   // Service net (svc collected - svc quoted balance)
   const serviceNet = useMemo(() => {
     if (!backup) return 0
-    const logs = backup.serviceLogs || []
+    const logs = (backup.serviceLogs || []).filter(isActiveServiceCall)
     return logs.reduce((s, l) => s + num(l.collected), 0)
   }, [backup])
 
