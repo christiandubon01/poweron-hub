@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useMemo, lazy, Suspense, useEffect } from 'react'
-import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive, Timer, Boxes, Route, CircleDollarSign, X } from 'lucide-react'
+import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive, Timer, Boxes, Route, CircleDollarSign, X, ClipboardList } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -1449,69 +1449,105 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         </div>
 
         {/* Project Log Modal */}
-        {showProjForm && (
+        {showProjForm && (() => {
+          const projectLogInputClass = 'h-10 w-full rounded-lg border border-cyan-400/15 bg-slate-950/55 px-3 text-xs text-slate-100 shadow-inner shadow-black/20 outline-none transition-all placeholder:text-slate-500 focus:border-cyan-300/70 focus:ring-2 focus:ring-cyan-400/20'
+          const projectLogLabelClass = 'mb-1.5 block text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100/55'
+          const projectLogSectionClass = 'rounded-xl border border-white/8 bg-slate-950/35 p-4 shadow-inner shadow-white/[0.025]'
+
+          return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center"
             style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
           >
             <div
-              className="relative mx-6 flex w-full max-w-5xl flex-col rounded-2xl shadow-2xl"
+              className="relative mx-4 flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl shadow-2xl"
               style={{
-                backgroundColor: 'var(--bg-card)',
-                border: '1px solid rgba(16,185,129,0.3)',
                 maxHeight: '90vh',
-                overflow: 'hidden',
+                background: 'linear-gradient(145deg, rgba(15,23,42,0.98) 0%, rgba(8,31,47,0.98) 48%, rgba(2,16,28,0.99) 100%)',
+                border: '1px solid rgba(45,212,191,0.28)',
+                boxShadow: '0 28px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 70px rgba(20,184,166,0.08)',
               }}
             >
-              <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-700/60 px-6 py-4">
-                <div>
-                  <h2 className="text-xl font-bold text-white">{editLogId ? 'Edit Project Log' : 'New Project Log'}</h2>
-                  <p className="mt-1 text-sm text-gray-400">Log labor, materials, mileage, collection, and work performed.</p>
+              <div
+                className="pointer-events-none absolute inset-0 opacity-50"
+                style={{
+                  background: 'linear-gradient(115deg, transparent 0%, rgba(45,212,191,0.07) 32%, transparent 58%)',
+                  animation: 'projectLogModalGlare 9s ease-in-out infinite',
+                }}
+              />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-cyan-300/10 to-transparent" />
+
+              <div className="relative flex flex-shrink-0 items-center justify-between border-b border-cyan-300/10 px-6 py-5">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-300/25 bg-emerald-400/10 text-emerald-300 shadow-lg shadow-emerald-950/30">
+                    <ClipboardList size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold tracking-normal text-white">{editLogId ? 'Edit Project Log' : 'New Project Log'}</h2>
+                    <p className="mt-1 text-sm text-cyan-100/58">Log labor, materials, mileage, collection, and work performed.</p>
+                  </div>
                 </div>
                 <button
                   onClick={resetProjForm}
-                  className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-white"
+                  className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-white"
                   aria-label="Close project log modal"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="flex-1 space-y-3 overflow-y-auto px-5 py-6">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="relative flex-1 space-y-4 overflow-y-auto px-5 py-5">
+                <div className={projectLogSectionClass}>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-gradient-to-r from-emerald-300/45 via-cyan-300/15 to-transparent" />
+                    <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-300/80">Job Context</div>
+                    <div className="h-px flex-1 bg-gradient-to-l from-emerald-300/45 via-cyan-300/15 to-transparent" />
+                  </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Project</label>
-                <select value={flProj} onChange={e => setFlProj(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200">
+                <label className={projectLogLabelClass}>Project</label>
+                <select value={flProj} onChange={e => setFlProj(e.target.value)} className={projectLogInputClass}>
                   <option value="">Select...</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Phase</label>
-                <select value={flPhase} onChange={e => setFlPhase(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200">
+                <label className={projectLogLabelClass}>Phase</label>
+                <select value={flPhase} onChange={e => setFlPhase(e.target.value)} className={projectLogInputClass}>
                   {PHASES.map(ph => <option key={ph} value={ph}>{ph}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Date</label>
-                <input type="date" value={flDate} onChange={e => setFlDate(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <label className={projectLogLabelClass}>Date</label>
+                <input type="date" value={flDate} onChange={e => setFlDate(e.target.value)} className={projectLogInputClass} />
               </div>
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Employee</label>
-                <select value={flEmp} onChange={e => setFlEmp(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200">
+                <label className={projectLogLabelClass}>Employee</label>
+                <select value={flEmp} onChange={e => setFlEmp(e.target.value)} className={projectLogInputClass}>
                   <option value="">Me</option>
                   {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </div>
+            </div>
+                </div>
+
+                <div className={projectLogSectionClass}>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-gradient-to-r from-cyan-300/40 via-emerald-300/15 to-transparent" />
+                    <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-200/80">Time + Cost Inputs</div>
+                    <div className="h-px flex-1 bg-gradient-to-l from-cyan-300/40 via-emerald-300/15 to-transparent" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Hours</label>
-                <input key={`flHrs-${editLogId || 'new'}`} type="number" step="0.5" defaultValue={flHrs} onBlur={e => setFlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <label className={projectLogLabelClass}>Hours</label>
+                <input key={`flHrs-${editLogId || 'new'}`} type="number" step="0.5" defaultValue={flHrs} onBlur={e => setFlHrs(e.target.value)} className={projectLogInputClass} placeholder="0.0" />
               </div>
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Miles RT</label>
-                <input key={`flMiles-${editLogId || 'new'}`} type="number" defaultValue={flMiles} onBlur={e => setFlMiles(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <label className={projectLogLabelClass}>Miles RT</label>
+                <input key={`flMiles-${editLogId || 'new'}`} type="number" defaultValue={flMiles} onBlur={e => setFlMiles(e.target.value)} className={projectLogInputClass} placeholder="0" />
               </div>
               <VoiceMaterialCapture
+                className="!col-span-1 sm:!col-span-1 lg:!col-span-1 [&>label]:mb-1.5 [&>label]:block [&>label]:text-[10px] [&>label]:font-bold [&>label]:uppercase [&>label]:tracking-[0.16em] [&>label]:text-cyan-100/55 [&_input]:!h-10 [&_input]:!rounded-lg [&_input]:!border-cyan-400/15 [&_input]:!bg-slate-950/55 [&_input]:!px-3 [&_input]:!text-slate-100 [&_input]:outline-none [&_input]:transition-all [&_input:focus]:!border-cyan-300/70 [&_input:focus]:!ring-2 [&_input:focus]:!ring-cyan-400/20 [&_button]:!h-10 [&_button]:!w-10 [&_button]:!rounded-lg"
                 value={flMat}
                 onChange={setFlMat}
                 priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
@@ -1521,26 +1557,37 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 }}
               />
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Collected $</label>
-                <input key={`flCollected-${editLogId || 'new'}`} type="number" step="0.01" defaultValue={flCollected} onBlur={e => setFlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <label className={projectLogLabelClass}>Collected $</label>
+                <input key={`flCollected-${editLogId || 'new'}`} type="number" step="0.01" defaultValue={flCollected} onBlur={e => setFlCollected(e.target.value)} className={projectLogInputClass} placeholder="0.00" />
               </div>
               <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Store</label>
-                <input key={`flStore-${editLogId || 'new'}`} defaultValue={flStore} onBlur={e => setFlStore(e.target.value)} placeholder="Home Depot..." className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+                <label className={projectLogLabelClass}>Store</label>
+                <input key={`flStore-${editLogId || 'new'}`} defaultValue={flStore} onBlur={e => setFlStore(e.target.value)} placeholder="Home Depot..." className={projectLogInputClass} />
               </div>
+                  </div>
+                </div>
+
+                <div className={projectLogSectionClass}>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-gradient-to-r from-emerald-300/40 via-cyan-300/15 to-transparent" />
+                    <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-200/80">Notes + Proof</div>
+                    <div className="h-px flex-1 bg-gradient-to-l from-emerald-300/40 via-cyan-300/15 to-transparent" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label className={projectLogLabelClass}>Emergency Mat Info</label>
+              <input key={`flEmatInfo-${editLogId || 'new'}`} defaultValue={flEmatInfo} onBlur={e => setFlEmatInfo(e.target.value)} className={projectLogInputClass} placeholder="PO, reason, approval..." />
             </div>
             <div>
-              <label className="text-[9px] text-gray-500 uppercase font-bold">Emergency Mat Info</label>
-              <input key={`flEmatInfo-${editLogId || 'new'}`} defaultValue={flEmatInfo} onBlur={e => setFlEmatInfo(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+              <label className={projectLogLabelClass}>Detail Link</label>
+              <input key={`flDetailLink-${editLogId || 'new'}`} defaultValue={flDetailLink} onBlur={e => setFlDetailLink(e.target.value)} placeholder="Receipt, cart, item link" className={projectLogInputClass} />
             </div>
-            <div>
-              <label className="text-[9px] text-gray-500 uppercase font-bold">Detail Link</label>
-              <input key={`flDetailLink-${editLogId || 'new'}`} defaultValue={flDetailLink} onBlur={e => setFlDetailLink(e.target.value)} placeholder="Receipt, cart, item link" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
+            <div className="md:col-span-2">
+              <label className={projectLogLabelClass}>Work Performed</label>
+              <textarea key={`flNotes-${editLogId || 'new'}`} defaultValue={flNotes} onBlur={e => setFlNotes(e.target.value)} rows={3} className={`${projectLogInputClass} h-auto min-h-[92px] resize-none py-3 leading-relaxed`} placeholder="Describe the work completed, blockers, and next steps..." />
             </div>
-            <div>
-              <label className="text-[9px] text-gray-500 uppercase font-bold">Work Performed</label>
-              <textarea key={`flNotes-${editLogId || 'new'}`} defaultValue={flNotes} onBlur={e => setFlNotes(e.target.value)} rows={2} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none" />
-            </div>
+                  </div>
+                </div>
             {/* Spec: Live entry form preview — updates as user types */}
             {flProj && (() => {
               const previewBillRate = num(settings.billRate) || 95
@@ -1574,7 +1621,30 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               const previewColor = getBalanceColor(remainingAfterSave, contract)
 
               return (
-                <div className="bg-[var(--bg-primary)] border border-gray-700 rounded px-3 py-2 text-[10px] font-mono text-gray-400">
+                <div className="rounded-xl border border-cyan-300/12 bg-slate-950/45 p-3 shadow-inner shadow-white/[0.02]">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-100/55">Live Summary</div>
+                    <div className="text-[10px] font-mono text-slate-500">{quoteBurnPct.toFixed(1)}% burn against {fmt(contract)}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                    {[
+                      { label: 'Labor', value: previewLaborCost, color: 'text-rose-300' },
+                      { label: 'Material', value: previewMat, color: 'text-orange-300' },
+                      { label: 'Mileage', value: previewMileageCost, color: 'text-sky-300' },
+                      { label: 'Collected', value: previewColl, color: 'text-emerald-300' },
+                    ].map(item => (
+                      <div key={item.label} className="rounded-lg border border-white/8 bg-white/[0.035] px-3 py-2">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</div>
+                        <div className={`mt-1 font-mono text-sm font-bold ${item.color}`}>{fmt(item.value)}</div>
+                      </div>
+                    ))}
+                    <div className="rounded-lg border border-emerald-300/18 bg-emerald-300/[0.06] px-3 py-2">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-emerald-100/55">Estimated Total</div>
+                      <div className="mt-1 font-mono text-sm font-bold text-white">{fmt(previewEntryCost)}</div>
+                      <div className="mt-0.5 text-[9px] font-mono" style={{ color: previewColor }}>Rem. {fmt(remainingAfterSave)}</div>
+                    </div>
+                  </div>
+                  <div className="sr-only">
                   <span className="text-gray-500">Daily net preview: </span>
                   <span style={{ color: previewColor, fontWeight: 700 }}>{fmt(remainingAfterSave)}</span>
                   <span className="text-gray-600"> ({quoteBurnPct.toFixed(1)}% burn) | </span>
@@ -1589,28 +1659,36 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <span className="text-gray-600"> — </span>
                   <span className="text-gray-500">Remaining after save: </span>
                   <span style={{ color: previewColor, fontWeight: 700 }}>{fmt(remainingAfterSave)}</span>
+                  </div>
                 </div>
               )
             })()}
               </div>
 
-              <div className="flex flex-shrink-0 items-center justify-between border-t border-gray-700/60 px-8 py-5" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+              <div className="relative flex flex-shrink-0 items-center justify-between border-t border-cyan-300/10 bg-slate-950/70 px-8 py-5 shadow-[0_-18px_34px_rgba(2,6,23,0.35)]">
                 <button
                   onClick={resetProjForm}
-                  className="rounded-lg border border-gray-600 px-4 py-2 text-xs text-gray-400 transition-colors hover:border-gray-400 hover:text-white"
+                  className="rounded-lg border border-white/12 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-white/25 hover:bg-white/[0.06] hover:text-white"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={saveProjEntry}
-                  className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-lg transition-colors hover:bg-emerald-500"
+                  className="flex items-center gap-2 rounded-lg border border-emerald-300/35 bg-gradient-to-r from-emerald-600 to-teal-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/35 transition-all hover:from-emerald-500 hover:to-teal-400"
                 >
                   {editLogId ? 'Update Log' : 'Save Log'}
                 </button>
               </div>
+              <style>{`
+                @keyframes projectLogModalGlare {
+                  0%, 100% { transform: translateX(-22%); opacity: 0.28; }
+                  50% { transform: translateX(18%); opacity: 0.48; }
+                }
+              `}</style>
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* AI Profit Analysis Results */}
         {aiProfitAnalysis && (
