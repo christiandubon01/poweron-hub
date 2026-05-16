@@ -55,6 +55,7 @@ import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABO
 const PHASES = ['Rough-in', 'Trim', 'Demo', 'Underground', 'Finish', 'Material Run', 'Planning', 'Inspection']
 const JOB_TYPES = ['GFCI / Receptacles', 'Panel / Service', 'Troubleshoot', 'Lighting', 'EV Charger', 'Low Voltage', 'Circuit Add/Replace', 'Switches / Dimmers', 'Warranty', 'Other']
 const REL_ACCOUNT_TYPES = ['General Contractor', 'Subcontractor', 'Homeowner', 'Property Manager', 'Commercial Client', 'Service Customer', 'Other']
+const FIELD_LOG_HIDE_GAPS_KEY = 'poweron:v15r:fieldLogHideGaps'
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -283,7 +284,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   })
   const [projFilter, setProjFilter] = useState('all')
   const [svcFilter, setSvcFilter] = useState('all')
-  const [showGaps, setShowGaps] = useState(true)
+  const [showGaps, setShowGaps] = useState(() => {
+    try {
+      return localStorage.getItem(FIELD_LOG_HIDE_GAPS_KEY) !== 'true'
+    } catch {
+      return true
+    }
+  })
   const [showProjForm, setShowProjForm] = useState(false)
   const [showSvcForm, setShowSvcForm] = useState(false)
   const [editLogId, setEditLogId] = useState<string | null>(null)
@@ -292,6 +299,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [aiOpen, setAiOpen] = useState(false)
   const [aiProfitAnalysis, setAiProfitAnalysis] = useState<string | null>(null)
   const [aiProfitLoading, setAiProfitLoading] = useState(false)
+  function toggleShowGaps() {
+    const next = !showGaps
+    setShowGaps(next)
+    try {
+      localStorage.setItem(FIELD_LOG_HIDE_GAPS_KEY, String(!next))
+    } catch {}
+  }
 
   // Trigger bucket selector state
   const [triggerBucket, setTriggerBucket] = useState<'all' | 'projects' | 'service'>('all')
@@ -1376,7 +1390,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <button
-              onClick={() => setShowGaps(!showGaps)}
+              onClick={toggleShowGaps}
               className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
                 showGaps
                   ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
@@ -1900,10 +1914,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                             <div className="mt-0.5 font-mono text-[13px] font-extrabold leading-none" style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</div>
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => beginLogEdit(l.id)} className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/[0.07] hover:text-white">Edit</button>
-                          <button onClick={() => deleteLogEntry(l.id)} className="rounded-md border border-red-400/10 bg-red-500/[0.06] px-2.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/[0.10] hover:text-red-200">Delete</button>
-                        </div>
                       </div>
                       <div className="ml-auto flex w-full flex-wrap justify-end gap-2 lg:w-auto lg:min-w-[390px] lg:flex-none">
                         {entryTotalStats.map(({ label, amount, Icon, color, bg, border, featured }) => (
@@ -1949,16 +1959,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                      <span className="inline-flex items-baseline gap-1.5">
-                        <span className="font-medium text-slate-400">Net</span>
-                        <span className="font-mono font-semibold" style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</span>
-                      </span>
-                      {todayHours > 0 && (
+                      {false && todayHours > 0 && (
                         <span style={{ padding: '2px 6px', borderRadius: '3px', background: onTarget ? 'rgba(16,185,129,.2)' : 'rgba(239,68,68,.2)', color: onTarget ? '#10b981' : '#ef4444', fontSize: '9px', fontWeight: 700 }}>
                           {onTarget ? '✓ On Target' : '⚠ Below Target'} ({todayHours.toFixed(1)}h)
                         </span>
                       )}
                     </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => beginLogEdit(l.id)} className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/[0.07] hover:text-white">Edit</button>
+                    <button onClick={() => deleteLogEntry(l.id)} className="rounded-md border border-red-400/10 bg-red-500/[0.06] px-2.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/[0.10] hover:text-red-200">Delete</button>
                   </div>
                 </div>
               )
@@ -2120,7 +2130,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               {JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
             </select>
             <button
-              onClick={() => setShowGaps(!showGaps)}
+              onClick={toggleShowGaps}
               className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
                 showGaps
                   ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
