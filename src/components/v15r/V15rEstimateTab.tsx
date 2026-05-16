@@ -1979,16 +1979,35 @@ Return ONLY valid JSON, no other text.`
 
         {/* DEAL OVERVIEW CHART */}
         {hasAnyData && (
-          <div style={{ backgroundColor: '#1f2937', borderRadius: '8px', marginBottom: '16px', padding: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 16px 0' }}>Deal Overview</h4>
-            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <p style={{ color: t.customerProfit > 0 ? '#22c55e' : '#ef4444', fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', margin: '0 0 4px 0' }}>{fmt(t.customerProfit)}</p>
-              <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>Projected Profit ({t.customerMarginPct.toFixed(1)}%)</p>
+          <div style={{
+            position: 'relative',
+            overflow: 'hidden',
+            background: 'linear-gradient(135deg, rgba(6,78,59,0.42), rgba(20,83,45,0.28) 45%, rgba(15,23,42,0.72))',
+            borderRadius: '12px',
+            marginBottom: '16px',
+            padding: '16px',
+            border: '1px solid rgba(52,211,153,0.24)',
+            boxShadow: '0 18px 42px rgba(0,0,0,0.24), 0 0 34px rgba(16,185,129,0.08), inset 0 1px 0 rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ position: 'absolute', inset: '-45% auto auto 62%', width: '220px', height: '220px', borderRadius: '999px', background: 'rgba(16,185,129,0.14)', filter: 'blur(26px)', pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', inset: 'auto auto -42% -10%', width: '190px', height: '190px', borderRadius: '999px', background: 'rgba(20,184,166,0.10)', filter: 'blur(24px)', pointerEvents: 'none' }} />
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                <span style={{ width: '9px', height: '9px', borderRadius: '999px', backgroundColor: '#34d399', boxShadow: '0 0 16px rgba(52,211,153,0.65)', flex: '0 0 auto' }} />
+                <h4 style={{ color: '#d1fae5', fontWeight: '700', margin: 0, fontSize: '15px', letterSpacing: '0.01em' }}>Deal Overview</h4>
+              </div>
+              <span style={{ color: '#a7f3d0', backgroundColor: 'rgba(16,185,129,0.14)', border: '1px solid rgba(52,211,153,0.24)', borderRadius: '999px', padding: '4px 8px', fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>
+                Customer View
+              </span>
+            </div>
+            <div style={{ position: 'relative', textAlign: 'center', marginBottom: '16px' }}>
+              <p style={{ color: t.customerProfit > 0 ? '#22c55e' : '#ef4444', fontSize: '38px', fontWeight: '800', fontFamily: 'monospace', margin: '0 0 4px 0', lineHeight: 1, textShadow: t.customerProfit > 0 ? '0 0 22px rgba(34,197,94,0.16)' : '0 0 22px rgba(239,68,68,0.14)' }}>{fmt(t.customerProfit)}</p>
+              <p style={{ color: '#a7f3d0', fontSize: '12px', fontWeight: '600', margin: '0' }}>Projected Profit ({t.customerMarginPct.toFixed(1)}%)</p>
             </div>
             {/* Editable Contract Amount */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', padding: '10px 14px', backgroundColor: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '6px' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '12px', fontWeight: '600' }}>Total Contract Amount</span>
-              <span style={{ color: 'var(--t3)', fontSize: '12px' }}>$</span>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', padding: '10px 14px', backgroundColor: 'rgba(15,23,42,0.44)', border: '1px solid rgba(52,211,153,0.20)', borderRadius: '999px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+              <span style={{ color: '#d1fae5', fontSize: '12px', fontWeight: '700' }}>Total Contract Amount</span>
+              <span style={{ color: '#6ee7b7', fontSize: '12px', fontWeight: '700' }}>$</span>
               <input
                 type="number"
                 value={num(p.contract || 0)}
@@ -2005,10 +2024,10 @@ Return ONLY valid JSON, no other text.`
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  borderBottom: '1px solid rgba(16,185,129,0.4)',
-                  color: '#10b981',
+                  borderBottom: '1px solid rgba(52,211,153,0.45)',
+                  color: '#34d399',
                   fontFamily: 'monospace',
-                  fontWeight: '700',
+                  fontWeight: '800',
                   fontSize: '18px',
                   width: '120px',
                   textAlign: 'right',
@@ -2016,20 +2035,20 @@ Return ONLY valid JSON, no other text.`
                 }}
               />
             </div>
-            <div style={{ space: '8px' }}>
+            <div style={{ position: 'relative', display: 'grid', gap: '10px' }}>
               {[
                 { label: 'Labor', value: t.lab, color: '#3b82f6', pct: (num(p.contract) > 0) ? (t.lab / num(p.contract)) * 100 : 0 },
                 { label: 'Material', value: t.matSellingC + t.taxOnMatSelling, color: '#eab308', pct: (num(p.contract) > 0) ? ((t.matSellingC + t.taxOnMatSelling) / num(p.contract)) * 100 : 0 },
                 { label: 'Mileage', value: t.mi + t.taxOnMileage, color: '#14b8a6', pct: (num(p.contract) > 0) ? ((t.mi + t.taxOnMileage) / num(p.contract)) * 100 : 0 },
                 { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: (num(p.contract) > 0) ? (t.oh / num(p.contract)) * 100 : 0 },
-                { label: 'Profit', value: t.customerProfit, color: '#22c55e', pct: (num(p.contract) > 0) ? (t.customerProfit / num(p.contract)) * 100 : 0 },
-              ].filter(item => item.value > 0).map(item => (
-                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                  <span style={{ color: 'var(--t3)', fontSize: '12px', width: '75px', textAlign: 'left' }}>{item.label}</span>
-                  <div style={{ flex: 1, backgroundColor: '#111827', borderRadius: '4px', height: '18px', overflow: 'hidden' }}>
-                    <div style={{ backgroundColor: item.color, height: '100%', borderRadius: '4px', width: Math.max(0, Math.min(100, item.pct)) + '%', transition: 'width 0.2s' }} />
+                { label: 'Profit', value: t.customerProfit, color: t.customerProfit > 0 ? '#22c55e' : '#ef4444', pct: (num(p.contract) > 0) ? (t.customerProfit / num(p.contract)) * 100 : 0 },
+              ].map(item => (
+                <div key={item.label} style={{ display: 'grid', gridTemplateColumns: 'minmax(72px, 92px) minmax(72px, 1fr) minmax(80px, 112px)', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ color: '#cbd5e1', fontSize: '12px', fontWeight: '600', textAlign: 'left' }}>{item.label}</span>
+                  <div style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.72)', border: '1px solid rgba(52,211,153,0.10)', borderRadius: '999px', height: '18px', overflow: 'hidden', boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.28)' }}>
+                    <div style={{ background: `linear-gradient(90deg, ${item.color}, ${item.color}cc)`, height: '100%', borderRadius: '999px', width: Math.max(0, Math.min(100, item.pct)) + '%', transition: 'width 0.2s', boxShadow: `0 0 16px ${item.color}33` }} />
                   </div>
-                  <span style={dealOverviewValueStyle(item.color)}>{fmt(item.value)}</span>
+                  <span style={{ color: item.color, fontSize: '13px', textAlign: 'right', fontFamily: 'monospace', fontWeight: '800', whiteSpace: 'nowrap' }}>{fmt(item.value)}</span>
                 </div>
               ))}
             </div>
