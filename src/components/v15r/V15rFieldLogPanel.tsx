@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useMemo, lazy, Suspense, useEffect } from 'react'
-import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive, Timer, Boxes, Route, CircleDollarSign } from 'lucide-react'
+import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive, Timer, Boxes, Route, CircleDollarSign, X } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -1448,10 +1448,36 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           </div>
         </div>
 
-        {/* Entry form */}
+        {/* Project Log Modal */}
         {showProjForm && (
-          <div className="rounded-xl border border-gray-700 bg-[var(--bg-input)] p-4 space-y-3">
-            <div className="text-xs font-bold text-gray-300 uppercase">{editLogId ? 'Edit Entry' : 'New Log'}</div>
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+          >
+            <div
+              className="relative mx-6 flex w-full max-w-5xl flex-col rounded-2xl shadow-2xl"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid rgba(16,185,129,0.3)',
+                maxHeight: '90vh',
+                overflow: 'hidden',
+              }}
+            >
+              <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-700/60 px-6 py-4">
+                <div>
+                  <h2 className="text-xl font-bold text-white">{editLogId ? 'Edit Project Log' : 'New Project Log'}</h2>
+                  <p className="mt-1 text-sm text-gray-400">Log labor, materials, mileage, collection, and work performed.</p>
+                </div>
+                <button
+                  onClick={resetProjForm}
+                  className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-white"
+                  aria-label="Close project log modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="flex-1 space-y-3 overflow-y-auto px-5 py-6">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-[9px] text-gray-500 uppercase font-bold">Project</label>
@@ -1566,9 +1592,22 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 </div>
               )
             })()}
-            <div className="flex gap-2">
-              <button onClick={saveProjEntry} className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs font-semibold">{editLogId ? 'Update' : 'Save'}</button>
-              <button onClick={resetProjForm} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-xs">Cancel</button>
+              </div>
+
+              <div className="flex flex-shrink-0 items-center justify-between border-t border-gray-700/60 px-8 py-5" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                <button
+                  onClick={resetProjForm}
+                  className="rounded-lg border border-gray-600 px-4 py-2 text-xs text-gray-400 transition-colors hover:border-gray-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveProjEntry}
+                  className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-lg transition-colors hover:bg-emerald-500"
+                >
+                  {editLogId ? 'Update Log' : 'Save Log'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1964,11 +2003,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                           {onTarget ? '✓ On Target' : '⚠ Below Target'} ({todayHours.toFixed(1)}h)
                         </span>
                       )}
+                      <button onClick={() => beginLogEdit(l.id)} className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/[0.07] hover:text-white">Edit</button>
+                      <button onClick={() => deleteLogEntry(l.id)} className="rounded-md border border-red-400/10 bg-red-500/[0.06] px-2.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/[0.10] hover:text-red-200">Delete</button>
                     </div>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => beginLogEdit(l.id)} className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/[0.07] hover:text-white">Edit</button>
-                    <button onClick={() => deleteLogEntry(l.id)} className="rounded-md border border-red-400/10 bg-red-500/[0.06] px-2.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/[0.10] hover:text-red-200">Delete</button>
                   </div>
                 </div>
               )
