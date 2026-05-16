@@ -2331,60 +2331,86 @@ Return ONLY valid JSON, no other text.`
         )}
 
         {/* INTERNAL COST BREAKDOWN — mirrors top Summary, labor at internal opCost */}
-        <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '16px' }}>
+        <div style={{ backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px', marginTop: '16px' }}>
           {/* LEFT — Internal Cost */}
-          <div>
-            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#a78bfa', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid rgba(99,102,241,0.2)' }}>
-              📊 Internal Cost Breakdown
+          <div style={{
+            position: 'relative',
+            overflow: 'hidden',
+            borderRadius: '10px',
+            padding: '14px 16px',
+            background: 'linear-gradient(135deg, rgba(124,58,237,0.16), rgba(99,102,241,0.08) 52%, rgba(15,23,42,0.48))',
+            border: '1px solid rgba(167,139,250,0.24)',
+            boxShadow: '0 14px 34px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ position: 'absolute', inset: '-35% auto auto 58%', width: '150px', height: '150px', borderRadius: '999px', background: 'rgba(167,139,250,0.12)', filter: 'blur(20px)', pointerEvents: 'none' }} />
+            <div style={{ position: 'relative', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#c4b5fd', marginBottom: '12px' }}>
+              Internal Cost Breakdown
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ position: 'relative', display: 'grid', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Labor Total ({t.labHrs.toFixed(1)} labHrs × ${t.opRate.toFixed(2)})</span>
-              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.opC)}</span>
+              <span style={{ color: '#ede9fe', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(t.opC)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning &amp; OH</span>
-              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
+              <span style={{ color: '#ede9fe', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(t.oh)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
-              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matC)}</span>
+              <span style={{ color: '#ede9fe', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(t.matC)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Mileage</span>
-              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
+              <span style={{ color: '#ede9fe', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(t.mi)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Tax ({(num(backup.settings?.tax || 0)).toFixed(2)}% · mat + mileage)</span>
-              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.taxAmt)}</span>
+              <span style={{ color: '#ede9fe', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(t.taxAmt)}</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '6px', borderTop: '1px solid rgba(99,102,241,0.2)' }}>
-              <span style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: '700' }}>Sub Total</span>
-              <span style={{ color: '#a78bfa', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.internalCost)}</span>
+            </div>
+            <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'flex-end', paddingTop: '12px', marginTop: '12px', borderTop: '1px solid rgba(167,139,250,0.24)' }}>
+              <span style={{ color: '#ddd6fe', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sub Total</span>
+              <span style={{ color: '#a78bfa', fontFamily: 'monospace', fontWeight: '800', fontSize: '22px', lineHeight: 1 }}>{fmt(t.internalCost)}</span>
             </div>
           </div>
 
           {/* RIGHT — Margin Breakdown (internal basis) */}
-          <div style={{ borderLeft: '1px solid rgba(99,102,241,0.15)', paddingLeft: '24px' }}>
-            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#a78bfa', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid rgba(99,102,241,0.2)' }}>
+          <div style={{
+            position: 'relative',
+            overflow: 'hidden',
+            borderRadius: '10px',
+            padding: '14px 16px',
+            background: t.internalProfit > 0
+              ? 'linear-gradient(135deg, rgba(16,185,129,0.14), rgba(124,58,237,0.10) 52%, rgba(15,23,42,0.48))'
+              : 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(124,58,237,0.10) 52%, rgba(15,23,42,0.48))',
+            border: t.internalProfit > 0 ? '1px solid rgba(167,139,250,0.24)' : '1px solid rgba(239,68,68,0.24)',
+            boxShadow: '0 14px 34px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ position: 'absolute', inset: '-35% auto auto 58%', width: '150px', height: '150px', borderRadius: '999px', background: t.internalProfit > 0 ? 'rgba(167,139,250,0.12)' : 'rgba(239,68,68,0.12)', filter: 'blur(20px)', pointerEvents: 'none' }} />
+            <div style={{ position: 'relative', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#c4b5fd', marginBottom: '12px' }}>
               Margin Breakdown
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ position: 'relative', display: 'grid', gap: '8px', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Contract Amount</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(p.contract || 0)}</span>
+              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(p.contract || 0)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Internal Cost</span>
-              <span style={{ color: '#818cf8', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.internalCost)}</span>
+              <span style={{ color: '#a78bfa', fontFamily: 'monospace', fontWeight: '700', whiteSpace: 'nowrap' }}>{fmt(t.internalCost)}</span>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid rgba(99,102,241,0.2)' }}>
-              <span style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: '700' }}>Profit</span>
-              <span style={{ color: t.internalProfit > 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.internalProfit)}</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ position: 'relative', paddingTop: '12px', borderTop: t.internalProfit > 0 ? '1px solid rgba(167,139,250,0.24)' : '1px solid rgba(239,68,68,0.24)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'flex-end', marginBottom: '10px' }}>
+              <span style={{ color: 'var(--t2)', fontSize: '13px', fontWeight: '700' }}>Profit</span>
+              <span style={{ color: t.internalProfit > 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '800', fontSize: '24px', lineHeight: 1 }}>{fmt(t.internalProfit)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
               <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Margin</span>
-              <span style={{ color: t.internalMarginPct >= 40 ? '#10b981' : t.internalMarginPct >= 20 ? '#f59e0b' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>
+              <span style={{ color: t.internalMarginPct >= 40 ? '#10b981' : t.internalMarginPct >= 20 ? '#f59e0b' : '#ef4444', fontFamily: 'monospace', fontWeight: '800', fontSize: '18px', padding: '4px 8px', borderRadius: '999px', backgroundColor: t.internalMarginPct >= 40 ? 'rgba(16,185,129,0.12)' : t.internalMarginPct >= 20 ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)', border: t.internalMarginPct >= 40 ? '1px solid rgba(16,185,129,0.24)' : t.internalMarginPct >= 20 ? '1px solid rgba(245,158,11,0.24)' : '1px solid rgba(239,68,68,0.24)' }}>
                 {t.internalMarginPct.toFixed(1)}%
               </span>
+            </div>
             </div>
           </div>
         </div>
