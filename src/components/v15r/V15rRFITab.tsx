@@ -470,29 +470,26 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         {/* HEADER */}
         <div
-          className="relative mb-4 overflow-hidden rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/25"
+          className="relative mb-4 overflow-hidden rounded-2xl border border-blue-400/20 bg-gradient-to-br from-slate-950 via-indigo-950/80 to-blue-950/70 p-4 shadow-lg shadow-indigo-950/25"
           style={{ backdropFilter: 'blur(14px)' }}
         >
           <span aria-hidden="true" className="rfi-tracker-header-sweep pointer-events-none absolute inset-0 overflow-hidden rounded-2xl" />
-          <div className="pointer-events-none absolute -left-16 -top-20 h-44 w-44 rounded-full bg-cyan-400/10 blur-3xl" />
-          <div className="pointer-events-none absolute -right-12 -bottom-24 h-48 w-48 rounded-full bg-blue-500/10 blur-3xl" />
+          <div className="pointer-events-none absolute -left-16 -top-20 h-44 w-44 rounded-full bg-blue-500/10 blur-3xl" />
+          <div className="pointer-events-none absolute -right-12 -bottom-24 h-48 w-48 rounded-full bg-indigo-500/10 blur-3xl" />
 
           <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 shadow-inner shadow-cyan-950/40">
-                <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_16px_rgba(103,232,249,0.85)]" />
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-blue-400/25 bg-blue-400/10 shadow-inner shadow-blue-950/40">
+                <span className="h-2.5 w-2.5 rounded-full bg-sky-300 shadow-[0_0_16px_rgba(125,211,252,0.85)]" />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Project RFIs</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-300/80">Project RFIs</p>
                 <h4 className="mt-1 text-xl font-bold leading-tight text-gray-100">RFI Tracker</h4>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <p className="m-0 text-xs font-medium text-gray-400">
-                    {rfis.length} total · {openCount} open
-                  </p>
                   <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-200">
                     Total {rfis.length}
                   </span>
-                  <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+                  <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">
                     Open {openCount}
                   </span>
                 </div>
