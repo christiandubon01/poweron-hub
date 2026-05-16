@@ -250,6 +250,27 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     return { bg: '#f59e0b', text: '#000' }
   }
 
+  const labelBadgeColor = (label: string) => {
+    if (label === 'Critical') {
+      return { bg: 'rgba(239,68,68,0.16)', text: '#fca5a5', border: 'rgba(239,68,68,0.35)', glow: 'rgba(239,68,68,0.12)' }
+    }
+    if (label === 'Other trades') {
+      return { bg: 'rgba(99,102,241,0.16)', text: '#a5b4fc', border: 'rgba(99,102,241,0.35)', glow: 'rgba(99,102,241,0.12)' }
+    }
+    return { bg: 'rgba(148,163,184,0.12)', text: '#cbd5e1', border: 'rgba(148,163,184,0.22)', glow: 'rgba(148,163,184,0.06)' }
+  }
+
+  const displayTimestamp = (value: unknown): string => {
+    const raw = String(value || '').trim()
+    if (!raw) return '—'
+    return raw.replace('T', ' ')
+  }
+
+  const displayStage = (value: unknown): string => {
+    const normalized = normalizePhaseName(value || '', phases)
+    return normalized || 'Not set'
+  }
+
   const renderPhaseOptions = (currentValue: string) => {
     const normalizedCurrent = normalizePhaseName(currentValue, phases)
     const showLegacy = normalizedCurrent && !isKnownProjectPhase(normalizedCurrent, phases)
@@ -331,124 +352,121 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {rfis.map(r => {
               const label = getRfiLabel(r)
-              const displayStatus = r.status === 'critical' || r.critical === true || label === 'Critical' ? 'critical' : r.status
-              const colors = statusBadgeColor(displayStatus)
-              const responseText = r.response || r.answer || ''
+              const isCritical = r.status === 'critical' || r.critical === true || label === 'Critical'
               const isResolved = r.status === 'answered' || r.status === 'resolved'
-              const createdDate = r.submitted ? new Date(r.submitted) : null
-              const endDate = isResolved && r.resolved_at ? new Date(r.resolved_at) : new Date()
+              const displayStatus = isResolved ? 'answered' : 'open'
+              const colors = statusBadgeColor(displayStatus)
+              const labelColors = labelBadgeColor(label)
+              const responseText = r.response || r.answer || ''
+              const createdValue = r[questionTimestampField(r)] || r.submitted || ''
+              const answeredValue = r[answerTimestampField(r)] || ''
+              const createdDate = createdValue ? new Date(createdValue) : null
+              const endDate = isResolved && answeredValue ? new Date(answeredValue) : new Date()
               const daysOpen = createdDate
                 ? Math.max(0, Math.floor((endDate.getTime() - createdDate.getTime()) / 86400000))
                 : null
               const daysColor = daysOpen === null ? 'var(--t3)' : daysOpen > 30 ? '#ef4444' : daysOpen > 14 ? '#f59e0b' : 'var(--t3)'
+              const stageRecorded = displayStage(r.stageRecorded)
+              const stageApplies = displayStage(r.stageApplies)
+              const cardAccent = isCritical ? '#ef4444' : isResolved ? '#10b981' : '#f59e0b'
               return (
                 <div
                   key={r.id}
                   style={{
-                    backgroundColor: '#232738',
-                    borderRadius: '8px',
+                    background: 'linear-gradient(145deg, rgba(35,39,56,0.98), rgba(22,25,35,0.98))',
+                    borderRadius: '14px',
                     padding: '16px',
-                    borderLeft: `4px solid ${colors.bg}`,
+                    border: '1px solid rgba(148,163,184,0.12)',
+                    borderLeft: `4px solid ${cardAccent}`,
+                    boxShadow: `0 18px 42px rgba(0,0,0,0.22), 0 0 28px ${labelColors.glow}`,
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <span style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--t3)' }}>
-                        {r.id}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: '12px', color: '#e5e7eb', fontWeight: '800', letterSpacing: '0.02em' }}>
+                        {r.id || 'RFI'}
                       </span>
-                      <span
-                        style={{
-                          padding: '2px 8px',
-                          backgroundColor: colors.bg,
-                          color: colors.text,
-                          borderRadius: '3px',
-                          fontSize: '11px',
-                          fontWeight: '600',
-                        }}
-                      >
-                        {String(displayStatus || 'open').toUpperCase()}
+                      <span style={{ padding: '3px 9px', backgroundColor: colors.bg, color: colors.text, borderRadius: '999px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.05em' }}>
+                        {displayStatus.toUpperCase()}
                       </span>
-                      {label === 'Other trades' && (
-                        <span style={{ padding: '2px 8px', backgroundColor: 'rgba(14,165,233,0.16)', color: '#7dd3fc', border: '1px solid rgba(14,165,233,0.28)', borderRadius: '3px', fontSize: '11px', fontWeight: '600' }}>
-                          OTHER TRADES
+                      <span style={{ padding: '3px 9px', backgroundColor: labelColors.bg, color: labelColors.text, border: `1px solid ${labelColors.border}`, borderRadius: '999px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.04em' }}>
+                        {label.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
+                      <span style={{ padding: '4px 8px', borderRadius: '999px', backgroundColor: 'rgba(15,23,42,0.42)', border: '1px solid rgba(148,163,184,0.12)', color: 'var(--t3)', fontSize: '10px', fontWeight: '700' }}>
+                        Created {displayTimestamp(createdValue)}
+                      </span>
+                      {answeredValue && (
+                        <span style={{ padding: '4px 8px', borderRadius: '999px', backgroundColor: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.22)', color: '#86efac', fontSize: '10px', fontWeight: '700' }}>
+                          Resolved {displayTimestamp(answeredValue)}
                         </span>
                       )}
+                      {daysOpen !== null && (
+                        <span style={{ padding: '4px 8px', borderRadius: '999px', backgroundColor: 'rgba(15,23,42,0.42)', border: '1px solid rgba(148,163,184,0.12)', color: daysColor, fontSize: '10px', fontWeight: '800' }}>
+                          Open {daysOpen} {daysOpen === 1 ? 'day' : 'days'}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => openEditModal(r)}
+                        style={{
+                          padding: '6px 10px',
+                          backgroundColor: 'rgba(59,130,246,0.18)',
+                          color: '#60a5fa',
+                          border: '1px solid rgba(59,130,246,0.24)',
+                          borderRadius: '7px',
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => delRFI(r.id)}
+                        style={{
+                          padding: '6px 10px',
+                          backgroundColor: 'rgba(239,68,68,0.14)',
+                          color: '#f87171',
+                          border: '1px solid rgba(239,68,68,0.24)',
+                          borderRadius: '7px',
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Delete
+                      </button>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
-                        Created: {r.submitted || '—'} · {r.directedTo || '—'}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginBottom: '12px' }}>
+                    <div style={{ padding: '9px 11px', backgroundColor: 'rgba(15,23,42,0.34)', border: '1px solid rgba(148,163,184,0.12)', borderRadius: '10px' }}>
+                      <div style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+                        Stage Recorded
                       </div>
-                      <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '2px' }}>
-                        Resolved: {isResolved && r.resolved_at ? r.resolved_at : '—'}
-                        {daysOpen !== null && (
-                          <span style={{ marginLeft: '8px', color: daysColor, fontWeight: daysOpen > 14 ? '600' : '400' }}>
-                            Open {daysOpen} {daysOpen === 1 ? 'day' : 'days'}
-                          </span>
-                        )}
+                      <div style={{ color: stageRecorded === 'Not set' ? 'var(--t3)' : '#e5e7eb', fontSize: '12px', fontWeight: '800' }}>
+                        {stageRecorded}
+                      </div>
+                    </div>
+                    <div style={{ padding: '9px 11px', backgroundColor: 'rgba(15,23,42,0.34)', border: '1px solid rgba(148,163,184,0.12)', borderRadius: '10px' }}>
+                      <div style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+                        Stage Applies
+                      </div>
+                      <div style={{ color: stageApplies === 'Not set' ? 'var(--t3)' : '#e5e7eb', fontSize: '12px', fontWeight: '800' }}>
+                        {stageApplies}
                       </div>
                     </div>
                   </div>
 
-                  {/* Stage Recorded / Stage Applies dropdowns */}
-                  <div style={{ display: 'flex', gap: '12px', marginBottom: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
-                      <span style={{ fontSize: '11px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>Stage Recorded</span>
-                      <select
-                        value={normalizePhaseName(r.stageRecorded || '', phases)}
-                        onChange={e => editRFI(r.id, 'stageRecorded', e.target.value)}
-                        style={{
-                          flex: 1,
-                          padding: '4px 6px',
-                          backgroundColor: '#1e2130',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          borderRadius: '4px',
-                          color: r.stageRecorded ? 'var(--t1)' : 'var(--t3)',
-                          fontSize: '11px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {renderPhaseOptions(r.stageRecorded || '')}
-                      </select>
+                  <div style={{ marginBottom: '10px', padding: '11px 12px', backgroundColor: 'rgba(15,23,42,0.42)', border: '1px solid rgba(148,163,184,0.13)', borderRadius: '11px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '7px', flexWrap: 'wrap' }}>
+                      <span style={{ color: '#bfdbfe', fontSize: '10px', fontWeight: '900', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Question</span>
+                      {createdValue && <span style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '600' }}>{displayTimestamp(createdValue)}</span>}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
-                      <span style={{ fontSize: '11px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>Stage Applies</span>
-                      <select
-                        value={normalizePhaseName(r.stageApplies || '', phases)}
-                        onChange={e => editRFI(r.id, 'stageApplies', e.target.value)}
-                        style={{
-                          flex: 1,
-                          padding: '4px 6px',
-                          backgroundColor: '#1e2130',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          borderRadius: '4px',
-                          color: r.stageApplies ? 'var(--t1)' : 'var(--t3)',
-                          fontSize: '11px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {renderPhaseOptions(r.stageApplies || '')}
-                      </select>
+                    <div style={{ color: r.question ? 'var(--t1)' : 'var(--t3)', fontSize: '13px', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                      {r.question || 'No question entered.'}
                     </div>
-                  </div>
-
-                  <div style={{ marginBottom: '8px' }}>
-                    <textarea
-                      value={r.question || ''}
-                      onChange={e => editRFI(r.id, 'question', e.target.value)}
-                      placeholder="Question"
-                      style={{
-                        width: '100%',
-                        minHeight: '60px',
-                        padding: '8px 10px',
-                        backgroundColor: '#1e2130',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: '4px',
-                        color: 'var(--t1)',
-                        fontSize: '12px',
-                        fontFamily: 'inherit',
-                        resize: 'vertical',
-                      }}
-                    />
                   </div>
 
                   {r.costImpact && (
@@ -457,34 +475,30 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                     </div>
                   )}
 
-                  {responseText && (
-                    <div style={{ marginBottom: '8px', padding: '8px 10px', backgroundColor: 'rgba(16,185,129,0.1)', borderRadius: '4px', fontSize: '11px', color: '#10b981' }}>
-                      ✓ {responseText}
+                  <div
+                    style={{
+                      marginBottom: '12px',
+                      padding: '11px 12px',
+                      backgroundColor: responseText ? 'rgba(16,185,129,0.10)' : 'rgba(15,23,42,0.26)',
+                      border: responseText ? '1px solid rgba(16,185,129,0.22)' : '1px solid rgba(148,163,184,0.10)',
+                      borderRadius: '11px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '7px', flexWrap: 'wrap' }}>
+                      <span style={{ color: responseText ? '#86efac' : 'var(--t3)', fontSize: '10px', fontWeight: '900', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Answer</span>
+                      {answeredValue && <span style={{ color: responseText ? '#86efac' : 'var(--t3)', fontSize: '10px', fontWeight: '600' }}>{displayTimestamp(answeredValue)}</span>}
                     </div>
-                  )}
-
-                  {r.solvedBy && (
-                    <div style={{ marginBottom: '8px', fontSize: '11px', color: 'var(--t3)' }}>
-                      Solved by: <span style={{ color: 'var(--t2)', fontWeight: '600' }}>{r.solvedBy}</span>
+                    <div style={{ color: responseText ? '#d1fae5' : 'var(--t3)', fontSize: '13px', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                      {responseText || 'No answer yet.'}
                     </div>
-                  )}
+                    {r.solvedBy && (
+                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: '11px', color: 'var(--t3)' }}>
+                        Solved by: <span style={{ color: responseText ? '#86efac' : 'var(--t2)', fontWeight: '800' }}>{r.solvedBy}</span>
+                      </div>
+                    )}
+                  </div>
 
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => openEditModal(r)}
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: 'rgba(59,130,246,0.18)',
-                        color: '#60a5fa',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                        fontWeight: '600',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Edit
-                    </button>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
                     {r.status === 'open' && (
                       <button
                         onClick={() => {
@@ -498,10 +512,10 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                           padding: '6px 12px',
                           backgroundColor: 'rgba(34,197,94,0.2)',
                           color: '#22c55e',
-                          border: 'none',
-                          borderRadius: '4px',
+                          border: '1px solid rgba(34,197,94,0.26)',
+                          borderRadius: '7px',
                           fontSize: '12px',
-                          fontWeight: '600',
+                          fontWeight: '800',
                           cursor: 'pointer',
                         }}
                       >
@@ -514,30 +528,14 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                         padding: '6px 12px',
                         backgroundColor: 'rgba(245,158,11,0.2)',
                         color: '#f59e0b',
-                        border: 'none',
-                        borderRadius: '4px',
+                        border: '1px solid rgba(245,158,11,0.26)',
+                        borderRadius: '7px',
                         fontSize: '12px',
-                        fontWeight: '600',
+                        fontWeight: '800',
                         cursor: 'pointer',
                       }}
                     >
-                      {displayStatus === 'critical' ? '↓ Lower' : '↑ Critical'}
-                    </button>
-                    <button
-                      onClick={() => delRFI(r.id)}
-                      style={{
-                        marginLeft: 'auto',
-                        padding: '6px 12px',
-                        backgroundColor: 'rgba(239,68,68,0.2)',
-                        color: '#ef4444',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                        fontWeight: '600',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Delete
+                      {isCritical ? '↓ Lower' : '↑ Critical'}
                     </button>
                   </div>
                 </div>
