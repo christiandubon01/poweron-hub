@@ -11,7 +11,36 @@ interface V15rRFITabProps {
   backup?: any
 }
 
-const RFI_LABEL_OPTIONS = ['Default', 'Critical', 'Other trades']
+const BASE_RFI_LABEL_OPTIONS = ['Default', 'Critical', 'Other trades']
+const RFI_LABEL_COLOR_PALETTE = [
+  { key: 'blue', bg: 'rgba(59,130,246,0.10)', text: '#93c5fd', border: 'rgba(59,130,246,0.22)' },
+  { key: 'purple', bg: 'rgba(139,92,246,0.10)', text: '#c4b5fd', border: 'rgba(139,92,246,0.22)' },
+  { key: 'teal', bg: 'rgba(20,184,166,0.10)', text: '#5eead4', border: 'rgba(20,184,166,0.22)' },
+  { key: 'amber', bg: 'rgba(245,158,11,0.10)', text: '#fcd34d', border: 'rgba(245,158,11,0.22)' },
+  { key: 'rose', bg: 'rgba(244,63,94,0.10)', text: '#fda4af', border: 'rgba(244,63,94,0.22)' },
+  { key: 'cyan', bg: 'rgba(6,182,212,0.10)', text: '#67e8f9', border: 'rgba(6,182,212,0.22)' },
+  { key: 'green', bg: 'rgba(34,197,94,0.10)', text: '#86efac', border: 'rgba(34,197,94,0.22)' },
+]
+
+function cleanRfiLabelName(value: unknown): string {
+  return String(value || '').trim().replace(/\s+/g, ' ')
+}
+
+function rfiLabelKey(value: unknown): string {
+  return cleanRfiLabelName(value).toLowerCase()
+}
+
+function isDefaultRfiLabel(label: unknown): boolean {
+  const key = rfiLabelKey(label)
+  return !key || key === 'default'
+}
+
+function customLabelColorIndex(label: string): number {
+  let hash = 0
+  const key = rfiLabelKey(label)
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  return hash % RFI_LABEL_COLOR_PALETTE.length
+}
 
 function dateTimeInputValue(value: unknown): string {
   const raw = String(value || '').trim()
@@ -57,7 +86,8 @@ function responseField(rfi: any): string {
 }
 
 function getRfiLabel(rfi: any): string {
-  if (RFI_LABEL_OPTIONS.includes(rfi?.label)) return rfi.label
+  const clean = cleanRfiLabelName(rfi?.label)
+  if (clean) return clean
   if (rfi?.critical === true || rfi?.status === 'critical') return 'Critical'
   return 'Default'
 }
@@ -66,6 +96,8 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [showLabelModal, setShowLabelModal] = useState(false)
+  const [newLabelName, setNewLabelName] = useState('')
   const [editForm, setEditForm] = useState({
     question: '',
     questionAt: '',
@@ -86,6 +118,24 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   const rfis = (p.rfis || []).sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')))
   const openCount = rfis.filter(r => r.status !== 'answered').length
   const phases = getProjectPhaseNames(backup)
+  const customRfiLabels = Array.isArray(backup.settings?.rfiLabels)
+    ? backup.settings.rfiLabels
+      .map((label: any) => ({
+        name: cleanRfiLabelName(typeof label === 'string' ? label : label?.name),
+        colorKey: typeof label === 'object' && label ? label.colorKey : undefined,
+      }))
+      .filter((label: any) => label.name && !BASE_RFI_LABEL_OPTIONS.some(base => rfiLabelKey(base) === rfiLabelKey(label.name)))
+    : []
+  const discoveredRfiLabels = rfis
+    .map((rfi: any) => cleanRfiLabelName(rfi?.label))
+    .filter((label: string) => label && !BASE_RFI_LABEL_OPTIONS.some(base => rfiLabelKey(base) === rfiLabelKey(label)))
+  const rfiLabelOptions = [
+    ...BASE_RFI_LABEL_OPTIONS,
+    ...customRfiLabels
+      .map((label: any) => label.name)
+      .concat(discoveredRfiLabels)
+      .filter((name: string, idx: number, arr: string[]) => arr.findIndex(x => rfiLabelKey(x) === rfiLabelKey(name)) === idx),
+  ]
 
   const addRFI = () => {
     pushState()
@@ -186,6 +236,39 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     if (onUpdate) onUpdate()
   }
 
+  const closeLabelModal = () => {
+    setShowLabelModal(false)
+    setNewLabelName('')
+  }
+
+  const saveCustomLabel = () => {
+    const clean = cleanRfiLabelName(newLabelName)
+    if (!clean || isDefaultRfiLabel(clean)) return
+    const isReserved = BASE_RFI_LABEL_OPTIONS.some(label => rfiLabelKey(label) === rfiLabelKey(clean))
+    const alreadyExists = rfiLabelOptions.some(label => rfiLabelKey(label) === rfiLabelKey(clean))
+    if (isReserved || alreadyExists) {
+      closeLabelModal()
+      return
+    }
+
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    pushState()
+    freshBackup.settings = freshBackup.settings || {}
+    const existing = Array.isArray(freshBackup.settings.rfiLabels) ? freshBackup.settings.rfiLabels : []
+    freshBackup.settings.rfiLabels = [
+      ...existing,
+      {
+        name: clean,
+        colorKey: RFI_LABEL_COLOR_PALETTE[customLabelColorIndex(clean)].key,
+      },
+    ]
+    saveBackupDataAndSync(freshBackup, 'settings')
+    closeLabelModal()
+    forceUpdate()
+    if (onUpdate) onUpdate()
+  }
+
   const toggleStatus = (rfiId) => {
     const freshBackup = getBackupData()
     if (!freshBackup) return
@@ -257,7 +340,14 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     if (label === 'Other trades') {
       return { bg: 'rgba(99,102,241,0.10)', text: '#a5b4fc', border: 'rgba(99,102,241,0.22)' }
     }
-    return { bg: 'rgba(148,163,184,0.08)', text: '#cbd5e1', border: 'rgba(148,163,184,0.16)' }
+    if (isDefaultRfiLabel(label)) {
+      return { bg: 'rgba(148,163,184,0.08)', text: '#cbd5e1', border: 'rgba(148,163,184,0.16)' }
+    }
+    const saved = customRfiLabels.find((custom: any) => rfiLabelKey(custom.name) === rfiLabelKey(label))
+    const byKey = saved?.colorKey
+      ? RFI_LABEL_COLOR_PALETTE.find(color => color.key === saved.colorKey)
+      : null
+    return byKey || RFI_LABEL_COLOR_PALETTE[customLabelColorIndex(label)]
   }
 
   const displayTimestamp = (value: unknown): string => {
@@ -313,6 +403,21 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
               + Add RFI
             </button>
             <button
+              onClick={() => setShowLabelModal(true)}
+              style={{
+                padding: '8px 12px',
+                backgroundColor: 'rgba(59,130,246,0.12)',
+                color: '#93c5fd',
+                border: '1px solid rgba(59,130,246,0.22)',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: '600',
+                cursor: 'pointer',
+              }}
+            >
+              + Label
+            </button>
+            <button
               onClick={() => alert('AI Analyze RFIs placeholder')}
               style={{
                 padding: '8px 12px',
@@ -353,6 +458,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
             {rfis.map(r => {
               const label = getRfiLabel(r)
               const isCritical = r.status === 'critical' || r.critical === true || label === 'Critical'
+              const showLabelPill = !isDefaultRfiLabel(label) || isCritical
               const isResolved = r.status === 'answered' || r.status === 'resolved'
               const displayStatus = isResolved ? 'answered' : 'open'
               const colors = statusBadgeColor(displayStatus)
@@ -389,9 +495,11 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                       <span style={{ padding: '2px 7px', backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '999px', fontSize: '9px', fontWeight: '700', letterSpacing: '0.04em' }}>
                         {displayStatus.toUpperCase()}
                       </span>
-                      <span style={{ padding: '2px 7px', backgroundColor: labelColors.bg, color: labelColors.text, border: `1px solid ${labelColors.border}`, borderRadius: '999px', fontSize: '9px', fontWeight: '700', letterSpacing: '0.03em' }}>
-                        {label.toUpperCase()}
-                      </span>
+                      {showLabelPill && (
+                        <span style={{ padding: '2px 7px', backgroundColor: labelColors.bg, color: labelColors.text, border: `1px solid ${labelColors.border}`, borderRadius: '999px', fontSize: '9px', fontWeight: '700', letterSpacing: '0.03em' }}>
+                          {(isCritical ? 'Critical' : label).toUpperCase()}
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
                       <span style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '600' }}>
@@ -543,6 +651,89 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
           </div>
         )}
 
+        {/* ADD RFI LABEL MODAL */}
+        {showLabelModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(3px)' }}
+            onClick={e => { if (e.target === e.currentTarget) closeLabelModal() }}
+          >
+            <div
+              className="w-full max-w-sm mx-4 rounded-xl shadow-2xl"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid rgba(148,163,184,0.22)',
+                padding: '18px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: '12px', marginBottom: '14px' }}>
+                <div>
+                  <h3 style={{ color: 'var(--t1)', fontSize: '16px', fontWeight: '700', margin: 0 }}>Add RFI Label</h3>
+                  <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '4px 0 0 0' }}>
+                    Custom labels sync with the project backup.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeLabelModal}
+                  style={{ background: 'none', border: 'none', color: 'var(--t3)', cursor: 'pointer', padding: '2px' }}
+                  aria-label="Close add label modal"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Label name</label>
+              <input
+                type="text"
+                value={newLabelName}
+                onChange={e => setNewLabelName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveCustomLabel()
+                  if (e.key === 'Escape') closeLabelModal()
+                }}
+                autoFocus
+                placeholder="e.g. Inspector"
+                className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
+                style={{ backgroundColor: 'var(--bg-input)' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  onClick={closeLabelModal}
+                  style={{
+                    padding: '7px 12px',
+                    backgroundColor: 'rgba(15,23,42,0.35)',
+                    color: 'var(--t2)',
+                    border: '1px solid rgba(148,163,184,0.18)',
+                    borderRadius: '7px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveCustomLabel}
+                  style={{
+                    padding: '7px 12px',
+                    backgroundColor: 'rgba(59,130,246,0.18)',
+                    color: '#93c5fd',
+                    border: '1px solid rgba(59,130,246,0.28)',
+                    borderRadius: '7px',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Save Label
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* EDIT RFI MODAL */}
         {editingId && (
           <div
@@ -662,10 +853,11 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                 <div>
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-2">Label</label>
                   <div className="flex flex-wrap gap-2">
-                    {RFI_LABEL_OPTIONS.map(option => {
+                    {rfiLabelOptions.map(option => {
                       const selected = editForm.label === option
                       const critical = option === 'Critical'
                       const otherTrades = option === 'Other trades'
+                      const optionColors = labelBadgeColor(option)
                       return (
                         <button
                           key={option}
@@ -675,24 +867,24 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                           style={{
                             backgroundColor: selected
                               ? critical
-                                ? 'rgba(239,68,68,0.22)'
+                                ? 'rgba(239,68,68,0.18)'
                                 : otherTrades
-                                  ? 'rgba(14,165,233,0.22)'
-                                  : 'rgba(148,163,184,0.18)'
+                                  ? 'rgba(99,102,241,0.16)'
+                                  : optionColors.bg
                               : 'rgba(15,23,42,0.35)',
                             color: selected
                               ? critical
                                 ? '#fca5a5'
                                 : otherTrades
-                                  ? '#7dd3fc'
-                                  : '#e5e7eb'
+                                  ? '#a5b4fc'
+                                  : optionColors.text
                               : '#94a3b8',
                             border: selected
                               ? critical
-                                ? '1px solid rgba(239,68,68,0.45)'
+                                ? '1px solid rgba(239,68,68,0.32)'
                                 : otherTrades
-                                  ? '1px solid rgba(14,165,233,0.45)'
-                                  : '1px solid rgba(148,163,184,0.35)'
+                                  ? '1px solid rgba(99,102,241,0.32)'
+                                  : `1px solid ${optionColors.border}`
                               : '1px solid rgba(148,163,184,0.15)',
                           }}
                         >
