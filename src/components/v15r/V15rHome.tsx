@@ -184,7 +184,7 @@ const HOME_CALENDAR_MAX_HEIGHT = 1120
 // time grid fills the remaining height. Used to calculate the locked offset.
 const GCAL_HEADER_H = 44
 const LOCK_DEFAULT_START_HOUR = 6
-const LOCK_START_HOURS = [3, 4, 5, 6, 7]
+const LOCK_START_HOURS = [3, 4, 5, 6, 7, 8, 9, 10]
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
@@ -760,9 +760,8 @@ export default function V15rHome() {
                 {homeCalendarView.locked ? (
                   <button
                     type="button"
-                    onClick={() => updateHomeCalendarView(v => ({ ...v, locked: false }))}
+                    onClick={() => setShowLockPopover(v => !v)}
                     className="flex items-center gap-1.5 rounded-md border border-cyan-700 bg-cyan-900/30 px-2.5 py-1 text-[10px] font-semibold text-cyan-300 transition-colors hover:bg-cyan-900/50"
-                    title="Click to unlock"
                   >
                     <Lock size={10} />
                     Locked {hourLabel(homeCalendarView.lockedStartHour)}–{hourLabel(homeCalendarView.lockedStartHour + 12)}
@@ -772,29 +771,88 @@ export default function V15rHome() {
                     type="button"
                     onClick={() => setShowLockPopover(v => !v)}
                     className="flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-900/40 px-2.5 py-1 text-[10px] font-semibold text-gray-400 transition-colors hover:border-gray-700 hover:text-gray-200"
-                    title="Lock to a fixed hour window"
                   >
                     <LockOpen size={10} />
                     Lock
                   </button>
                 )}
-                {showLockPopover && !homeCalendarView.locked && (
-                  <div className="absolute right-0 top-full mt-1 z-20 w-38 rounded-lg border border-gray-700 bg-[#16181f] p-2 shadow-xl">
-                    <div className="mb-1.5 px-1 text-[9px] font-semibold uppercase tracking-wider text-gray-500">Start at</div>
-                    {LOCK_START_HOURS.map(h => (
-                      <button
-                        key={h}
-                        type="button"
-                        onClick={() => {
-                          updateHomeCalendarView(v => ({ ...v, locked: true, lockedStartHour: h }))
-                          setShowLockPopover(false)
-                        }}
-                        className="flex w-full items-center justify-between rounded px-3 py-1.5 text-[11px] text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
-                      >
-                        <span>{hourLabel(h)}</span>
-                        <span className="text-gray-600">→ {hourLabel(h + 12)}</span>
-                      </button>
-                    ))}
+
+                {showLockPopover && (
+                  <div
+                    className="absolute right-0 top-full mt-1.5 z-30 w-52 rounded-xl overflow-hidden"
+                    style={{
+                      background: 'linear-gradient(135deg, #16181f 0%, #1a1d28 100%)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      boxShadow: '0 0 0 1px rgba(0,0,0,0.5), 0 24px 48px rgba(0,0,0,0.65)',
+                    }}
+                  >
+                    {/* Popover header */}
+                    <div className="px-3.5 pt-3 pb-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <Lock size={10} className="text-cyan-400 opacity-80" />
+                        <span className="text-[11px] font-semibold text-gray-200">Lock calendar view</span>
+                      </div>
+                      <p className="text-[9px] text-gray-500 leading-relaxed">Choose the 12-hour window to restore on reload.</p>
+                    </div>
+
+                    {/* Option rows */}
+                    <div className="p-1.5 space-y-0.5">
+                      {LOCK_START_HOURS.map(h => {
+                        const isActive = homeCalendarView.locked && homeCalendarView.lockedStartHour === h
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            onClick={() => {
+                              updateHomeCalendarView(v => ({ ...v, locked: true, lockedStartHour: h }))
+                              setShowLockPopover(false)
+                            }}
+                            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 transition-all ${isActive ? '' : 'hover:bg-white/[0.04]'}`}
+                            style={isActive ? {
+                              background: 'rgba(6,182,212,0.08)',
+                              border: '1px solid rgba(6,182,212,0.28)',
+                            } : {
+                              border: '1px solid transparent',
+                            }}
+                          >
+                            <div className="text-left">
+                              <div
+                                className="text-[12px] font-semibold leading-tight"
+                                style={{ color: isActive ? '#67e8f9' : '#d1d5db' }}
+                              >
+                                {hourLabel(h)} – {hourLabel(h + 12)}
+                              </div>
+                              <div className="text-[9px] text-gray-600 mt-0.5">12-hour workday view</div>
+                            </div>
+                            {isActive && (
+                              <span
+                                className="text-[8px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                                style={{ background: 'rgba(6,182,212,0.18)', color: '#67e8f9' }}
+                              >
+                                Active
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {/* Footer – unlock action when locked */}
+                    {homeCalendarView.locked && (
+                      <div className="px-1.5 pb-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateHomeCalendarView(v => ({ ...v, locked: false }))
+                            setShowLockPopover(false)
+                          }}
+                          className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[10px] font-semibold text-gray-400 transition-colors hover:bg-white/[0.04] hover:text-gray-200"
+                        >
+                          <LockOpen size={10} />
+                          Unlock view
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
