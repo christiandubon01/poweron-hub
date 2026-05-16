@@ -986,6 +986,30 @@ Return ONLY valid JSON, no other text.`
     border,
     whiteSpace: 'nowrap',
   })
+  const dealOverviewValueStyle = (color: string) => ({
+    color,
+    fontSize: '15px',
+    width: '110px',
+    textAlign: 'right',
+    fontFamily: 'monospace',
+    fontWeight: 800,
+    letterSpacing: '-0.02em',
+    whiteSpace: 'nowrap',
+  })
+  const costBreakdownValueStyle = (color: string) => ({
+    color,
+    fontSize: '16px',
+    lineHeight: 1.1,
+    fontFamily: 'monospace',
+    fontWeight: 800,
+    letterSpacing: '-0.03em',
+  })
+  const costBreakdownPctStyle = {
+    color: 'rgba(229,231,235,0.72)',
+    fontSize: '12px',
+    fontFamily: 'monospace',
+    fontWeight: 700,
+  }
 
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
@@ -2001,12 +2025,12 @@ Return ONLY valid JSON, no other text.`
                 { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: (num(p.contract) > 0) ? (t.oh / num(p.contract)) * 100 : 0 },
                 { label: 'Profit', value: t.customerProfit, color: '#22c55e', pct: (num(p.contract) > 0) ? (t.customerProfit / num(p.contract)) * 100 : 0 },
               ].filter(item => item.value > 0).map(item => (
-                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <span style={{ color: 'var(--t3)', fontSize: '12px', width: '65px', textAlign: 'left' }}>{item.label}</span>
-                  <div style={{ flex: 1, backgroundColor: '#111827', borderRadius: '4px', height: '16px', overflow: 'hidden' }}>
+                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                  <span style={{ color: 'var(--t3)', fontSize: '12px', width: '75px', textAlign: 'left' }}>{item.label}</span>
+                  <div style={{ flex: 1, backgroundColor: '#111827', borderRadius: '4px', height: '18px', overflow: 'hidden' }}>
                     <div style={{ backgroundColor: item.color, height: '100%', borderRadius: '4px', width: Math.max(0, Math.min(100, item.pct)) + '%', transition: 'width 0.2s' }} />
                   </div>
-                  <span style={{ color: 'var(--t2)', fontSize: '11px', width: '90px', textAlign: 'right', fontFamily: 'monospace' }}>{fmt(item.value)}</span>
+                  <span style={dealOverviewValueStyle(item.color)}>{fmt(item.value)}</span>
                 </div>
               ))}
             </div>
@@ -2035,14 +2059,17 @@ Return ONLY valid JSON, no other text.`
             </div>
 
             {/* Legend with bars */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '14px' }}>
               {t.lab > 0 && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#3b82f6', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Labor</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.lab)} ({((t.lab / t.customerCost) * 100).toFixed(0)}%)</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={costBreakdownValueStyle('#3b82f6')}>{fmt(t.lab)}</span>
+                    <span style={costBreakdownPctStyle}>({((t.lab / t.customerCost) * 100).toFixed(0)}%)</span>
+                  </div>
                 </div>
               )}
               {(t.matSellingC + t.taxOnMatSelling) > 0 && (
@@ -2051,7 +2078,10 @@ Return ONLY valid JSON, no other text.`
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#f59e0b', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Material</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.matSellingC + t.taxOnMatSelling)} ({(((t.matSellingC + t.taxOnMatSelling) / t.customerCost) * 100).toFixed(0)}%)</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={costBreakdownValueStyle('#f59e0b')}>{fmt(t.matSellingC + t.taxOnMatSelling)}</span>
+                    <span style={costBreakdownPctStyle}>({(((t.matSellingC + t.taxOnMatSelling) / t.customerCost) * 100).toFixed(0)}%)</span>
+                  </div>
                 </div>
               )}
               {t.oh > 0 && (
@@ -2060,7 +2090,10 @@ Return ONLY valid JSON, no other text.`
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#a855f7', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Planning/OH</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.oh)} ({((t.oh / t.customerCost) * 100).toFixed(0)}%)</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={costBreakdownValueStyle('#a855f7')}>{fmt(t.oh)}</span>
+                    <span style={costBreakdownPctStyle}>({((t.oh / t.customerCost) * 100).toFixed(0)}%)</span>
+                  </div>
                 </div>
               )}
               {(t.mi + t.taxOnMileage) > 0 && (
@@ -2069,7 +2102,10 @@ Return ONLY valid JSON, no other text.`
                     <div style={{ width: '8px', height: '8px', backgroundColor: '#06b6d4', borderRadius: '2px' }} />
                     <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Mileage</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--t2)', fontFamily: 'monospace' }}>{fmt(t.mi + t.taxOnMileage)} ({(((t.mi + t.taxOnMileage) / t.customerCost) * 100).toFixed(0)}%)</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={costBreakdownValueStyle('#06b6d4')}>{fmt(t.mi + t.taxOnMileage)}</span>
+                    <span style={costBreakdownPctStyle}>({(((t.mi + t.taxOnMileage) / t.customerCost) * 100).toFixed(0)}%)</span>
+                  </div>
                 </div>
               )}
             </div>
