@@ -172,9 +172,9 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
 }
 
 const HOME_CALENDAR_VIEW_KEY = 'poweron:v15r:homeCalendarView'
-const HOME_CALENDAR_MIN_HEIGHT = 360
-const HOME_CALENDAR_DEFAULT_HEIGHT = 520
-const HOME_CALENDAR_MAX_HEIGHT = 900
+const HOME_CALENDAR_MIN_HEIGHT = 760
+const HOME_CALENDAR_DEFAULT_HEIGHT = 820
+const HOME_CALENDAR_MAX_HEIGHT = 1000
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
@@ -722,10 +722,14 @@ export default function V15rHome() {
           <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
             {!homeCalendarView.collapsed && (
               <>
-                <div id="home-google-calendar" className="calendar-container relative w-full overflow-hidden">
+                <div
+                  id="home-google-calendar"
+                  className="relative w-full overflow-visible"
+                  style={{ height: `${homeCalendarView.height}px`, minHeight: `${HOME_CALENDAR_MIN_HEIGHT}px` }}
+                >
                   <iframe
                     src={gcalUrl}
-                    style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, display: 'block', pointerEvents: isCalendarResizing ? 'none' : 'auto' }}
+                    style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, minHeight: `${HOME_CALENDAR_MIN_HEIGHT}px`, display: 'block', pointerEvents: isCalendarResizing ? 'none' : 'auto' }}
                     className="bg-[var(--bg-secondary)] w-full"
                     title="Google Calendar"
                   />
