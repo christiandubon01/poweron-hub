@@ -786,6 +786,12 @@ Return ONLY valid JSON, no other text.`
     return num(l.quoted) + addIncome
   }
   const serviceWorkflowStatus = (record: any) => String(record?.serviceStatus || record?.estimateStatus || record?.status || '').toLowerCase().trim()
+  const fieldLogVisibleServiceEstimates = (backup.serviceEstimates || []).filter(isActiveServiceCall)
+  const fieldLogOpenServiceEstimates = fieldLogVisibleServiceEstimates.filter(e => {
+    const s = serviceWorkflowStatus(e)
+    return s === '' || s === 'open'
+  })
+  const fieldLogActiveServiceCalls = fieldLogVisibleServiceEstimates.filter(e => serviceWorkflowStatus(e) === 'active')
 
   // WON box: active/won projects (work awarded) + service logs fully paid (money math)
   const pipelineWon = (() => {
@@ -815,7 +821,6 @@ Return ONLY valid JSON, no other text.`
   // PENDING box: coming/estimating projects + open service estimates + active calls + partial svc
   const pipelinePending = (() => {
     const allProjects = (backup.projects || []).filter(isActiveProject)
-    const estimates = (backup.serviceEstimates || []).filter(isActiveServiceCall)
     const svcLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
     // Coming projects = estimates in progress / not yet awarded
     const comingProjects = allProjects.filter(p => {
@@ -823,24 +828,18 @@ Return ONLY valid JSON, no other text.`
       if (s === 'deleted' || s === 'lost' || s === 'rejected') return false
       return resolveProjectBucket(p) === 'coming'
     })
-    // Open service estimates. Missing status is treated as open for older saved estimates.
-    const openEstimates = estimates.filter(e => {
-      const s = serviceWorkflowStatus(e)
-      return s === '' || s === 'open'
-    })
     // Field Log's Active Service Calls bucket is the source of truth:
     // active service estimates only, after the shared isActiveServiceCall exclusions.
-    const activeEstimateCalls = estimates.filter(e => serviceWorkflowStatus(e) === 'active')
     // Partial service payments (money math: some collected but not complete)
     const partialSvc = svcLogs.filter(l => {
       const tb = svcTotalBillable(l)
       return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb
     })
     return {
-      count: comingProjects.length + openEstimates.length + activeEstimateCalls.length + partialSvc.length,
+      count: comingProjects.length + fieldLogOpenServiceEstimates.length + fieldLogActiveServiceCalls.length + partialSvc.length,
       value: comingProjects.reduce((s, p) => s + num(p.contract), 0)
-             + openEstimates.reduce((s, e) => s + num(e.totalQuote || e.quoted || 0), 0)
-             + activeEstimateCalls.reduce((s, c) => s + num(c.totalQuote || c.quoted || 0), 0)
+             + fieldLogOpenServiceEstimates.reduce((s, e) => s + num(e.totalQuote || e.quoted || 0), 0)
+             + fieldLogActiveServiceCalls.reduce((s, c) => s + num(c.totalQuote || c.quoted || 0), 0)
              + partialSvc.reduce((s, l) => s + (svcTotalBillable(l) - num(l.collected)), 0)
     }
   })()
@@ -951,17 +950,8 @@ Return ONLY valid JSON, no other text.`
                       {(() => {
                         const allProjects = (backup.projects || []).filter(isActiveProject)
                         const comingCount = allProjects.filter(p => { const s = (p.status||'').toLowerCase(); if (s==='deleted'||s==='lost'||s==='rejected') return false; return resolveProjectBucket(p)==='coming' }).length
-                        const estimates = (backup.serviceEstimates||[]).filter(isActiveServiceCall)
-                        const openEstimateCount = estimates.filter(e => { const s = serviceWorkflowStatus(e); return s === '' || s === 'open' }).length
-                        const activeEstimateCalls = estimates.filter(e => serviceWorkflowStatus(e) === 'active')
-                        const activeEstimateIds = new Set(activeEstimateCalls.map(e => String(e.id || '')).filter(Boolean))
-                        const legacyActiveCount = (backup.activeServiceCalls||[]).filter(c => {
-                          if (!isActiveServiceCall(c)) return false
-                          const s = serviceWorkflowStatus(c)
-                          if (s !== 'active' && s !== 'open') return false
-                          return !activeEstimateIds.has(String(c.fromEstimateId || c.id || ''))
-                        }).length
-                        const activeCallCount = activeEstimateCalls.length + legacyActiveCount
+                        const openEstimateCount = fieldLogOpenServiceEstimates.length
+                        const activeCallCount = fieldLogActiveServiceCalls.length
                         const svcLogs = (backup.serviceLogs||[]).filter(isActiveServiceCall)
                         const partialCount = svcLogs.filter(l => { const tb = svcTotalBillable(l); return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb }).length
                         return (
