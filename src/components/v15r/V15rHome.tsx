@@ -46,6 +46,7 @@ import {
   ensureAgendaState,
   getAgendaProjectName,
   resolveProjectBucket,
+  isArchivedRecord,
   num,
   getProjectFinancials,
   buildProjectLogRollup,
@@ -307,6 +308,8 @@ export default function V15rHome() {
     }))
     .filter((l: any) => l.balanceDue > 0.5)
     .sort((a: any, b: any) => b.balanceDue - a.balanceDue)
+
+  const activeJobHealthProjects = projects.filter(p => !isArchivedRecord(p) && resolveProjectBucket(p) === 'active')
 
   // ── Agenda CRUD handlers ─────────────────────────────────────────────────────
 
@@ -617,12 +620,11 @@ export default function V15rHome() {
       </div>
 
       {/* ── JOB HEALTH CARDS ── */}
-      {projects.filter(p => resolveProjectBucket(p) === 'active').length > 0 && (
+      {activeJobHealthProjects.length > 0 && (
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Job Health</h2>
           <div className="job-health-grid">
-            {projects
-              .filter(p => resolveProjectBucket(p) === 'active')
+            {activeJobHealthProjects
               .map(p => {
                 const h = health(p, backup)
                 const o = getOverallCompletion(p, backup)
