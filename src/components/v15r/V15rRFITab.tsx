@@ -438,65 +438,90 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
 
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
+      <style>{`
+        @keyframes rfi-tracker-glass-sweep {
+          0% { transform: translateX(-125%) skewX(-18deg); opacity: 0; }
+          14% { opacity: 0.58; }
+          52% { opacity: 0.42; }
+          88% { opacity: 0; }
+          100% { transform: translateX(225%) skewX(-18deg); opacity: 0; }
+        }
+        .rfi-tracker-header-sweep::before {
+          content: '';
+          position: absolute;
+          inset: 0 auto 0 0;
+          width: 36%;
+          background: linear-gradient(
+            115deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(125, 211, 252, 0.10) 35%,
+            rgba(207, 250, 254, 0.34) 50%,
+            rgba(45, 212, 191, 0.10) 65%,
+            rgba(255, 255, 255, 0) 100%
+          );
+          filter: blur(0.5px);
+          animation: rfi-tracker-glass-sweep 4200ms cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+          will-change: transform, opacity;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .rfi-tracker-header-sweep::before { animation: none; opacity: 0; }
+        }
+      `}</style>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         {/* HEADER */}
-        <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 4px 0' }}>RFI Tracker</h4>
-            <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '0' }}>
-              {rfis.length} total · {openCount} open
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={openAddModal}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: 'rgba(34,197,94,0.2)',
-                color: '#22c55e',
-                border: '1px solid rgba(34,197,94,0.3)',
-                borderRadius: '4px',
-                fontSize: '12px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              + Add RFI
-            </button>
-            <button
-              onClick={() => setShowLabelModal(true)}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: 'rgba(59,130,246,0.12)',
-                color: '#93c5fd',
-                border: '1px solid rgba(59,130,246,0.22)',
-                borderRadius: '4px',
-                fontSize: '12px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              + Label
-            </button>
-            <button
-              onClick={() => alert('AI Analyze RFIs placeholder')}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: 'rgba(139,92,246,0.2)',
-                color: '#a78bfa',
-                border: '1px solid rgba(139,92,246,0.3)',
-                borderRadius: '4px',
-                fontSize: '12px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}
-            >
-              <Sparkles size={14} />
-              AI Analyze
-            </button>
+        <div
+          className="relative mb-4 overflow-hidden rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/60 p-4 shadow-lg shadow-blue-950/25"
+          style={{ backdropFilter: 'blur(14px)' }}
+        >
+          <span aria-hidden="true" className="rfi-tracker-header-sweep pointer-events-none absolute inset-0 overflow-hidden rounded-2xl" />
+          <div className="pointer-events-none absolute -left-16 -top-20 h-44 w-44 rounded-full bg-cyan-400/10 blur-3xl" />
+          <div className="pointer-events-none absolute -right-12 -bottom-24 h-48 w-48 rounded-full bg-blue-500/10 blur-3xl" />
+
+          <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 shadow-inner shadow-cyan-950/40">
+                <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_16px_rgba(103,232,249,0.85)]" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/80">Project RFIs</p>
+                <h4 className="mt-1 text-xl font-bold leading-tight text-gray-100">RFI Tracker</h4>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <p className="m-0 text-xs font-medium text-gray-400">
+                    {rfis.length} total · {openCount} open
+                  </p>
+                  <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-200">
+                    Total {rfis.length}
+                  </span>
+                  <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+                    Open {openCount}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={openAddModal}
+                className="rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-300 shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-400/15"
+              >
+                + Add RFI
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLabelModal(true)}
+                className="rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-xs font-bold text-blue-200 shadow-sm shadow-blue-950/20 transition-colors hover:bg-blue-400/15"
+              >
+                + Label
+              </button>
+              <button
+                type="button"
+                onClick={() => alert('AI Analyze RFIs placeholder')}
+                className="flex items-center gap-1.5 rounded-lg border border-violet-400/25 bg-violet-400/10 px-3 py-2 text-xs font-bold text-violet-300 shadow-sm shadow-violet-950/20 transition-colors hover:bg-violet-400/15"
+              >
+                <Sparkles size={14} />
+                AI Analyze
+              </button>
+            </div>
           </div>
         </div>
 
