@@ -816,7 +816,6 @@ Return ONLY valid JSON, no other text.`
   const pipelinePending = (() => {
     const allProjects = (backup.projects || []).filter(isActiveProject)
     const estimates = (backup.serviceEstimates || []).filter(isActiveServiceCall)
-    const activeCalls = (backup.activeServiceCalls || []).filter(isActiveServiceCall)
     const svcLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
     // Coming projects = estimates in progress / not yet awarded
     const comingProjects = allProjects.filter(p => {
@@ -829,27 +828,19 @@ Return ONLY valid JSON, no other text.`
       const s = serviceWorkflowStatus(e)
       return s === '' || s === 'open'
     })
-    // Active service calls in progress. Field Log keeps active estimates visible and
-    // also writes a legacy activeServiceCalls clone, so de-dupe clones by estimate id.
+    // Field Log's Active Service Calls bucket is the source of truth:
+    // active service estimates only, after the shared isActiveServiceCall exclusions.
     const activeEstimateCalls = estimates.filter(e => serviceWorkflowStatus(e) === 'active')
-    const activeEstimateIds = new Set(activeEstimateCalls.map(e => String(e.id || '')).filter(Boolean))
-    const legacyActiveCalls = activeCalls.filter(c => {
-      const s = serviceWorkflowStatus(c)
-      if (s !== 'active' && s !== 'open') return false
-      const linkedEstimateId = String(c.fromEstimateId || c.id || '')
-      return !activeEstimateIds.has(linkedEstimateId)
-    })
     // Partial service payments (money math: some collected but not complete)
     const partialSvc = svcLogs.filter(l => {
       const tb = svcTotalBillable(l)
       return tb > 0 && num(l.collected) > 0 && num(l.collected) < tb
     })
     return {
-      count: comingProjects.length + openEstimates.length + activeEstimateCalls.length + legacyActiveCalls.length + partialSvc.length,
+      count: comingProjects.length + openEstimates.length + activeEstimateCalls.length + partialSvc.length,
       value: comingProjects.reduce((s, p) => s + num(p.contract), 0)
              + openEstimates.reduce((s, e) => s + num(e.totalQuote || e.quoted || 0), 0)
              + activeEstimateCalls.reduce((s, c) => s + num(c.totalQuote || c.quoted || 0), 0)
-             + legacyActiveCalls.reduce((s, c) => s + num(c.totalQuote || c.quoted || 0), 0)
              + partialSvc.reduce((s, l) => s + (svcTotalBillable(l) - num(l.collected)), 0)
     }
   })()
