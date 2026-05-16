@@ -17,7 +17,6 @@ import {
   getOverallCompletion,
   getProjectFinancials,
   resolveProjectBucket,
-  daysSince,
   fmtK,
   fmt,
   pct,
@@ -26,6 +25,7 @@ import {
   isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
+import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
 import { useDemoMode } from '@/store/demoStore'
@@ -819,7 +819,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   function renderProjectCard(p: BackupProject, bucket: string) {
     const h = health(p, backup)
     const o = getOverallCompletion(p, backup)
-    const d = daysSince(p.lastMove)
+    const staleDays = getProjectDaysSinceLastMovement(p, backup)
     const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
     const fin = getProjectFinancials(p, backup)
     const paidPercent = fin.contract > 0 ? Math.min(100, Math.max(0, (fin.paid / fin.contract) * 100)) : 0
@@ -917,9 +917,13 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
           {/* Status chips */}
           <div className="flex flex-wrap gap-1.5 mb-2.5">
-            <span className={`text-[9px] px-2 py-0.5 rounded-full font-semibold ${
-              d >= 14 ? 'bg-red-500/20 text-red-400' : d >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'
-            }`}>{d}d stale</span>
+            {staleDays === null ? (
+              <span className="text-[9px] px-2 py-0.5 rounded-full font-semibold bg-slate-500/20 text-slate-400">no log yet</span>
+            ) : (
+              <span className={`text-[9px] px-2 py-0.5 rounded-full font-semibold ${
+                staleDays >= 14 ? 'bg-red-500/20 text-red-400' : staleDays >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'
+              }`}>{staleDays}d stale</span>
+            )}
             <span className="text-[9px] px-2 py-0.5 rounded-full font-semibold bg-blue-500/20 text-blue-400">
               {pct(Math.round(o))}
             </span>
