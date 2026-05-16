@@ -24,6 +24,14 @@ import {
   RefreshCw,
   Lock,
   LockOpen,
+  CalendarDays,
+  Receipt,
+  Users,
+  Target,
+  Building2,
+  Briefcase,
+  Package,
+  Truck,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -84,6 +92,18 @@ function agendaStatusChip(status: string) {
 }
 
 const STATUS_CYCLE = ['pending', 'active', 'done', 'postponed', 'declined']
+
+function getAgendaSectionIcon(title: string, projectId?: string | null) {
+  const normalizedTitle = (title || '').toLowerCase()
+  if (normalizedTitle.includes('today')) return CalendarDays
+  if (normalizedTitle.includes('payment') || normalizedTitle.includes('collect')) return Receipt
+  if (normalizedTitle.includes('lead')) return Users
+  if (normalizedTitle.includes('business')) return Briefcase
+  if (normalizedTitle.includes('tool') || normalizedTitle.includes('material')) return Truck
+  if (normalizedTitle.includes('stock') || normalizedTitle.includes('watchlist')) return Package
+  if (projectId) return Building2
+  return Target
+}
 
 // ── Balance color helper ─────────────────────────────────────────────────────
 
@@ -1127,41 +1147,51 @@ export default function V15rHome() {
         </div>
         {(backup.agendaSections || []).length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {(backup.agendaSections || []).map(sec => (
-              <div key={sec.id} className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <div className="font-bold text-sm text-gray-200">{sec.title}</div>
-                    <div className="text-[9px] text-gray-500 mt-0.5">
-                      {getAgendaProjectName(backup, sec.projectId)} • {(sec.tasks || []).length} task{(sec.tasks || []).length === 1 ? '' : 's'}
-                    </div>
-                  </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => addAgendaTask(sec.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors">+ Task</button>
-                    <button onClick={() => editAgendaCategory(sec.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors">Edit</button>
-                    <button onClick={() => removeAgendaCategory(sec.id)} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300 transition-colors">Delete</button>
-                  </div>
-                </div>
-                {(sec.tasks || []).length > 0 ? (
-                  <div className="space-y-1">
-                    {(sec.tasks || []).map((t: any) => (
-                      <div key={t.id} className="flex items-center gap-2 py-1.5 group">
-                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: t.status === 'completed' ? '#10b981' : t.status === 'canceled' ? '#ef4444' : '#3b82f6' }} />
-                        <div className={`text-xs flex-1 ${t.status === 'done' ? 'line-through text-gray-600' : t.status === 'declined' ? 'line-through text-gray-600' : 'text-gray-300'}`}>{t.text}</div>
-                        <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => cycleAgendaTaskStatus(sec.id, t.id)} className="cursor-pointer">{agendaStatusChip(t.status)}</button>
-                          <button onClick={() => editAgendaTask(sec.id, t.id)} className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">Edit</button>
-                          <button onClick={() => moveAgendaTask(sec.id, t.id)} className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300">Move</button>
-                          <button onClick={() => removeAgendaTask(sec.id, t.id)} className="text-[8px] px-1 py-0.5 rounded bg-gray-700/50 text-red-400 hover:text-red-300">✕</button>
+            {(backup.agendaSections || []).map(sec => {
+              const AgendaIcon = getAgendaSectionIcon(sec.title, sec.projectId)
+              return (
+                <div key={sec.id} className="relative overflow-hidden rounded-xl border border-cyan-500/30 bg-gradient-to-br from-slate-950 via-gray-950 to-black p-4 shadow-[0_18px_40px_rgba(8,145,178,0.14),inset_0_1px_0_rgba(255,255,255,0.08)]">
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(34,211,238,0.18),transparent_34%),linear-gradient(135deg,rgba(255,255,255,0.08),transparent_28%,rgba(20,184,166,0.06)_72%,transparent)]" />
+                  <div className="pointer-events-none absolute inset-px rounded-[11px] border border-white/5" />
+                  <div className="relative flex items-start justify-between gap-3 mb-4">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-cyan-300/[0.35] bg-cyan-400/10 text-cyan-200 shadow-[0_0_22px_rgba(34,211,238,0.22),inset_0_1px_0_rgba(255,255,255,0.18)]">
+                        <AgendaIcon size={17} strokeWidth={2.2} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-slate-100">{sec.title}</div>
+                        <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-100/[0.55]">
+                          {getAgendaProjectName(backup, sec.projectId)} • {(sec.tasks || []).length} task{(sec.tasks || []).length === 1 ? '' : 's'}
                         </div>
                       </div>
-                    ))}
+                    </div>
+                    <div className="flex flex-shrink-0 flex-wrap justify-end gap-1.5">
+                      <button onClick={() => addAgendaTask(sec.id)} className="rounded-md border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[9px] font-bold text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.16)] transition-colors hover:bg-cyan-400/30">+ Task</button>
+                      <button onClick={() => editAgendaCategory(sec.id)} className="rounded-md border border-white/10 bg-white/[0.08] px-2 py-1 text-[9px] font-bold text-slate-300 transition-colors hover:bg-white/[0.12] hover:text-white">Edit</button>
+                      <button onClick={() => removeAgendaCategory(sec.id)} className="rounded-md border border-red-400/30 bg-red-500/[0.12] px-2 py-1 text-[9px] font-bold text-red-300 transition-colors hover:bg-red-500/20 hover:text-red-200">Delete</button>
+                    </div>
                   </div>
-                ) : (
-                  <div className="text-[10px] text-gray-600 text-center py-3">No tasks yet.</div>
-                )}
-              </div>
-            ))}
+                  {(sec.tasks || []).length > 0 ? (
+                    <div className="relative space-y-1.5">
+                      {(sec.tasks || []).map((t: any) => (
+                        <div key={t.id} className="group flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/5 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                          <div className="h-2 w-2 flex-shrink-0 rounded-full shadow-[0_0_10px_currentColor]" style={{ color: t.status === 'done' ? '#34d399' : t.status === 'declined' ? '#f87171' : t.status === 'postponed' ? '#94a3b8' : t.status === 'active' ? '#60a5fa' : '#facc15', background: 'currentColor' }} />
+                          <div className={`min-w-0 flex-1 text-xs leading-snug ${t.status === 'done' ? 'line-through text-slate-500' : t.status === 'declined' ? 'line-through text-slate-500' : 'text-slate-200'}`}>{t.text}</div>
+                          <div className="flex flex-shrink-0 items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => cycleAgendaTaskStatus(sec.id, t.id)} className="cursor-pointer">{agendaStatusChip(t.status)}</button>
+                            <button onClick={() => editAgendaTask(sec.id, t.id)} className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[8px] font-semibold text-slate-400 hover:text-slate-200">Edit</button>
+                            <button onClick={() => moveAgendaTask(sec.id, t.id)} className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[8px] font-semibold text-slate-400 hover:text-slate-200">Move</button>
+                            <button onClick={() => removeAgendaTask(sec.id, t.id)} className="rounded bg-red-500/10 px-1.5 py-0.5 text-[8px] font-semibold text-red-300 hover:text-red-200">✕</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="relative rounded-lg border border-dashed border-cyan-300/25 bg-cyan-400/5 px-3 py-5 text-center text-[10px] font-semibold text-cyan-100/[0.55] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">No tasks yet.</div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         ) : (
           <div className="p-4 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">
