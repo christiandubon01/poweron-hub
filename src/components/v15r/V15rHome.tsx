@@ -26,12 +26,16 @@ import {
   LockOpen,
   CalendarDays,
   Receipt,
+  Timer,
   Users,
   Target,
   Building2,
   Briefcase,
   Package,
   Truck,
+  Boxes,
+  Route,
+  CircleDollarSign,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -1247,10 +1251,10 @@ export default function V15rHome() {
                     const entryTotal = rr.entryTotalCost
                     const hasPay = num(l.collected) > 0
                     const entryTotalStats = [
-                      { label: 'Labor', amount: fmt(num(entryRevenue)), Icon: Briefcase, color: '#e5e7eb', bg: 'rgba(229,231,235,0.06)', border: 'rgba(229,231,235,0.16)' },
-                      { label: 'Material', amount: fmt(num(l.mat)), Icon: Package, color: '#fcd34d', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.22)' },
-                      { label: 'Mileage', amount: fmt(num(entryMiCost)), Icon: Truck, color: '#60a5fa', bg: 'rgba(96,165,250,0.08)', border: 'rgba(96,165,250,0.22)' },
-                      { label: 'Total', amount: fmt(num(entryTotal)), Icon: Receipt, color: '#f87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)', featured: true },
+                      { label: 'Labor', amount: fmt(num(entryRevenue)), Icon: Timer, color: '#e5e7eb', bg: 'rgba(229,231,235,0.06)', border: 'rgba(229,231,235,0.16)' },
+                      { label: 'Material', amount: fmt(num(l.mat)), Icon: Boxes, color: '#fcd34d', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.22)' },
+                      { label: 'Mileage', amount: fmt(num(entryMiCost)), Icon: Route, color: '#67e8f9', bg: 'rgba(103,232,249,0.08)', border: 'rgba(103,232,249,0.24)' },
+                      { label: 'Total', amount: fmt(num(entryTotal)), Icon: CircleDollarSign, color: '#f87171', bg: 'rgba(248,113,113,0.11)', border: 'rgba(248,113,113,0.34)', featured: true },
                     ]
                     return (
                       <div key={l.id || i} className={`px-4 py-2.5 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
@@ -1258,8 +1262,8 @@ export default function V15rHome() {
                           className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3"
                           style={hasPay ? { background: 'linear-gradient(180deg, rgba(48,209,88,.10), rgba(48,209,88,.04))', borderLeft: '3px solid #10b981' } : { borderLeft: '3px solid #10b981' }}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-[10px] text-gray-150 font-mono">{l.date}</span>
                                 <span className="text-xs font-semibold text-gray-150">{l.projName}</span>
@@ -1276,21 +1280,21 @@ export default function V15rHome() {
                                 Remaining Bal: <span style={{ color: balanceColor }}>{fmt(runningBalance)}</span>
                               </div>
                             </div>
-                            <div className="ml-auto grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-4">
+                            <div className="ml-auto flex w-full flex-wrap justify-end gap-2 lg:w-auto lg:min-w-[390px]">
                               {entryTotalStats.map(({ label, amount, Icon, color, bg, border, featured }) => (
                                 <div
                                   key={label}
-                                  className={`min-w-[84px] rounded-lg border px-2.5 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${featured ? 'bg-red-950/10' : 'bg-slate-950/20'}`}
+                                  className={`rounded-lg border text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${featured ? 'min-w-[118px] bg-red-950/10 px-3 py-2.5' : 'min-w-[78px] bg-slate-950/20 px-2.5 py-2'}`}
                                   style={{ borderColor: border, boxShadow: featured ? `inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px ${bg}` : undefined }}
                                 >
                                   <div
-                                    className="mx-auto mb-1 flex h-6 w-6 items-center justify-center rounded-md border"
+                                    className={`mx-auto mb-1 flex items-center justify-center rounded-md border ${featured ? 'h-7 w-7' : 'h-6 w-6'}`}
                                     style={{ color, background: bg, borderColor: border }}
                                   >
-                                    <Icon size={13} strokeWidth={2.2} />
+                                    <Icon size={featured ? 15 : 13} strokeWidth={2} />
                                   </div>
-                                  <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-gray-400">{label}</div>
-                                  <div className="mt-0.5 font-mono text-[12px] font-extrabold leading-tight" style={{ color }}>
+                                  <div className={`${featured ? 'text-[9px]' : 'text-[8px]'} font-bold uppercase tracking-[0.12em] text-gray-400`}>{label}</div>
+                                  <div className={`mt-0.5 font-mono font-extrabold leading-tight ${featured ? 'text-[15px]' : 'text-[12px]'}`} style={{ color }}>
                                     {amount}
                                   </div>
                                 </div>
