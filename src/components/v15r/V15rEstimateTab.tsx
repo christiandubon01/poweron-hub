@@ -1737,70 +1737,98 @@ Return ONLY valid JSON, no other text.`
 
         {/* MILEAGE */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden', padding: '12px 16px' }}>
-          {/* Header: title + running total */}
+          {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Mileage Calculation</h4>
-            <span style={{ color: '#f59e0b', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.mi)}</span>
           </div>
-          {/* Body: left inputs | right street view + address — stacks on narrow screens */}
+          {/* Body: left inputs | right project map + address — stacks on narrow screens */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px' }}>
-            {/* Left: 2×2 numeric input grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', alignContent: 'start' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                  Miles Round Trip
-                </label>
-                <input
-                  type="number"
-                  value={p.mileRT || 30}
-                  onChange={e => editMileage('mileRT', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '6px',
-                    backgroundColor: '#1e2130',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '4px',
-                    color: 'var(--t1)',
-                    fontFamily: 'monospace',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                  Days on Site
-                </label>
-                <input
-                  type="number"
-                  value={p.miDays || 12}
-                  onChange={e => editMileage('miDays', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '6px',
-                    backgroundColor: '#1e2130',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '4px',
-                    color: 'var(--t1)',
-                    fontFamily: 'monospace',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                  Rate (per mile)
-                </label>
-                <div style={{ color: 'var(--t3)', fontFamily: 'monospace', fontSize: '13px', fontWeight: '500', padding: '6px 8px', backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '4px' }}>
-                  ${(backup.settings?.mileRate || 0.66).toFixed(2)}
+            {/* Left: 2x2 numeric grid + premium total summary */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignContent: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', alignContent: 'start' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                    Miles Round Trip
+                  </label>
+                  <input
+                    type="number"
+                    value={p.mileRT || 30}
+                    onChange={e => editMileage('mileRT', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '6px',
+                      backgroundColor: '#1e2130',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '4px',
+                      color: 'var(--t1)',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                    Days on Site
+                  </label>
+                  <input
+                    type="number"
+                    value={p.miDays || 12}
+                    onChange={e => editMileage('miDays', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '6px',
+                      backgroundColor: '#1e2130',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '4px',
+                      color: 'var(--t1)',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                    Rate (per mile)
+                  </label>
+                  <div style={{ color: 'var(--t3)', fontFamily: 'monospace', fontSize: '13px', fontWeight: '500', padding: '6px 8px', backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '4px' }}>
+                    ${(backup.settings?.mileRate || 0.66).toFixed(2)}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                    Total Miles
+                  </label>
+                  <div style={{ color: '#22d3ee', fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', padding: '6px', backgroundColor: 'rgba(6,182,212,0.08)', borderRadius: '4px', border: '1px solid rgba(6,182,212,0.2)' }}>
+                    {num(p.mileRT || 0) * num(p.miDays || 0)} mi
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '3px' }}>
+                    {p.mileRT || 0} RT x {p.miDays || 0} days
+                  </div>
                 </div>
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                  Total Miles
-                </label>
-                <div style={{ color: '#22d3ee', fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', padding: '6px', backgroundColor: 'rgba(6,182,212,0.08)', borderRadius: '4px', border: '1px solid rgba(6,182,212,0.2)' }}>
-                  {num(p.mileRT || 0) * num(p.miDays || 0)} mi
+              <div style={{
+                position: 'relative',
+                overflow: 'hidden',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                background: 'linear-gradient(135deg, rgba(245,158,11,0.18), rgba(34,211,238,0.08) 52%, rgba(15,23,42,0.48))',
+                border: '1px solid rgba(245,158,11,0.26)',
+                boxShadow: '0 14px 34px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.08)',
+              }}>
+                <div style={{ position: 'absolute', inset: '-35% auto auto 62%', width: '150px', height: '150px', borderRadius: '999px', background: 'rgba(245,158,11,0.14)', filter: 'blur(20px)', pointerEvents: 'none' }} />
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                  <div>
+                    <div style={{ color: '#fbbf24', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '6px' }}>
+                      Estimated Mileage Total
+                    </div>
+                    <div style={{ color: 'var(--t1)', fontFamily: 'monospace', fontSize: '30px', lineHeight: 1, fontWeight: 800, letterSpacing: '-0.04em' }}>
+                      {fmt(t.mi)}
+                    </div>
+                  </div>
+                  <div style={{ color: '#fde68a', fontSize: '10px', fontWeight: 700, padding: '4px 7px', borderRadius: '999px', backgroundColor: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.24)', whiteSpace: 'nowrap' }}>
+                    Live
+                  </div>
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '3px' }}>
-                  {p.mileRT || 0} RT × {p.miDays || 0} days
+                <div style={{ position: 'relative', color: 'rgba(229,231,235,0.72)', fontSize: '11px', marginTop: '9px', fontFamily: 'monospace' }}>
+                  {p.mileRT || 0} mi RT x {p.miDays || 0} days x ${(backup.settings?.mileRate || 0.66).toFixed(2)}
                 </div>
               </div>
             </div>
