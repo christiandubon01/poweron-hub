@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { CircleF, GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api'
+import { GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api'
 
 export type MileageAddressCommitPatch = {
   address: string
@@ -24,7 +24,6 @@ export type PersistProjectAddressGeometryPayload = {
 
 export const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY as string) ?? ''
 
-const PROJECT_RADIUS_METERS = 24140
 const PROJECT_MARKER_Z_INDEX = 1000
 
 const darkMapStyles: google.maps.MapTypeStyle[] = [
@@ -57,32 +56,13 @@ function coordsClose(a?: number | null, b?: number | null, eps = 1e-5): boolean 
   return Math.abs((a as number) - (b as number)) < eps
 }
 
-function projectRadiusBounds(center: google.maps.LatLngLiteral): google.maps.LatLngBounds | null {
-  if (typeof window === 'undefined') return null
-  const g = window.google
-  if (!g?.maps) return null
-
-  const latRadians = center.lat * Math.PI / 180
-  const latDelta = PROJECT_RADIUS_METERS / 111320
-  const lngMetersPerDegree = Math.max(111320 * Math.cos(latRadians), 1)
-  const lngDelta = PROJECT_RADIUS_METERS / lngMetersPerDegree
-
-  return new g.maps.LatLngBounds(
-    { lat: center.lat - latDelta, lng: center.lng - lngDelta },
-    { lat: center.lat + latDelta, lng: center.lng + lngDelta },
-  )
-}
-
-function fitMapToProjectRadius(map: google.maps.Map | null, center: google.maps.LatLngLiteral): void {
+function centerMapOnProject(map: google.maps.Map | null, center: google.maps.LatLngLiteral): void {
   if (!map || typeof window === 'undefined') return
   const g = window.google
   if (!g?.maps) return
 
-  const bounds = projectRadiusBounds(center)
-  if (!bounds) return
-
-  map.fitBounds(bounds, 18)
   map.panTo(center)
+  map.setZoom(15)
 }
 
 /**
@@ -244,7 +224,7 @@ export function MileageProjectMapPreview({
   ])
 
   useEffect(() => {
-    if (phase === 'ready' && resolvedCoords) fitMapToProjectRadius(mapRef.current, resolvedCoords)
+    if (phase === 'ready' && resolvedCoords) centerMapOnProject(mapRef.current, resolvedCoords)
   }, [phase, resolvedCoords])
 
   const placeholderText = hasAddress && phase === 'missing'
@@ -298,27 +278,12 @@ export function MileageProjectMapPreview({
             options={mapOptions}
             onLoad={(map) => {
               mapRef.current = map
-              fitMapToProjectRadius(map, resolvedCoords)
+              centerMapOnProject(map, resolvedCoords)
             }}
             onUnmount={() => {
               mapRef.current = null
             }}
           >
-            <CircleF
-              center={resolvedCoords}
-              radius={PROJECT_RADIUS_METERS}
-              options={{
-                clickable: false,
-                draggable: false,
-                editable: false,
-                fillColor: '#22d3ee',
-                fillOpacity: 0.08,
-                strokeColor: '#22d3ee',
-                strokeOpacity: 0.85,
-                strokeWeight: 2,
-                zIndex: 1,
-              }}
-            />
             <MarkerF
               position={resolvedCoords}
               title="Project / job site address"
