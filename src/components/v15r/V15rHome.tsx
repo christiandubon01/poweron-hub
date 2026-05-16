@@ -6,7 +6,7 @@
  * Sections:
  * 1. Greeting + date + "New Project" button
  * 2. 4 KPI cards (Pipeline, Cash Received, Open RFIs, Hours Logged)
- * 3. Google Calendar embed with week navigation (calOffset)
+ * 3. Google Calendar embed
  * 4. Job Health cards (per project, score 0-100, reasons, chips)
  * 5. Service Jobs Requiring Attention (unpaid only)
  * 6. Agenda Alerts (auto-generated: stalled, check-in, critical RFIs)
@@ -20,7 +20,6 @@ import {
   Trash2,
   ChevronRight,
   Zap,
-  ChevronLeft,
   X,
   Sparkles,
   Edit3,
@@ -172,12 +171,45 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
   return grouped
 }
 
+const HOME_CALENDAR_VIEW_KEY = 'poweron:v15r:homeCalendarView'
+const HOME_CALENDAR_MIN_HEIGHT = 360
+const HOME_CALENDAR_DEFAULT_HEIGHT = 520
+const HOME_CALENDAR_MAX_HEIGHT = 900
+
+function getHomeCalendarMaxHeight(): number {
+  if (typeof window === 'undefined') return HOME_CALENDAR_MAX_HEIGHT
+  return Math.max(HOME_CALENDAR_MIN_HEIGHT, Math.min(HOME_CALENDAR_MAX_HEIGHT, window.innerHeight - 120))
+}
+
+function clampHomeCalendarHeight(height: unknown): number {
+  const next = Number(height)
+  if (!Number.isFinite(next)) return HOME_CALENDAR_DEFAULT_HEIGHT
+  return Math.min(getHomeCalendarMaxHeight(), Math.max(HOME_CALENDAR_MIN_HEIGHT, Math.round(next)))
+}
+
+function loadHomeCalendarView() {
+  if (typeof window === 'undefined') {
+    return { collapsed: false, height: HOME_CALENDAR_DEFAULT_HEIGHT }
+  }
+  try {
+    const stored = JSON.parse(localStorage.getItem(HOME_CALENDAR_VIEW_KEY) || '{}')
+    return {
+      collapsed: stored?.collapsed === true,
+      height: clampHomeCalendarHeight(stored?.height ?? HOME_CALENDAR_DEFAULT_HEIGHT),
+    }
+  } catch {
+    return { collapsed: false, height: HOME_CALENDAR_DEFAULT_HEIGHT }
+  }
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function V15rHome() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setTick] = useState(0)
-  const [calOffset, setCalOffset] = useState(0)
+  const [homeCalendarView, setHomeCalendarView] = useState(loadHomeCalendarView)
+  const [isCalendarResizing, setIsCalendarResizing] = useState(false)
+  const calendarResizeRef = useRef<{ startY: number; startHeight: number } | null>(null)
   const [customAlerts, setCustomAlerts] = useState<Array<{id: string, title: string, description: string, action: string, isAI: boolean, manuallyEdited?: boolean, scheduledAt?: string, linkedProjectId?: string}>>([])
   const [editingAlertId, setEditingAlertId] = useState<string | null>(null)
   const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}>({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
@@ -185,6 +217,26 @@ export default function V15rHome() {
   const [editingAIAlertId, setEditingAIAlertId] = useState<string | null>(null)
   const [editAIAlertText, setEditAIAlertText] = useState('')
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+
+  const persistHomeCalendarView = useCallback((view: { collapsed: boolean; height: number }) => {
+    if (typeof window === 'undefined') return
+    localStorage.setItem(HOME_CALENDAR_VIEW_KEY, JSON.stringify({
+      collapsed: view.collapsed,
+      height: clampHomeCalendarHeight(view.height),
+    }))
+  }, [])
+
+  const updateHomeCalendarView = useCallback((updater: (view: { collapsed: boolean; height: number }) => { collapsed: boolean; height: number }) => {
+    setHomeCalendarView(prev => {
+      const next = updater(prev)
+      const normalized = {
+        collapsed: next.collapsed === true,
+        height: clampHomeCalendarHeight(next.height),
+      }
+      persistHomeCalendarView(normalized)
+      return normalized
+    })
+  }, [persistHomeCalendarView])
 
   // ── Recent Logs pagination ──
   const [logsVisible, setLogsVisible] = useState(10)
@@ -228,6 +280,39 @@ export default function V15rHome() {
     }
     fetchUserName()
   }, [])
+
+  useEffect(() => {
+    if (!isCalendarResizing) return
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+
+    const stopResize = () => {
+      calendarResizeRef.current = null
+      setIsCalendarResizing(false)
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = calendarResizeRef.current
+      if (!resize) return
+      const height = resize.startHeight + event.clientY - resize.startY
+      updateHomeCalendarView(view => ({ ...view, collapsed: false, height }))
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResize)
+    window.addEventListener('pointercancel', stopResize)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResize)
+      window.removeEventListener('pointercancel', stopResize)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+  }, [isCalendarResizing, updateHomeCalendarView])
 
   const _rawBackup = getBackupData()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : _rawBackup
@@ -485,10 +570,20 @@ export default function V15rHome() {
     })
   }
 
-  function prevWeek() { setCalOffset(calOffset - 1) }
-  function nextWeek() { setCalOffset(calOffset + 1) }
-
   const gcalUrl = backup.settings?.gcalUrl ? `${backup.settings.gcalUrl}&mode=WEEK` : null
+
+  function toggleHomeCalendarCollapsed() {
+    updateHomeCalendarView(view => ({ ...view, collapsed: !view.collapsed }))
+  }
+
+  function startHomeCalendarResize(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    calendarResizeRef.current = {
+      startY: event.clientY,
+      startHeight: homeCalendarView.height,
+    }
+    setIsCalendarResizing(true)
+  }
 
   // ── Daily Motivation ─────────────────────────────────────────────────────────
   const MOTIVATION_PHRASES = [
@@ -585,31 +680,41 @@ export default function V15rHome() {
       <div className="calendar-container-wrapper">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Calendar</h2>
-          <span className="text-[9px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 font-semibold">Week View ✓</span>
+          {gcalUrl && (
+            <button
+              type="button"
+              onClick={toggleHomeCalendarCollapsed}
+              className="flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-900/40 px-2.5 py-1 text-[10px] font-semibold text-gray-400 transition-colors hover:border-gray-700 hover:text-gray-200"
+              aria-expanded={!homeCalendarView.collapsed}
+              aria-controls="home-google-calendar"
+            >
+              <ChevronRight size={12} className={`transition-transform ${homeCalendarView.collapsed ? '' : 'rotate-90'}`} />
+              {homeCalendarView.collapsed ? 'Show' : 'Hide'}
+            </button>
+          )}
         </div>
         {gcalUrl ? (
           <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800/50">
-              <h3 className="text-sm font-semibold text-gray-200 truncate">
-                {calOffset === 0 ? 'This Week' : calOffset > 0 ? `+${calOffset} week${calOffset !== 1 ? 's' : ''}` : `${calOffset} weeks`}
-              </h3>
-              <div className="flex gap-2 ml-2 flex-shrink-0">
-                <button onClick={prevWeek} className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target" title="Previous week" aria-label="Previous week">
-                  <ChevronLeft size={16} className="text-gray-400" />
+            {!homeCalendarView.collapsed && (
+              <>
+                <div id="home-google-calendar" className="calendar-container w-full overflow-hidden">
+                  <iframe
+                    src={gcalUrl}
+                    style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, display: 'block' }}
+                    className="bg-[var(--bg-secondary)] w-full"
+                    title="Google Calendar"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onPointerDown={startHomeCalendarResize}
+                  className="group flex h-5 w-full cursor-ns-resize items-center justify-center border-t border-gray-800/70 bg-gray-900/30 transition-colors hover:bg-gray-800/50"
+                  aria-label="Resize calendar"
+                >
+                  <span className="h-1 w-10 rounded-full bg-gray-700 transition-colors group-hover:bg-gray-500" />
                 </button>
-                <button onClick={nextWeek} className="p-1 rounded hover:bg-gray-700/50 transition-colors touch-target" title="Next week" aria-label="Next week">
-                  <ChevronRight size={16} className="text-gray-400" />
-                </button>
-              </div>
-            </div>
-            <div className="calendar-container w-full overflow-hidden">
-              <iframe
-                src={gcalUrl}
-                style={{ border: '0', width: '100%', height: 'clamp(350px, 60vh, 600px)', display: 'block' }}
-                className="bg-[var(--bg-secondary)] w-full"
-                title="Google Calendar"
-              />
-            </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="p-6 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-center">
