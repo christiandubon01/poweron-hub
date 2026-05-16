@@ -162,26 +162,22 @@ function groupLogsByDate(logs: any[]): Map<string, any[]> {
   return grouped
 }
 
-// ── Home Calendar persistence strategy ───────────────────────────────────────
-// The Google Calendar embed is a cross-origin iframe on calendar.google.com.
-// Its internal hour-of-day scroll position (1am vs 6am) cannot be read or set
-// — browser same-origin policy blocks contentDocument access and Google
-// exposes no postMessage scroll API.
+// ── Home Calendar persistence ─────────────────────────────────────────────────
+// Google Calendar iframe embed. Internal hour-of-day scroll is cross-origin
+// and cannot be controlled; the container height determines how much of the
+// 24-hour grid is visible, so a taller container reveals more of the workday.
 //
-// Workday-view approach: size the container tall enough (≥900px) that the
-// full 6am–6pm window is visible without any user scrolling. The iframe
-// renders the full 24-hour grid; a taller container reveals more of it.
-// Dragging the resize handle or a previously saved height is preserved on
-// reload; any saved height below the workday minimum is bumped automatically
-// by clampHomeCalendarHeight on next load.
+// Drag handle is clamped to ±30% of the default height:
+//   min  ≈ DEFAULT × 0.70  →  600 px
+//   max  ≈ DEFAULT × 1.30  → 1120 px
 //
 // Persisted in localStorage under HOME_CALENDAR_VIEW_KEY:
 //   collapsed — whether the calendar section is visible (boolean)
 //   height    — container height in pixels (number, clamped to min/max)
 const HOME_CALENDAR_VIEW_KEY = 'poweron:v15r:homeCalendarView'
-const HOME_CALENDAR_MIN_HEIGHT = 900
-const HOME_CALENDAR_DEFAULT_HEIGHT = 980
-const HOME_CALENDAR_MAX_HEIGHT = 1400
+const HOME_CALENDAR_MIN_HEIGHT = 600
+const HOME_CALENDAR_DEFAULT_HEIGHT = 860
+const HOME_CALENDAR_MAX_HEIGHT = 1120
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
