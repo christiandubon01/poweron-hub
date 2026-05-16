@@ -809,6 +809,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const d = daysSince(p.lastMove)
     const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
     const fin = getProjectFinancials(p, backup)
+    const paidPercent = fin.contract > 0 ? Math.min(100, Math.max(0, (fin.paid / fin.contract) * 100)) : 0
 
     // Planned timeline display
     const plannedLine = (p.plannedStart && p.plannedEnd)
@@ -855,9 +856,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           </div>
         </div>
 
-        {/* Progress bar */}
+        {/* Paid progress bar */}
         <div className="w-full h-1.5 rounded-full bg-gray-700/50 overflow-hidden mb-2">
-          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, o)}%`, background: h.clr }} />
+          <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${paidPercent}%` }} />
         </div>
 
         {/* Chips */}

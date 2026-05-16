@@ -177,8 +177,7 @@ const HOME_CALENDAR_DEFAULT_HEIGHT = 520
 const HOME_CALENDAR_MAX_HEIGHT = 900
 
 function getHomeCalendarMaxHeight(): number {
-  if (typeof window === 'undefined') return HOME_CALENDAR_MAX_HEIGHT
-  return Math.max(HOME_CALENDAR_MIN_HEIGHT, Math.min(HOME_CALENDAR_MAX_HEIGHT, window.innerHeight - 120))
+  return HOME_CALENDAR_MAX_HEIGHT
 }
 
 function clampHomeCalendarHeight(height: unknown): number {
@@ -297,6 +296,15 @@ export default function V15rHome() {
     const handlePointerMove = (event: PointerEvent) => {
       const resize = calendarResizeRef.current
       if (!resize) return
+      event.preventDefault()
+      const height = resize.startHeight + event.clientY - resize.startY
+      updateHomeCalendarView(view => ({ ...view, collapsed: false, height }))
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const resize = calendarResizeRef.current
+      if (!resize) return
+      event.preventDefault()
       const height = resize.startHeight + event.clientY - resize.startY
       updateHomeCalendarView(view => ({ ...view, collapsed: false, height }))
     }
@@ -304,11 +312,15 @@ export default function V15rHome() {
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', stopResize)
     window.addEventListener('pointercancel', stopResize)
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', stopResize)
 
     return () => {
       window.removeEventListener('pointermove', handlePointerMove)
       window.removeEventListener('pointerup', stopResize)
       window.removeEventListener('pointercancel', stopResize)
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', stopResize)
       document.body.style.cursor = previousCursor
       document.body.style.userSelect = previousUserSelect
     }
@@ -578,6 +590,19 @@ export default function V15rHome() {
 
   function startHomeCalendarResize(event: React.PointerEvent<HTMLButtonElement>) {
     event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    calendarResizeRef.current = {
+      startY: event.clientY,
+      startHeight: homeCalendarView.height,
+    }
+    setIsCalendarResizing(true)
+  }
+
+  function startHomeCalendarMouseResize(event: React.MouseEvent<HTMLButtonElement>) {
+    if (typeof window !== 'undefined' && 'PointerEvent' in window) return
+    event.preventDefault()
+    event.stopPropagation()
     calendarResizeRef.current = {
       startY: event.clientY,
       startHeight: homeCalendarView.height,
@@ -697,17 +722,21 @@ export default function V15rHome() {
           <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] overflow-hidden">
             {!homeCalendarView.collapsed && (
               <>
-                <div id="home-google-calendar" className="calendar-container w-full overflow-hidden">
+                <div id="home-google-calendar" className="calendar-container relative w-full overflow-hidden">
                   <iframe
                     src={gcalUrl}
-                    style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, display: 'block' }}
+                    style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, display: 'block', pointerEvents: isCalendarResizing ? 'none' : 'auto' }}
                     className="bg-[var(--bg-secondary)] w-full"
                     title="Google Calendar"
                   />
+                  {isCalendarResizing && (
+                    <div className="absolute inset-0 z-10 cursor-ns-resize bg-transparent" aria-hidden="true" />
+                  )}
                 </div>
                 <button
                   type="button"
                   onPointerDown={startHomeCalendarResize}
+                  onMouseDown={startHomeCalendarMouseResize}
                   className="group flex h-5 w-full cursor-ns-resize items-center justify-center border-t border-gray-800/70 bg-gray-900/30 transition-colors hover:bg-gray-800/50"
                   aria-label="Resize calendar"
                 >
