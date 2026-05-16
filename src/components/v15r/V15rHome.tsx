@@ -22,6 +22,8 @@ import {
   Edit3,
   Edit2,
   RefreshCw,
+  Lock,
+  LockOpen,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -178,6 +180,11 @@ const HOME_CALENDAR_VIEW_KEY = 'poweron:v15r:homeCalendarView'
 const HOME_CALENDAR_MIN_HEIGHT = 600
 const HOME_CALENDAR_DEFAULT_HEIGHT = 860
 const HOME_CALENDAR_MAX_HEIGHT = 1120
+// Google Calendar iframe header row (days/date strip) is ~44 px; the 24-hour
+// time grid fills the remaining height. Used to calculate the locked offset.
+const GCAL_HEADER_H = 44
+const LOCK_DEFAULT_START_HOUR = 6
+const LOCK_START_HOURS = [3, 4, 5, 6, 7]
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
@@ -189,18 +196,39 @@ function clampHomeCalendarHeight(height: unknown): number {
   return Math.min(getHomeCalendarMaxHeight(), Math.max(HOME_CALENDAR_MIN_HEIGHT, Math.round(next)))
 }
 
+function hourLabel(h: number): string {
+  if (h === 0) return '12AM'
+  if (h < 12) return `${h}AM`
+  if (h === 12) return '12PM'
+  return `${h - 12}PM`
+}
+
+// Returns the iframe height and negative top offset needed to clip the Google
+// Calendar iframe so only the locked 12-hour window is visible.
+// pxPerHour = containerHeight / 12 (12 hours fill the visible container).
+// iframeHeight = 24 * pxPerHour + GCAL_HEADER_H (full 24-h grid + header).
+// topOffset = GCAL_HEADER_H + startHour * pxPerHour (scroll to start hour).
+function calcLockOffset(containerHeight: number, startHour: number) {
+  const pxPerHour = containerHeight / 12
+  const iframeHeight = Math.round(24 * pxPerHour + GCAL_HEADER_H)
+  const topOffset = Math.round(GCAL_HEADER_H + startHour * pxPerHour)
+  return { iframeHeight, topOffset }
+}
+
 function loadHomeCalendarView() {
   if (typeof window === 'undefined') {
-    return { collapsed: false, height: HOME_CALENDAR_DEFAULT_HEIGHT }
+    return { collapsed: false, height: HOME_CALENDAR_DEFAULT_HEIGHT, locked: false, lockedStartHour: LOCK_DEFAULT_START_HOUR }
   }
   try {
     const stored = JSON.parse(localStorage.getItem(HOME_CALENDAR_VIEW_KEY) || '{}')
     return {
       collapsed: stored?.collapsed === true,
       height: clampHomeCalendarHeight(stored?.height ?? HOME_CALENDAR_DEFAULT_HEIGHT),
+      locked: stored?.locked === true,
+      lockedStartHour: typeof stored?.lockedStartHour === 'number' ? stored.lockedStartHour : LOCK_DEFAULT_START_HOUR,
     }
   } catch {
-    return { collapsed: false, height: HOME_CALENDAR_DEFAULT_HEIGHT }
+    return { collapsed: false, height: HOME_CALENDAR_DEFAULT_HEIGHT, locked: false, lockedStartHour: LOCK_DEFAULT_START_HOUR }
   }
 }
 
@@ -211,7 +239,9 @@ export default function V15rHome() {
   const [, setTick] = useState(0)
   const [homeCalendarView, setHomeCalendarView] = useState(loadHomeCalendarView)
   const [isCalendarResizing, setIsCalendarResizing] = useState(false)
+  const [showLockPopover, setShowLockPopover] = useState(false)
   const calendarResizeRef = useRef<{ startY: number; startHeight: number } | null>(null)
+  const lockPopoverRef = useRef<HTMLDivElement>(null)
   const [customAlerts, setCustomAlerts] = useState<Array<{id: string, title: string, description: string, action: string, isAI: boolean, manuallyEdited?: boolean, scheduledAt?: string, linkedProjectId?: string}>>([])
   const [editingAlertId, setEditingAlertId] = useState<string | null>(null)
   const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}>({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
@@ -220,20 +250,24 @@ export default function V15rHome() {
   const [editAIAlertText, setEditAIAlertText] = useState('')
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
-  const persistHomeCalendarView = useCallback((view: { collapsed: boolean; height: number }) => {
+  const persistHomeCalendarView = useCallback((view: { collapsed: boolean; height: number; locked: boolean; lockedStartHour: number }) => {
     if (typeof window === 'undefined') return
     localStorage.setItem(HOME_CALENDAR_VIEW_KEY, JSON.stringify({
       collapsed: view.collapsed,
       height: clampHomeCalendarHeight(view.height),
+      locked: view.locked,
+      lockedStartHour: view.lockedStartHour,
     }))
   }, [])
 
-  const updateHomeCalendarView = useCallback((updater: (view: { collapsed: boolean; height: number }) => { collapsed: boolean; height: number }) => {
+  const updateHomeCalendarView = useCallback((updater: (view: { collapsed: boolean; height: number; locked: boolean; lockedStartHour: number }) => { collapsed: boolean; height: number; locked: boolean; lockedStartHour: number }) => {
     setHomeCalendarView(prev => {
       const next = updater(prev)
       const normalized = {
         collapsed: next.collapsed === true,
         height: clampHomeCalendarHeight(next.height),
+        locked: next.locked === true,
+        lockedStartHour: typeof next.lockedStartHour === 'number' ? next.lockedStartHour : LOCK_DEFAULT_START_HOUR,
       }
       persistHomeCalendarView(normalized)
       return normalized
@@ -328,6 +362,17 @@ export default function V15rHome() {
       document.body.style.userSelect = previousUserSelect
     }
   }, [isCalendarResizing, updateHomeCalendarView])
+
+  useEffect(() => {
+    if (!showLockPopover) return
+    const handler = (e: MouseEvent) => {
+      if (lockPopoverRef.current && !lockPopoverRef.current.contains(e.target as Node)) {
+        setShowLockPopover(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showLockPopover])
 
   const _rawBackup = getBackupData()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : _rawBackup
@@ -709,16 +754,62 @@ export default function V15rHome() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Calendar</h2>
           {gcalUrl && (
-            <button
-              type="button"
-              onClick={toggleHomeCalendarCollapsed}
-              className="flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-900/40 px-2.5 py-1 text-[10px] font-semibold text-gray-400 transition-colors hover:border-gray-700 hover:text-gray-200"
-              aria-expanded={!homeCalendarView.collapsed}
-              aria-controls="home-google-calendar"
-            >
-              <ChevronRight size={12} className={`transition-transform ${homeCalendarView.collapsed ? '' : 'rotate-90'}`} />
-              {homeCalendarView.collapsed ? 'Show' : 'Hide'}
-            </button>
+            <div className="flex items-center gap-1.5">
+              {/* Lock button */}
+              <div className="relative" ref={lockPopoverRef}>
+                {homeCalendarView.locked ? (
+                  <button
+                    type="button"
+                    onClick={() => updateHomeCalendarView(v => ({ ...v, locked: false }))}
+                    className="flex items-center gap-1.5 rounded-md border border-cyan-700 bg-cyan-900/30 px-2.5 py-1 text-[10px] font-semibold text-cyan-300 transition-colors hover:bg-cyan-900/50"
+                    title="Click to unlock"
+                  >
+                    <Lock size={10} />
+                    Locked {hourLabel(homeCalendarView.lockedStartHour)}–{hourLabel(homeCalendarView.lockedStartHour + 12)}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowLockPopover(v => !v)}
+                    className="flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-900/40 px-2.5 py-1 text-[10px] font-semibold text-gray-400 transition-colors hover:border-gray-700 hover:text-gray-200"
+                    title="Lock to a fixed hour window"
+                  >
+                    <LockOpen size={10} />
+                    Lock
+                  </button>
+                )}
+                {showLockPopover && !homeCalendarView.locked && (
+                  <div className="absolute right-0 top-full mt-1 z-20 w-38 rounded-lg border border-gray-700 bg-[#16181f] p-2 shadow-xl">
+                    <div className="mb-1.5 px-1 text-[9px] font-semibold uppercase tracking-wider text-gray-500">Start at</div>
+                    {LOCK_START_HOURS.map(h => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => {
+                          updateHomeCalendarView(v => ({ ...v, locked: true, lockedStartHour: h }))
+                          setShowLockPopover(false)
+                        }}
+                        className="flex w-full items-center justify-between rounded px-3 py-1.5 text-[11px] text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                      >
+                        <span>{hourLabel(h)}</span>
+                        <span className="text-gray-600">→ {hourLabel(h + 12)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Hide/Show button */}
+              <button
+                type="button"
+                onClick={toggleHomeCalendarCollapsed}
+                className="flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-900/40 px-2.5 py-1 text-[10px] font-semibold text-gray-400 transition-colors hover:border-gray-700 hover:text-gray-200"
+                aria-expanded={!homeCalendarView.collapsed}
+                aria-controls="home-google-calendar"
+              >
+                <ChevronRight size={12} className={`transition-transform ${homeCalendarView.collapsed ? '' : 'rotate-90'}`} />
+                {homeCalendarView.collapsed ? 'Show' : 'Hide'}
+              </button>
+            </div>
           )}
         </div>
         {gcalUrl ? (
@@ -727,15 +818,34 @@ export default function V15rHome() {
               <>
                 <div
                   id="home-google-calendar"
-                  className="relative w-full overflow-visible"
+                  className={`relative w-full ${homeCalendarView.locked ? 'overflow-hidden' : 'overflow-visible'}`}
                   style={{ height: `${homeCalendarView.height}px`, minHeight: `${HOME_CALENDAR_MIN_HEIGHT}px` }}
                 >
-                  <iframe
-                    src={gcalUrl}
-                    style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, minHeight: `${HOME_CALENDAR_MIN_HEIGHT}px`, display: 'block', pointerEvents: isCalendarResizing ? 'none' : 'auto' }}
-                    className="bg-[var(--bg-secondary)] w-full"
-                    title="Google Calendar"
-                  />
+                  {homeCalendarView.locked ? (() => {
+                    const { iframeHeight, topOffset } = calcLockOffset(homeCalendarView.height, homeCalendarView.lockedStartHour)
+                    return (
+                      <iframe
+                        src={gcalUrl}
+                        style={{
+                          border: '0',
+                          width: '100%',
+                          height: `${iframeHeight}px`,
+                          display: 'block',
+                          pointerEvents: isCalendarResizing ? 'none' : 'auto',
+                          marginTop: `-${topOffset}px`,
+                        }}
+                        className="bg-[var(--bg-secondary)] w-full"
+                        title="Google Calendar"
+                      />
+                    )
+                  })() : (
+                    <iframe
+                      src={gcalUrl}
+                      style={{ border: '0', width: '100%', height: `${homeCalendarView.height}px`, minHeight: `${HOME_CALENDAR_MIN_HEIGHT}px`, display: 'block', pointerEvents: isCalendarResizing ? 'none' : 'auto' }}
+                      className="bg-[var(--bg-secondary)] w-full"
+                      title="Google Calendar"
+                    />
+                  )}
                   {isCalendarResizing && (
                     <div className="absolute inset-0 z-10 cursor-ns-resize bg-transparent" aria-hidden="true" />
                   )}
