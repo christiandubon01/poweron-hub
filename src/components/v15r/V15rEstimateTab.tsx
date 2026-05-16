@@ -786,6 +786,22 @@ Return ONLY valid JSON, no other text.`
     return num(l.quoted) + addIncome
   }
   const serviceWorkflowStatus = (record: any) => String(record?.serviceStatus || record?.estimateStatus || record?.status || '').toLowerCase().trim()
+  const isArchivedRecord = (record: any) => !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
+  const projectIsLost = (record: any) => {
+    const s = String(record?.status || record?.projectStatus || '').toLowerCase().trim()
+    const outcome = String(record?.outcome || '').toLowerCase().trim()
+    return s === 'lost' || s === 'rejected' || outcome === 'lost'
+  }
+  const serviceIsLost = (record: any) => {
+    const s = serviceWorkflowStatus(record)
+    const outcome = String(record?.outcome || '').toLowerCase().trim()
+    return s === 'lost' || s === 'rejected' || outcome === 'lost'
+  }
+  const serviceHistoryValue = (record: any) => num(record?.totalQuote || record?.quoted || 0)
+  const serviceHistoryKey = (record: any, source: string) => {
+    if (source !== 'service_log') return `estimate:${String(record?.fromEstimateId || record?.id || '')}`
+    return `service_log:${String(record?.id || '')}`
+  }
   const fieldLogVisibleServiceEstimates = (backup.serviceEstimates || []).filter(isActiveServiceCall)
   const fieldLogOpenServiceEstimates = fieldLogVisibleServiceEstimates.filter(e => {
     const s = serviceWorkflowStatus(e)
@@ -844,38 +860,65 @@ Return ONLY valid JSON, no other text.`
     }
   })()
 
-  // LOST/UNPAID box — split into two states:
-  // LOST: estimates/projects explicitly marked lost/rejected
-  // UNPAID: completed projects with outstanding AR, unpaid service logs
+  // HISTORY/RISK box: archived records, lost records, and unpaid collection risk.
   const pipelineLost = (() => {
-    const allProjects = (backup.projects || []).filter(p => !p.archived && !p.isArchived && !p.archivedAt)
-    const estimates = (backup.serviceEstimates || []).filter(e => !e.archived && !e.isArchived && !e.archivedAt)
+    const seenProjects = new Set<string>()
+    const seenServices = new Set<string>()
+    const rows: any[] = []
+    const addProject = (p: any, category: string, value: number) => {
+      const key = String(p?.id || `${p?.name || ''}:${p?.client || ''}`)
+      if (!key || seenProjects.has(key)) return
+      seenProjects.add(key)
+      rows.push({ category, value })
+    }
+    const addService = (record: any, source: string, category: string, value: number) => {
+      const key = serviceHistoryKey(record, source)
+      if (!key || seenServices.has(key)) return
+      seenServices.add(key)
+      rows.push({ category, value })
+    }
 
-    // LOST: estimates manually marked as lost
-    const lostEstimates = estimates.filter(e => (e.estimateStatus || e.status || '') === 'lost')
-    // LOST: projects explicitly set to lost/rejected status
-    const lostProjects = allProjects.filter(p => {
-      const s = (p.status || '').toLowerCase()
-      return s === 'lost' || s === 'rejected'
+    ;(backup.projects || []).forEach((p: any) => {
+      if (isArchivedRecord(p)) addProject(p, 'archived', num(p.contract))
+      else if (projectIsLost(p)) addProject(p, 'lost', num(p.contract))
+      else if (isActiveProject(p) && resolveProjectBucket(p) === 'completed') {
+        const fin = getProjectFinancials(p, backup)
+        if (fin.AR > 0) addProject(p, 'unpaid', fin.AR)
+      }
     })
-    const lostValue = lostEstimates.reduce((s, e) => s + num(e.totalQuote || e.quoted || 0), 0)
-                    + lostProjects.reduce((s, p) => s + num(p.contract), 0)
-    const lostCount = lostEstimates.length + lostProjects.length
 
-    // UNPAID: completed projects with AR > 0 (money math)
-    const unpaidProjects = allProjects.filter(p => {
-      if (!isActiveProject(p) || resolveProjectBucket(p) !== 'completed') return false
-      const fin = getProjectFinancials(p, backup)
-      return fin.AR > 0
+    ;(backup.serviceEstimates || []).forEach((e: any) => {
+      if (isArchivedRecord(e)) addService(e, 'service_estimate', 'archived', serviceHistoryValue(e))
+      else if (serviceIsLost(e)) addService(e, 'service_estimate', 'lost', serviceHistoryValue(e))
     })
-    const unpaidValue = unpaidProjects.reduce((s, p) => s + getProjectFinancials(p, backup).AR, 0)
-    const unpaidCount = unpaidProjects.length
+    ;(backup.activeServiceCalls || []).forEach((c: any) => {
+      if (isArchivedRecord(c)) addService(c, 'active_call', 'archived', serviceHistoryValue(c))
+      else if (serviceIsLost(c)) addService(c, 'active_call', 'lost', serviceHistoryValue(c))
+    })
+    ;(backup.serviceLogs || []).forEach((l: any) => {
+      const tb = svcTotalBillable(l)
+      const openBalance = Math.max(0, tb - num(l.collected))
+      if (isArchivedRecord(l)) addService(l, 'service_log', 'archived', tb)
+      else if (serviceIsLost(l)) addService(l, 'service_log', 'lost', tb)
+      else if (tb > 0 && openBalance > 0.009) addService(l, 'service_log', 'unpaid', openBalance)
+    })
+
+    const archivedRows = rows.filter(r => r.category === 'archived')
+    const lostRows = rows.filter(r => r.category === 'lost')
+    const unpaidRows = rows.filter(r => r.category === 'unpaid')
+    const archivedValue = archivedRows.reduce((s, r) => s + num(r.value), 0)
+    const lostValue = lostRows.reduce((s, r) => s + num(r.value), 0)
+    const unpaidValue = unpaidRows.reduce((s, r) => s + num(r.value), 0)
 
     return {
-      count: lostCount + unpaidCount,
-      value: lostValue + unpaidValue,
-      lostCount, lostValue,
-      unpaidCount, unpaidValue
+      count: rows.length,
+      value: archivedValue + lostValue + unpaidValue,
+      archivedCount: archivedRows.length,
+      archivedValue,
+      lostCount: lostRows.length,
+      lostValue,
+      unpaidCount: unpaidRows.length,
+      unpaidValue
     }
   })()
   const pipelineTotal = pipelineWon.value + pipelinePending.value + pipelineLost.value
@@ -967,11 +1010,16 @@ Return ONLY valid JSON, no other text.`
                   )}
                 </div>
               </div>
-              {/* Lost / Unpaid — split into two states */}
+              {/* History / Risk — archived records, lost outcomes, and unpaid collection risk */}
               <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '6px', padding: '10px 12px', borderLeft: '3px solid #ef4444' }}>
-                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost / Unpaid</div>
+                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>❌ Lost / Unpaid / Archived</div>
                 <div style={{ fontSize: '18px', fontWeight: '800', color: '#ef4444', fontFamily: 'monospace' }}>{fmt(pipelineLost.value)}</div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                  {pipelineLost.archivedCount > 0 && (
+                    <span style={{ fontSize: '10px', color: '#cbd5e1', backgroundColor: 'rgba(148,163,184,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
+                      Archived: {pipelineLost.archivedCount} ({fmt(pipelineLost.archivedValue)})
+                    </span>
+                  )}
                   {pipelineLost.lostCount > 0 && (
                     <span style={{ fontSize: '10px', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', padding: '1px 6px', borderRadius: '3px' }}>
                       Lost: {pipelineLost.lostCount} ({fmt(pipelineLost.lostValue)})
@@ -1003,7 +1051,7 @@ Return ONLY valid JSON, no other text.`
                   )}
                   {pipelineLost.value > 0 && (
                     <div style={{ flex: pipelineLost.value / pipelineTotal, backgroundColor: '#ef4444', minWidth: '2px' }}
-                         title={`Lost: ${fmt(pipelineLost.value)}`} />
+                         title={`History/Risk: ${fmt(pipelineLost.value)}`} />
                   )}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#4b5563', marginTop: '4px' }}>

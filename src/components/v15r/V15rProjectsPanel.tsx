@@ -95,6 +95,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   }, [forceUpdate])
   const [showQBImport, setShowQBImport] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
+  const [showArchivedProjects, setShowArchivedProjects] = useState(false)
   // Local snapshot of HUNTER context from prefillFromLead, kept independent
   // of the prop so the banner persists after onPrefillUsed nulls the prop.
   const [hunterBannerCtx, setHunterBannerCtx] = useState<any>(null)
@@ -480,6 +481,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
   const allProjects = backup.projects || []
   const projects = allProjects.filter(isActiveProject)
+  const isArchivedRecord = (record: any) => !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
+  const archivedProjects = allProjects.filter(isArchivedRecord)
   const gcContacts = backup.gcContacts || []
   const accountOptions = gcContacts.map((gc: any) => ({
     id: String(gc.id || ''),
@@ -667,6 +670,19 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     ;(p as any).archived = true
     ;(p as any).archivedAt = new Date().toISOString()
     ;(p as any).archivedReason = (p as any).archivedReason ?? null
+    persist()
+  }
+
+  function restoreProject(id: string) {
+    const p = allProjects.find(x => x.id === id)
+    if (!p) return
+    pushState(backup)
+    ;(p as any).archived = false
+    ;(p as any).isArchived = false
+    if ((p as any).archivedAt && !(p as any).lastArchivedAt) {
+      ;(p as any).lastArchivedAt = (p as any).archivedAt
+    }
+    delete (p as any).archivedAt
     persist()
   }
 
@@ -974,6 +990,68 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     )
   }
 
+  function renderArchivedProjects() {
+    if (!showArchivedProjects) return null
+    return (
+      <div className="mb-6 rounded-xl border border-slate-700/50 bg-slate-950/20 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+            Archived Projects <span className="text-gray-600 ml-1">({archivedProjects.length})</span>
+          </h3>
+          <span className="text-[10px] text-gray-500">Hidden from active project cards</span>
+        </div>
+        {archivedProjects.length === 0 ? (
+          <div className="text-xs text-gray-500 py-4">No archived projects.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {archivedProjects.map(p => {
+              const fin = getProjectFinancials(p, backup)
+              return (
+                <div key={p.id} className="rounded-lg border border-slate-700/50 bg-[var(--bg-card)] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-bold text-gray-100">{p.name || 'Unnamed project'}</div>
+                      <div className="text-[10px] text-gray-500">{p.client || p.customer || 'No client listed'}</div>
+                    </div>
+                    <span className="text-[9px] px-2 py-0.5 rounded bg-slate-500/20 text-slate-300 font-bold">Archived</span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="bg-[var(--bg-input)] rounded p-2">
+                      <div className="text-gray-500 uppercase font-bold">Quoted</div>
+                      <div className="font-mono text-gray-200">{fmtK(fin.contract || p.contract || 0)}</div>
+                    </div>
+                    <div className="bg-[var(--bg-input)] rounded p-2">
+                      <div className="text-gray-500 uppercase font-bold">Status</div>
+                      <div className="text-gray-300">{p.outcome || p.status || 'Unknown'}</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-1 text-[10px] text-gray-500">
+                    {(p as any).archivedAt && <div>Archived: {new Date((p as any).archivedAt).toLocaleString()}</div>}
+                    {(p as any).archivedReason && <div>Reason: {(p as any).archivedReason}</div>}
+                  </div>
+                  <div className="mt-3 flex gap-2 border-t border-gray-700/50 pt-3">
+                    <button
+                      onClick={() => restoreProject(p.id)}
+                      className="flex-1 text-[10px] px-2 py-1.5 rounded bg-emerald-600/20 text-emerald-300 border border-emerald-600/30 font-semibold"
+                    >
+                      Restore
+                    </button>
+                    <button
+                      onClick={() => deleteProject(p.id)}
+                      className="text-[10px] px-2 py-1.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-semibold"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const inputCls = "w-full px-3 py-2 bg-[var(--bg-input)] border border-gray-600 rounded text-sm text-[var(--text-primary)] focus:outline-none focus:border-emerald-500"
 
   return (
@@ -982,6 +1060,16 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-sm font-bold text-gray-300 uppercase tracking-wider">Projects</h2>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowArchivedProjects(v => !v)}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+              showArchivedProjects
+                ? 'bg-slate-600/30 text-slate-100 border-slate-500/50'
+                : 'bg-slate-700/20 text-slate-300 border-slate-600/30'
+            }`}
+          >
+            <Archive size={12} /> Archived Projects ({archivedProjects.length})
+          </button>
           <button
             onClick={() => setShowQBImport(true)}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold"
@@ -998,6 +1086,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       {renderSection('Active', active, 'active')}
       {renderSection('Coming Up', coming, 'coming')}
       {renderSection('Completed', completed, 'completed')}
+      {renderArchivedProjects()}
 
       {projects.length === 0 && (
         <div className="p-8 text-center">

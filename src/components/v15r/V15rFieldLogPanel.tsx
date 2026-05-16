@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useMemo, lazy, Suspense, useEffect } from 'react'
-import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText } from 'lucide-react'
+import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -58,6 +58,10 @@ const REL_ACCOUNT_TYPES = ['General Contractor', 'Subcontractor', 'Homeowner', '
 
 function today() {
   return new Date().toISOString().slice(0, 10)
+}
+
+function isArchivedRecord(record: any): boolean {
+  return !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
 }
 
 // ── Service balance & rollup ─────────────────────────────────────────────────
@@ -449,6 +453,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [paymentCollected, setPaymentCollected] = useState('')
   const [paymentStatus, setPaymentStatus] = useState('Unpaid')
   const [completionVariance, setCompletionVariance] = useState<any>(null)
+  const [showArchivedServiceReview, setShowArchivedServiceReview] = useState(false)
 
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) {
@@ -497,6 +502,26 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const billRate = num(settings.billRate || 75)
   const taxRate = num(settings.tax || 0)
   const serviceWorkflowStatus = (record: any) => String(record?.serviceStatus || record?.estimateStatus || record?.status || '').toLowerCase().trim()
+  const archivedServiceReviewEntries = (() => {
+    const seen = new Set<string>()
+    const rows: any[] = []
+    const keyFor = (record: any, source: string) => {
+      if (source !== 'service_log') return `estimate:${String(record?.fromEstimateId || record?.id || '')}`
+      return `service_log:${String(record?.id || '')}`
+    }
+    const addRows = (items: any[], source: string, label: string) => {
+      items.filter(isArchivedRecord).forEach((record) => {
+        const key = keyFor(record, source)
+        if (seen.has(key)) return
+        seen.add(key)
+        rows.push({ source, label, record })
+      })
+    }
+    addRows(serviceEstimates, 'service_estimate', 'Estimate / Call')
+    addRows(rawActiveServiceCalls, 'active_call', 'Active Call')
+    addRows(serviceLogs, 'service_log', 'Service Log')
+    return rows.sort((a, b) => String(b.record.archivedAt || b.record.date || '').localeCompare(String(a.record.archivedAt || a.record.date || '')))
+  })()
 
   function resetEstimateForm() {
     setEstCust('')
@@ -1191,6 +1216,37 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       archivedAt: new Date().toISOString(),
       archivedReason: (l as any).archivedReason ?? null,
     } : l)
+    persist()
+  }
+
+  function restoreArchivedFields(record: any) {
+    const next = {
+      ...record,
+      archived: false,
+      isArchived: false,
+    }
+    if (record?.archivedAt && !record?.lastArchivedAt) next.lastArchivedAt = record.archivedAt
+    delete next.archivedAt
+    return next
+  }
+
+  function restoreArchivedServiceEntry(source: string, id: string) {
+    pushState(backup)
+    if (source === 'service_log') {
+      backup.serviceLogs = serviceLogs.map(l => String(l.id) === String(id) ? restoreArchivedFields(l) : l)
+    } else if (source === 'active_call') {
+      backup.activeServiceCalls = rawActiveServiceCalls.map(c => String(c.id) === String(id) ? restoreArchivedFields(c) : c)
+    } else {
+      backup.serviceEstimates = serviceEstimates.map(e => String(e.id) === String(id) ? restoreArchivedFields(e) : e)
+      backup.activeServiceCalls = rawActiveServiceCalls.map(c => (String(c.id) === String(id) || String(c.fromEstimateId || '') === String(id)) ? restoreArchivedFields(c) : c)
+    }
+    persist()
+  }
+
+  function deleteArchivedActiveServiceCall(id: string) {
+    if (!confirm('Delete this archived active service call?')) return
+    pushState(backup)
+    backup.activeServiceCalls = rawActiveServiceCalls.filter(c => String(c.id) !== String(id))
     persist()
   }
 
@@ -2019,6 +2075,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setShowArchivedServiceReview(v => !v)}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                showArchivedServiceReview
+                  ? 'bg-slate-600/30 text-slate-100 border-slate-500/50'
+                  : 'bg-slate-700/20 text-slate-300 border-slate-600/30'
+              }`}
+            >
+              <Archive size={12} /> Archived Service Calls ({archivedServiceReviewEntries.length})
+            </button>
+            <button
               onClick={() => setShowQBImport(true)}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold"
               style={{ backgroundColor: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' }}
@@ -2033,6 +2099,69 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             </button>
           </div>
         </div>
+
+        {showArchivedServiceReview && (
+          <div className="rounded-xl border border-slate-700/50 bg-slate-950/20 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-300 uppercase">
+                Archived Service Calls ({archivedServiceReviewEntries.length})
+              </div>
+              <div className="text-[10px] text-gray-500">Hidden from open/active service queues</div>
+            </div>
+            {archivedServiceReviewEntries.length === 0 ? (
+              <div className="text-xs text-gray-500 py-3">No archived service calls.</div>
+            ) : (
+              <div className="space-y-2">
+                {archivedServiceReviewEntries.map(({ source, label, record }) => {
+                  const isLog = source === 'service_log'
+                  const amount = isLog ? getServicePaymentMeta(record).quoted : num(record.totalQuote || record.quoted || 0)
+                  const status = serviceWorkflowStatus(record) || record.payStatus || record.outcome || 'unknown'
+                  const type = record.jobType || record.jtype || record.category || 'Service Call'
+                  return (
+                    <div key={`${source}-${record.id}`} className="bg-[var(--bg-input)] rounded p-3 border border-slate-700/40">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(record)}</span>
+                            <span className="text-[10px] text-gray-500">{type}</span>
+                            <span className="text-[10px] text-gray-500">{record.date || 'No date'}</span>
+                            <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-slate-500/20 text-slate-300">
+                              Archived {label}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[10px] text-gray-500">
+                            Status: {status}
+                            {record.archivedAt ? ` · Archived: ${new Date(record.archivedAt).toLocaleString()}` : ''}
+                          </div>
+                          {record.archivedReason && (
+                            <div className="mt-1 text-[10px] text-gray-500">Reason: {record.archivedReason}</div>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <div className="font-mono text-sm font-bold text-slate-200">{fmt(amount)}</div>
+                          <div className="mt-2 flex gap-1 justify-end">
+                            <button
+                              onClick={() => restoreArchivedServiceEntry(source, record.id)}
+                              className="text-[9px] px-2 py-1 rounded bg-emerald-700/40 text-emerald-300 hover:bg-emerald-700/60"
+                            >
+                              Restore
+                            </button>
+                            <button
+                              onClick={() => source === 'service_log' ? deleteSvcEntry(record.id) : source === 'active_call' ? deleteArchivedActiveServiceCall(record.id) : deleteEstimate(record.id)}
+                              className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ═══════════════════════════════════════════════════════════════════════ */}
         {/* STEP 1: New Service Estimate — Modal Trigger */}
