@@ -1977,83 +1977,108 @@ Return ONLY valid JSON, no other text.`
         )}
 
         {/* SUMMARY */}
-        {/* SUMMARY */}
-        <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-          {/* LEFT — Internal Cost */}
-          <div>
-            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid var(--bdr2)' }}>
+        <div style={{ backgroundColor: '#232738', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+          {/* LEFT — Customer Rate Cost */}
+          <div style={{
+            position: 'relative',
+            overflow: 'hidden',
+            borderRadius: '10px',
+            padding: '14px 16px',
+            background: 'linear-gradient(135deg, rgba(248,113,113,0.14), rgba(245,158,11,0.08) 52%, rgba(15,23,42,0.44))',
+            border: '1px solid rgba(248,113,113,0.22)',
+            boxShadow: '0 14px 34px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ position: 'absolute', inset: '-35% auto auto 58%', width: '150px', height: '150px', borderRadius: '999px', background: 'rgba(248,113,113,0.12)', filter: 'blur(20px)', pointerEvents: 'none' }} />
+            <div style={{ position: 'relative', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#fca5a5', marginBottom: '12px' }}>
               Customer Rate Cost
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Labor Total ({t.labHrs.toFixed(1)} hrs × ${t.labHrs > 0 ? (t.lab / t.labHrs).toFixed(2) : '0.00'})</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.lab)}</span>
+            <div style={{ position: 'relative', display: 'grid', gap: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Labor Total ({t.labHrs.toFixed(1)} hrs × ${t.labHrs > 0 ? (t.lab / t.labHrs).toFixed(2) : '0.00'})</span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(t.lab)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning &amp; OH</span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(t.oh)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(t.matSellingC)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Mileage</span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(t.mi)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  Tax (
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={num(backup.settings?.tax || 0)}
+                    onChange={e => editTax(e.target.value)}
+                    style={{
+                      width: '60px',
+                      height: '22px',
+                      padding: '0 6px',
+                      backgroundColor: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      borderRadius: '4px',
+                      color: 'var(--t1)',
+                      fontFamily: 'monospace',
+                      fontSize: '12px',
+                      textAlign: 'right',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  % · mat + mileage)
+                </span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(t.customerTax)}</span>
+              </div>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Planning &amp; OH</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.oh)}</span>
-            </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Materials</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.matSellingC)}</span>
-            </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Mileage</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.mi)}</span>
-            </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                Tax (
-                <input
-                  type="number"
-                  step="0.01"
-                  value={num(backup.settings?.tax || 0)}
-                  onChange={e => editTax(e.target.value)}
-                  style={{
-                    width: '60px',
-                    height: '22px',
-                    padding: '0 6px',
-                    backgroundColor: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.15)',
-                    borderRadius: '4px',
-                    color: 'var(--t1)',
-                    fontFamily: 'monospace',
-                    fontSize: '12px',
-                    textAlign: 'right',
-                    boxSizing: 'border-box',
-                  }}
-                />
-                % · mat + mileage)
-              </span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.customerTax)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '6px', borderTop: '1px solid var(--bdr2)' }}>
-              <span style={{ color: 'var(--t2)', fontSize: '13px', fontWeight: '700' }}>Sub Total</span>
-              <span style={{ color: '#f87171', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.customerCost)}</span>
+            <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'flex-end', paddingTop: '12px', marginTop: '12px', borderTop: '1px solid rgba(248,113,113,0.22)' }}>
+              <span style={{ color: '#fecaca', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sub Total</span>
+              <span style={{ color: '#f87171', fontFamily: 'monospace', fontWeight: '800', fontSize: '22px', lineHeight: 1 }}>{fmt(t.customerCost)}</span>
             </div>
           </div>
 
           {/* RIGHT — Margin Breakdown */}
-          <div>
-            <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid var(--bdr2)' }}>
+          <div style={{
+            position: 'relative',
+            overflow: 'hidden',
+            borderRadius: '10px',
+            padding: '14px 16px',
+            background: t.customerProfit > 0
+              ? 'linear-gradient(135deg, rgba(16,185,129,0.16), rgba(34,211,238,0.08) 52%, rgba(15,23,42,0.44))'
+              : 'linear-gradient(135deg, rgba(239,68,68,0.16), rgba(245,158,11,0.08) 52%, rgba(15,23,42,0.44))',
+            border: t.customerProfit > 0 ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(239,68,68,0.25)',
+            boxShadow: '0 14px 34px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ position: 'absolute', inset: '-35% auto auto 58%', width: '150px', height: '150px', borderRadius: '999px', background: t.customerProfit > 0 ? 'rgba(16,185,129,0.13)' : 'rgba(239,68,68,0.13)', filter: 'blur(20px)', pointerEvents: 'none' }} />
+            <div style={{ position: 'relative', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: t.customerProfit > 0 ? '#6ee7b7' : '#fca5a5', marginBottom: '12px' }}>
               Margin Breakdown
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Contract Amount</span>
-              <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(p.contract || 0)}</span>
+            <div style={{ position: 'relative', display: 'grid', gap: '8px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Contract Amount</span>
+                <span style={{ color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(p.contract || 0)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Customer Cost</span>
+                <span style={{ color: '#f87171', fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap' }}>{fmt(t.customerCost)}</span>
+              </div>
             </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Customer Cost</span>
-              <span style={{ color: '#f87171', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(t.customerCost)}</span>
-            </div>
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid var(--bdr2)' }}>
-              <span style={{ color: 'var(--t2)', fontSize: '13px', fontWeight: '700' }}>Profit</span>
-              <span style={{ color: t.customerProfit > 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700', fontSize: '15px' }}>{fmt(t.customerProfit)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Margin</span>
-              <span style={{ color: t.customerMarginPct >= 40 ? '#10b981' : t.customerMarginPct >= 20 ? '#f59e0b' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>
-                {t.customerMarginPct.toFixed(1)}%
-              </span>
+            <div style={{ position: 'relative', paddingTop: '12px', borderTop: t.customerProfit > 0 ? '1px solid rgba(16,185,129,0.24)' : '1px solid rgba(239,68,68,0.24)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'flex-end', marginBottom: '10px' }}>
+                <span style={{ color: 'var(--t2)', fontSize: '13px', fontWeight: '700' }}>Profit</span>
+                <span style={{ color: t.customerProfit > 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '800', fontSize: '24px', lineHeight: 1 }}>{fmt(t.customerProfit)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--t3)', fontSize: '13px' }}>Margin</span>
+                <span style={{ color: t.customerMarginPct >= 40 ? '#10b981' : t.customerMarginPct >= 20 ? '#f59e0b' : '#ef4444', fontFamily: 'monospace', fontWeight: '800', fontSize: '18px', padding: '4px 8px', borderRadius: '999px', backgroundColor: t.customerMarginPct >= 40 ? 'rgba(16,185,129,0.12)' : t.customerMarginPct >= 20 ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)', border: t.customerMarginPct >= 40 ? '1px solid rgba(16,185,129,0.24)' : t.customerMarginPct >= 20 ? '1px solid rgba(245,158,11,0.24)' : '1px solid rgba(239,68,68,0.24)' }}>
+                  {t.customerMarginPct.toFixed(1)}%
+                </span>
+              </div>
             </div>
           </div>
         </div>
