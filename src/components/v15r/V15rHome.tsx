@@ -1246,6 +1246,12 @@ export default function V15rHome() {
                     const entryMiCost = rr.entryMileageCost
                     const entryTotal = rr.entryTotalCost
                     const hasPay = num(l.collected) > 0
+                    const entryTotalStats = [
+                      { label: 'Labor', amount: fmt(num(entryRevenue)), Icon: Briefcase, color: '#e5e7eb', bg: 'rgba(229,231,235,0.06)', border: 'rgba(229,231,235,0.16)' },
+                      { label: 'Material', amount: fmt(num(l.mat)), Icon: Package, color: '#fcd34d', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.22)' },
+                      { label: 'Mileage', amount: fmt(num(entryMiCost)), Icon: Truck, color: '#60a5fa', bg: 'rgba(96,165,250,0.08)', border: 'rgba(96,165,250,0.22)' },
+                      { label: 'Total', amount: fmt(num(entryTotal)), Icon: Receipt, color: '#f87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)', featured: true },
+                    ]
                     return (
                       <div key={l.id || i} className={`px-4 py-2.5 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
                         <div
@@ -1270,11 +1276,25 @@ export default function V15rHome() {
                                 Remaining Bal: <span style={{ color: balanceColor }}>{fmt(runningBalance)}</span>
                               </div>
                             </div>
-                            <div className="text-right text-[11px] space-y-0.5 min-w-[110px]">
-                              <div style={{ color: '#e5e7eb', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(entryRevenue))} lab</div>
-                              <div style={{ color: '#fcd34d', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(l.mat))} mat</div>
-                              <div style={{ color: '#60a5fa', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(entryMiCost))} mi</div>
-                              <div style={{ color: '#ef4444', fontFamily: 'monospace', fontSize: '12px', fontWeight: 700 }}>{fmt(num(entryTotal))} total</div>
+                            <div className="ml-auto grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-4">
+                              {entryTotalStats.map(({ label, amount, Icon, color, bg, border, featured }) => (
+                                <div
+                                  key={label}
+                                  className={`min-w-[84px] rounded-lg border px-2.5 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${featured ? 'bg-red-950/10' : 'bg-slate-950/20'}`}
+                                  style={{ borderColor: border, boxShadow: featured ? `inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px ${bg}` : undefined }}
+                                >
+                                  <div
+                                    className="mx-auto mb-1 flex h-6 w-6 items-center justify-center rounded-md border"
+                                    style={{ color, background: bg, borderColor: border }}
+                                  >
+                                    <Icon size={13} strokeWidth={2.2} />
+                                  </div>
+                                  <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-gray-400">{label}</div>
+                                  <div className="mt-0.5 font-mono text-[12px] font-extrabold leading-tight" style={{ color }}>
+                                    {amount}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         </div>
