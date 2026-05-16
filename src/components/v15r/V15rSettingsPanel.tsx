@@ -24,7 +24,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
-import { getBackupData, saveBackupData, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, saveBackupDataAndSync, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
@@ -36,6 +36,7 @@ import { generateScoutSuggestions, queueScoutProposal } from '@/agents/scout'
 import type { RawProposal } from '@/agents/scout'
 import { subscribe as subscribeAgentEvent } from '@/services/agentEventBus'
 import { useDemoStore } from '@/store/demoStore'
+import { getProjectPhaseNames, DEFAULT_PROJECT_PHASES } from '@/utils/v15rProjectPhases'
 import { DEMO_COMPANY, DEMO_OWNER, DEMO_LICENSE } from '@/services/demoDataService'
 import {
   createMilestone,
@@ -925,7 +926,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
   if (data) {
     if (!mutatedData) pushState(data)
     data._lastSavedAt = new Date().toISOString()
-    saveBackupData(data)
+    saveBackupDataAndSync(data, 'settings')
     forceUpdate()
   }
 }, [forceUpdate])
@@ -1091,7 +1092,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         billableHrsYear: 936,
         annualTarget: 120000,
         phaseWeights: { Estimating: 5, Planning: 10, 'Site Prep': 15, 'Rough-in': 35, Finish: 25, Trim: 10 },
-        mtoPhases: ['Underground', 'Rough In', 'Trim', 'Finish'],
+        mtoPhases: [...DEFAULT_PROJECT_PHASES],
         overhead: { essential: [], extra: [], loans: [], vehicle: [] },
         gcalUrl: '',
       } as any
@@ -1110,19 +1111,9 @@ const persist = useCallback((mutatedData?: BackupData) => {
   }, [gcalUrlDraft, persist])
 
   const effectivePhaseWeights = getPhaseWeights(backup)
-  const effPhaseKeys = Object.keys(effectivePhaseWeights)
-  /** All workflow phases: saved mto order first, then any weight keys missing from mto */
-  const workflowPhasesForList = (() => {
-    const m = Array.isArray(settings.mtoPhases) ? settings.mtoPhases : []
-    if (m.length === 0) return effPhaseKeys
-    const out = m.filter((p: string) => effPhaseKeys.includes(p))
-    for (const k of effPhaseKeys) {
-      if (!out.includes(k)) out.push(k)
-    }
-    return out
-  })()
+  const workflowPhasesForList = getProjectPhaseNames(backup)
   const phaseWeights = effectivePhaseWeights
-  const mtoPhases = settings.mtoPhases || ['Underground', 'Rough In', 'Trim', 'Finish']
+  const mtoPhases = workflowPhasesForList
   const overhead = settings.overhead || { essential: [], extra: [], loans: [], vehicle: [] }
 
   // Calculate overhead totals
@@ -2300,7 +2291,9 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     </span>
                   </div>
                   <div className="space-y-2">
-                    {Object.entries(phaseWeights).map(([phase, weight]) => (
+                    {workflowPhasesForList.map((phase: string) => {
+                      const weight = num((phaseWeights as any)[phase] || 0)
+                      return (
                       <div key={phase} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1fr)_64px_32px] items-center gap-3 rounded-lg border border-blue-400/10 bg-slate-900/60 px-3 py-2">
                         <span className="truncate text-sm font-medium text-gray-200">{phase}</span>
                         <input
@@ -2348,7 +2341,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
                           X
                         </button>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                   <div className={`mt-3 rounded-lg border px-3 py-2 text-sm font-semibold ${phaseWeightTotal === 100 ? 'border-emerald-400/15 bg-emerald-400/10 text-emerald-200' : 'border-red-400/15 bg-red-400/10 text-red-200'}`}>
                     Total: {phaseWeightTotal}% {phaseWeightTotal === 100 ? 'Balanced' : 'should equal 100%'}
@@ -2357,7 +2351,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     onClick={() => {
                       const data = getBackupData()
                       if (!data) return
-                      const keys = Object.keys(getPhaseWeights(data))
+                      const keys = getProjectPhaseNames(data)
                       if (keys.length === 0) return
                       pushState(data)
                       if (!data.settings.phaseWeights) data.settings.phaseWeights = {}
@@ -2425,7 +2419,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       const trimmed = String(name).trim()
                       const data = getBackupData()
                       if (!data) return
-                      if (trimmed in getPhaseWeights(data)) {
+                      if (getProjectPhaseNames(data).some(ph => ph.toLowerCase() === trimmed.toLowerCase())) {
                         alert('That phase already exists.')
                         return
                       }

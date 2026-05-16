@@ -5,6 +5,7 @@ import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, p
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
+import { getProjectPhaseNames, getLegacyPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import MileageProjectAddress, {
   MileageProjectMapPreview,
   type MileageAddressCommitPatch,
@@ -93,15 +94,13 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
 
   const getMTOActivePhaseBreakdown = (proj) => {
-    // Show ALL MTO phases that have rows — matches HTML renderMTO() which shows all phases
-    const DEFAULT_MTO_PHASES = ['Underground', 'Rough In', 'Trim', 'Finish']
-    const configuredPhases = backup.settings?.mtoPhases
-    const allPhases = Array.isArray(configuredPhases) && configuredPhases.length > 0
-      ? configuredPhases
-      : DEFAULT_MTO_PHASES
+    const settingsPhases = getProjectPhaseNames(backup)
+    const legacyPhases = getLegacyPhaseNames((proj.mtoRows || []).map((r: any) => r.phase), settingsPhases)
+    const allPhases = [...settingsPhases, ...legacyPhases]
     const taxRate = num(backup.settings?.tax || 0) / 100
     const markupRate = num(backup.settings?.markup || 0) / 100
     return (proj.mtoRows || [])
+      .map(r => ({ ...r, phase: normalizePhaseName(r.phase, settingsPhases) }))
       .filter(r => allPhases.includes(r.phase))
       .reduce((acc, r) => {
         const pbItem = (backup.priceBook || []).find(x => x.id === r.matId)

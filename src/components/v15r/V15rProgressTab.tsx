@@ -8,6 +8,12 @@ import {
   removeProgressPhaseViewKeys,
   phaseExpandedFromCollapsedPhases,
 } from '@/utils/v15rViewPrefs'
+import {
+  getProjectPhaseNames,
+  getLegacyPhaseNames,
+  normalizePhaseName,
+  isKnownProjectPhase,
+} from '@/utils/v15rProjectPhases'
 
 function parseDateLocal(dateStr?: string): Date | null {
   if (!dateStr) return null
@@ -41,11 +47,6 @@ const DEFAULT_HEADER_COLORS: Record<string, string> = {
   'Site Prep': '#f59e0b',
   'Rough-in': '#10b981',
 }
-
-const PREFERRED_PHASE_ORDER = ['Demo', 'Underground', 'Rough In', 'Trim', 'Finish']
-
-/** Legacy weight-map order (for grouping keys from getPhaseWeights) */
-const LEGACY_STANDARD_PHASE_ORDER = ['Estimating', 'Planning', 'Site Prep', 'Rough-in', 'Trim', 'Finish']
 
 const CUSTOM_PHASE_PALETTE = ['#f97316', '#84cc16', '#22d3ee', '#e879f9', '#fb7185', '#a3e635']
 const MOVEMENT_TIMESTAMP_FIELDS = ['createdAt', 'updatedAt', 'date', 'logDate', 'timestamp']
@@ -81,28 +82,20 @@ function resolvePhaseHeaderColor(
   return normalizeColorPickerValue(DEFAULT_HEADER_COLORS[ph] || customPhaseColor(ph))
 }
 
-function orderPhaseEntries(combined: [string, number][]): [string, number][] {
-  const ordered: [string, number][] = []
-  const added = new Set<string>()
-  for (const ph of PREFERRED_PHASE_ORDER) {
-    const row = combined.find(([p]) => p === ph)
-    if (row && !added.has(ph)) {
-      ordered.push(row)
-      added.add(ph)
-    }
-  }
-  for (const row of combined) {
-    if (!added.has(row[0])) {
-      ordered.push(row)
-      added.add(row[0])
-    }
-  }
-  return ordered
+/** Simple average of task pct values; 0 when there are no tasks */
+function tasksForPhase(project: any, ph: string, phases: string[]): any[] {
+  const buckets = project?.tasks || {}
+  return Object.entries(buckets).flatMap(([key, rows]: [string, any]) => {
+    if (normalizePhaseName(key, phases) !== ph) return []
+    return (Array.isArray(rows) ? rows : []).map((task: any) => ({
+      ...task,
+      __phaseKey: key,
+    }))
+  })
 }
 
-/** Simple average of task pct values; 0 when there are no tasks */
-function computedPhaseProgressFromTasks(project: any, ph: string): number {
-  const tasks = (project.tasks || {})[ph] || []
+function computedPhaseProgressFromTasks(project: any, ph: string, phases: string[]): number {
+  const tasks = tasksForPhase(project, ph, phases)
   if (!tasks.length) return 0
   const sum = tasks.reduce((s: number, t: any) => s + num(t?.pct ?? 0), 0)
   return Math.min(100, Math.max(0, Math.round(sum / tasks.length)))
@@ -123,34 +116,14 @@ function isProgressPhaseManualOverride(
 function effectivePhaseProgressPct(
   project: any,
   ph: string,
+  phases: string[],
   lsOverride?: Record<string, boolean>,
 ): number {
   if (isProgressPhaseManualOverride(project, ph, lsOverride)) {
     const raw = (project.phases || {})[ph]
     return Math.min(100, Math.max(0, num(raw ?? 0)))
   }
-  return computedPhaseProgressFromTasks(project, ph)
-}
-
-function configuredProgressPhaseNames(project: any, weights: Record<string, number>): string[] {
-  const phases = new Set<string>()
-  Object.keys(weights || {}).forEach(ph => {
-    const clean = String(ph || '').trim()
-    if (clean) phases.add(clean)
-  })
-  ;(project?.customPhases || []).forEach((ph: string) => {
-    const clean = String(ph || '').trim()
-    if (clean) phases.add(clean)
-  })
-  Object.keys(project?.phases || {}).forEach(ph => {
-    const clean = String(ph || '').trim()
-    if (clean) phases.add(clean)
-  })
-  Object.keys(project?.tasks || {}).forEach(ph => {
-    const clean = String(ph || '').trim()
-    if (clean) phases.add(clean)
-  })
-  return Array.from(phases)
+  return computedPhaseProgressFromTasks(project, ph, phases)
 }
 
 function phaseWeightFor(ph: string, weights: Record<string, number>, fallbackWeight: number): number {
@@ -167,13 +140,13 @@ function formatPhaseWeight(wt: number): string {
 function weightedOverallCompletion(
   project: any,
   weights: Record<string, number>,
+  phases: string[],
   lsOverride?: Record<string, boolean>,
 ): number {
-  const phases = configuredProgressPhaseNames(project, weights)
   if (phases.length === 0) return 0
   const fallbackWeight = 100 / phases.length
   const weighted = phases.reduce((sum, ph) => {
-    const phaseProgress = effectivePhaseProgressPct(project, ph, lsOverride)
+    const phaseProgress = effectivePhaseProgressPct(project, ph, phases, lsOverride)
     const phaseWeight = phaseWeightFor(ph, weights, fallbackWeight)
     return sum + (phaseProgress * phaseWeight)
   }, 0)
@@ -300,6 +273,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const innerViewPrefs = loadInnerProjectViewPrefs(projectId)
 
   const w = getPhaseWeights(backup)
+  const settingsPhases = getProjectPhaseNames(backup)
   const movementLogs = movementLogsForProject(backup, p)
   const movementDates = movementLogs
     .map(movementLogDate)
@@ -322,14 +296,21 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     return true
   }
 
-  const configuredPhaseNames = configuredProgressPhaseNames(p, w)
-  const missingPhaseFallbackWeight = configuredPhaseNames.length > 0 ? 100 / configuredPhaseNames.length : 0
-  const configuredPhaseEntries: [string, number][] = configuredPhaseNames.map(ph => [
+  const missingPhaseFallbackWeight = settingsPhases.length > 0 ? 100 / settingsPhases.length : 0
+  const settingsPhaseEntries: [string, number][] = settingsPhases.map(ph => [
     ph,
     phaseWeightFor(ph, w, missingPhaseFallbackWeight),
   ])
 
-  const orderedPhaseEntries = orderPhaseEntries(configuredPhaseEntries)
+  const legacyProgressPhases = getLegacyPhaseNames([
+    ...Object.keys(p.tasks || {}),
+    ...Object.keys(p.phases || {}),
+    ...(p.customPhases || []),
+  ], settingsPhases)
+  const orderedPhaseEntries = [
+    ...settingsPhaseEntries.map(([ph, wt]) => [ph, wt, false] as [string, number, boolean]),
+    ...legacyProgressPhases.map(ph => [ph, 0, true] as [string, number, boolean]),
+  ]
 
   const togglePhaseBucket = (ph: string) => {
     setPhaseExpanded(prev => {
@@ -463,19 +444,21 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const confirmAddCustomPhase = () => {
     const trimmed = newPhaseName.trim()
     if (!trimmed) return
-    const existingNames = new Set(orderedPhaseEntries.map(([ph]) => ph.toLowerCase()))
-    if (existingNames.has(trimmed.toLowerCase())) {
+    if (isKnownProjectPhase(trimmed, settingsPhases)) {
       alert(`Phase "${trimmed}" already exists.`)
       return
     }
     pushState()
-    persistProjectChange(proj => {
-      if (!proj.customPhases) proj.customPhases = []
+    persistProjectChange((proj, currentBackup) => {
+      if (!currentBackup.settings) currentBackup.settings = {}
+      if (!currentBackup.settings.phaseWeights) currentBackup.settings.phaseWeights = {}
+      if (!currentBackup.settings.mtoPhases) currentBackup.settings.mtoPhases = []
+      currentBackup.settings.mtoPhases = [...settingsPhases, trimmed]
+      currentBackup.settings.phaseWeights[trimmed] = 0
       if (!proj.phases) proj.phases = {}
       if (!proj.tasks) proj.tasks = {}
       if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
       proj.progressPhaseOverrideEnabled[trimmed] = false
-      proj.customPhases.push(trimmed)
       proj.phases[trimmed] = 0
       if (!proj.tasks[trimmed]) proj.tasks[trimmed] = []
     })
@@ -547,7 +530,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     setDragActive(null)
   }
 
-  const overallCompletion = weightedOverallCompletion(p, w, innerViewPrefs.progress?.overrideEnabled)
+  const overallCompletion = weightedOverallCompletion(p, w, settingsPhases, innerViewPrefs.progress?.overrideEnabled)
   const openRfiCount = (p.rfis || []).filter(r => r.status !== 'answered').length
 
   const today = new Date()
@@ -747,7 +730,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
               label: 'Overall Completion',
               value: `${overallCompletion}%`,
               accent: '#10b981',
-              micro: `Weighted by phase setup across ${configuredPhaseNames.length} phase${configuredPhaseNames.length === 1 ? '' : 's'}.`,
+              micro: `Weighted by phase setup across ${settingsPhases.length} phase${settingsPhases.length === 1 ? '' : 's'}.`,
               badge: 'Live',
               progressPct: overallCompletion,
             })}
@@ -772,13 +755,14 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
           </div>
         </div>
 
-        {orderedPhaseEntries.map(([ph, wt]) => {
-          const tasks = (p.tasks || {})[ph] || []
+        {orderedPhaseEntries.map(([ph, wt, isLegacyPhase]) => {
+          const tasks = tasksForPhase(p, ph, settingsPhases)
           const clrSaved = resolvePhaseHeaderColor(ph, p.progressPhaseColors)
           const clrDisplay = normalizeColorPickerValue(phaseColorDraft[ph] ?? clrSaved)
           const phaseEffectivePct = effectivePhaseProgressPct(
             p,
             ph,
+            settingsPhases,
             innerViewPrefs.progress?.overrideEnabled,
           )
           const overrideOn = isProgressPhaseManualOverride(
@@ -787,7 +771,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
             innerViewPrefs.progress?.overrideEnabled,
           )
           const storedManualPct = Math.min(100, Math.max(0, num((p.phases || {})[ph] ?? 0)))
-          const isCustom = Array.isArray(p.customPhases) && p.customPhases.includes(ph)
+          const isCustom = false
           const isOpen = phaseExpanded[ph] !== false
 
           return (
@@ -847,7 +831,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '14px', marginBottom: '2px' }}>
                     {ph}
-                    {isCustom && (
+                    {isLegacyPhase && (
                       <span style={{
                         marginLeft: '6px',
                         fontSize: '9px',
@@ -858,13 +842,13 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                         fontWeight: '500',
                         verticalAlign: 'middle',
                       }}>
-                        custom
+                        legacy
                       </span>
                     )}
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
                     {overrideOn ? 'Manual override · ' : 'From tasks · '}
-                    {wt > 0 ? `${formatPhaseWeight(wt)}% weight · ` : ''}{tasks.length} task{tasks.length !== 1 ? 's' : ''}
+                    {isLegacyPhase ? 'Unmapped / legacy phase · ' : (wt > 0 ? `${formatPhaseWeight(wt)}% weight · ` : '')}{tasks.length} task{tasks.length !== 1 ? 's' : ''}
                   </div>
                 </div>
                 <div style={{ width: '80px', height: '4px', backgroundColor: '#1e2130', borderRadius: '2px', overflow: 'hidden', flexShrink: 0 }}>
@@ -914,7 +898,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                       <div
                         key={t.id}
                         onDragOver={e => onDragOver(e, t.id)}
-                        onDrop={e => onDrop(ph, t.id, e)}
+                        onDrop={e => onDrop(t.__phaseKey || ph, t.id, e)}
                         style={{
                           padding: '8px 10px',
                           backgroundColor: dragActive === t.id ? '#2a2d40' : '#1e2130',
@@ -942,7 +926,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             draggable
                             onDragStart={e => {
                               e.stopPropagation()
-                              onDragStart(ph, t.id, e)
+                              onDragStart(t.__phaseKey || ph, t.id, e)
                             }}
                             onDragEnd={onDragEnd}
                             style={{
@@ -964,7 +948,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           <input
                             type="text"
                             value={t.desc || ''}
-                            onChange={e => editTask(ph, t.id, 'desc', e.target.value)}
+                            onChange={e => editTask(t.__phaseKey || ph, t.id, 'desc', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
                             onPointerDown={e => e.stopPropagation()}
                             onTouchStart={e => e.stopPropagation()}
@@ -1007,7 +991,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                             min="0"
                             max="100"
                             value={t.pct ?? 0}
-                            onChange={e => editTask(ph, t.id, 'pct', e.target.value)}
+                            onChange={e => editTask(t.__phaseKey || ph, t.id, 'pct', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
                             onPointerDown={e => e.stopPropagation()}
                             onTouchStart={e => e.stopPropagation()}
@@ -1039,7 +1023,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                           <input
                             type="number"
                             value={t.hrs ?? 0}
-                            onChange={e => editTask(ph, t.id, 'hrs', e.target.value)}
+                            onChange={e => editTask(t.__phaseKey || ph, t.id, 'hrs', e.target.value)}
                             onMouseDown={e => e.stopPropagation()}
                             onPointerDown={e => e.stopPropagation()}
                             onTouchStart={e => e.stopPropagation()}
@@ -1067,7 +1051,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
 
                         <button
                           type="button"
-                          onClick={() => delTask(ph, t.id)}
+                          onClick={() => delTask(t.__phaseKey || ph, t.id)}
                           title="Remove task"
                           style={{
                             width: '24px',
@@ -1268,7 +1252,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
               letterSpacing: '0.02em',
             }}
           >
-            + Add Custom Phase
+            + Add Phase to Settings
           </button>
         )}
 

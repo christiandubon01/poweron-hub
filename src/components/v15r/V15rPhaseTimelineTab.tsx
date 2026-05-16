@@ -14,8 +14,9 @@
  */
 
 import React, { useState, useCallback } from 'react'
-import { getBackupData, saveBackupData, getPhaseWeights, num } from '@/services/backupDataService'
+import { getBackupData, saveBackupDataAndSync, num } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { getProjectPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import {
   normalizePhaseTimeline,
   savePhaseTimelineEntry,
@@ -93,6 +94,7 @@ function PhaseRow({
   projectId,
   projectLogs,
   historicalAvgs,
+  phases,
   onSave,
 }: {
   entry: PhaseTimelineEntry
@@ -101,6 +103,7 @@ function PhaseRow({
   projectId: string
   projectLogs: any[]
   historicalAvgs: Record<string, number>
+  phases: string[]
   onSave: (updated: PhaseTimelineEntry) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -112,8 +115,8 @@ function PhaseRow({
 
   // Compute actual hours/materials from field logs for this phase
   const phaseLogs = projectLogs.filter(l => {
-    const logPhase = (l.phase || l.phaseLabel || '').toLowerCase().trim()
-    const entryPhase = entry.phase_name.toLowerCase().trim()
+    const logPhase = normalizePhaseName(l.phase || l.phaseLabel || '', phases).toLowerCase().trim()
+    const entryPhase = normalizePhaseName(entry.phase_name, phases).toLowerCase().trim()
     return logPhase === entryPhase || logPhase.includes(entryPhase) || entryPhase.includes(logPhase)
   })
   const actualHrs = phaseLogs.reduce((s, l) => s + num(l.hrs || 0), 0)
@@ -390,8 +393,8 @@ export default function V15rPhaseTimelineTab({
   const project = (backup.projects || []).find((p: any) => p.id === projectId)
   if (!project) return <div style={{ color: '#6b7280', padding: '16px' }}>Project not found</div>
 
-  const weights = getPhaseWeights(backup)
   const timeline = normalizePhaseTimeline(project, backup)
+  const phases = getProjectPhaseNames(backup)
   const projectLogs = (backup.logs || []).filter((l: any) =>
     l.projId === projectId || l.projectId === projectId
   )
@@ -431,7 +434,7 @@ export default function V15rPhaseTimelineTab({
     const updatedProjects = [...projects]
     updatedProjects[idx] = { ...proj, phase_timeline: existingTimeline }
     pushState(b)
-    saveBackupData({ ...b, projects: updatedProjects, _lastSavedAt: Date.now() })
+    saveBackupDataAndSync({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, 'projects')
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -445,7 +448,7 @@ export default function V15rPhaseTimelineTab({
     const updatedProjects = [...projects]
     updatedProjects[idx] = { ...projects[idx], deposit_pct: currentDepositPct }
     pushState(b)
-    saveBackupData({ ...b, projects: updatedProjects, _lastSavedAt: Date.now() })
+    saveBackupDataAndSync({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, 'projects')
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -560,6 +563,7 @@ export default function V15rPhaseTimelineTab({
               projectId={projectId}
               projectLogs={projectLogs}
               historicalAvgs={historicalAvgs}
+              phases={phases}
               onSave={handlePhaseEntryUpdate}
             />
           ))}

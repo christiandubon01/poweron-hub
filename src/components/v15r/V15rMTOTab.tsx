@@ -1,9 +1,10 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Sparkles, FileText, Search } from 'lucide-react'
-import { getBackupData, saveBackupData, num, fmt } from '@/services/backupDataService'
+import { getBackupData, saveBackupDataAndSync, num, fmt } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { exportMaterialSummaryPDF } from '@/services/mtoExportService'
+import { getProjectPhaseNames, getLegacyPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 
 interface V15rMTOTabProps {
   projectId: string
@@ -55,11 +56,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
 
-  const DEFAULT_MTO_PHASES = ['Underground', 'Rough In', 'Trim', 'Finish']
-  const phases = Array.isArray(backup.settings?.mtoPhases) && backup.settings.mtoPhases.length > 0
-    ? backup.settings.mtoPhases
-    : DEFAULT_MTO_PHASES
+  const phases = getProjectPhaseNames(backup)
   const allRows: any[] = Array.isArray(p.mtoRows) ? p.mtoRows : []
+  const legacyPhases = getLegacyPhaseNames(allRows.map(r => r.phase), phases)
+  const displayPhases = [...phases, ...legacyPhases]
   // Force recapture of allRows in closures on every render
 React.useEffect(() => { forceUpdate() }, [projectId])
 
@@ -77,7 +77,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         row.unitCost = value === '' || value === null || value === undefined ? undefined : num(value)
       }
     }
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -95,7 +95,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
       placement: '',
       note: '',
     })
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -105,7 +105,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     setSelectedIds(prev => { const n = new Set(prev); n.delete(rowId); return n })
     // Clean up local placement state for the deleted row
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -174,7 +174,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     const row = (p.mtoRows || []).find((r: any) => r.id === rowId)
     if (row) row.matId = newItem.id
 
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
     closePbModal()
   }
@@ -218,7 +218,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     ;(p.mtoRows || []).forEach(r => {
       if (selectedIds.has(r.id)) r.placement = placement
     })
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     setSelectedIds(new Set())
     setBulkPlacement('')
     setShowConfirm(false)
@@ -711,8 +711,9 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
   // Phase-grouped view (original behavior — no placements assigned)
   const renderPhaseGroups = () =>
-    phases.map(phase => {
-      const rows = allRows.filter(r => r.phase === phase)
+    displayPhases.map(phase => {
+      const isLegacyPhase = legacyPhases.includes(phase)
+      const rows = allRows.filter(r => normalizePhaseName(r.phase, phases) === phase)
       let phTotal = 0
       rows.forEach(r => {
         const pbItem = getPBItem(r.matId)
@@ -738,7 +739,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             }}
           >
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>
-              {phase} ({rows.length} items)
+              {isLegacyPhase ? `Unmapped / Legacy Phase: ${phase}` : phase} ({rows.length} items)
             </h4>
             <span style={{ color: '#10b981', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(phTotal)}</span>
           </div>
@@ -892,7 +893,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           >
             <p style={{ margin: '0 0 16px 0' }}>No materials added yet. Start by adding items to a phase.</p>
             <button
-              onClick={() => addMTORow(phases[0] || 'Underground')}
+              onClick={() => addMTORow(phases[0] || 'Estimating')}
               style={{
                 padding: '8px 16px',
                 backgroundColor: 'rgba(59,130,246,0.2)',

@@ -9,7 +9,8 @@
  * DO NOT put React hooks here. These are plain data-fetch functions.
  */
 
-import { getBackupData, saveBackupData, getPhaseWeights } from '@/services/backupDataService'
+import { getBackupData, saveBackupData } from '@/services/backupDataService'
+import { getProjectPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import {
   getPhasePaymentSchedule,
   get8WeekCashFlow,
@@ -47,12 +48,14 @@ export function normalizePhaseTimeline(
   project: any,
   backup: any
 ): PhaseTimelineEntry[] {
-  const weights = getPhaseWeights(backup)
-  const phaseNames = Object.keys(weights)
+  const phaseNames = getProjectPhaseNames(backup)
   const existing: PhaseTimelineEntry[] = project.phase_timeline || []
   const existingByName: Record<string, PhaseTimelineEntry> = {}
   for (const e of existing) {
-    existingByName[e.phase_name] = e
+    existingByName[normalizePhaseName(e.phase_name, phaseNames)] = {
+      ...e,
+      phase_name: normalizePhaseName(e.phase_name, phaseNames),
+    }
   }
 
   const totalPhasePct = phaseNames.length > 0 ? 100 : 0

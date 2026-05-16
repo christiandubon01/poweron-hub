@@ -1,8 +1,9 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react'
 import { Sparkles } from 'lucide-react'
-import { getBackupData, saveBackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
+import { getProjectPhaseNames, normalizePhaseName, isKnownProjectPhase } from '@/utils/v15rProjectPhases'
 
 interface V15rRFITabProps {
   projectId: string
@@ -23,6 +24,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
 
   const rfis = (p.rfis || []).sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')))
   const openCount = rfis.filter(r => r.status !== 'answered').length
+  const phases = getProjectPhaseNames(backup)
 
   const addRFI = () => {
     pushState()
@@ -40,7 +42,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       stageRecorded: '',
       stageApplies: '',
     })
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -59,10 +61,10 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       else if (field === 'directedTo') rfi.directedTo = String(value)
       else if (field === 'response') rfi.response = String(value)
       else if (field === 'costImpact') rfi.costImpact = String(value)
-      else if (field === 'stageRecorded') rfi.stageRecorded = String(value)
-      else if (field === 'stageApplies') rfi.stageApplies = String(value)
+      else if (field === 'stageRecorded') rfi.stageRecorded = normalizePhaseName(value, phases)
+      else if (field === 'stageApplies') rfi.stageApplies = normalizePhaseName(value, phases)
     }
-    saveBackupData(freshBackup)
+    saveBackupDataAndSync(freshBackup, 'projects')
     forceUpdate()
     // Notify the parent (V15rProjectInner) to re-read from localStorage so the
     // updated stage values are reflected when the parent next renders.
@@ -85,7 +87,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
         rfi.resolved_at = ''
       }
     }
-    saveBackupData(freshBackup)
+    saveBackupDataAndSync(freshBackup, 'projects')
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -98,7 +100,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     if (!freshProject) return
     pushState()
     freshProject.rfis = (freshProject.rfis || []).filter(r => r.id !== rfiId)
-    saveBackupData(freshBackup)
+    saveBackupDataAndSync(freshBackup, 'projects')
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -107,6 +109,20 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     if (status === 'answered') return { bg: '#10b981', text: '#fff' }
     if (status === 'critical') return { bg: '#ef4444', text: '#fff' }
     return { bg: '#f59e0b', text: '#000' }
+  }
+
+  const renderPhaseOptions = (currentValue: string) => {
+    const normalizedCurrent = normalizePhaseName(currentValue, phases)
+    const showLegacy = normalizedCurrent && !isKnownProjectPhase(normalizedCurrent, phases)
+    return (
+      <>
+        <option value="">—</option>
+        {phases.map(phase => (
+          <option key={phase} value={phase}>{phase}</option>
+        ))}
+        {showLegacy && <option value={normalizedCurrent}>Legacy: {normalizedCurrent}</option>}
+      </>
+    )
   }
 
   return (
@@ -231,7 +247,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
                       <span style={{ fontSize: '11px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>Stage Recorded</span>
                       <select
-                        value={r.stageRecorded || ''}
+                        value={normalizePhaseName(r.stageRecorded || '', phases)}
                         onChange={e => editRFI(r.id, 'stageRecorded', e.target.value)}
                         style={{
                           flex: 1,
@@ -244,19 +260,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                           cursor: 'pointer',
                         }}
                       >
-                        <option value="">—</option>
-                        <option value="Estimating">Estimating</option>
-                        <option value="Underground">Underground</option>
-                        <option value="Rough-In">Rough-In</option>
-                        <option value="Trim">Trim</option>
-                        <option value="Finish">Finish</option>
-                        <option value="General">General</option>
+                        {renderPhaseOptions(r.stageRecorded || '')}
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
                       <span style={{ fontSize: '11px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>Stage Applies</span>
                       <select
-                        value={r.stageApplies || ''}
+                        value={normalizePhaseName(r.stageApplies || '', phases)}
                         onChange={e => editRFI(r.id, 'stageApplies', e.target.value)}
                         style={{
                           flex: 1,
@@ -269,13 +279,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                           cursor: 'pointer',
                         }}
                       >
-                        <option value="">—</option>
-                        <option value="Estimating">Estimating</option>
-                        <option value="Underground">Underground</option>
-                        <option value="Rough-In">Rough-In</option>
-                        <option value="Trim">Trim</option>
-                        <option value="Finish">Finish</option>
-                        <option value="General">General</option>
+                        {renderPhaseOptions(r.stageApplies || '')}
                       </select>
                     </div>
                   </div>
