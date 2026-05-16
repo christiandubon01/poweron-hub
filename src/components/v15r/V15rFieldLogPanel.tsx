@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useMemo, lazy, Suspense, useEffect } from 'react'
-import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive } from 'lucide-react'
+import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive, Timer, Boxes, Route, CircleDollarSign } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -1839,6 +1839,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 }
                 const balanceColor = getBalanceColor(num(rr.remainingAfter), projRoll.quote)
                 const hasPay = num(l.collected) > 0
+                const entryTotalStats = [
+                  { label: 'Labor', amount: fmt(num(rr.entryLaborCost)), Icon: Timer, color: '#e5e7eb', bg: 'rgba(229,231,235,0.06)', border: 'rgba(229,231,235,0.16)' },
+                  { label: 'Material', amount: fmt(num(l.mat)), Icon: Boxes, color: '#fcd34d', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.22)' },
+                  { label: 'Mileage', amount: fmt(num(rr.entryMileageCost)), Icon: Route, color: '#67e8f9', bg: 'rgba(103,232,249,0.08)', border: 'rgba(103,232,249,0.24)' },
+                  { label: 'Total', amount: fmt(num(rr.entryTotalCost)), Icon: CircleDollarSign, color: '#f87171', bg: 'rgba(248,113,113,0.11)', border: 'rgba(248,113,113,0.34)', featured: true },
+                ]
 
               // Daily target indicator
               const todayHours = sorted.filter(x => x.date === today()).reduce((s, x) => s + num(x.hrs), 0)
@@ -1850,52 +1856,103 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   {/* Main entry row */}
                   <div
                     className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3"
-                    style={hasPay ? { background: 'linear-gradient(180deg, rgba(48,209,88,.10), rgba(48,209,88,.04))', borderLeft: '3px solid #10b981' } : {}}
+                    style={hasPay ? { background: 'linear-gradient(180deg, rgba(48,209,88,.10), rgba(48,209,88,.04))', borderLeft: '3px solid #10b981' } : { borderLeft: '3px solid #10b981' }}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] text-gray-150 font-mono">{l.date}</span>
-                          <span className="text-xs font-semibold text-gray-150">{l.projName}</span>
-                          <span className="text-[10px] text-gray-200">{l.phase}</span>
-                          <span className="text-[10px] text-gray-200">{l.emp || 'Me'}</span>
-                          {hasPay && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold">💵 Collected</span>}
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1 space-y-2.5">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <span className="rounded-md border border-cyan-300/10 bg-cyan-400/[0.04] px-2 py-1 font-mono text-[10px] font-semibold text-cyan-100/70">
+                            {l.date}
+                          </span>
+                          <span className="min-w-0 text-[15px] font-extrabold leading-tight text-white">
+                            {l.projName}
+                          </span>
+                          <span className="h-1 w-1 rounded-full bg-cyan-300/35" />
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-300/80">{l.phase}</span>
+                          <span className="text-[11px] font-semibold text-slate-400">{l.emp || 'Me'}</span>
+                          {hasPay && <span className="rounded-full border border-emerald-400/20 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-emerald-300">Collected</span>}
                         </div>
-                        {l.notes && <div className="text-[10px] text-gray-300 mt-1">{l.notes}</div>}
-                        {l.store && <div className="text-[10px] text-gray-300 mt-0.5">🏪 {l.store}</div>}
-                        {/* Spec: Daily preview line below description */}
-                        <div className="text-[10px] text-gray-200 mt-1 font-mono">
-                          Hrs: <span style={{ color: '#e5e7eb' }}>{num(l.hrs).toFixed(1)}</span> &nbsp;
-                          Miles: <span style={{ color: '#60a5fa' }}>{num(l.miles)}</span> &nbsp;
-                          Mat: <span style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</span> &nbsp;
-                          Coll: <span style={{ color: '#6ee7b7' }}>{fmt(num(l.collected))}</span> &nbsp;
-                          Remaining Bal: <span style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</span>
+                        {l.notes && <div className="max-w-3xl text-[12px] font-medium leading-relaxed text-white">{l.notes}</div>}
+                        {l.store && (
+                          <div className="text-[11px] font-medium text-slate-300">
+                            <span className="text-slate-500">Store</span> <span className="text-slate-200">{l.store}</span>
+                          </div>
+                        )}
+                        <div className="grid max-w-3xl grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                          <div className="rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
+                            <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Hrs</div>
+                            <div className="mt-0.5 font-mono text-[12px] font-bold leading-none text-slate-100">{num(l.hrs).toFixed(1)}</div>
+                          </div>
+                          <div className="rounded-md border border-amber-300/[0.12] bg-amber-400/[0.025] px-2.5 py-2">
+                            <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Mat</div>
+                            <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</div>
+                          </div>
+                          <div className="rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
+                            <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Miles</div>
+                            <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#60a5fa' }}>{num(l.miles)}</div>
+                          </div>
+                          <div className="rounded-md border border-emerald-300/[0.12] bg-emerald-400/[0.025] px-2.5 py-2">
+                            <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Coll</div>
+                            <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#6ee7b7' }}>{fmt(num(l.collected))}</div>
+                          </div>
+                          <div className="rounded-md border border-cyan-200/[0.14] bg-slate-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:col-span-2 xl:col-span-1">
+                            <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Remaining</div>
+                            <div className="mt-0.5 font-mono text-[13px] font-extrabold leading-none" style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</div>
+                          </div>
                         </div>
-                        <div className="flex gap-2 mt-1.5">
-                          <button onClick={() => beginLogEdit(l.id)} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
-                          <button onClick={() => deleteLogEntry(l.id)} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-red-400 hover:text-red-500">Delete</button>
+                        <div className="flex gap-2">
+                          <button onClick={() => beginLogEdit(l.id)} className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/[0.07] hover:text-white">Edit</button>
+                          <button onClick={() => deleteLogEntry(l.id)} className="rounded-md border border-red-400/10 bg-red-500/[0.06] px-2.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/[0.10] hover:text-red-200">Delete</button>
                         </div>
                       </div>
-                      {/* Spec: Top right of card — cumHours, entry mat cost, running balance, cumMiles */}
-                      <div className="text-right text-[11px] space-y-0.5 min-w-[110px]">
-                        <div style={{ color: '#e5e7eb', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(rr.entryLaborCost))} lab</div>
-                        <div style={{ color: '#fcd34d', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(l.mat))} mat</div>
-                        <div style={{ color: '#60a5fa', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700 }}>{fmt(num(rr.entryMileageCost))} mi</div>
-                        <div style={{ color: '#ef4444', fontFamily: 'monospace', fontSize: '12px', fontWeight: 700 }}>{fmt(num(rr.entryTotalCost))} total</div>
+                      <div className="ml-auto flex w-full flex-wrap justify-end gap-2 lg:w-auto lg:min-w-[390px]">
+                        {entryTotalStats.map(({ label, amount, Icon, color, bg, border, featured }) => (
+                          <div
+                            key={label}
+                            className={`rounded-lg border text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${featured ? 'min-w-[118px] bg-red-950/10 px-3 py-2.5' : 'min-w-[78px] bg-slate-950/20 px-2.5 py-2'}`}
+                            style={{ borderColor: border, boxShadow: featured ? `inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px ${bg}` : undefined }}
+                          >
+                            <div
+                              className={`mx-auto mb-1 flex items-center justify-center rounded-md border ${featured ? 'h-7 w-7' : 'h-6 w-6'}`}
+                              style={{ color, background: bg, borderColor: border }}
+                            >
+                              <Icon size={featured ? 15 : 13} strokeWidth={2} />
+                            </div>
+                            <div className={`${featured ? 'text-[9px]' : 'text-[8px]'} font-bold uppercase tracking-[0.12em] text-gray-400`}>{label}</div>
+                            <div className={`mt-0.5 font-mono font-extrabold leading-tight ${featured ? 'text-[15px]' : 'text-[12px]'}`} style={{ color }}>
+                              {amount}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
 
                   {/* Running totals sub-row — cumulative data from rollup */}
-                  <div className="bg-[var(--bg-input)] border border-gray-800 rounded px-3 py-2 text-[10px] flex justify-between gap-3">
-                    <div className="flex gap-4 flex-wrap">
-                      <span><span className="text-gray-300">Cum Hours:</span> <span className="font-mono text-gray-300">{num(rr.cumHours).toFixed(1)}h</span></span>
-                      <span><span className="text-gray-300">Cum Mat:</span> <span className="font-mono" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span></span>
-                      <span><span className="text-gray-300">Cum Collected:</span> <span className="font-mono text-emerald-400">{fmt(num(rr.cumCollected))}</span></span>
-                      <span><span className="text-gray-300">Cum Cost:</span> <span className="font-mono text-red-400">{fmt(num(rr.cumTotalCost))}</span></span>
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-md border border-white/[0.06] bg-slate-950/20 px-3 py-1.5 text-[10px] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                      <span className="inline-flex items-baseline gap-1.5">
+                        <span className="font-medium text-slate-500">Cum Hours</span>
+                        <span className="font-mono font-medium text-slate-300">{num(rr.cumHours).toFixed(1)}h</span>
+                      </span>
+                      <span className="inline-flex items-baseline gap-1.5">
+                        <span className="font-medium text-slate-500">Cum Mat</span>
+                        <span className="font-mono font-medium" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span>
+                      </span>
+                      <span className="inline-flex items-baseline gap-1.5">
+                        <span className="font-medium text-slate-500">Cum Collected</span>
+                        <span className="font-mono font-medium text-emerald-400">{fmt(num(rr.cumCollected))}</span>
+                      </span>
+                      <span className="inline-flex items-baseline gap-1.5">
+                        <span className="font-medium text-slate-500">Cum Cost</span>
+                        <span className="font-mono font-medium text-red-400">{fmt(num(rr.cumTotalCost))}</span>
+                      </span>
                     </div>
-                    <div className="flex gap-3 items-center">
-                      <span style={{ color: balanceColor, fontFamily: 'monospace', fontWeight: 700 }}>Net: {fmt(num(rr.remainingAfter))}</span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <span className="inline-flex items-baseline gap-1.5">
+                        <span className="font-medium text-slate-400">Net</span>
+                        <span className="font-mono font-semibold" style={{ color: balanceColor }}>{fmt(num(rr.remainingAfter))}</span>
+                      </span>
                       {todayHours > 0 && (
                         <span style={{ padding: '2px 6px', borderRadius: '3px', background: onTarget ? 'rgba(16,185,129,.2)' : 'rgba(239,68,68,.2)', color: onTarget ? '#10b981' : '#ef4444', fontSize: '9px', fontWeight: 700 }}>
                           {onTarget ? '✓ On Target' : '⚠ Below Target'} ({todayHours.toFixed(1)}h)
