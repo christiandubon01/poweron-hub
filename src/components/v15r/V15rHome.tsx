@@ -17,17 +17,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Plus,
-  Trash2,
   ChevronRight,
-  Zap,
   X,
-  Sparkles,
   Edit3,
   Edit2,
-  Brain,
-  Send,
-  Mic,
-  MicOff,
   RefreshCw,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -37,21 +30,19 @@ import {
   saveBackupDataAndSync,
   getKPIs,
   health,
-  getOverallCompletion,
   daysSince,
   fmtK,
   fmt,
-  pct,
   ensureAgendaState,
   getAgendaProjectName,
   resolveProjectBucket,
   isArchivedRecord,
   num,
-  getProjectFinancials,
   buildProjectLogRollup,
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
+import { ProjectCard } from './ProjectCard'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
@@ -761,64 +752,15 @@ export default function V15rHome() {
       {activeJobHealthProjects.length > 0 && (
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Job Health</h2>
-          <div className="job-health-grid">
-            {activeJobHealthProjects
-              .map(p => {
-                const h = health(p, backup)
-                const o = getOverallCompletion(p, backup)
-                const d = daysSince(p.lastMove)
-                const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
-                return (
-                  <div key={p.id} className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4 cursor-pointer hover:border-gray-600 transition-colors">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <div className="font-bold text-sm text-gray-100">{p.name}</div>
-                        <div className="text-[10px] text-gray-500">{p.type}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xl font-bold font-mono" style={{ color: h.clr }}>{h.sc}</div>
-                        <div className="text-[9px] text-gray-500">Health</div>
-                      </div>
-                    </div>
-                    <div className="w-full h-1.5 rounded-full bg-gray-700/50 overflow-hidden mb-2">
-                      <div className="h-full transition-all rounded-full" style={{ width: `${Math.min(100, o)}%`, background: h.clr }} />
-                    </div>
-                    <div className="text-[10px] text-gray-500 mb-2">
-                      {h.reasons.length ? h.reasons.join(' · ') : 'On track'}
-                    </div>
-                    {(() => {
-                      const fin = getProjectFinancials(p, backup)
-                      const paidPct = Math.round((fin.paid / Math.max(fin.contract, 1)) * 100)
-                      return (
-                        <div className="mb-2 flex items-center gap-2">
-                          <div style={{ width: '60px', height: '6px', backgroundColor: '#374151', borderRadius: '2px', overflow: 'hidden', display: 'flex' }}>
-                            {fin.paid > 0 && fin.contract > 0 && (
-                              <div style={{ width: `${(fin.paid / fin.contract) * 100}%`, backgroundColor: '#10b981', height: '100%' }} />
-                            )}
-                            {fin.paid < fin.contract && (
-                              <div style={{ width: `${((fin.contract - fin.paid) / fin.contract) * 100}%`, backgroundColor: '#9ca3af', height: '100%' }} />
-                            )}
-                          </div>
-                          <span style={{ fontSize: '8px', color: '#9ca3af' }}>{paidPct}% paid</span>
-                        </div>
-                      )
-                    })()}
-                    <div className="flex flex-wrap gap-1.5 mb-2">
-                      <span className={`text-[9px] px-2 py-0.5 rounded font-semibold ${d >= 14 ? 'bg-red-500/20 text-red-400' : d >= 7 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'}`}>{d}d stale</span>
-                      <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-blue-500/20 text-blue-400">{pct(Math.round(o))}</span>
-                      {openR > 0 && <span className="text-[9px] px-2 py-0.5 rounded font-semibold bg-red-500/20 text-red-400">{openR} RFI</span>}
-                    </div>
-                    <div className="flex gap-2 pt-2 border-t border-gray-700/50">
-                      <button className="flex-1 text-[10px] px-2 py-1.5 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50 transition-colors font-semibold">
-                        <Edit3 size={10} className="inline mr-1" /> Edit
-                      </button>
-                      <button className="text-[10px] px-2 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors font-semibold border border-red-500/20">
-                        <Trash2 size={10} className="inline mr-1" /> Delete
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {activeJobHealthProjects.map(p => (
+              <ProjectCard
+                key={p.id}
+                p={p}
+                backup={backup}
+                bucket="active"
+              />
+            ))}
           </div>
         </div>
       )}
