@@ -6,9 +6,9 @@ import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
 import MileageProjectAddress, {
-  MileageStreetViewPreview,
+  MileageProjectMapPreview,
   type MileageAddressCommitPatch,
-  type PersistStreetViewGeometryPayload,
+  type PersistProjectAddressGeometryPayload,
 } from './MileageProjectAddress'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
@@ -85,8 +85,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [scStore, setScStore] = useState('')
   const [showEstForm, setShowEstForm] = useState(false)
   const [editingEstId, setEditingEstId] = useState<string | null>(null)
-  /** Bumps MileageStreetViewPreview to retry geocode / panorama after Save address */
-  const [mileageSvRetryNonce, setMileageSvRetryNonce] = useState(0)
+  /** Bumps MileageProjectMapPreview to retry geocode after Save address */
+  const [mileageMapRetryNonce, setMileageMapRetryNonce] = useState(0)
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
 
   const p = backup.projects.find(x => x.id === projectId)
@@ -293,7 +293,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   }
 
   /** Geocoder-derived lat/lng (+ optional Google place id) uses the same synced backup write as typed address edits. */
-  function persistStreetViewGeometry(hit: PersistStreetViewGeometryPayload): void {
+  function persistProjectAddressGeometry(hit: PersistProjectAddressGeometryPayload): void {
     const lat = Number(hit.addressLat)
     const lng = Number(hit.addressLng)
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
@@ -1737,87 +1737,91 @@ Return ONLY valid JSON, no other text.`
 
         {/* MILEAGE */}
         <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden', padding: '12px 16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '12px', gap: '16px' }}>
-            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0', flexShrink: 0 }}>Mileage Calculation</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', minWidth: 0 }}>
-              <span style={{ color: '#f59e0b', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.mi)}</span>
-              <div style={{ width: 'min(320px, 42vw)', maxWidth: '100%' }}>
-                <MileageStreetViewPreview
-                  addressProp={String(p.address || '')}
-                  addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
-                  addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
-                  placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
-                  geoRetryNonce={mileageSvRetryNonce}
-                  onPersistGeometry={persistStreetViewGeometry}
+          {/* Header: title + running total */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0' }}>Mileage Calculation</h4>
+            <span style={{ color: '#f59e0b', fontWeight: '600', fontFamily: 'monospace' }}>{fmt(t.mi)}</span>
+          </div>
+          {/* Body: left inputs | right street view + address — stacks on narrow screens */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px' }}>
+            {/* Left: 2×2 numeric input grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', alignContent: 'start' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                  Miles Round Trip
+                </label>
+                <input
+                  type="number"
+                  value={p.mileRT || 30}
+                  onChange={e => editMileage('mileRT', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px',
+                    backgroundColor: '#1e2130',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '4px',
+                    color: 'var(--t1)',
+                    fontFamily: 'monospace',
+                  }}
                 />
               </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                  Days on Site
+                </label>
+                <input
+                  type="number"
+                  value={p.miDays || 12}
+                  onChange={e => editMileage('miDays', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px',
+                    backgroundColor: '#1e2130',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '4px',
+                    color: 'var(--t1)',
+                    fontFamily: 'monospace',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                  Rate (per mile)
+                </label>
+                <div style={{ color: 'var(--t3)', fontFamily: 'monospace', fontSize: '13px', fontWeight: '500', padding: '6px 8px', backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '4px' }}>
+                  ${(backup.settings?.mileRate || 0.66).toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                  Total Miles
+                </label>
+                <div style={{ color: '#22d3ee', fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', padding: '6px', backgroundColor: 'rgba(6,182,212,0.08)', borderRadius: '4px', border: '1px solid rgba(6,182,212,0.2)' }}>
+                  {num(p.mileRT || 0) * num(p.miDays || 0)} mi
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '3px' }}>
+                  {p.mileRT || 0} RT × {p.miDays || 0} days
+                </div>
+              </div>
             </div>
-          </div>
-          <MileageProjectAddress
-            addressProp={String(p.address || '')}
-            addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
-            addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
-            placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
-            onCommit={applyProjectAddressCommit}
-            onRequestStreetViewRetry={() => setMileageSvRetryNonce((n) => n + 1)}
-          />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', fontSize: '13px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                Miles Round Trip
-              </label>
-              <input
-                type="number"
-                value={p.mileRT || 30}
-                onChange={e => editMileage('mileRT', e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '6px',
-                  backgroundColor: '#1e2130',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '4px',
-                  color: 'var(--t1)',
-                  fontFamily: 'monospace',
-                }}
+            {/* Right: project map + address input below */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <MileageProjectMapPreview
+                addressProp={String(p.address || '')}
+                addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
+                addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
+                placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
+                geoRetryNonce={mileageMapRetryNonce}
+                onPersistGeometry={persistProjectAddressGeometry}
               />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                Days on Site
-              </label>
-              <input
-                type="number"
-                value={p.miDays || 12}
-                onChange={e => editMileage('miDays', e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '6px',
-                  backgroundColor: '#1e2130',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '4px',
-                  color: 'var(--t1)',
-                  fontFamily: 'monospace',
-                }}
+              <MileageProjectAddress
+                addressProp={String(p.address || '')}
+                addressLatProp={typeof p.addressLat === 'number' ? p.addressLat : undefined}
+                addressLngProp={typeof p.addressLng === 'number' ? p.addressLng : undefined}
+                placeIdProp={typeof p.placeId === 'string' ? p.placeId : undefined}
+                onCommit={applyProjectAddressCommit}
+                onRequestMapRetry={() => setMileageMapRetryNonce((n) => n + 1)}
               />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                Total Miles
-              </label>
-              <div style={{ color: '#22d3ee', fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', padding: '6px', backgroundColor: 'rgba(6,182,212,0.08)', borderRadius: '4px', border: '1px solid rgba(6,182,212,0.2)' }}>
-                {num(p.mileRT || 0) * num(p.miDays || 0)} mi
-              </div>
-              <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '3px' }}>
-                {p.mileRT || 0} RT × {p.miDays || 0} days
-              </div>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
-                Rate (per mile)
-              </label>
-              <div style={{ color: 'var(--t2)', fontFamily: 'monospace', fontSize: '13px', padding: '6px' }}>
-                ${(backup.settings?.mileRate || 0.66).toFixed(2)}
-              </div>
             </div>
           </div>
         </div>
