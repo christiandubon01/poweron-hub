@@ -384,6 +384,14 @@ function SolarEstimateSettingsPanel() {
         </div>
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Electrical Upgrades</p>
+          <p className="mt-1 text-[11px] text-slate-400">Applied in Summary only when Main panel upgrade is enabled in System Config.</p>
+          <div className="mt-3">
+            {field('mainPanelUpgradeCost', 'Main panel upgrade cost')}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Permit Cost by Size</p>
           <p className="mt-1 text-[11px] text-slate-500">Small, medium, and large system-size ranges for permit cost defaults.</p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">

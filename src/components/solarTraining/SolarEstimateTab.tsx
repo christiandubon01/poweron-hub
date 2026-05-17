@@ -1290,9 +1290,7 @@ function SystemConfigStep({
               ))}
             </div>
           </div>
-        </div>
 
-        <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
           <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
@@ -1311,6 +1309,25 @@ function SystemConfigStep({
               </button>
             </div>
           </div>
+
+          {hasBattery && (
+            <div>
+              <FieldLabel>Battery size</FieldLabel>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <p className="text-2xl font-semibold text-emerald-200">{data.batterySizeKwh.toFixed(1)} kWh</p>
+                <p className="text-xs text-slate-500">5-40 kWh</p>
+              </div>
+              <input
+                type="range"
+                min="5"
+                max="40"
+                step="0.5"
+                value={data.batterySizeKwh}
+                onChange={(event) => updateField('batterySizeKwh', Number(event.target.value))}
+                className="mt-3 h-2 w-full accent-emerald-400"
+              />
+            </div>
+          )}
 
           <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1333,26 +1350,9 @@ function SystemConfigStep({
               Current main breaker: {findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)}
             </p>
           </div>
+        </div>
 
-          {hasBattery && (
-            <div>
-              <FieldLabel>Battery size</FieldLabel>
-              <div className="mt-2 flex items-end justify-between gap-3">
-                <p className="text-2xl font-semibold text-emerald-200">{data.batterySizeKwh.toFixed(1)} kWh</p>
-                <p className="text-xs text-slate-500">5-40 kWh</p>
-              </div>
-              <input
-                type="range"
-                min="5"
-                max="40"
-                step="0.5"
-                value={data.batterySizeKwh}
-                onChange={(event) => updateField('batterySizeKwh', Number(event.target.value))}
-                className="mt-3 h-2 w-full accent-emerald-400"
-              />
-            </div>
-          )}
-
+        <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
           <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
             <FieldLabel hint="Used for suggested sizing">Target solar offset</FieldLabel>
             <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1437,6 +1437,9 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
     { label: 'Blueprint', value: breakdown.blueprintCost },
     { label: 'Mobility', value: breakdown.mobilityCost, detail: breakdown.mobilityLabel },
     { label: 'Delivery', value: breakdown.deliveryCost, detail: breakdown.deliveryLabel },
+    ...(breakdown.mainPanelUpgradeCost > 0
+      ? [{ label: 'Main panel upgrade', value: breakdown.mainPanelUpgradeCost }]
+      : []),
   ]
 
   return (
@@ -1452,7 +1455,7 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
           {formatMoney(breakdown.totalEstimatedInstallCost)}
         </span>
       </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         {rows.map(row => (
           <div key={row.label} className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{row.label}</p>

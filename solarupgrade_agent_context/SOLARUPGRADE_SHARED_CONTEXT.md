@@ -2203,3 +2203,59 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Step 4 System Config cleanup complete. Step 4 no longer renders Modeled Install Cost or any settings-cost display. It now shows design controls only: monthly usage, system size, panel wattage, Solar Plus Battery toggle, Main Panel Upgrade toggle, battery size when enabled, target offset, and compact design info. `SolarEstimateData.mainPanelUpgradeNeeded` persists in drafts/saved estimates; older data derives the default from breaker size. Summary still uses Settings-driven cost logic unchanged and now includes Main panel upgrade Yes/No. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE SYSTEM CONFIG LAYOUT AND PANEL COST COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Reorganized Step 4 System Config so the left side contains Monthly Usage, System Size, Panel Wattage, Solar Plus Battery, conditional Battery Size, and Main Panel Upgrade.
+- Reorganized the right side so it only contains Target Solar Offset and the four summary boxes: Mode, Panels, Target Offset, and Main Panel Upgrade.
+- Added `mainPanelUpgradeCost` to Solar Estimate Settings with default `$2,500`, localStorage normalization, and reset-default support.
+- Added a Settings Hub `Main panel upgrade cost` input under a new Electrical Upgrades settings card.
+- Updated the shared install cost calculator so Summary includes the main panel upgrade cost only when `mainPanelUpgradeNeeded` is ON.
+- Added Main panel upgrade to the Summary cost breakdown only when that cost is active.
+- Preserved the existing Settings Hub local modifications already present in `V15rSettingsPanel.tsx` while adding the new scoped field.
+
+WHAT WAS LEARNED:
+- Step 4 can remain completely cost-free while Summary still uses the settings-driven calculator.
+- The Solar Estimate settings service normalization pattern makes adding a new localStorage-backed setting safe for existing stored settings.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep optional breakdown rows conditional so zero-cost settings do not clutter Summary.
+- Add settings defaults and normalization together so reset defaults, old storage, and new storage stay aligned.
+
+BUGS / RISKS:
+- Screenshot QA should verify the Step 4 two-column balance and that the right side contains only Target Solar Offset plus the four summary boxes.
+- Screenshot QA should verify the new Settings Hub Electrical Upgrades card.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Verify Summary totals increase by the configured Main panel upgrade cost when the Step 4 toggle is ON, and do not increase when it is OFF.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped System Config layout and main panel cost setting complete. Step 4 left side now holds the design controls including Solar Plus Battery, conditional Battery Size, and Main Panel Upgrade; the right side only holds Target Solar Offset and four summary boxes. Solar Estimate Settings now includes `mainPanelUpgradeCost` defaulting to `$2,500` under Electrical Upgrades. Summary install cost includes that amount only when `mainPanelUpgradeNeeded` is ON, and the cost breakdown shows a Main panel upgrade row only when active. Typecheck passes.

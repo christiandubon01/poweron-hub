@@ -19,6 +19,7 @@ export type SolarEstimateSettings = {
   largeBlueprintCost: number
   flatDeliveryCost: number
   deliveryCostPerMile: number
+  mainPanelUpgradeCost: number
 }
 
 export type SolarEstimateCostBreakdown = {
@@ -29,6 +30,7 @@ export type SolarEstimateCostBreakdown = {
   blueprintCost: number
   mobilityCost: number
   deliveryCost: number
+  mainPanelUpgradeCost: number
   totalEstimatedInstallCost: number
   combinedHourlyLaborRate: number
   distanceMiles: number | null
@@ -52,6 +54,7 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   largeBlueprintCost: 725,
   flatDeliveryCost: 300,
   deliveryCostPerMile: 0,
+  mainPanelUpgradeCost: 2500,
 }
 
 export function getCombinedHourlyLaborRate(settings: SolarEstimateSettings): number {
@@ -86,6 +89,7 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     largeBlueprintCost: safeNumber(raw.largeBlueprintCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.largeBlueprintCost),
     flatDeliveryCost: safeNumber(raw.flatDeliveryCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.flatDeliveryCost),
     deliveryCostPerMile: safeNumber(raw.deliveryCostPerMile, DEFAULT_SOLAR_ESTIMATE_SETTINGS.deliveryCostPerMile),
+    mainPanelUpgradeCost: safeNumber(raw.mainPanelUpgradeCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mainPanelUpgradeCost),
   }
 }
 
@@ -108,7 +112,7 @@ export function saveSolarEstimateSettings(settings: SolarEstimateSettings): Sola
 }
 
 export function calculateSolarEstimateInstallCost(
-  data: Pick<SolarEstimateData, 'systemSizeKw' | 'panelWattage'>,
+  data: Pick<SolarEstimateData, 'systemSizeKw' | 'panelWattage' | 'mainPanelUpgradeNeeded'>,
   settings: SolarEstimateSettings,
   distanceMiles: number | null = null
 ): SolarEstimateCostBreakdown {
@@ -130,7 +134,10 @@ export function calculateSolarEstimateInstallCost(
   const panelLaborCost = panelCount * settings.panelInstallLaborCost
   const mobilityCost = settings.baseMobilityCost + mileageCost
   const deliveryCost = settings.flatDeliveryCost + deliveryMileageCost
-  const totalEstimatedInstallCost = Math.round(panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost)
+  const mainPanelUpgradeCost = data.mainPanelUpgradeNeeded ? settings.mainPanelUpgradeCost : 0
+  const totalEstimatedInstallCost = Math.round(
+    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost
+  )
 
   return {
     panelCount,
@@ -140,6 +147,7 @@ export function calculateSolarEstimateInstallCost(
     blueprintCost,
     mobilityCost,
     deliveryCost,
+    mainPanelUpgradeCost,
     totalEstimatedInstallCost,
     combinedHourlyLaborRate: getCombinedHourlyLaborRate(settings),
     distanceMiles,
