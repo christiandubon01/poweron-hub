@@ -761,3 +761,55 @@ NO — no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV Charger Addition + Labor formula selector phase complete. evChargerAddition in SolarEstimateData, evChargerAdditionCost ($1,500) and laborFormulaMode ('panelRate') in SolarEstimateSettings. Step 4 toggle below Main Panel Upgrade. Cost breakdown includes EV charger row when ON. Settings Hub Electrical Upgrades is now 2-col with both costs. Labor box has Hourly crew / Panel rate selector with disabled fields and future-modeling note. Typecheck passes. Commit: d57277e.
+
+---
+
+## LABOR HOURS PER SYSTEM COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+bcdbc91
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Add Labor Hours per System to Solar Estimate Settings
+
+WHAT CHANGED:
+- Added `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) to `SolarEstimateSettings` type, defaults, and normalization.
+- `calculateSolarEstimateInstallCost` now branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate × laborHours[tier]`; panelRate still uses `panelCount × panelInstallLaborCost`.
+- Settings Hub has new "Labor Hours per System" card below Permit Cost by Size with three `numberField` inputs (hrs suffix).
+
+WHAT WAS LEARNED:
+- No changes to SolarEstimateTab.tsx needed — cost math flows through existing `estimateSettings` argument.
+- `panelLaborCost` in breakdown correctly carries both formula modes with no shape change.
+
+BUGS / RISKS:
+- Tier boundaries in `getSolarSystemSizeTier` (≤6, ≤12) differ slightly from UI labels (3–7, 7–15, 15–30). This was pre-existing and unchanged.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- If the amber "hourly mode not yet affecting cost" note in the Labor box needs removal now that cost math is wired, target V15rSettingsPanel.tsx Labor box.
+
+NEXT PHASE READY:
+NO — no active build phase defined.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Labor Hours per System added. `laborHoursSmall/Medium/Large` fields in `SolarEstimateSettings` with defaults 16/32/48, persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew = combinedRate × laborHours[tier], panelRate = panelCount × panelInstallLaborCost. Settings Hub "Labor Hours per System" card below Permit Cost by Size with hrs-suffixed inputs. No SolarEstimateTab.tsx changes needed. Typecheck passes. Commit: bcdbc91.

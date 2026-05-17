@@ -2330,3 +2330,58 @@ NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV Charger Addition toggle added to Step 4 System Config below Main Panel Upgrade. Default OFF, persists in saved estimates. Settings Hub Electrical Upgrades box now shows both Main Panel Upgrade Cost and EV Charger Addition Cost ($1,500 default) in a 2-col grid. Summary cost includes EV charger cost only when toggled ON; breakdown row appears only when active. Labor formula selector (Hourly crew / Panel rate) added as compact button group in Labor box header. Hourly inputs dim when Panel rate mode is selected; panel labor input dims when Hourly crew mode is selected. Hourly mode persists but does not affect cost math yet — amber note shown. Typecheck passes clean. Commit: d57277e.
+
+---
+
+## LABOR HOURS PER SYSTEM COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+bcdbc91
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Add Labor Hours per System to Solar Estimate Settings
+
+WHAT CHANGED:
+- `SolarEstimateSettings.ts`: Added `laborHoursSmall`, `laborHoursMedium`, `laborHoursLarge` to `SolarEstimateSettings` type. Defaults: 16 / 32 / 48 hrs. Added normalization via `safeNumber` in `normalizeSolarEstimateSettings`. Updated `calculateSolarEstimateInstallCost` to branch on `laborFormulaMode`: when `hourlyCrew`, computes `getCombinedHourlyLaborRate(settings) * laborHours[tier]` instead of `panelCount * panelInstallLaborCost`. Existing `panelLaborCost` breakdown key carries the result in both modes.
+- `V15rSettingsPanel.tsx`: Added "Labor Hours per System" card directly below Permit Cost by Size. Three inputs via `numberField` with 'hrs' suffix: Small System (3–7 kW), Medium System (7–15 kW), Large System (15–30 kW). Always editable (not disabled by mode) so values can be pre-filled before switching.
+
+WHAT WAS LEARNED:
+- `panelLaborCost` in `SolarEstimateCostBreakdown` is the correct vehicle for both formulas — no new breakdown key needed.
+- `numberField` already supports a suffix string, making hrs display trivial.
+- No changes to `SolarEstimateTab.tsx` were required: `calculateSolarEstimateInstallCost` is called with `estimateSettings` which already includes `laborFormulaMode`, so the cost math updates automatically.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Formula branching pattern in `calculateSolarEstimateInstallCost`: derive `laborHours` from tier, then branch on `laborFormulaMode`. Keeps the breakdown shape stable while supporting multiple formula modes.
+
+BUGS / RISKS:
+- `getSolarSystemSizeTier` uses ≤6 kW for small, ≤12 kW for medium. Settings UI labels show 3–7 kW / 7–15 kW / 15–30 kW (matching existing Permit/Blueprint labels). Slight mismatch is acceptable and consistent with prior phases.
+- No Supabase, no new packages, no formula services touched.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA: verify "Labor Hours per System" box appears below Permit Cost by Size in Settings Hub.
+- Screenshot QA: verify switching to Hourly crew mode changes cost breakdown Panel labor value.
+- If amber "hourly mode not yet affecting cost" note in Labor box should be removed now that cost math is wired, target `V15rSettingsPanel.tsx` Labor box area.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Labor Hours per System added to Solar Estimate Settings. `SolarEstimateSettings` now has `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate × laborHours[tier]`; panelRate still uses `panelCount × panelInstallLaborCost`. Settings Hub has a new "Labor Hours per System" card with three `numberField` inputs (hrs suffix). No changes to SolarEstimateTab.tsx or any other file. Typecheck passes. Commit: bcdbc91.
