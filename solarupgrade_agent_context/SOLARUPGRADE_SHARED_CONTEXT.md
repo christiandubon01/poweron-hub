@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Hardware Index added to Solar Estimate Settings
+Anchor Average Electric Bill to estimate month (season-aware monthly consumption)
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -772,15 +772,16 @@ Latest completed commits:
 - Home Details electrical configuration and appliance selector: see completion log below
 - Hardware Index to Solar Estimate Settings: `9e65fc1`
 - Hardware Cost Tiers to Hardware Index: `c81cb48`
+- Anchor bill usage to estimate month: `3ba7339`
 
 Current ready phase:
 No active build phase. Ready for screenshot QA.
 
 Current risk level:
-Low. Changes are additive only â€” new fields on settings type, new normalizers, new UI box inside Hardware Index. No cost math, NEM formulas, estimate steps, Supabase, or unrelated tabs changed. Typecheck passes clean.
+Low. Changes are scoped to Monthly Bill chart logic in SolarEstimateTab.tsx only. No NEM 3.0 formulas, no other chart tabs, no Supabase, no localStorage, no settings, no other steps changed. Typecheck passes clean.
 
 Recommended action:
-Screenshot QA: open Settings Hub > Solar Estimate Settings > Hardware Index, confirm "Hardware Cost by System Size" box shows Small/Medium/Large inputs with $2500/$4500/$7500 defaults. Edit values, reload, confirm persistence. Also confirm existing Hardware Index item entries still persist.
+Screenshot QA: open Solar Estimate, enter an Average Electric Bill (e.g. $350). Go to Estimate Summary > Monthly Bill chart. Verify: (1) the helper text shows the anchor month and climate profile; (2) the bar chart shows seasonal variation; (3) post-solar bars do not drop to near-zero for small systems; (4) tooltip shows Anchor month, Climate profile, Modeled usage, Current cost, Projected cost, Savings.
 
 ---
 
@@ -2627,3 +2628,64 @@ NO — no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Seasonal Monthly Bill chart added. `SeasonalBillChart` replaces `BillComparisonChart` in the monthly_bill tab. Climate profile detected from address text via `detectClimateProfile`. Two profiles: `hotDesert` (Coachella Valley keywords) and `defaultSouthernCalifornia`. Seasonal consumption and solar production weights normalize so annual totals are preserved. Battery benefit derived from flat nemResult ratio. Tooltip shows profile, usage kWh, costs, savings. Chart note shows profile label. All other chart tabs untouched. Typecheck passes.
+
+---
+
+## ANCHOR BILL TO ESTIMATE MONTH COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+3ba7339
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Anchor Average Electric Bill to estimate month — season-aware monthly consumption
+
+WHAT CHANGED:
+- Added `getAnchorBlendedRate(utility, ratePlan)`: returns `getAverageImportRate` when rate plan is known; falls back to SCE=$0.36, IID=$0.22, default=$0.32 when rate plan is null.
+- Added `computeAnchoredMonthlyKwhByMonth(averageBill, blendedRate, climateProfile, anchorMonthIndex)`: converts bill to anchor-month kWh, derives baseline, returns 12-month array using raw seasonal weights.
+- Added `computeNormalizedMonthlyKwhByMonth(averageMonthlyKwh, climateProfile)`: preserves old behavior for home_size / direct kWh paths.
+- Refactored `getSeasonalBillData` to accept `monthlyKwhByMonth: number[]` instead of flat `monthlyKwh: number`; removed internal consumption weight normalization; added conservative savings floors (solar-only ≥ 25%, solar+battery ≥ 15% of current bill).
+- `SeasonalBillChart`: added `anchorMonthLabel` prop; tooltip adds "Anchor month" row; helper text below subtitle shows profile + anchor month.
+- `SummaryChartModule`: added `monthlyKwhByMonth` and `anchorMonthLabel` props, passed to `SeasonalBillChart`.
+- `EstimateSummaryStep`: added `anchorMonthIndex` prop; computes `anchorMonthLabel`, `blendedRate`, and `monthlyKwhByMonth`; passes all to `SummaryChartModule`.
+- `ActiveStepPanel`: added `anchorMonthIndex` prop, passes to `EstimateSummaryStep`.
+- `SolarEstimateTab`: computes `anchorMonthIndex` via `useMemo` — uses saved estimate's `createdAt` when opened from library, else `new Date().getMonth()`.
+
+WHAT WAS LEARNED:
+- `getSeasonalBillData` was the right place to separate "what kWh array" from "how to chart it"; moving array construction out keeps the function pure.
+- Two chart components share the same title string — uniquely identify by `aria-label` when editing.
+- `useMemo` is already imported; anchor month can be derived reactively from `activeEstimateId` + `savedEstimates` with no new state.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Anchor-month pattern: `baselineMonthlyKwh = anchorMonthKwh / weights[anchorMonth]` → `monthly[m] = baseline * weights[m]`. Reusable for any future seasonal anchoring.
+- Conservative planning floor: `Math.max(rawAfter, beforeCost * FLOOR_PCT)` applied per month at the data layer keeps the chart honest.
+
+BUGS / RISKS:
+- `EnergyFlow24hChart` and other chart tabs still use flat `monthlyKwh` — this is intentional per scope. If those tabs need seasonal accuracy, add a separate phase.
+- Savings floors (25% / 15%) are conservative planning assumptions only; real NEM 3.0 outcomes may differ.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Home Size seasonal anchoring: when consumptionMethod is home_size, the anchor approach could also be applied (use home size → flat kWh → normalize). This is deferred per task scope.
+- If the 24h energy flow chart needs seasonal anchoring, add a separate `monthlyKwhByMonth` prop path to `EnergyFlow24hChart`.
+
+NEXT PHASE READY:
+NO — no active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Anchor bill to estimate month complete. `SolarEstimateTab.tsx` only. `computeAnchoredMonthlyKwhByMonth` + `computeNormalizedMonthlyKwhByMonth` + `getAnchorBlendedRate` added. `getSeasonalBillData` now takes `number[]` instead of flat kWh. Savings floors 25%/15% applied per month. `SeasonalBillChart` shows anchor month in subtitle label and tooltip. Anchor month = saved estimate createdAt month if opened from library, else current month. Typecheck passes. Commit: 3ba7339.

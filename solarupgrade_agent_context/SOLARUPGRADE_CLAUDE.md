@@ -1126,3 +1126,45 @@ None. Ready for screenshot QA.
 
 NEXT PHASE READY:
 NO — ready for screenshot QA.
+
+---
+
+## ANCHOR BILL TO ESTIMATE MONTH COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+3ba7339
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Anchor Average Electric Bill to estimate month — season-aware monthly consumption
+
+WHAT CHANGED:
+- `getAnchorBlendedRate(utility, ratePlan)` — utility fallbacks when no rate plan selected.
+- `computeAnchoredMonthlyKwhByMonth(bill, rate, profile, anchorMonthIndex)` — anchor-month → baseline → 12-month array.
+- `computeNormalizedMonthlyKwhByMonth(avgKwh, profile)` — old normalization path for home_size / direct kWh.
+- `getSeasonalBillData` refactored: takes `number[]`, no internal consumption normalization, adds 25%/15% savings floors.
+- `SeasonalBillChart`: `anchorMonthLabel` prop; anchor month in subtitle + tooltip.
+- `SummaryChartModule`, `EstimateSummaryStep`, `ActiveStepPanel`, `SolarEstimateTab`: prop chain for `anchorMonthIndex` / `anchorMonthLabel` / `monthlyKwhByMonth`.
+- Anchor month derived from saved estimate `createdAt` when loaded from library; else `new Date().getMonth()`.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE READY:
+NO — ready for screenshot QA.
