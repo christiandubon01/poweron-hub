@@ -876,3 +876,59 @@ NO — no active build phase defined. Branch ready for browser QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Hardware Index added to Solar Estimate Settings. `HardwareEntry` + `HardwareIndexData` types in `SolarEstimateSettings.ts`. Persisted in existing `poweron.solarTraining.solarEstimateSettings` key. UI: `HardwareIndexPanel` with `EntrySection` CRUD (title, supplier, wattage/spec, price, remove). Three sections: Solar Modules, Hardware (5 subdivisions), Electrical Equipment (3 subdivisions). Placed below Blueprint Cost by Size, above Stored locally message. Independently collapsible. Does not affect cost math. Typecheck passes. Commit: 9e65fc1.
+
+---
+
+## HARDWARE COST TIERS COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+c81cb48
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+
+ACTIVE PHASE COMPLETED:
+Add hardware cost by system size to Hardware Index
+
+WHAT CHANGED:
+- Added `hardwareCostSmall` (2500), `hardwareCostMedium` (4500), `hardwareCostLarge` (7500) to `SolarEstimateSettings` type, defaults, and normalization.
+- Added `hwCostInputClass` module-scope constant for `$`-prefixed inputs in `HardwareIndexPanel`.
+- Updated `HardwareIndexPanel` props to accept `hardwareCostSmall`, `hardwareCostMedium`, `hardwareCostLarge`, `onUpdateCost`.
+- Added "Hardware Cost by System Size" box at the bottom of Hardware Index expanded content with 3 tier inputs (3–7 kW, 7–15 kW, 15–30 kW).
+- Updated `<HardwareIndexPanel>` call site to pass cost fields and `updateSetting` as `onUpdateCost`.
+
+WHAT WAS LEARNED:
+- When a new settings field belongs to the top-level settings object but must appear in a sub-panel, pass it as a prop rather than restructuring the data model.
+- `as const` on the tuple array lets TypeScript narrow key types in map() — clean pattern for rendering N similar fields without N separate JSX blocks.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Tuple-map pattern: `([['key', 'Label', 'hint', value], ...] as const).map(([key, label, hint, value]) => ...)` — compact way to render a set of same-shape fields inside a sub-panel.
+
+BUGS / RISKS:
+- Hardware cost does not affect estimate math yet. Labeled in UI.
+- Existing Hardware Index item entries are unaffected.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- If hardware cost is to be wired to cost math: extend `calculateSolarEstimateInstallCost` to add `hardwareCost[tier]` from settings; add `hardwareCost` line to `SolarEstimateCostBreakdown`.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Hardware cost tiers added to `SolarEstimateSettings.ts` (hardwareCostSmall/Medium/Large, defaults 2500/4500/7500, persisted in existing localStorage key). `HardwareIndexPanel` in `V15rSettingsPanel.tsx` now renders a "Hardware Cost by System Size" box with 3 $-prefixed tier inputs below Solar Modules, Hardware, and Electrical Equipment sections. Saved via existing `updateSetting` handler. Does not affect estimate cost math yet. Typecheck passes. Commit: c81cb48.

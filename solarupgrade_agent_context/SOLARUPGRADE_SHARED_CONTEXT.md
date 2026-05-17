@@ -771,15 +771,16 @@ Latest completed commits:
 - Local Saved Estimates: see Local Saved Estimates completion log below
 - Home Details electrical configuration and appliance selector: see completion log below
 - Hardware Index to Solar Estimate Settings: `9e65fc1`
+- Hardware Cost Tiers to Hardware Index: `c81cb48`
 
 Current ready phase:
 No active build phase. Ready for screenshot QA.
 
 Current risk level:
-Low. Hardware Index is additive only — new types, new normalizers, new UI. No cost math, NEM formulas, estimate steps, Supabase, or unrelated tabs changed. Typecheck passes clean.
+Low. Changes are additive only — new fields on settings type, new normalizers, new UI box inside Hardware Index. No cost math, NEM formulas, estimate steps, Supabase, or unrelated tabs changed. Typecheck passes clean.
 
 Recommended action:
-Screenshot QA: open Settings Hub > Solar Estimate Settings, expand the Hardware Index panel, add entries to Solar Modules / Hardware subdivisions / Electrical Equipment subdivisions, reload and confirm entries persist.
+Screenshot QA: open Settings Hub > Solar Estimate Settings > Hardware Index, confirm "Hardware Cost by System Size" box shows Small/Medium/Large inputs with $2500/$4500/$7500 defaults. Edit values, reload, confirm persistence. Also confirm existing Hardware Index item entries still persist.
 
 ---
 
