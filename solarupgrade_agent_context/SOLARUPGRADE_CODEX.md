@@ -980,3 +980,66 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Size-range label polish complete in `src/components/v15r/V15rSettingsPanel.tsx`. Permit Cost by Size and Blueprint Cost by Size now visibly label each tier: Small `5–15 kW`, Medium `15–30 kW`, Large `30–50 kW`. Existing input keys, saved values, formulas, threshold logic, persistence, Supabase behavior, and unrelated Settings Hub/Solar Estimate logic were not changed. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE SYSTEM CONFIG DESIGN CLEANUP COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Clean System Config design step and add main panel upgrade toggle
+
+WHAT CHANGED:
+- Removed the Step 4 green `Modeled install cost` display card.
+- Removed Step 4's `Settings cost` design row and kept Summary's Settings-driven install cost logic unchanged.
+- Added `mainPanelUpgradeNeeded` to `SolarEstimateData` with default `false`.
+- Added breaker-based defaulting: `100A`, `125A`, and `150A` default ON; `200A`, `225A`, `400A`, and `unknown` default OFF.
+- Added a clean `Main panel upgrade` toggle directly below the Solar Plus Battery toggle in Step 4.
+- Reworked the Solar Plus Battery toggle into a premium dark card with label/helper text on the left and an unclipped right-aligned switch.
+- Added Main panel upgrade Yes/No to Step 4 design info and Step 5 Summary values.
+- Preserved explicit saved/draft toggle values while deriving a default for older saved data without the field.
+
+WHAT WAS LEARNED:
+- Main breaker values are typed with `A` suffixes, not bare numbers.
+- Step 4 can be decoupled from install-cost display without affecting Summary's `calculateSolarEstimateInstallCost` flow.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Derive new local-state defaults during normalization only when old saved records do not have the new field.
+- Keep switches inside a padded flex card and move the knob with a block transform to avoid clipped toggle rendering.
+
+BUGS / RISKS:
+- Screenshot QA is recommended for Step 4 toggles and the conditional battery-size slider.
+- An unrelated modified `src/components/v15r/V15rSettingsPanel.tsx` existed before this commit and was not staged.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Verify Step 4 no longer displays any install cost card or settings-cost row.
+- Verify Main Panel Upgrade defaults ON for `100A`, `125A`, `150A`, and OFF for `200A`, `225A`, `400A`, and `unknown`, while remaining manually toggleable.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Step 4 System Config design cleanup complete in `src/components/solarTraining/SolarEstimateTab.tsx`, with typed state added in `SolarEstimateTypes.ts`. Step 4 is now design-only and includes clean Solar Plus Battery and Main Panel Upgrade toggles. `mainPanelUpgradeNeeded` persists in drafts/saved estimates and older records derive the default from breaker size. Summary cost logic remains unchanged and Summary now shows Main panel upgrade Yes/No. Typecheck passes.

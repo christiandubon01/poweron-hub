@@ -257,6 +257,10 @@ function normalizeSelectedAppliances(value: unknown): SolarEstimateSelectedAppli
     .filter((appliance): appliance is SolarEstimateSelectedAppliance => Boolean(appliance))
 }
 
+function shouldDefaultMainPanelUpgrade(mainBreakerSize: MainBreakerSize): boolean {
+  return mainBreakerSize === '100A' || mainBreakerSize === '125A' || mainBreakerSize === '150A'
+}
+
 function normalizeEstimateData(
   data: Partial<SolarEstimateData> | null | undefined,
   fallbacks: SystemConfigFallbacks = {}
@@ -284,6 +288,10 @@ function normalizeEstimateData(
       : DEFAULT_ESTIMATE_DATA.panelWattage,
     batterySizeKwh: validNumber(raw.batterySizeKwh, fallbackBatterySize, 5, 40),
     installCost: validNumber(raw.installCost, fallbackInstallCost, 10000, 100000),
+    mainPanelUpgradeNeeded:
+      typeof raw.mainPanelUpgradeNeeded === 'boolean'
+        ? raw.mainPanelUpgradeNeeded
+        : shouldDefaultMainPanelUpgrade(raw.mainBreakerSize ?? DEFAULT_ESTIMATE_DATA.mainBreakerSize),
   }
 }
 
@@ -1203,23 +1211,26 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
 function SystemConfigStep({
   data,
   updateField,
-  estimateSettings,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
-  estimateSettings: SolarEstimateSettings
 }) {
   const hasBattery = data.systemMode === 'solar_plus_battery'
   const panelCount = Math.ceil((data.systemSizeKw * 1000) / data.panelWattage)
-  const costBreakdown = calculateSolarEstimateInstallCost(data, estimateSettings)
   const setBatteryEnabled = (enabled: boolean) => {
     updateField('systemMode', enabled ? 'solar_plus_battery' : 'solar_only')
   }
+  const toggleClass = (enabled: boolean) =>
+    `relative h-7 w-14 shrink-0 rounded-full border p-0.5 transition-colors ${
+      enabled ? 'border-emerald-400/60 bg-emerald-500/70' : 'border-slate-700 bg-slate-800'
+    }`
+  const knobClass = (enabled: boolean) =>
+    `block h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-7' : 'translate-x-0'}`
 
   return (
     <div>
       <SectionIntro icon={BatteryCharging} eyebrow="Step 04" title="Choose the system direction">
-        Tune the usage, system size, equipment assumptions, and battery path that the summary will model.
+        Tune the usage, system size, equipment assumptions, and design options that the summary will model.
       </SectionIntro>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
@@ -1260,66 +1271,67 @@ function SystemConfigStep({
             />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <FieldLabel>Panel wattage</FieldLabel>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {PANEL_WATTAGE_OPTIONS.map(watts => (
-                  <button
-                    key={watts}
-                    type="button"
-                    onClick={() => updateField('panelWattage', watts)}
-                    className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
-                      data.panelWattage === watts
-                        ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
-                        : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
-                    }`}
-                  >
-                    {watts}W
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <FieldLabel>Modeled install cost</FieldLabel>
-              <div className="mt-2 rounded-lg border border-emerald-800/60 bg-emerald-950/15 p-3">
-                <p className="text-2xl font-semibold text-emerald-200">
-                  {formatMoney(costBreakdown.totalEstimatedInstallCost)}
-                </p>
-                <p className="mt-2 text-xs leading-5 text-slate-500">
-                  Calculated from Solar Estimate Settings. Mobility and delivery use base/flat costs because distance
-                  is not inferred here.
-                </p>
-              </div>
+          <div>
+            <FieldLabel>Panel wattage</FieldLabel>
+            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+              {PANEL_WATTAGE_OPTIONS.map(watts => (
+                <button
+                  key={watts}
+                  type="button"
+                  onClick={() => updateField('panelWattage', watts)}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
+                    data.panelWattage === watts
+                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                      : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                  }`}
+                >
+                  {watts}W
+                </button>
+              ))}
             </div>
           </div>
         </div>
 
         <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
-          <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-            <div>
-              <FieldLabel>Solar plus battery</FieldLabel>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Toggle on to model storage for NEM 3.0 self-consumption and backup planning.
-              </p>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <FieldLabel>Solar plus battery</FieldLabel>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Toggle on to model storage for NEM 3.0 self-consumption and backup planning.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBatteryEnabled(!hasBattery)}
+                aria-pressed={hasBattery}
+                className={toggleClass(hasBattery)}
+              >
+                <span className={knobClass(hasBattery)} />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setBatteryEnabled(!hasBattery)}
-              aria-pressed={hasBattery}
-              className={`relative h-7 w-14 shrink-0 rounded-full border transition-colors ${
-                hasBattery
-                  ? 'border-emerald-400/60 bg-emerald-500/70'
-                  : 'border-slate-700 bg-slate-800'
-              }`}
-            >
-              <span
-                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                  hasBattery ? 'translate-x-7' : 'translate-x-1'
-                }`}
-              />
-            </button>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <FieldLabel>Main panel upgrade</FieldLabel>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Auto-enabled when the selected main breaker is below 200A.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateField('mainPanelUpgradeNeeded', !data.mainPanelUpgradeNeeded)}
+                aria-pressed={data.mainPanelUpgradeNeeded}
+                className={toggleClass(data.mainPanelUpgradeNeeded)}
+              >
+                <span className={knobClass(data.mainPanelUpgradeNeeded)} />
+              </button>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-600">
+              Current main breaker: {findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)}
+            </p>
           </div>
 
           {hasBattery && (
@@ -1368,8 +1380,8 @@ function SystemConfigStep({
           <div className="grid grid-cols-2 gap-3">
             <ReviewRow label="Mode" value={hasBattery ? 'Solar Plus Battery' : 'Solar Only'} />
             <ReviewRow label="Panels" value={`${panelCount} @ ${data.panelWattage}W`} />
-            <ReviewRow label="Permit tier" value={`${costBreakdown.systemSizeTier} system`} />
-            <ReviewRow label="Settings cost" value={formatMoney(costBreakdown.totalEstimatedInstallCost)} />
+            <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
+            <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
           </div>
         </div>
       </div>
@@ -2642,6 +2654,7 @@ function EstimateSummaryStep({
         <ReviewRow label="System size" value={`${solarSizeKw.toFixed(1)} kW`} />
         <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
         <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
+        <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
         <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
       </div>
 
@@ -2804,7 +2817,7 @@ function ActiveStepPanel({
     case 'energy_use':
       return <EnergyUseStep data={data} updateField={updateField} />
     case 'system_config':
-      return <SystemConfigStep data={data} updateField={updateField} estimateSettings={estimateSettings} />
+      return <SystemConfigStep data={data} updateField={updateField} />
     case 'estimate_summary':
       return (
         <EstimateSummaryStep
@@ -2886,7 +2899,17 @@ export default function SolarEstimateTab() {
 
   const updateField = useCallback(
     <K extends keyof SolarEstimateData>(key: K, value: SolarEstimateData[K]) => {
-      setData(d => ({ ...d, [key]: value }))
+      setData(d => {
+        if (key === 'mainBreakerSize') {
+          const mainBreakerSize = value as MainBreakerSize
+          return {
+            ...d,
+            mainBreakerSize,
+            mainPanelUpgradeNeeded: shouldDefaultMainPanelUpgrade(mainBreakerSize),
+          }
+        }
+        return { ...d, [key]: value }
+      })
     },
     []
   )

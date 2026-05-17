@@ -107,6 +107,7 @@ export interface SolarEstimateData {
   panelWattage: number;
   batterySizeKwh: number;
   installCost: number;
+  mainPanelUpgradeNeeded: boolean;
 
   // Navigation
   currentStep: EstimateStep;
@@ -140,6 +141,7 @@ export const DEFAULT_ESTIMATE_DATA: SolarEstimateData = {
   panelWattage: 420,
   batterySizeKwh: 13.5,
   installCost: 28000,
+  mainPanelUpgradeNeeded: false,
   currentStep: 'address',
 };
 
