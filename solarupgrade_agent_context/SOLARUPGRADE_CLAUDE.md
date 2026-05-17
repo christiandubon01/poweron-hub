@@ -941,7 +941,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-(see report below)
+4a411b3
 
 FILES CHANGED:
 - `src/services/solarTraining/SolarEstimateSettings.ts`
