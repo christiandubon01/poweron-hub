@@ -439,62 +439,84 @@ type SeasonalBillMonth = {
   fullLabel: string
   shortLabel: string
   kwh: number
+  solarProductionKwh: number
+  importedKwh: number
+  exportedKwh: number
   beforeCost: number
   afterCostNoBattery: number
   afterCostWithBattery: number
   savingsNoBattery: number
   savingsWithBattery: number
+  extraBatterySavings: number
 }
 
 function getSeasonalBillData(
   monthlyKwhByMonth: number[],
   solarSizeKw: number,
-  ratePlan: RatePlan,
   utility: Utility,
-  nemResult: ReturnType<typeof calculateNEM3Savings>,
+  climateProfile: ClimateProfile,
+  batterySizeKwh: number,
 ): SeasonalBillMonth[] {
-  const importRate = getAverageImportRate(ratePlan)
-  const schedule = TOU_RATE_SCHEDULES[ratePlan]
-  const fixedCharge = schedule?.monthly_fixed_charge ?? 10
-  const peakSunHours = utility === 'IID' ? 6.2 : 5.5
-  const derate = utility === 'IID' ? 0.77 : 0.8
-  const annualProductionKwh = solarSizeKw * peakSunHours * 365 * derate
-
+  const retailRate = getMonthlyBillRetailRate(utility)
+  const nemExportRate = 0.06
+  const fixedMonthlyCharge = 15
+  const annualProductionKwh = solarSizeKw * (climateProfile === 'hotDesert' ? 1650 : 1500)
   const solarWeightAvg = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.reduce((s, w) => s + w, 0) / 12
   const normalizedSolarWeights = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.map(w => w / solarWeightAvg)
-
-  const flatMonth = nemResult.monthly_breakdown[0]
-  const batteryRatio =
-    flatMonth && flatMonth.bill_after_solar_no_battery > 0
-      ? Math.min(1, flatMonth.bill_after_solar_with_battery / flatMonth.bill_after_solar_no_battery)
-      : 0.82
-
-  const NEM3_EXPORT_RATE = importRate * 0.25
+  const solarOnlySelfConsumptionRatio = 0.55
+  const batteryShiftCapacityMonthlyKwh = Math.max(0, batterySizeKwh) * 26
 
   return MONTH_FULL_LABELS.map((fullLabel, i) => {
     const kwh = monthlyKwhByMonth[i] ?? 0
     const solarProduction = (annualProductionKwh / 12) * normalizedSolarWeights[i]
-    const gridImport = Math.max(0, kwh - solarProduction)
-    const gridExport = Math.max(0, solarProduction - kwh)
-    const beforeCost = kwh * importRate + fixedCharge
-    const rawAfterNoBattery = Math.max(
-      fixedCharge,
-      gridImport * importRate - gridExport * NEM3_EXPORT_RATE + fixedCharge,
+    const selfConsumedKwh = Math.min(kwh, solarProduction * solarOnlySelfConsumptionRatio)
+    const exportedKwh = Math.max(0, solarProduction - selfConsumedKwh)
+    const importedKwh = Math.max(0, kwh - selfConsumedKwh)
+    const beforeCost = kwh * retailRate
+    const rawSolarOnlyCost =
+      fixedMonthlyCharge +
+      importedKwh * retailRate -
+      exportedKwh * nemExportRate
+    const afterCostNoBattery = Math.max(
+      rawSolarOnlyCost,
+      beforeCost * 0.45,
+      fixedMonthlyCharge,
     )
-    // Conservative planning floors: solar-only ≥ 25%, solar+battery ≥ 15% of current bill
-    const afterCostNoBattery = Math.max(rawAfterNoBattery, beforeCost * 0.25)
-    const afterCostWithBattery = Math.max(rawAfterNoBattery * batteryRatio, beforeCost * 0.15)
+    const extraShiftedKwh = Math.min(exportedKwh, batteryShiftCapacityMonthlyKwh)
+    const extraBatterySavings = extraShiftedKwh * Math.max(0, retailRate - nemExportRate)
+    const rawBatteryCost = afterCostNoBattery - extraBatterySavings
+    const afterCostWithBattery = Math.max(
+      0,
+      Math.min(
+        Math.max(
+          rawBatteryCost,
+          beforeCost * 0.30,
+          fixedMonthlyCharge,
+        ),
+        afterCostNoBattery,
+      ),
+    )
     return {
       fullLabel,
       shortLabel: MONTH_SHORT_LABELS[i],
       kwh: Math.round(kwh),
+      solarProductionKwh: Math.round(solarProduction),
+      importedKwh: Math.round(importedKwh),
+      exportedKwh: Math.round(exportedKwh),
       beforeCost,
       afterCostNoBattery,
       afterCostWithBattery,
       savingsNoBattery: Math.max(0, beforeCost - afterCostNoBattery),
       savingsWithBattery: Math.max(0, beforeCost - afterCostWithBattery),
+      extraBatterySavings: Math.max(0, afterCostNoBattery - afterCostWithBattery),
     }
   })
+}
+
+function getMonthlyBillRetailRate(utility: Utility | null): number {
+  if (utility === 'SCE') return 0.36
+  if (utility === 'IID') return 0.22
+  return 0.32
 }
 
 function getAverageImportRate(ratePlan: SolarEstimateRatePlan | null): number {
@@ -1932,24 +1954,22 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
 function SeasonalBillChart({
   monthlyKwhByMonth,
   solarSizeKw,
-  ratePlan,
   utility,
   hasBattery,
-  nemResult,
+  batterySizeKwh,
   climateProfile,
   anchorMonthLabel,
 }: {
   monthlyKwhByMonth: number[]
   solarSizeKw: number
-  ratePlan: RatePlan
   utility: Utility
   hasBattery: boolean
-  nemResult: ReturnType<typeof calculateNEM3Savings>
+  batterySizeKwh: number
   climateProfile: ClimateProfile
   anchorMonthLabel: string
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
-  const months = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, ratePlan, utility, nemResult)
+  const months = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, utility, climateProfile, batterySizeKwh)
   const maxBill = Math.max(1, ...months.map(m => m.beforeCost))
 
   // 3 bars per month when battery ON (grey / yellow / green), 2 when OFF (grey / yellow)
@@ -1977,6 +1997,10 @@ function SeasonalBillChart({
             {climateProfile === 'hotDesert'
               ? `Hot desert profile · anchored to ${anchorMonthLabel}`
               : `Southern California profile · anchored to ${anchorMonthLabel}`}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Projected bills use conservative NEM 3.0 import/export modeling. Solar Only savings are limited by daytime
+            self-consumption; battery savings are modeled as shifted export energy.
           </p>
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-400">
@@ -2021,7 +2045,7 @@ function SeasonalBillChart({
             const solarOnlyCost = month.afterCostNoBattery
             const batteryPlusCost = month.afterCostWithBattery
             const solarOnlySavings = month.savingsNoBattery
-            const extraBatterySavings = Math.max(0, solarOnlyCost - batteryPlusCost)
+            const extraBatterySavings = month.extraBatterySavings
             const totalBatterySavings = month.savingsWithBattery
 
             const groupW = hasBattery ? barW * 3 + gap * 2 : barW * 2 + gap
@@ -2035,20 +2059,24 @@ function SeasonalBillChart({
             const showTooltip = (event: React.MouseEvent) => {
               const position = getTooltipPosition(event)
               const rows: ChartTooltipRow[] = [
-                { label: 'Anchor month', value: anchorMonthLabel },
-                { label: 'Climate profile', value: climateProfile === 'hotDesert' ? 'Hot desert' : 'Default SoCal' },
+                { label: 'Month', value: month.fullLabel },
                 { label: 'Modeled usage', value: `${formatNumber(month.kwh)} kWh` },
-                { label: 'Current monthly cost', value: formatMoney(month.beforeCost) },
-                { label: 'Solar only projected', value: formatMoney(solarOnlyCost), tone: 'amber' },
+                { label: 'Solar production', value: `${formatNumber(month.solarProductionKwh)} kWh`, tone: 'amber' },
+                { label: 'Current bill', value: formatMoney(month.beforeCost) },
+                { label: 'Solar only projected bill', value: formatMoney(solarOnlyCost), tone: 'amber' },
                 { label: 'Solar only savings', value: formatMoney(solarOnlySavings), tone: 'cyan' },
               ]
               if (hasBattery) {
                 rows.push(
-                  { label: 'Solar + battery projected', value: formatMoney(batteryPlusCost), tone: 'emerald' },
+                  { label: 'Solar + battery projected bill', value: formatMoney(batteryPlusCost), tone: 'emerald' },
                   { label: 'Extra battery savings', value: formatMoney(extraBatterySavings), tone: 'emerald' },
                   { label: 'Total savings w/ battery', value: formatMoney(totalBatterySavings), tone: 'cyan' },
                 )
               }
+              rows.push(
+                { label: 'Imported kWh', value: `${formatNumber(month.importedKwh)} kWh` },
+                { label: 'Exported kWh', value: `${formatNumber(month.exportedKwh)} kWh` },
+              )
               setTooltip({ ...position, eyebrow: 'Monthly bill', title: month.fullLabel, rows })
             }
 
@@ -2879,6 +2907,7 @@ function SummaryChartModule({
   monthlyKwh,
   monthlyKwhByMonth,
   solarSizeKw,
+  batterySizeKwh,
   avgBeforeBill,
   avgAfterBill,
   systemCost,
@@ -2892,6 +2921,7 @@ function SummaryChartModule({
   monthlyKwh: number
   monthlyKwhByMonth: number[]
   solarSizeKw: number
+  batterySizeKwh: number
   avgBeforeBill: number
   avgAfterBill: number
   systemCost: number
@@ -2925,10 +2955,9 @@ function SummaryChartModule({
           <SeasonalBillChart
             monthlyKwhByMonth={monthlyKwhByMonth}
             solarSizeKw={solarSizeKw}
-            ratePlan={ratePlan}
             utility={utility}
             hasBattery={hasBattery}
-            nemResult={nemResult}
+            batterySizeKwh={batterySizeKwh}
             climateProfile={climateProfile}
             anchorMonthLabel={anchorMonthLabel}
           />
@@ -3266,6 +3295,7 @@ function EstimateSummaryStep({
         monthlyKwh={monthlyKwh}
         monthlyKwhByMonth={monthlyKwhByMonth}
         solarSizeKw={solarSizeKw}
+        batterySizeKwh={batterySizeKwh}
         avgBeforeBill={avgBeforeBill}
         avgAfterBill={avgAfterBill}
         systemCost={systemCost}
