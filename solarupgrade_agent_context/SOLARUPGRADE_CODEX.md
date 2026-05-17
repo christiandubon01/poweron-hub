@@ -626,3 +626,65 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Map render bug fix complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Satellite Roof Preview now has a guaranteed visible map surface (`min-height: 360px`, full width, no shrink collapse) and GoogleMap fills it with `{ width: '100%', height: '100%' }`. Autocomplete, coordinates, hybrid map mode, zoom `19`, and centered marker are unchanged. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE MAP QUALITY POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Scoped Solar Estimate map quality polish pass
+
+WHAT CHANGED:
+- Replaced the fixed Step 1 roof preview zoom `19` with a target/fallback zoom model.
+- Added `SOLAR_ROOF_TARGET_ZOOM = 20` and `SOLAR_ROOF_FALLBACK_ZOOM = 19`.
+- Added Google Maps `MaxZoomService` lookup for selected address coordinates when available.
+- The preview initially uses fallback zoom `19`, then applies `min(20, reportedMaxZoom)` so areas with lower native satellite resolution are not over-zoomed.
+- If `MaxZoomService` is missing or fails, the preview stays at fallback zoom `19`.
+- Kept the map centered on selected coordinates with the marker centered there.
+- Preserved `GoogleMap` `mapContainerStyle={{ width: '100%', height: '100%' }}` and the existing non-collapsing map surface.
+- Added/kept map options for hybrid imagery, `tilt: 0`, `heading: 0`, clickable icons off, fullscreen/map type/zoom controls on, and Street View off.
+- Removed unused custom dark map styles from the satellite preview so this component does not style the native imagery surface.
+
+WHAT WAS LEARNED:
+- `MaxZoomService` lets the app prefer roof-level zoom `20` without forcing Google to scale lower-resolution satellite tiles where native imagery tops out below that.
+- The existing map sizing fix remained valid; this pass only needed zoom and map option polish.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Apply a quick fallback zoom for initial map paint, then update zoom asynchronously after native imagery max zoom is known.
+- Use `google.maps.MapTypeId.HYBRID` once the Maps API is loaded while keeping a string fallback for pre-load safety.
+
+BUGS / RISKS:
+- Final imagery clarity still depends on Google's tile availability for the selected roof.
+- Browser QA with a real Maps key is recommended to confirm behavior across high-resolution and lower-resolution addresses.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Run Step 1 Address screenshot QA with a configured Maps key and multiple selected addresses to verify zoom `20` where available and lower max zoom where Google reports it.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Map quality polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 roof preview now targets zoom `20`, falls back to `19`, and uses `MaxZoomService` to cap zoom to the selected coordinate's native satellite max. It remains hybrid, top-down, manually zoomable, centered on the selected marker, and keeps existing fallback behavior. Typecheck passes.

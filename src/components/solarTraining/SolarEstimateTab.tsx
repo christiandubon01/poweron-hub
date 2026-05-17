@@ -90,29 +90,19 @@ const STEP_META: StepMeta[] = [
   },
 ]
 
-const darkMapStyles: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#111827' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#d1d5db' }] },
-  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#374151' }] },
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#243044' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#374151' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#111827' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#e5e7eb' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
-]
+const SOLAR_ROOF_TARGET_ZOOM = 20
+const SOLAR_ROOF_FALLBACK_ZOOM = 19
 
-const SOLAR_ROOF_MAP_ZOOM = 19
-
-const mapOptions: google.maps.MapOptions = {
+const baseMapOptions: google.maps.MapOptions = {
   disableDefaultUI: true,
   zoomControl: true,
+  fullscreenControl: true,
+  streetViewControl: false,
+  mapTypeControl: true,
   clickableIcons: false,
   gestureHandling: 'greedy',
-  mapTypeId: 'hybrid',
   tilt: 0,
-  styles: darkMapStyles,
+  heading: 0,
 }
 
 const FIELD_CLASS =
@@ -388,6 +378,8 @@ function SectionIntro({
 
 function AddressMapPreview({ data }: { data: SolarEstimateData }) {
   const mapRef = useRef<google.maps.Map | null>(null)
+  const zoomRequestRef = useRef(0)
+  const [roofMapZoom, setRoofMapZoom] = useState(SOLAR_ROOF_FALLBACK_ZOOM)
   const { isLoaded, loadError } = useV15rGoogleMapsLoader()
 
   const hasCoordinates =
@@ -401,14 +393,57 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
     return { lat: data.latitude as number, lng: data.longitude as number }
   }, [data.latitude, data.longitude, hasCoordinates])
 
-  useEffect(() => {
-    if (mapRef.current && center) {
-      mapRef.current.panTo(center)
-      mapRef.current.setMapTypeId('hybrid')
-      mapRef.current.setTilt(0)
-      mapRef.current.setZoom(SOLAR_ROOF_MAP_ZOOM)
+  const roofMapOptions = useMemo<google.maps.MapOptions>(() => {
+    const mapsApi = typeof window !== 'undefined' ? window.google?.maps : undefined
+
+    return {
+      ...baseMapOptions,
+      mapTypeId: mapsApi?.MapTypeId?.HYBRID ?? 'hybrid',
     }
-  }, [center])
+  }, [isLoaded])
+
+  useEffect(() => {
+    if (!center) {
+      setRoofMapZoom(SOLAR_ROOF_FALLBACK_ZOOM)
+      return
+    }
+
+    const mapsApi = typeof window !== 'undefined' ? window.google?.maps : undefined
+    const mapTypeId = mapsApi?.MapTypeId?.HYBRID ?? 'hybrid'
+
+    if (mapRef.current) {
+      mapRef.current.panTo(center)
+      mapRef.current.setMapTypeId(mapTypeId)
+      mapRef.current.setTilt(0)
+      mapRef.current.setHeading(0)
+      mapRef.current.setZoom(SOLAR_ROOF_FALLBACK_ZOOM)
+    }
+
+    if (!isLoaded || !mapsApi?.MaxZoomService) {
+      setRoofMapZoom(SOLAR_ROOF_FALLBACK_ZOOM)
+      return
+    }
+
+    const requestId = ++zoomRequestRef.current
+    const maxZoomService = new mapsApi.MaxZoomService()
+
+    maxZoomService.getMaxZoomAtLatLng(center, (result) => {
+      if (requestId !== zoomRequestRef.current) return
+
+      const maxZoom =
+        result.status === mapsApi.MaxZoomStatus.OK && typeof result.zoom === 'number' ? result.zoom : null
+      const bestZoom = maxZoom == null ? SOLAR_ROOF_FALLBACK_ZOOM : Math.min(SOLAR_ROOF_TARGET_ZOOM, maxZoom)
+
+      setRoofMapZoom(bestZoom)
+      if (mapRef.current) {
+        mapRef.current.panTo(center)
+        mapRef.current.setMapTypeId(mapTypeId)
+        mapRef.current.setTilt(0)
+        mapRef.current.setHeading(0)
+        mapRef.current.setZoom(bestZoom)
+      }
+    })
+  }, [center, isLoaded])
 
   if (!GOOGLE_MAPS_BROWSER_KEY || loadError) {
     const addressLabel = data.selectedAddressLabel || data.addressText
@@ -506,13 +541,15 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
           mapContainerStyle={{ width: '100%', height: '100%' }}
           mapContainerClassName="absolute inset-0 h-full w-full"
           center={center}
-          zoom={SOLAR_ROOF_MAP_ZOOM}
-          options={mapOptions}
+          zoom={roofMapZoom}
+          options={roofMapOptions}
           onLoad={(map) => {
+            const mapsApi = window.google?.maps
             mapRef.current = map
-            map.setMapTypeId('hybrid')
+            map.setMapTypeId(mapsApi?.MapTypeId?.HYBRID ?? 'hybrid')
             map.setTilt(0)
-            map.setZoom(SOLAR_ROOF_MAP_ZOOM)
+            map.setHeading(0)
+            map.setZoom(roofMapZoom)
           }}
           onUnmount={() => {
             mapRef.current = null
