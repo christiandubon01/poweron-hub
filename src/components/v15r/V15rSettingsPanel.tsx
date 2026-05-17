@@ -600,90 +600,106 @@ function SolarEstimateSettingsPanel() {
       {!isCollapsed && (
       <>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor</p>
-            <div className="flex items-center gap-0.5 rounded-lg border border-slate-700/80 bg-slate-900/70 p-0.5">
-              {formulaModeBtn('hourlyCrew', 'Hourly crew labor')}
-              {formulaModeBtn('panelRate', 'Panel labor rate')}
+        {/* ── Left column ── */}
+        <div className="flex flex-col gap-4">
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor</p>
+              <div className="flex items-center gap-0.5 rounded-lg border border-slate-700/80 bg-slate-900/70 p-0.5">
+                {formulaModeBtn('hourlyCrew', 'Hourly crew labor')}
+                {formulaModeBtn('panelRate', 'Panel labor rate')}
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Hourly crew labor rates</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                {field('crewLeadHourlyRate', 'Crew lead hourly rate', undefined, laborFormulaMode === 'panelRate')}
+                {field('installer2HourlyRate', 'Installer 2 hourly rate', undefined, laborFormulaMode === 'panelRate')}
+                {field('installer3HourlyRate', 'Installer 3 hourly rate', undefined, laborFormulaMode === 'panelRate')}
+              </div>
+              <div className={`mt-3 rounded-lg border border-emerald-400/15 bg-emerald-950/15 p-3 ${laborFormulaMode === 'panelRate' ? 'opacity-50' : ''}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/75">Combined crew labor rate</p>
+                <p className="mt-1 text-xl font-semibold text-emerald-100">
+                  {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
+                </p>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500">Crew Lead + Installer 2 + Installer 3 hourly rates.</p>
+              </div>
+              {laborFormulaMode === 'hourlyCrew' && (
+                <p className="mt-2 text-[11px] leading-4 text-amber-400/70">
+                  Hourly crew mode is saved for future labor-hour modeling. Panel rate is used in cost math until labor hours are defined.
+                </p>
+              )}
+            </div>
+            <div className="mt-3 rounded-lg border border-amber-400/10 bg-slate-950/45 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-200/75">Panel labor rate</p>
+              <p className="mt-1 text-[11px] leading-4 text-slate-500">Separate from the hourly crew total; used as panel count times labor-only panel cost.</p>
+              <div className="mt-3">
+                {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only', laborFormulaMode === 'hourlyCrew')}
+              </div>
             </div>
           </div>
-          <div className="mt-3 rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Hourly crew labor rates</p>
+
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Electrical Upgrades</p>
+            <p className="mt-1 text-[11px] text-slate-400">Applied in Summary only when the corresponding toggle is enabled in System Config.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {field('mainPanelUpgradeCost', 'Main panel upgrade cost')}
+              {field('evChargerAdditionCost', 'EV Charger Addition Cost')}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor Hours per System</p>
+            <p className="mt-1 text-[11px] text-slate-400">Used when Hourly crew labor is selected. Matches the same system-size tiers.</p>
             <div className="mt-3 grid gap-3 md:grid-cols-3">
-              {field('crewLeadHourlyRate', 'Crew lead hourly rate', undefined, laborFormulaMode === 'panelRate')}
-              {field('installer2HourlyRate', 'Installer 2 hourly rate', undefined, laborFormulaMode === 'panelRate')}
-              {field('installer3HourlyRate', 'Installer 3 hourly rate', undefined, laborFormulaMode === 'panelRate')}
-            </div>
-            <div className={`mt-3 rounded-lg border border-emerald-400/15 bg-emerald-950/15 p-3 ${laborFormulaMode === 'panelRate' ? 'opacity-50' : ''}`}>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/75">Combined crew labor rate</p>
-              <p className="mt-1 text-xl font-semibold text-emerald-100">
-                {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
-              </p>
-              <p className="mt-1 text-[11px] leading-4 text-slate-500">Crew Lead + Installer 2 + Installer 3 hourly rates.</p>
-            </div>
-            {laborFormulaMode === 'hourlyCrew' && (
-              <p className="mt-2 text-[11px] leading-4 text-amber-400/70">
-                Hourly crew mode is saved for future labor-hour modeling. Panel rate is used in cost math until labor hours are defined.
-              </p>
-            )}
-          </div>
-          <div className="mt-3 rounded-lg border border-amber-400/10 bg-slate-950/45 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-200/75">Panel labor rate</p>
-            <p className="mt-1 text-[11px] leading-4 text-slate-500">Separate from the hourly crew total; used as panel count times labor-only panel cost.</p>
-            <div className="mt-3">
-              {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only', laborFormulaMode === 'hourlyCrew')}
+              {numberField('laborHoursSmall', 'Small System', 'hrs', '3–7 kW')}
+              {numberField('laborHoursMedium', 'Medium System', 'hrs', '7–15 kW')}
+              {numberField('laborHoursLarge', 'Large System', 'hrs', '15–30 kW')}
             </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Mobility and Delivery</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {field('baseMobilityCost', 'Base mobility cost')}
-            {field('mobilityCostPerMile', 'Cost per mile')}
-            {numberField('mobilityFreeMiles', 'Free miles threshold', 'mi')}
-            {field('flatDeliveryCost', 'Flat delivery cost')}
-            {field('deliveryCostPerMile', 'Delivery cost per mile')}
+        {/* ── Right column ── */}
+        <div className="flex flex-col gap-4">
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Profit</p>
+            <p className="mt-1 text-[11px] text-slate-400">Desired profit added to the modeled internal estimate total, by system size.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {field('profitSmall', 'Small system', '3–7 kW')}
+              {field('profitMedium', 'Medium system', '7–15 kW')}
+              {field('profitLarge', 'Large system', '15–30 kW')}
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Electrical Upgrades</p>
-          <p className="mt-1 text-[11px] text-slate-400">Applied in Summary only when the corresponding toggle is enabled in System Config.</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {field('mainPanelUpgradeCost', 'Main panel upgrade cost')}
-            {field('evChargerAdditionCost', 'EV Charger Addition Cost')}
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Mobility and Delivery</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {field('baseMobilityCost', 'Base mobility cost')}
+              {field('mobilityCostPerMile', 'Cost per mile')}
+              {numberField('mobilityFreeMiles', 'Free miles threshold', 'mi')}
+              {field('flatDeliveryCost', 'Flat delivery cost')}
+              {field('deliveryCostPerMile', 'Delivery cost per mile')}
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Permit Cost by Size</p>
-          <p className="mt-1 text-[11px] text-slate-400">Small, medium, and large system-size ranges for permit cost defaults.</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {field('smallPermitCost', 'Small system', '3–7 kW')}
-            {field('mediumPermitCost', 'Medium system', '7–15 kW')}
-            {field('largePermitCost', 'Large system', '15–30 kW')}
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Permit Cost by Size</p>
+            <p className="mt-1 text-[11px] text-slate-400">Small, medium, and large system-size ranges for permit cost defaults.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {field('smallPermitCost', 'Small system', '3–7 kW')}
+              {field('mediumPermitCost', 'Medium system', '7–15 kW')}
+              {field('largePermitCost', 'Large system', '15–30 kW')}
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor Hours per System</p>
-          <p className="mt-1 text-[11px] text-slate-400">Used when Hourly crew labor is selected. Matches the same system-size tiers.</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {numberField('laborHoursSmall', 'Small System', 'hrs', '3–7 kW')}
-            {numberField('laborHoursMedium', 'Medium System', 'hrs', '7–15 kW')}
-            {numberField('laborHoursLarge', 'Large System', 'hrs', '15–30 kW')}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Blueprint Cost by Size</p>
-          <p className="mt-1 text-[11px] text-slate-400">Uses the same small, medium, and large system-size ranges.</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {field('smallBlueprintCost', 'Small system', '3–7 kW')}
-            {field('mediumBlueprintCost', 'Medium system', '7–15 kW')}
-            {field('largeBlueprintCost', 'Large system', '15-30 kW')}
+          <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Blueprint Cost by Size</p>
+            <p className="mt-1 text-[11px] text-slate-400">Uses the same small, medium, and large system-size ranges.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {field('smallBlueprintCost', 'Small system', '3–7 kW')}
+              {field('mediumBlueprintCost', 'Medium system', '7–15 kW')}
+              {field('largeBlueprintCost', 'Large system', '15-30 kW')}
+            </div>
           </div>
         </div>
       </div>

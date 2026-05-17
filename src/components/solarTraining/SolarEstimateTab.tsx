@@ -1523,6 +1523,10 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
 
         <CostBreakdownRow label="Hardware" value={breakdown.hardwareCost} detail={tierLabel} />
 
+        {breakdown.profitCost > 0 && (
+          <CostBreakdownRow label="Profit" value={breakdown.profitCost} detail={tierLabel} />
+        )}
+
         <CostBreakdownRow
           label="Estimated total"
           value={breakdown.totalEstimatedInstallCost}

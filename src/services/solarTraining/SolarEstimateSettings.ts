@@ -71,6 +71,9 @@ export type SolarEstimateSettings = {
   hardwareCostMedium: number
   hardwareCostLarge: number
   hardwareIndex: HardwareIndexData
+  profitSmall: number
+  profitMedium: number
+  profitLarge: number
 }
 
 export type SolarEstimateCostBreakdown = {
@@ -87,6 +90,7 @@ export type SolarEstimateCostBreakdown = {
   mainPanelUpgradeCost: number
   evChargerAdditionCost: number
   hardwareCost: number
+  profitCost: number
   totalEstimatedInstallCost: number
   combinedHourlyLaborRate: number
   distanceMiles: number | null
@@ -120,6 +124,9 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   hardwareCostMedium: 4500,
   hardwareCostLarge: 7500,
   hardwareIndex: DEFAULT_HARDWARE_INDEX,
+  profitSmall: 0,
+  profitMedium: 0,
+  profitLarge: 0,
 }
 
 export function getCombinedHourlyLaborRate(settings: SolarEstimateSettings): number {
@@ -205,6 +212,9 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     hardwareCostMedium: safeNumber(raw.hardwareCostMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.hardwareCostMedium),
     hardwareCostLarge: safeNumber(raw.hardwareCostLarge, DEFAULT_SOLAR_ESTIMATE_SETTINGS.hardwareCostLarge),
     hardwareIndex: safeHardwareIndex(raw.hardwareIndex),
+    profitSmall: safeNumber(raw.profitSmall, DEFAULT_SOLAR_ESTIMATE_SETTINGS.profitSmall),
+    profitMedium: safeNumber(raw.profitMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.profitMedium),
+    profitLarge: safeNumber(raw.profitLarge, DEFAULT_SOLAR_ESTIMATE_SETTINGS.profitLarge),
   }
 }
 
@@ -262,8 +272,14 @@ export function calculateSolarEstimateInstallCost(
       : tier === 'medium'
       ? settings.hardwareCostMedium
       : settings.hardwareCostLarge
+  const profitCost =
+    tier === 'small'
+      ? (settings.profitSmall ?? 0)
+      : tier === 'medium'
+      ? (settings.profitMedium ?? 0)
+      : (settings.profitLarge ?? 0)
   const totalEstimatedInstallCost = Math.round(
-    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost + evChargerAdditionCost + hardwareCost
+    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost + evChargerAdditionCost + hardwareCost + profitCost
   )
 
   return {
@@ -280,6 +296,7 @@ export function calculateSolarEstimateInstallCost(
     mainPanelUpgradeCost,
     evChargerAdditionCost,
     hardwareCost,
+    profitCost,
     totalEstimatedInstallCost,
     combinedHourlyLaborRate: getCombinedHourlyLaborRate(settings),
     distanceMiles,
