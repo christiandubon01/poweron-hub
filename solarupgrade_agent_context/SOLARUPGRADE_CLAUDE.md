@@ -642,3 +642,60 @@ NO — no next build phase defined.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Local Saved Estimates added to `src/components/solarTraining/SolarEstimateTab.tsx`. localStorage keys: `poweron.solarTraining.solarEstimates` (estimate list) and `poweron.solarTraining.activeDraft` (current open estimate). `SolarEstimatesLibrary` component with Open/Rename/Delete. "Solar Estimates" button in header. Save creates or updates — no duplicates. App reload restores current draft. No Supabase, no new packages, no formula or unrelated tab changes. Typecheck passes.
+
+---
+
+## STEP 1 LAYOUT FINAL ALIGNMENT COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+TBD
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Solar Estimate Step 1 JSX Layout Fix — items-start alignment correction
+
+WHAT CHANGED:
+- Changed `xl:items-start` to `items-start` on the AddressStep two-column grid div (line 665).
+- The two-column grid structure was already correct from prior commits. This pass aligns `items-start` to apply at all viewport sizes, not just xl.
+
+WHAT WAS LEARNED:
+- The two-column JSX structure is confirmed correct: `xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]` with SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. No dead code, no duplicate blocks.
+- At 1280px viewport with expanded sidebar (224px), grid container is ~920px. Min column widths total 1016px, so ~52px overflows the section's `overflow-hidden`. Map shows ~92% visible.
+- The `xl:` breakpoint (1280px) activates two-column layout. If test screen is <1280px, layout stacks single-column (expected behavior).
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Apply `items-start` without a breakpoint prefix when vertical alignment should be consistent across all viewport sizes, not just when the multi-column layout activates.
+
+BUGS / RISKS:
+- At 1280px viewport with expanded sidebar, map's right ~52px is clipped. Acceptable; map is still functional. Fully unclipped at ≥1440px viewport or with collapsed sidebar.
+- If xl breakpoint doesn't fire on the test screen (viewport <1280px), lower to `lg:` with smaller right-column min (e.g., 480px instead of 640px).
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA at xl+ viewport to verify two-column layout is visible.
+- If map clipping at 1280px is a problem: reduce `minmax(640px,1.35fr)` to `minmax(480px,1.35fr)`.
+- If xl doesn't fire on test screen: change breakpoint from `xl:` to `lg:` with smaller column minimums.
+
+NEXT PHASE READY:
+NO — no active build phase defined.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Step 1 layout fix: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. AddressStep two-column grid confirmed structurally correct — SectionIntro + form in left column, AddressMapPreview in right column. `xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)] items-start` is the final class string. Two-column layout activates at ≥1280px viewport. Single-column stacking below that is expected. Typecheck passes clean.

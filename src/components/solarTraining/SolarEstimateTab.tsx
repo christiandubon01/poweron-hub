@@ -662,7 +662,7 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
   const mapsReady = Boolean(GOOGLE_MAPS_BROWSER_KEY && isLoaded && autocompleteServiceRef.current)
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)] xl:items-start">
+    <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)] items-start">
       <div className="min-w-0">
         <SectionIntro icon={MapPin} eyebrow="Step 01" title="Start with the project address">
           Enter the homeowner address. If the existing Google Places loader is configured, suggestions

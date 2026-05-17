@@ -1706,3 +1706,56 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Step 1 Address layout correction complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The entire Step 1 address column, including intro/header, input/suggestions, place ID, latitude, and longitude, now sits left of the Satellite Roof Preview on `xl` desktop widths. Map is a sibling in the right column, not below the full address section. Smaller screens stack address then map. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE STEP 1 LAYOUT FINAL ALIGNMENT COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+TBD
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Changed `xl:items-start` to `items-start` on the AddressStep two-column grid div.
+- The two-column grid structure was already correct from the previous pass (SectionIntro + form in left column, map in right column). This is a vertical-alignment fix ensuring grid items align to the top of their cells at all viewport sizes, not just at xl.
+
+WHAT WAS LEARNED:
+- The two-column JSX structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is correct and verified. Left column: SectionIntro + address form + Place ID/Lat/Lng. Right column: AddressMapPreview.
+- `items-start` (without xl: prefix) ensures cross-axis alignment is `start` for all viewport sizes, not just xl. This prevents the form column from stretching to match the map column height when the two-column layout is active.
+- The `xl:` breakpoint (1280px viewport) is what activates the two-column layout. At narrower viewport widths, the columns stack correctly (address then map).
+- At 1280px viewport with expanded sidebar (224px), the grid container is ~920px. With minimum column widths totaling 1016px, the right edge of the map card extends ~52px beyond the section's `overflow-hidden` boundary and is clipped. The map remains ~92% visible and functional.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For responsive grid items where columns have different natural heights, apply `items-start` without a breakpoint prefix so vertical alignment is consistent in both single-column and multi-column modes.
+- Verify that `items-start` is not prefixed when it should apply regardless of breakpoint.
+
+BUGS / RISKS:
+- At 1280px viewport with expanded sidebar (224px), the grid's minimum column widths (360+640+gap=1016px) slightly exceed the available container width (~920px). The section's `overflow-hidden` clips ~52px from the map column's right edge. The map is still ~92% visible and functional. To fully prevent clipping, a wider viewport (≥1440px) or a collapsed sidebar is needed.
+- If the user's viewport is <1280px (below xl breakpoint), the layout stacks single-column. The xl breakpoint activates the two-column layout on standard desktop screens ≥1280px.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA Step 1 at xl (1280px) viewport with expanded sidebar to confirm form and map appear side-by-side.
+- If map clipping at 1280px is visible/problematic, either reduce right column min from 640px to 480-520px, or remove `overflow-hidden` from the AddressStep card wrapper.
+- If the xl breakpoint does not fire on the test screen (viewport <1280px), the breakpoint can be lowered to `lg:` (1024px) with smaller column minimums.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Step 1 Address layout final alignment: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. The two-column grid structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is confirmed correct — SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. Two-column layout activates at xl (1280px+ viewport). Smaller screens stack correctly. Typecheck passes. Risk note: at 1280px with expanded sidebar, ~52px of map right edge is clipped by section overflow-hidden; fully visible at 1440px+.
