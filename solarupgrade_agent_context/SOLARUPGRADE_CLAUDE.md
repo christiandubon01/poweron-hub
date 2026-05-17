@@ -1168,3 +1168,47 @@ None. Ready for screenshot QA.
 
 NEXT PHASE READY:
 NO — ready for screenshot QA.
+
+---
+
+## MONTHLY BILL BATTERY COMPARISON COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+15ac20c
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Show Solar Only and Solar Plus Battery comparison in Monthly Bill chart
+
+WHAT CHANGED:
+- `SeasonalBillChart` rewritten to render 3 bars per month (grey/yellow/green) when `hasBattery=true`, 2 bars (grey/yellow) when false.
+- `barW` adapts: 22% of `monthW` for 3-bar mode, 30% for 2-bar mode. Bar group is centered in the month slot.
+- `gap` const (1px) used between bars.
+- Legend always shows grey + yellow; green "Solar + battery" swatch renders only when `hasBattery`.
+- Helper text switches between "Solar Only projection shown..." and "Solar Only and Solar Plus Battery projections are shown together..." based on `hasBattery`.
+- Climate profile + anchor month moved to a secondary line below helper text.
+- Tooltip: always shows solar-only projected + savings; adds extra battery savings and total-with-battery savings rows when `hasBattery`.
+- Hover hit area covers the full bar group + 2px padding each side.
+- All seasonal consumption logic, `getSeasonalBillData`, and anchor month detection unchanged.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE READY:
+NO — ready for screenshot QA.

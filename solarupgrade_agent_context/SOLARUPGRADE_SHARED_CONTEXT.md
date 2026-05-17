@@ -2689,3 +2689,32 @@ NO — no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Anchor bill to estimate month complete. `SolarEstimateTab.tsx` only. `computeAnchoredMonthlyKwhByMonth` + `computeNormalizedMonthlyKwhByMonth` + `getAnchorBlendedRate` added. `getSeasonalBillData` now takes `number[]` instead of flat kWh. Savings floors 25%/15% applied per month. `SeasonalBillChart` shows anchor month in subtitle label and tooltip. Anchor month = saved estimate createdAt month if opened from library, else current month. Typecheck passes. Commit: 3ba7339.
+
+---
+
+## MONTHLY BILL BATTERY COMPARISON COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+15ac20c
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+
+ACTIVE PHASE COMPLETED:
+Show Solar Only and Solar Plus Battery comparison in Monthly Bill chart
+
+WHAT CHANGED:
+- `SeasonalBillChart`: 3 bars per month when battery ON (grey=current, yellow=solar only, green=solar+battery), 2 when OFF (grey + yellow). `barW` adapts (22% / 30% of `monthW`). Group is centered in the month slot.
+- Legend: grey "Current bill", yellow "Solar only" always. Green "Solar + battery" conditional on `hasBattery`.
+- Helper text: "Solar Only projection shown against current monthly bill." / "Solar Only and Solar Plus Battery projections are shown together..."
+- Tooltip: solar-only projected + savings always; extra battery savings + total savings when battery ON.
+- No changes to `getSeasonalBillData`, anchor month, seasonal weights, or other chart tabs.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+NEXT PHASE READY:
+NO — ready for screenshot QA.
