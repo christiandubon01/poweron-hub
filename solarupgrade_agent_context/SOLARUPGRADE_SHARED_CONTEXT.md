@@ -1495,3 +1495,56 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Solar Estimate Address map upgrade complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 now shows a larger premium dark framed Google Maps `hybrid` satellite/top-down roof preview under the address fields after a Places suggestion supplies latitude/longitude. Map centers on selected coordinates, uses zoom `19`, forces tilt `0`, and shows a marker. Existing autocomplete and fallback cards are preserved. Typecheck passes. Ready for screenshot QA with a configured Maps key.
+
+---
+
+# SOLAR ESTIMATE MAP RENDER BUG FIX COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Hardened the Step 1 Satellite Roof Preview sizing chain so the actual Google map renders into a real, visible panel.
+- Added `w-full min-w-0` to the map/fallback wrappers to avoid flex/grid shrink collapse and horizontal overflow.
+- Raised all map and fallback panel minimum heights to `360px`.
+- Made the live map surface explicitly `relative`, full width, non-collapsing, overflow-hidden, and at least `360px` tall, with a larger desktop height at `sm:h-[420px]`.
+- Kept `GoogleMap` `mapContainerStyle={{ width: '100%', height: '100%' }}` and added a full-size `mapContainerClassName` so the Maps div fills the visible surface.
+- Preserved hybrid satellite map type, zoom `19`, centered coordinates, centered marker, existing loader, and address autocomplete behavior.
+
+WHAT WAS LEARNED:
+- The map was not visibly rendering because the live GoogleMap was relying on a percentage-height internal container without a sufficiently hardened non-collapsing parent sizing chain. The card/header could render while the map viewport effectively collapsed or failed to occupy a visible paint area.
+- The existing Maps API path, coordinate selection, marker, and zoom logic were already correct; the bug was presentation/layout sizing.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For `@react-google-maps/api`, give the map surface both explicit parent dimensions and a full-size map container (`width: 100%`, `height: 100%`) so Google can measure and paint tiles reliably.
+- Add `min-w-0` to map/card wrappers inside responsive layouts to prevent hidden overflow and shrink issues.
+
+BUGS / RISKS:
+- Actual satellite tile rendering still depends on a valid configured Google Maps browser key and Maps API availability.
+- Browser screenshot QA with a real selected address remains recommended to confirm tile imagery in the running app.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run browser QA on Step 1 Address with a configured Maps key and selected Places suggestion to visually confirm hybrid roof tiles and marker placement.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Solar Estimate map render bug fix complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The Satellite Roof Preview card now gives the live GoogleMap a guaranteed visible map surface (`min-height: 360px`, full width, no shrink collapse) and a full-size GoogleMap container. Autocomplete, coordinates, hybrid map mode, zoom `19`, and centered marker are unchanged. Typecheck passes.

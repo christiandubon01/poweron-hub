@@ -568,3 +568,61 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Address map upgrade complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 Address now shows a larger premium dark framed Google Maps `hybrid` satellite roof preview under the address form when coordinates exist. It centers on selected coordinates, uses zoom `19`, forces tilt `0`, and shows a marker. Existing Places autocomplete and fallback behavior are preserved. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE MAP RENDER BUG FIX COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Scoped Solar Estimate map render bug fix
+
+WHAT CHANGED:
+- Hardened the Step 1 Satellite Roof Preview sizing chain so the live Google map paints inside a large visible panel.
+- Added full-width, `min-w-0`, and `min-h-[360px]` constraints to the live map wrapper and fallback states.
+- Made the live map surface `relative`, full-width, non-collapsing, overflow-hidden, and at least `360px` tall, with `sm:h-[420px]` for a larger desktop roof preview.
+- Kept the `GoogleMap` container style as `{ width: '100%', height: '100%' }` and added a full-size `mapContainerClassName`.
+- Preserved hybrid satellite map type, zoom `19`, selected-coordinate centering, centered marker, existing loader, and address autocomplete behavior.
+
+WHAT WAS LEARNED:
+- The visible-header/empty-card failure was a layout sizing issue: the GoogleMap was mounted but depended on a percentage-height internal container without a strong non-collapsing parent map surface.
+- The existing coordinate flow, Maps API loader, marker, and zoom settings did not need changes.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Google Maps components need an explicit measured parent surface plus a full-size map container to reliably render tiles.
+- `min-w-0` is important for map/card wrappers inside responsive layouts to avoid shrink collapse and hidden overflow.
+
+BUGS / RISKS:
+- Live satellite imagery still requires a configured Google Maps browser key and available Maps API.
+- Browser screenshot QA is recommended with a selected Places address to verify real tile rendering and marker placement.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Run browser QA on Step 1 Address with a configured Maps key and selected Places suggestion to confirm hybrid imagery and the centered marker.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Map render bug fix complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Satellite Roof Preview now has a guaranteed visible map surface (`min-height: 360px`, full width, no shrink collapse) and GoogleMap fills it with `{ width: '100%', height: '100%' }`. Autocomplete, coordinates, hybrid map mode, zoom `19`, and centered marker are unchanged. Typecheck passes.

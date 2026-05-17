@@ -414,7 +414,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
     const addressLabel = data.selectedAddressLabel || data.addressText
     const hasAddr = Boolean(addressLabel?.trim())
     return (
-      <div className="flex min-h-[320px] flex-col gap-4 rounded-lg border border-slate-700/60 bg-slate-950/70 p-4">
+      <div className="flex min-h-[360px] w-full min-w-0 flex-col gap-4 rounded-lg border border-slate-700/60 bg-slate-950/70 p-4">
         <div className="flex items-center gap-2">
           <MapPin className="h-4 w-4 text-cyan-500/60" />
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -450,7 +450,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
 
   if (!isLoaded) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-slate-800 bg-slate-950/55 p-4 text-center text-xs text-slate-500">
+      <div className="flex min-h-[360px] w-full min-w-0 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/55 p-4 text-center text-xs text-slate-500">
         Loading map tools...
       </div>
     )
@@ -460,7 +460,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
     const addressLabel = data.selectedAddressLabel || data.addressText
     const hasAddr = Boolean(addressLabel?.trim())
     return (
-      <div className="flex min-h-[320px] flex-col gap-4 rounded-lg border border-dashed border-slate-700/60 bg-slate-950/55 p-4">
+      <div className="flex min-h-[360px] w-full min-w-0 flex-col gap-4 rounded-lg border border-dashed border-slate-700/60 bg-slate-950/55 p-4">
         <div className="flex items-center gap-2">
           <MapPin className="h-4 w-4 text-slate-600" />
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Awaiting pin</span>
@@ -484,7 +484,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-cyan-900/50 bg-slate-950 shadow-[0_18px_42px_rgba(2,6,23,0.32)]">
+    <div className="w-full min-w-0 overflow-hidden rounded-lg border border-cyan-900/50 bg-slate-950 shadow-[0_18px_42px_rgba(2,6,23,0.32)]">
       <div className="flex items-center justify-between gap-3 border-b border-cyan-950/70 bg-slate-950/95 px-4 py-3">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-400/80">
@@ -498,9 +498,13 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
           ~500 ft view
         </div>
       </div>
-      <div className="h-[360px] min-h-[320px]">
+      <div
+        className="relative h-[360px] min-h-[360px] w-full min-w-0 overflow-hidden bg-slate-900 sm:h-[420px]"
+        style={{ minHeight: 360 }}
+      >
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
+          mapContainerClassName="absolute inset-0 h-full w-full"
           center={center}
           zoom={SOLAR_ROOF_MAP_ZOOM}
           options={mapOptions}
