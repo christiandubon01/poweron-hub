@@ -46,9 +46,9 @@ export const DEFAULT_HARDWARE_INDEX: HardwareIndexData = {
 }
 
 export type SolarEstimateSettings = {
-  installer1HourlyRate: number
-  installer2HourlyRate: number
   crewLeadHourlyRate: number
+  installer2HourlyRate: number
+  installer3HourlyRate: number
   panelInstallLaborCost: number
   baseMobilityCost: number
   mobilityCostPerMile: number
@@ -95,9 +95,9 @@ export type SolarEstimateCostBreakdown = {
 }
 
 export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
-  installer1HourlyRate: 35,
-  installer2HourlyRate: 35,
   crewLeadHourlyRate: 48,
+  installer2HourlyRate: 35,
+  installer3HourlyRate: 35,
   panelInstallLaborCost: 95,
   baseMobilityCost: 275,
   mobilityCostPerMile: 0,
@@ -123,7 +123,8 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
 }
 
 export function getCombinedHourlyLaborRate(settings: SolarEstimateSettings): number {
-  return settings.installer1HourlyRate + settings.installer2HourlyRate + settings.crewLeadHourlyRate
+  const installer3HourlyRate = 'installer3HourlyRate' in settings ? Number(settings.installer3HourlyRate) : 0
+  return settings.crewLeadHourlyRate + settings.installer2HourlyRate + installer3HourlyRate
 }
 
 export function getSolarSystemSizeTier(systemSizeKw: number): SolarEstimateCostBreakdown['systemSizeTier'] {
@@ -179,9 +180,9 @@ function safeHardwareIndex(value: unknown): HardwareIndexData {
 export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSettings> | null | undefined): SolarEstimateSettings {
   const raw = value ?? {}
   return {
-    installer1HourlyRate: safeNumber(raw.installer1HourlyRate, DEFAULT_SOLAR_ESTIMATE_SETTINGS.installer1HourlyRate),
-    installer2HourlyRate: safeNumber(raw.installer2HourlyRate, DEFAULT_SOLAR_ESTIMATE_SETTINGS.installer2HourlyRate),
     crewLeadHourlyRate: safeNumber(raw.crewLeadHourlyRate, DEFAULT_SOLAR_ESTIMATE_SETTINGS.crewLeadHourlyRate),
+    installer2HourlyRate: safeNumber(raw.installer2HourlyRate, DEFAULT_SOLAR_ESTIMATE_SETTINGS.installer2HourlyRate),
+    installer3HourlyRate: safeNumber(raw.installer3HourlyRate, DEFAULT_SOLAR_ESTIMATE_SETTINGS.installer3HourlyRate),
     panelInstallLaborCost: safeNumber(raw.panelInstallLaborCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.panelInstallLaborCost),
     baseMobilityCost: safeNumber(raw.baseMobilityCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.baseMobilityCost),
     mobilityCostPerMile: safeNumber(raw.mobilityCostPerMile, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mobilityCostPerMile),
