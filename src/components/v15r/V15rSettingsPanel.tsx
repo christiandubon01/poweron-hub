@@ -611,16 +611,16 @@ function SolarEstimateSettingsPanel() {
           <div className="mt-3 rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Hourly crew labor rates</p>
             <div className="mt-3 grid gap-3 md:grid-cols-3">
-              {field('installer1HourlyRate', 'Installer 1 hourly rate', undefined, laborFormulaMode === 'panelRate')}
-              {field('installer2HourlyRate', 'Installer 2 hourly rate', undefined, laborFormulaMode === 'panelRate')}
               {field('crewLeadHourlyRate', 'Crew lead hourly rate', undefined, laborFormulaMode === 'panelRate')}
+              {field('installer2HourlyRate', 'Installer 2 hourly rate', undefined, laborFormulaMode === 'panelRate')}
+              {field('installer3HourlyRate', 'Installer 3 hourly rate', undefined, laborFormulaMode === 'panelRate')}
             </div>
             <div className={`mt-3 rounded-lg border border-emerald-400/15 bg-emerald-950/15 p-3 ${laborFormulaMode === 'panelRate' ? 'opacity-50' : ''}`}>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/75">Combined crew labor rate</p>
               <p className="mt-1 text-xl font-semibold text-emerald-100">
                 {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
               </p>
-              <p className="mt-1 text-[11px] leading-4 text-slate-500">Installer 1 + Installer 2 + Crew Lead hourly rates.</p>
+              <p className="mt-1 text-[11px] leading-4 text-slate-500">Crew Lead + Installer 2 + Installer 3 hourly rates.</p>
             </div>
             {laborFormulaMode === 'hourlyCrew' && (
               <p className="mt-2 text-[11px] leading-4 text-amber-400/70">
