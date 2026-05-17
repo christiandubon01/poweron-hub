@@ -3209,24 +3209,29 @@ function EstimateSummaryStep({
 
   return (
     <div>
-      <SectionIntro icon={BarChart3} eyebrow="Step 05" title="Estimate summary" />
-
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        {saveStatus === 'saved' ? (
-          <div className="flex items-center gap-2 rounded-md border border-emerald-700/50 bg-emerald-950/20 px-3 py-2">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="text-xs font-medium text-emerald-300">Saved in Solar Estimates</span>
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">
+            <BarChart3 className="h-4 w-4" />
+            Step 05
           </div>
-        ) : (
-          <div />
-        )}
-        <button
-          type="button"
-          onClick={onSave}
-          className="rounded-md border border-cyan-700/50 bg-cyan-900/20 px-3 py-2 text-xs font-semibold text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40"
-        >
-          {activeEstimateId ? 'Update estimate' : 'Save project estimate'}
-        </button>
+          <h3 className="text-lg font-semibold text-white">Estimate summary</h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {saveStatus === 'saved' && (
+            <div className="flex items-center gap-2 rounded-md border border-emerald-700/50 bg-emerald-950/20 px-3 py-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="text-xs font-medium text-emerald-300">Saved in Solar Estimates</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onSave}
+            className="rounded-md border border-cyan-700/50 bg-cyan-900/20 px-3 py-2 text-xs font-semibold text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40"
+          >
+            {activeEstimateId ? 'Update estimate' : 'Save project estimate'}
+          </button>
+        </div>
       </div>
 
       {/* A. Metric cards */}

@@ -2718,3 +2718,48 @@ PASS — zero errors
 
 NEXT PHASE READY:
 NO — ready for screenshot QA.
+
+---
+
+## COMPACT STEP 5 SUMMARY HEADER SPACING COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+TASK COMPLETED:
+Compact Step 5 Summary header spacing
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Replaced the Step 5 Summary-only `SectionIntro` plus separate save row with one compact header row.
+- Moved the `Update estimate` / `Save project estimate` button to the right side of the `Estimate summary` title row on desktop.
+- Kept the saved-status badge inline with the save action when present.
+- Reduced the header bottom margin so the four metric cards sit directly below the header area with normal spacing.
+
+WHAT WAS LEARNED:
+- The large gap was caused by stacking `SectionIntro` (`mb-5`) above a separate save/status row (`mb-5`) after the intro paragraph had been removed.
+- The Summary header is better handled as a local compact layout because the shared `SectionIntro` spacing is still appropriate for earlier steps.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For compact step headers, combine eyebrow/title and right-side actions in one responsive `flex` row instead of rendering a separate action row.
+- Preserve mobile behavior with `flex-col` by default and switch to `sm:flex-row sm:items-center sm:justify-between`.
+
+BUGS / RISKS:
+- Visual QA should verify the saved-status badge does not crowd the button on narrow widths.
+- No estimate math, chart rendering, saved-estimate behavior, or other steps were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+NEXT RECOMMENDED ACTION:
+- Run screenshot QA on Step 5 Summary at desktop and mobile widths, with both saved and unsaved states if possible.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Step 5 Summary header spacing compacted. The title and save/update button now share one responsive header row, and metric cards sit closer below it. Saved badge remains inline only when `saveStatus === 'saved'`. Scope stayed limited to Summary header layout plus context updates. Typecheck passed. Commit pending at log-write time.

@@ -257,3 +257,48 @@ RISKS:
 
 READY FOR SCREENSHOT QA:
 YES
+
+---
+
+## COMPACT STEP 5 SUMMARY HEADER SPACING COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+TASK COMPLETED:
+Compact Step 5 Summary header spacing
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Replaced the Step 5 Summary-only `SectionIntro` plus separate save/status row with one compact header row.
+- Aligned `Estimate summary` left and the `Update estimate` / `Save project estimate` button right on desktop.
+- Kept the saved-status badge as an inline compact badge next to the save action when present.
+- Reduced the header spacing so the metric cards move upward directly under the header.
+
+WHAT WAS LEARNED:
+- Removing Summary intro copy left two stacked margin blocks, which created the large empty gap.
+- A local Summary header is preferable here because the shared `SectionIntro` still provides good spacing for full intro sections elsewhere.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use a single responsive `flex` header for compact step title plus primary action rows.
+- Keep action groups wrapped with `flex-wrap` to prevent horizontal overflow with status badges.
+
+BUGS / RISKS:
+- Screenshot QA should verify the saved badge plus button wraps cleanly on small widths.
+- No chart logic, estimate math, saved-estimate behavior, or other steps were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+NEXT RECOMMENDED ACTION:
+- Screenshot QA Step 5 Summary after navigating to an existing saved estimate and a new unsaved estimate.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Step 5 Summary header spacing compacted. `Estimate summary` and the save/update button now share one responsive row; metric cards sit closer under the header. Saved badge remains inline when present. Scope was limited to Summary header layout and context logs. Typecheck passed. Commit pending at log-write time.
