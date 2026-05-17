@@ -803,3 +803,67 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Step 1 layout correction complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The Step 1 intro/header plus address form and metadata now occupy the left column; Satellite Roof Preview is the right-column sibling on `xl` desktop widths. Smaller screens stack address then map. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE ADMIN COST SETTINGS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Add Solar Estimate Settings modal/card and connect install cost logic
+
+WHAT CHANGED:
+- Added a Solar Estimate Settings admin card under HUNTER Operations below HUNTER Home Base.
+- Added local-only cost settings with safe defaults for labor rates, per-panel labor, mobility, permit tiers, blueprint tiers, and delivery.
+- Added a shared Solar Estimate settings service for localStorage persistence, normalization, combined hourly labor rate, tier selection, and cost breakdown calculation.
+- Removed the manual Step 4 Install Cost slider and replaced it with a settings-driven modeled cost preview.
+- Updated Summary estimated cost and cost-sensitive chart inputs to use the modeled settings total.
+- Added a compact internal cost breakdown in Summary.
+
+WHAT WAS LEARNED:
+- Settings Hub is `src/components/v15r/V15rSettingsPanel.tsx`, with HUNTER tools grouped in the HUNTER Operations card.
+- The Solar Estimate tab can listen for same-tab settings changes through a custom local event after settings are saved.
+- Distance cannot be safely inferred in this scope, so mobility and delivery use base/flat costs only while keeping mileage rates configurable for later.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use a small local service to keep Settings Hub defaults and feature calculations aligned.
+- Keep old persisted fields compatible while changing the active calculation source.
+
+BUGS / RISKS:
+- Screenshot QA is recommended for the Settings Hub card, Step 4 System Config, and Summary cost breakdown.
+- Per-mile mobility/delivery settings are stored but not used until scoped distance modeling exists.
+- Combined hourly labor is displayed but not applied because no labor-hours assumption exists.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Verify settings persist after reload and Summary updates from changed settings.
+- If future work enables distance, explicitly model HUNTER home base to project distance before applying per-mile rates.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Solar Estimate install cost is now settings-driven. New localStorage key is `poweron.solarTraining.solarEstimateSettings`; defaults and calculator live in `src/services/solarTraining/SolarEstimateSettings.ts`. Settings Hub card is below HUNTER Home Base. Step 4 install cost slider is removed. Summary uses the settings total and shows panel labor, permit, blueprint, mobility, delivery, and total internal cost breakdown. Typecheck passes.

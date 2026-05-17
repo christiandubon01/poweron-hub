@@ -51,6 +51,14 @@ import {
 import TestDataManagementPanel from '@/components/testdata/TestDataManagementPanel'
 import { HomeBaseSettings } from '@/components/settings/HomeBaseSettings'
 import { CronStatusPanel } from '@/components/hunter/CronStatusPanel'
+import {
+  DEFAULT_SOLAR_ESTIMATE_SETTINGS,
+  SOLAR_ESTIMATE_SETTINGS_STORAGE_KEY,
+  getCombinedHourlyLaborRate,
+  loadSolarEstimateSettings,
+  saveSolarEstimateSettings,
+  type SolarEstimateSettings,
+} from '@/services/solarTraining/SolarEstimateSettings'
 
 // ── Settings Hub visibility persistence (Phase R1) ──────────────────────────
 const SETTINGS_HUB_VISIBILITY_KEY = 'poweron_settings_hub_visibility_v1'
@@ -219,6 +227,141 @@ function SettingCard({ title, children }: { title: string; children: React.React
     <div className="rounded-lg border p-6" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-secondary)' }}>
       <h2 className="text-lg font-bold mb-4" style={{ color: 'var(--text-primary)' }}>{title}</h2>
       {children}
+    </div>
+  )
+}
+
+function SolarEstimateSettingsPanel() {
+  const [settings, setSettings] = useState<SolarEstimateSettings>(() => loadSolarEstimateSettings())
+  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
+  const combinedHourlyRate = getCombinedHourlyLaborRate(settings)
+
+  const updateSetting = (key: keyof SolarEstimateSettings, value: number) => {
+    const next = saveSolarEstimateSettings({ ...settings, [key]: Number.isFinite(value) && value >= 0 ? value : 0 })
+    setSettings(next)
+    setSaveState('saved')
+    window.setTimeout(() => setSaveState('idle'), 1800)
+  }
+
+  const resetDefaults = () => {
+    const next = saveSolarEstimateSettings(DEFAULT_SOLAR_ESTIMATE_SETTINGS)
+    setSettings(next)
+    setSaveState('saved')
+    window.setTimeout(() => setSaveState('idle'), 1800)
+  }
+
+  const inputClass =
+    'mt-2 w-full rounded-lg border border-cyan-400/15 bg-slate-950/75 px-3 py-2 text-sm text-cyan-50 outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/20'
+  const field = (key: keyof SolarEstimateSettings, label: string, hint?: string) => (
+    <label className="block min-w-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-200/75">{label}</span>
+      {hint && <span className="ml-2 text-[10px] text-slate-500">{hint}</span>}
+      <div className="relative">
+        <span className="pointer-events-none absolute left-3 top-[17px] text-xs text-slate-500">$</span>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          value={settings[key]}
+          onChange={event => updateSetting(key, Number(event.target.value))}
+          className={`${inputClass} pl-7`}
+        />
+      </div>
+    </label>
+  )
+
+  const numberField = (key: keyof SolarEstimateSettings, label: string, suffix: string, hint?: string) => (
+    <label className="block min-w-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-200/75">{label}</span>
+      {hint && <span className="ml-2 text-[10px] text-slate-500">{hint}</span>}
+      <div className="relative">
+        <input
+          type="number"
+          min="0"
+          step="1"
+          value={settings[key]}
+          onChange={event => updateSetting(key, Number(event.target.value))}
+          className={`${inputClass} pr-14`}
+        />
+        <span className="pointer-events-none absolute right-3 top-[17px] text-xs text-slate-500">{suffix}</span>
+      </div>
+    </label>
+  )
+
+  return (
+    <div className="rounded-2xl border border-emerald-400/15 bg-gradient-to-br from-slate-950/95 via-emerald-950/20 to-slate-950/90 p-4 shadow-inner shadow-emerald-950/20">
+      <div className="flex flex-col gap-3 border-b border-emerald-400/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h4 className="text-sm font-bold text-emerald-50">Solar Estimate Settings</h4>
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            Local admin defaults for modeled/internal Solar Estimate install cost. Customer quote pricing remains separate.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
+            Combined labor {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
+          </span>
+          <button
+            type="button"
+            onClick={resetDefaults}
+            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
+          >
+            Reset defaults
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {field('installer1HourlyRate', 'Installer 1 hourly rate')}
+            {field('installer2HourlyRate', 'Installer 2 hourly rate')}
+            {field('crewLeadHourlyRate', 'Crew lead hourly rate')}
+            {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only')}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Mobility and Delivery</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {field('baseMobilityCost', 'Base mobility cost')}
+            {field('mobilityCostPerMile', 'Cost per mile')}
+            {numberField('mobilityFreeMiles', 'Free miles threshold', 'mi')}
+            {field('flatDeliveryCost', 'Flat delivery cost')}
+            {field('deliveryCostPerMile', 'Delivery cost per mile')}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Permit Cost by Size</p>
+          <p className="mt-1 text-[11px] text-slate-500">Small up to 6 kW, medium 6.1-12 kW, large above 12 kW.</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            {field('smallPermitCost', 'Small system')}
+            {field('mediumPermitCost', 'Medium system')}
+            {field('largePermitCost', 'Large system')}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Blueprint Cost by Size</p>
+          <p className="mt-1 text-[11px] text-slate-500">Uses the same small, medium, and large thresholds.</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            {field('smallBlueprintCost', 'Small system')}
+            {field('mediumBlueprintCost', 'Medium system')}
+            {field('largeBlueprintCost', 'Large system')}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-2 rounded-xl border border-emerald-400/10 bg-emerald-950/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs leading-5 text-slate-400">
+          Stored locally at <span className="font-mono text-emerald-200">{SOLAR_ESTIMATE_SETTINGS_STORAGE_KEY}</span>.
+        </p>
+        <span className={`text-xs font-semibold ${saveState === 'saved' ? 'text-emerald-200' : 'text-slate-500'}`}>
+          {saveState === 'saved' ? 'Saved locally' : 'Local only'}
+        </span>
+      </div>
     </div>
   )
 }
@@ -1521,6 +1664,8 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   </h4>
                   <HomeBaseSettings />
                 </div>
+
+                <SolarEstimateSettingsPanel />
 
                 <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">
                   <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-cyan-200/80">

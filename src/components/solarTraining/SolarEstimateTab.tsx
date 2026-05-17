@@ -58,6 +58,13 @@ import {
   type SolarEstimateUtility,
   type SystemMode,
 } from '@/services/solarTraining/SolarEstimateTypes'
+import {
+  SOLAR_ESTIMATE_SETTINGS_CHANGED_EVENT,
+  calculateSolarEstimateInstallCost,
+  loadSolarEstimateSettings,
+  type SolarEstimateCostBreakdown,
+  type SolarEstimateSettings,
+} from '@/services/solarTraining/SolarEstimateSettings'
 
 // ============================================================================
 // STEP METADATA - visual labels and icons, ordered to match ESTIMATE_STEPS
@@ -1193,9 +1200,18 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
   )
 }
 
-function SystemConfigStep({ data, updateField }: { data: SolarEstimateData; updateField: UpdateField }) {
+function SystemConfigStep({
+  data,
+  updateField,
+  estimateSettings,
+}: {
+  data: SolarEstimateData
+  updateField: UpdateField
+  estimateSettings: SolarEstimateSettings
+}) {
   const hasBattery = data.systemMode === 'solar_plus_battery'
   const panelCount = Math.ceil((data.systemSizeKw * 1000) / data.panelWattage)
+  const costBreakdown = calculateSolarEstimateInstallCost(data, estimateSettings)
   const setBatteryEnabled = (enabled: boolean) => {
     updateField('systemMode', enabled ? 'solar_plus_battery' : 'solar_only')
   }
@@ -1266,22 +1282,15 @@ function SystemConfigStep({ data, updateField }: { data: SolarEstimateData; upda
             </div>
 
             <div>
-              <FieldLabel>Install cost</FieldLabel>
-              <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
-                <p className="text-2xl font-semibold text-emerald-200">{formatMoney(data.installCost)}</p>
-                <input
-                  type="range"
-                  min="10000"
-                  max="100000"
-                  step="1000"
-                  value={data.installCost}
-                  onChange={(event) => updateField('installCost', Number(event.target.value))}
-                  className="mt-3 h-2 w-full accent-emerald-400"
-                />
-                <div className="mt-1 flex justify-between text-[11px] text-slate-600">
-                  <span>$10k</span>
-                  <span>$100k</span>
-                </div>
+              <FieldLabel>Modeled install cost</FieldLabel>
+              <div className="mt-2 rounded-lg border border-emerald-800/60 bg-emerald-950/15 p-3">
+                <p className="text-2xl font-semibold text-emerald-200">
+                  {formatMoney(costBreakdown.totalEstimatedInstallCost)}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Calculated from Solar Estimate Settings. Mobility and delivery use base/flat costs because distance
+                  is not inferred here.
+                </p>
               </div>
             </div>
           </div>
@@ -1359,6 +1368,8 @@ function SystemConfigStep({ data, updateField }: { data: SolarEstimateData; upda
           <div className="grid grid-cols-2 gap-3">
             <ReviewRow label="Mode" value={hasBattery ? 'Solar Plus Battery' : 'Solar Only'} />
             <ReviewRow label="Panels" value={`${panelCount} @ ${data.panelWattage}W`} />
+            <ReviewRow label="Permit tier" value={`${costBreakdown.systemSizeTier} system`} />
+            <ReviewRow label="Settings cost" value={formatMoney(costBreakdown.totalEstimatedInstallCost)} />
           </div>
         </div>
       </div>
@@ -1403,6 +1414,41 @@ function MetricCard({
       </div>
       <p className="text-2xl font-semibold text-white">{value}</p>
       <p className="mt-1 text-xs leading-5 text-slate-500">{detail}</p>
+    </div>
+  )
+}
+
+function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdown }) {
+  const rows = [
+    { label: 'Panel labor', value: breakdown.panelLaborCost },
+    { label: 'Permit', value: breakdown.permitCost },
+    { label: 'Blueprint', value: breakdown.blueprintCost },
+    { label: 'Mobility', value: breakdown.mobilityCost, detail: breakdown.mobilityLabel },
+    { label: 'Delivery', value: breakdown.deliveryCost, detail: breakdown.deliveryLabel },
+  ]
+
+  return (
+    <div className="mb-5 rounded-lg border border-emerald-700/35 bg-emerald-950/10 p-4">
+      <div className="flex flex-col gap-2 border-b border-emerald-700/20 pb-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-emerald-100">Modeled internal cost breakdown</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Internal estimate only, based on Solar Estimate Settings. Not a final customer quote.
+          </p>
+        </div>
+        <span className="rounded-md border border-emerald-500/25 bg-slate-950/55 px-3 py-2 text-sm font-semibold text-emerald-200">
+          {formatMoney(breakdown.totalEstimatedInstallCost)}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        {rows.map(row => (
+          <div key={row.label} className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{row.label}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-100">{formatMoney(row.value)}</p>
+            {row.detail && <p className="mt-1 text-[11px] leading-4 text-slate-600">{row.detail}</p>}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -2426,6 +2472,7 @@ function EstimateSummaryStep({
   onSave,
   activeEstimateId,
   saveStatus,
+  estimateSettings,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
@@ -2433,6 +2480,7 @@ function EstimateSummaryStep({
   onSave: () => void
   activeEstimateId: string | null
   saveStatus: 'idle' | 'saved'
+  estimateSettings: SolarEstimateSettings
 }) {
   const ratePlanLabel = data.utilityProvider
     ? findLabel(RATE_PLANS_BY_UTILITY[data.utilityProvider], data.ratePlan)
@@ -2444,7 +2492,8 @@ function EstimateSummaryStep({
   const solarSizeKw = data.systemSizeKw
   const batterySizeKwh = data.batterySizeKwh
   const panelWattage = data.panelWattage
-  const systemCost = data.installCost
+  const costBreakdown = calculateSolarEstimateInstallCost(data, estimateSettings)
+  const systemCost = costBreakdown.totalEstimatedInstallCost
   const nemResult = calculateNEM3Savings({
     monthly_kwh: monthlyKwh,
     utility,
@@ -2517,7 +2566,7 @@ function EstimateSummaryStep({
         <MetricCard
           label="Estimated cost"
           value={formatMoney(systemCost)}
-          detail="Rough installed cost before site-specific adjustments"
+          detail="Modeled internal install cost from admin settings"
           Icon={DollarSign}
           tone="cyan"
         />
@@ -2536,6 +2585,8 @@ function EstimateSummaryStep({
           tone="blue"
         />
       </div>
+
+      <CostBreakdownCard breakdown={costBreakdown} />
 
       <div className="mb-5 rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2591,7 +2642,7 @@ function EstimateSummaryStep({
         <ReviewRow label="System size" value={`${solarSizeKw.toFixed(1)} kW`} />
         <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
         <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
-        <ReviewRow label="Install cost" value={formatMoney(systemCost)} />
+        <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
       </div>
 
       {hasBattery && (
@@ -2717,7 +2768,7 @@ function EstimateSummaryStep({
             <p className="text-sm font-semibold text-amber-100">Assumptions and disclaimer</p>
             <p className="mt-1 text-sm leading-6 text-slate-400">
               Estimates use local interview inputs, the existing NEM 3.0 training calculator, 420 W panel
-              assumptions, rough installed cost bands, average usage conversion, and simplified production
+              assumptions, admin Solar Estimate cost settings, average usage conversion, and simplified production
               modeling. Final design requires utility bill review, roof measurements, shade analysis,
               equipment selection, permitting, interconnection review, and finance terms.
             </p>
@@ -2735,6 +2786,7 @@ function ActiveStepPanel({
   onSave,
   activeEstimateId,
   saveStatus,
+  estimateSettings,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
@@ -2742,6 +2794,7 @@ function ActiveStepPanel({
   onSave: () => void
   activeEstimateId: string | null
   saveStatus: 'idle' | 'saved'
+  estimateSettings: SolarEstimateSettings
 }) {
   switch (data.currentStep) {
     case 'address':
@@ -2751,7 +2804,7 @@ function ActiveStepPanel({
     case 'energy_use':
       return <EnergyUseStep data={data} updateField={updateField} />
     case 'system_config':
-      return <SystemConfigStep data={data} updateField={updateField} />
+      return <SystemConfigStep data={data} updateField={updateField} estimateSettings={estimateSettings} />
     case 'estimate_summary':
       return (
         <EstimateSummaryStep
@@ -2761,6 +2814,7 @@ function ActiveStepPanel({
           onSave={onSave}
           activeEstimateId={activeEstimateId}
           saveStatus={saveStatus}
+          estimateSettings={estimateSettings}
         />
       )
     default:
@@ -2782,6 +2836,7 @@ export default function SolarEstimateTab() {
     const draft = loadActiveDraft()
     return draft?.estimateId ?? null
   })
+  const [estimateSettings, setEstimateSettings] = useState<SolarEstimateSettings>(() => loadSolarEstimateSettings())
   const [showLibrary, setShowLibrary] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle')
   const draftSaveTimer = useRef<number | null>(null)
@@ -2803,6 +2858,16 @@ export default function SolarEstimateTab() {
       }
     })
   }, [data.currentStep])
+
+  useEffect(() => {
+    const handleSettingsChanged = () => setEstimateSettings(loadSolarEstimateSettings())
+    window.addEventListener(SOLAR_ESTIMATE_SETTINGS_CHANGED_EVENT, handleSettingsChanged)
+    window.addEventListener('storage', handleSettingsChanged)
+    return () => {
+      window.removeEventListener(SOLAR_ESTIMATE_SETTINGS_CHANGED_EVENT, handleSettingsChanged)
+      window.removeEventListener('storage', handleSettingsChanged)
+    }
+  }, [])
 
   useEffect(() => {
     if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
@@ -3044,6 +3109,7 @@ export default function SolarEstimateTab() {
                 onSave={handleSave}
                 activeEstimateId={activeEstimateId}
                 saveStatus={saveStatus}
+                estimateSettings={estimateSettings}
               />
             </div>
 

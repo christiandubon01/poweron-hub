@@ -1980,3 +1980,64 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Step 4 System Config upgrade complete. `SolarEstimateData` now includes `monthlyUsageKwh`, `systemSizeKw`, `panelWattage`, `batterySizeKwh`, and `installCost`, while battery on/off remains compatible through `systemMode`. Step 4 now has NEM 3.0-style sliders for monthly usage, system size, battery size, and install cost; panel wattage buttons; and a Solar Plus Battery toggle. Summary uses these selected values for monthly kWh, system size, panel wattage, battery kWh, and install cost, and review rows show them. Saved estimates/drafts normalize older snapshots and restore the new fields. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE ADMIN COST SETTINGS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Added a Solar Estimate Settings admin card inside Settings Hub under HUNTER Operations, directly below HUNTER Home Base.
+- Added local-only settings for installer 1, installer 2, crew lead hourly rates, combined hourly labor display, per-panel labor, mobility, permit tiers, blueprint tiers, and delivery.
+- Added `src/services/solarTraining/SolarEstimateSettings.ts` with safe defaults, storage helpers, normalization, and a shared install-cost calculator.
+- Stored settings in localStorage key `poweron.solarTraining.solarEstimateSettings`.
+- Removed the manual Step 4 Install Cost slider and replaced it with a modeled settings-driven install cost preview.
+- Updated Summary estimated cost, NEM cost input, review row, and internal breakdown to use the settings-driven cost.
+- Added compact Summary breakdown rows for Panel labor, Permit, Blueprint, Mobility, Delivery, and Total estimated install cost.
+
+WHAT WAS LEARNED:
+- Settings Hub lives in `src/components/v15r/V15rSettingsPanel.tsx`; HUNTER Home Base is rendered from `HomeBaseSettings` inside the HUNTER Operations `SettingCard`.
+- Solar Estimate Summary had been using `data.installCost` directly as the system cost sent into the existing NEM 3.0 training calculator.
+- Saved estimates can remain safe without removing the legacy `installCost` field; the new calculation simply supersedes it for display/modeling.
+- Distance cannot be safely inferred from the current Solar Estimate address state and HUNTER home base without additional scoped geospatial wiring, so mobility and delivery use base/flat cost only for now.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Put local-only feature settings in a small helper service so Settings Hub and feature tabs share defaults and normalization.
+- Dispatch a small browser custom event after localStorage writes when same-tab components need to update immediately.
+- Keep legacy persisted fields when changing a calculation source so older saved estimates continue to open safely.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended for the new Settings Hub card and the cleaned Step 4 System Config panel.
+- Mobility/delivery mileage rates are configurable but only base/flat costs are used until distance is explicitly and safely modeled.
+- Combined hourly labor rate is displayed for admin visibility but not used in install cost because no labor-hours model exists yet.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA should verify the Settings Hub card below HUNTER Home Base, settings persistence after reload, Step 4 without the install cost slider, and Summary breakdown readability.
+- If future scope adds distance modeling, use explicit shop/home-base-to-project distance data before enabling per-mile mobility or delivery calculations.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Solar Estimate admin cost settings are now local-only in `poweron.solarTraining.solarEstimateSettings`. Settings Hub has a Solar Estimate Settings card below HUNTER Home Base. `SolarEstimateSettings.ts` owns defaults, storage, normalization, and cost calculation. Step 4 no longer has a manual Install Cost slider; it shows a modeled settings-driven cost preview. Summary uses the settings-driven total as system cost and shows an internal breakdown. Typecheck passes.
