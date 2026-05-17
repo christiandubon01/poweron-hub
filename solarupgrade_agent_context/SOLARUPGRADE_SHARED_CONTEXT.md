@@ -1442,3 +1442,56 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped chart tooltip pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Added reusable `ChartHoverCard` plus local hover state to Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative. Tooltips use existing chart values only and appear near the cursor with premium dark styling. Payments has no hover tooltip by scope. No formulas, assumptions, sizing, persistence, Supabase, saved-estimate behavior, or unrelated tabs changed. Typecheck passes. Ready for screenshot QA.
+
+---
+
+# SOLAR ESTIMATE ADDRESS MAP UPGRADE COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Upgraded Solar Estimate Step 1 Address map preview from a small road-map side panel to a larger premium dark framed roof preview under the address fields.
+- Reused the existing `@react-google-maps/api` / `useV15rGoogleMapsLoader` / `VITE_GOOGLE_MAPS_BROWSER_KEY` path already present in the app.
+- Set the preview map to Google Maps `hybrid` imagery, centered on the selected Places coordinates, with tilt forced to `0` for a top-down roof view.
+- Added a visible marker at the selected property location and kept the map centered/zoomed when the selected address changes.
+- Preserved the existing fallback card behavior when the API key is missing, Google Maps fails to load, or coordinates are not available.
+
+WHAT WAS LEARNED:
+- The Solar Estimate address step already had Places autocomplete and a basic map preview wired through the correct app loader; the required work was a scoped presentation/map-mode upgrade.
+- Zoom `19` gives a cleaner roof/property context than the old zoom `15` while keeping the wide panel close to the requested roughly 500-foot surrounding view.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use `mapTypeId: 'hybrid'` plus `map.setTilt(0)` for roof-oriented satellite previews without adding packages or exposing keys.
+- Keep map fallbacks as full-height panels so unavailable states feel intentional rather than broken.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended with a real configured Google Maps browser key and a selected address to verify satellite tile availability and marker visibility in-browser.
+- The exact visible radius varies by viewport width, latitude, and Google Maps tile scaling.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA on Solar Estimate Step 1 Address with a real address selection and Maps key configured.
+- Confirm the hybrid imagery/marker are visually clear at zoom `19` across desktop and narrow widths.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Solar Estimate Address map upgrade complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 now shows a larger premium dark framed Google Maps `hybrid` satellite/top-down roof preview under the address fields after a Places suggestion supplies latitude/longitude. Map centers on selected coordinates, uses zoom `19`, forces tilt `0`, and shows a marker. Existing autocomplete and fallback cards are preserved. Typecheck passes. Ready for screenshot QA with a configured Maps key.

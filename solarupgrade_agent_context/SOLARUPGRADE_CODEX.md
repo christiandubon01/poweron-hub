@@ -510,3 +510,61 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Chart tooltip pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative now have premium dark hover cards driven by existing chart data. Payments is intentionally unchanged by scope. Typecheck passes. Ready for screenshot QA.
+
+---
+
+## SOLAR ESTIMATE ADDRESS MAP UPGRADE COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Scoped Solar Estimate Address map upgrade
+
+WHAT CHANGED:
+- Upgraded Solar Estimate Step 1 Address to render a larger Google Maps roof preview under the address fields after a Places suggestion provides latitude/longitude.
+- Reused the existing `@react-google-maps/api`, `useV15rGoogleMapsLoader`, and `VITE_GOOGLE_MAPS_BROWSER_KEY` path.
+- Switched the preview map to `hybrid` satellite imagery, centered on the selected coordinates, with top-down tilt forced to `0`.
+- Added a clear marker at the selected property location and kept the map centered/zoomed when the selected address changes.
+- Preserved the polished fallback card for missing API key, load failure, or missing coordinates.
+
+WHAT WAS LEARNED:
+- The address autocomplete behavior was already correctly wired in `SolarEstimateTab.tsx`; this pass only needed to upgrade the map mode, framing, placement, and zoom.
+- Zoom `19` is a better roof-level starting point than the old zoom `15` while keeping the wide panel near the requested 500-foot context.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `mapTypeId: 'hybrid'` with `map.setTilt(0)` is the scoped pattern for top-down satellite roof previews.
+- Moving map previews below form fields gives more useful inspection space without introducing horizontal overflow.
+
+BUGS / RISKS:
+- Browser screenshot QA is still needed with a real Maps key and selected address to validate satellite imagery, marker visibility, and exact framing.
+- Visible radius varies by viewport width and latitude.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA on Step 1 Address with a configured Maps key, select an address, and confirm hybrid imagery plus marker are clear at zoom `19`.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Address map upgrade complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 Address now shows a larger premium dark framed Google Maps `hybrid` satellite roof preview under the address form when coordinates exist. It centers on selected coordinates, uses zoom `19`, forces tilt `0`, and shows a marker. Existing Places autocomplete and fallback behavior are preserved. Typecheck passes.

@@ -103,11 +103,15 @@ const darkMapStyles: google.maps.MapTypeStyle[] = [
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
 ]
 
+const SOLAR_ROOF_MAP_ZOOM = 19
+
 const mapOptions: google.maps.MapOptions = {
   disableDefaultUI: true,
   zoomControl: true,
   clickableIcons: false,
   gestureHandling: 'greedy',
+  mapTypeId: 'hybrid',
+  tilt: 0,
   styles: darkMapStyles,
 }
 
@@ -400,7 +404,9 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
   useEffect(() => {
     if (mapRef.current && center) {
       mapRef.current.panTo(center)
-      mapRef.current.setZoom(15)
+      mapRef.current.setMapTypeId('hybrid')
+      mapRef.current.setTilt(0)
+      mapRef.current.setZoom(SOLAR_ROOF_MAP_ZOOM)
     }
   }, [center])
 
@@ -408,7 +414,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
     const addressLabel = data.selectedAddressLabel || data.addressText
     const hasAddr = Boolean(addressLabel?.trim())
     return (
-      <div className="flex min-h-[220px] flex-col gap-3 rounded-lg border border-slate-700/60 bg-slate-950/70 p-4">
+      <div className="flex min-h-[320px] flex-col gap-4 rounded-lg border border-slate-700/60 bg-slate-950/70 p-4">
         <div className="flex items-center gap-2">
           <MapPin className="h-4 w-4 text-cyan-500/60" />
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -444,7 +450,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
 
   if (!isLoaded) {
     return (
-      <div className="flex min-h-[220px] items-center justify-center rounded-lg border border-slate-800 bg-slate-950/55 p-4 text-center text-xs text-slate-500">
+      <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-slate-800 bg-slate-950/55 p-4 text-center text-xs text-slate-500">
         Loading map tools...
       </div>
     )
@@ -454,7 +460,7 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
     const addressLabel = data.selectedAddressLabel || data.addressText
     const hasAddr = Boolean(addressLabel?.trim())
     return (
-      <div className="flex min-h-[220px] flex-col gap-3 rounded-lg border border-dashed border-slate-700/60 bg-slate-950/55 p-4">
+      <div className="flex min-h-[320px] flex-col gap-4 rounded-lg border border-dashed border-slate-700/60 bg-slate-950/55 p-4">
         <div className="flex items-center gap-2">
           <MapPin className="h-4 w-4 text-slate-600" />
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Awaiting pin</span>
@@ -478,25 +484,44 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
   }
 
   return (
-    <div className="h-[220px] overflow-hidden rounded-lg border border-cyan-900/50 bg-slate-950">
-      <GoogleMap
-        mapContainerStyle={{ width: '100%', height: '100%' }}
-        center={center}
-        zoom={15}
-        options={mapOptions}
-        onLoad={(map) => {
-          mapRef.current = map
-        }}
-        onUnmount={() => {
-          mapRef.current = null
-        }}
-      >
-        <MarkerF
-          position={center}
-          title="Solar estimate address"
-          options={{ clickable: false, optimized: false }}
-        />
-      </GoogleMap>
+    <div className="overflow-hidden rounded-lg border border-cyan-900/50 bg-slate-950 shadow-[0_18px_42px_rgba(2,6,23,0.32)]">
+      <div className="flex items-center justify-between gap-3 border-b border-cyan-950/70 bg-slate-950/95 px-4 py-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-400/80">
+            Satellite roof preview
+          </p>
+          <p className="mt-1 max-w-full truncate text-xs text-slate-400">
+            {data.selectedAddressLabel || data.addressText || 'Selected address'}
+          </p>
+        </div>
+        <div className="shrink-0 rounded-full border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+          ~500 ft view
+        </div>
+      </div>
+      <div className="h-[360px] min-h-[320px]">
+        <GoogleMap
+          mapContainerStyle={{ width: '100%', height: '100%' }}
+          center={center}
+          zoom={SOLAR_ROOF_MAP_ZOOM}
+          options={mapOptions}
+          onLoad={(map) => {
+            mapRef.current = map
+            map.setMapTypeId('hybrid')
+            map.setTilt(0)
+            map.setZoom(SOLAR_ROOF_MAP_ZOOM)
+          }}
+          onUnmount={() => {
+            mapRef.current = null
+          }}
+        >
+          <MarkerF
+            position={center}
+            title="Solar estimate address"
+            zIndex={1000}
+            options={{ clickable: false, optimized: false, zIndex: 1000 }}
+          />
+        </GoogleMap>
+      </div>
     </div>
   )
 }
@@ -602,7 +627,7 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
         can capture a place ID and coordinates for a local map preview.
       </SectionIntro>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="space-y-5">
         <div className="rounded-lg border border-slate-800 bg-slate-950/45 p-4">
           <FieldLabel hint={mapsReady ? 'Suggestions enabled' : 'Plain text available'}>
             Homeowner address
