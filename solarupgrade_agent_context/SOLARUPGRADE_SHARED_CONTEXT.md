@@ -1284,3 +1284,54 @@ NO — no next build phase defined. Ready for screenshot QA on saved estimates f
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Local Saved Estimates added to `src/components/solarTraining/SolarEstimateTab.tsx`. localStorage keys: `poweron.solarTraining.solarEstimates` (estimate list) and `poweron.solarTraining.activeDraft` (current open estimate + step + system controls). `SolarEstimatesLibrary` component shows saved estimates with Open/Rename/Delete. "Solar Estimates" button in header opens/closes the library. Save creates or updates (no duplicates). Active draft auto-saves on every change (500ms debounce). App reload restores current draft via lazy useState initializers. No Supabase, no new packages, no formula or unrelated tab changes. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE CHART HEIGHT POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Increased the vertical plot area for the Summary chart subtabs: Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, Cumulative, and Payments.
+- Removed the shallow SVG `maxHeight` caps so the taller viewBox heights render naturally without changing chart data.
+- Raised SVG chart heights from roughly 150-170px to roughly 338-383px for about a 2.25x taller chart panel presentation.
+- Added a taller Payments panel and slightly taller payment comparison bars to make that non-SVG chart tab read at the same larger scale.
+
+WHAT WAS LEARNED:
+- The chart readability issue was primarily caused by shallow SVG viewBoxes and inline `maxHeight` caps rather than chart data or calculations.
+- The Summary chart module is isolated enough for a height-only polish pass without touching interview flow, saved estimates, persistence, Supabase, or formulas.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For these responsive SVG charts, increasing the viewBox height and removing `maxHeight` preserves horizontal behavior while giving the plot more vertical room.
+- Keep chart polish scoped to dimensions when the data pipeline is already correct.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended to confirm the taller panels feel right across desktop and mobile.
+- No chart logic, formulas, assumptions, saved estimate behavior, or persistence were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA on the Solar Estimate Summary chart module, especially narrow viewports, to confirm the taller panels avoid horizontal overflow and remain readable.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Chart height polish pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Summary chart subtabs Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, Cumulative, and Payments now render about 2.25x taller vertically. SVG chart data and formulas are unchanged; only chart dimensions and the payment panel height changed. Typecheck passes. Ready for screenshot QA.

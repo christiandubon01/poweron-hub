@@ -335,3 +335,60 @@ YES
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Phase 4 built the full local Solar Estimate interview flow in `SolarEstimateTab.tsx`. It uses existing option arrays and local state only, supports optional existing Google Places/map preview, and leaves all final summary math and editable output cards for Phase 5. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE CHART HEIGHT POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Scoped Solar Estimate Summary chart-height polish pass
+
+WHAT CHANGED:
+- Increased the vertical plot area for the Summary chart subtabs: Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, Cumulative, and Payments.
+- Removed the inline SVG `maxHeight` caps that were keeping charts visually shallow.
+- Raised SVG viewBox heights to about 2.25x their previous visual height while preserving the existing dark NEM 3.0-style chart language.
+- Added matching vertical breathing room to the Payments chart panel without changing payment assumptions or values.
+
+WHAT WAS LEARNED:
+- Chart readability was constrained by presentation dimensions, not data generation.
+- The chart module can be polished safely through local SVG dimension changes without touching formulas, saved estimates, Supabase, or unrelated tabs.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use taller SVG viewBoxes plus no `maxHeight` cap to preserve responsive width and avoid horizontal overflow.
+- Keep non-SVG chart tabs visually aligned with SVG tabs by adjusting only panel height and bar thickness.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended across desktop and mobile.
+- No formulas, assumptions, localStorage behavior, Supabase behavior, or chart values were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA on the Solar Estimate Summary chart module and confirm all six chart subtabs remain readable without horizontal overflow.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Solar Estimate chart-height polish complete. `SolarEstimateTab.tsx` now renders the Summary chart subtabs about 2.25x taller vertically by increasing SVG viewBox heights, removing max-height caps, and giving the Payments tab a taller panel. Chart data, formulas, assumptions, saved estimates, Supabase, and unrelated tabs were not touched. Typecheck passes.

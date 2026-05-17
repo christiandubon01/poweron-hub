@@ -958,11 +958,11 @@ function BillComparisonChart({
   const shortLabels = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
 
   const W = 480
-  const H = 150
+  const H = 338
   const padL = 40
   const padR = 8
-  const padT = 8
-  const padB = 22
+  const padT = 14
+  const padB = 34
   const chartW = W - padL - padR
   const chartH = H - padT - padB
   const monthW = chartW / 12
@@ -996,7 +996,7 @@ function BillComparisonChart({
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
-          style={{ minWidth: 320, maxHeight: 160 }}
+          style={{ minWidth: 320 }}
           aria-label="Monthly bill comparison chart"
         >
           {[0.25, 0.5, 0.75, 1].map((pct) => {
@@ -1101,7 +1101,7 @@ function EnergyFlow24hChart({
   const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar)))
   const maxVal = rawMax * 1.15
 
-  const W = 540; const H = 170; const pL = 36; const pR = 10; const pT = 12; const pB = 30
+  const W = 540; const H = 383; const pL = 36; const pR = 10; const pT = 18; const pB = 40
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (h: number) => pL + (h / 23) * cW
   const yOf = (v: number) => pT + cH - (v / maxVal) * cH
@@ -1149,7 +1149,7 @@ function EnergyFlow24hChart({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 185 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300 }}>
           {[0.25, 0.5, 0.75, 1].map(p => (
             <line
               key={p}
@@ -1194,7 +1194,7 @@ function TwentyFiveYearSavingsChart({
   const yearData = generate25YearData(annualBillBefore, annualBillAfter)
   const maxBill = Math.max(1, ...yearData.map(d => d.withoutSolar))
 
-  const W = 560; const H = 170; const pL = 48; const pR = 10; const pT = 10; const pB = 28
+  const W = 560; const H = 383; const pL = 48; const pR = 10; const pT = 18; const pB = 38
   const cW = W - pL - pR; const cH = H - pT - pB
   const colW = cW / 25
   const barW = Math.max(3, Math.floor(colW * 0.35))
@@ -1220,7 +1220,7 @@ function TwentyFiveYearSavingsChart({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 320, maxHeight: 185 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 320 }}>
           {[0.25, 0.5, 0.75, 1].map(p => {
             const y = yOf(maxBill * p)
             return (
@@ -1283,7 +1283,7 @@ function CostOfElectricityChart({
 
   const maxRate = Math.max(0.01, ...years.map(y => y.utilityRate)) * 1.15
 
-  const W = 540; const H = 160; const pL = 46; const pR = 10; const pT = 12; const pB = 28
+  const W = 540; const H = 360; const pL = 46; const pR = 10; const pT = 18; const pB = 38
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (year: number) => pL + ((year - 1) / 19) * cW
   const yOf = (v: number) => pT + cH - (v / maxRate) * cH
@@ -1312,7 +1312,7 @@ function CostOfElectricityChart({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 175 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300 }}>
           {[0.25, 0.5, 0.75, 1].map(p => {
             const y = yOf(maxRate * p)
             return (
@@ -1363,7 +1363,7 @@ function CumulativeSavingsChart({
   const paybackIdx = yearData.findIndex(d => d.cumulative >= systemCost)
   const paybackYear = paybackIdx >= 0 ? yearData[paybackIdx].year : null
 
-  const W = 540; const H = 160; const pL = 48; const pR = 10; const pT = 12; const pB = 28
+  const W = 540; const H = 360; const pL = 48; const pR = 10; const pT = 18; const pB = 38
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (year: number) => pL + ((year - 1) / 24) * cW
   const yOf = (v: number) => pT + cH - (v / maxCumulative) * cH
@@ -1395,7 +1395,7 @@ function CumulativeSavingsChart({
         )}
       </div>
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 175 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300 }}>
           {[0.25, 0.5, 0.75, 1].map(p => {
             const y = yOf(maxCumulative * p)
             return (
@@ -1481,7 +1481,7 @@ function PaymentComparisonChart({
   ]
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+    <div className="min-h-[360px] rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-4">
         <p className="text-sm font-semibold text-slate-100">Payment Comparison</p>
         <p className="text-xs text-slate-500">Modeled monthly cost breakdown — not a financing offer</p>
@@ -1498,9 +1498,9 @@ function PaymentComparisonChart({
                 {formatMoney(bar.value)}
                 <span className="text-xs font-normal text-slate-500">/mo</span>
               </p>
-              <div className="mt-2 h-1.5 rounded-full bg-slate-800">
+              <div className="mt-8 h-2 rounded-full bg-slate-800">
                 <div
-                  className="h-1.5 rounded-full transition-all"
+                  className="h-2 rounded-full transition-all"
                   style={{ width: `${pct}%`, background: bar.color }}
                 />
               </div>
