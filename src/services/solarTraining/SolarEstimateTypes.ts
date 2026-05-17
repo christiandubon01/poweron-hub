@@ -51,6 +51,11 @@ export type SolarEstimateAppliance =
   | 'pool_equipment'
   | 'extra_heavy_load';
 
+export interface SolarEstimateSelectedAppliance {
+  id: SolarEstimateAppliance;
+  amps?: number;
+}
+
 export type ConsumptionMethod = 'average_bill' | 'home_size';
 
 export type SystemMode = 'solar_only' | 'solar_plus_battery';
@@ -80,7 +85,7 @@ export interface SolarEstimateData {
   ownership: OwnershipStatus | null;
   propertyType: PropertyType | null;
   mainBreakerSize: MainBreakerSize;
-  selectedAppliances: SolarEstimateAppliance[];
+  selectedAppliances: SolarEstimateSelectedAppliance[];
 
   // Energy use
   utilityProvider: SolarEstimateUtility | null;

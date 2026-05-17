@@ -140,3 +140,40 @@ RISKS:
 
 READY FOR SCREENSHOT QA:
 YES
+
+---
+
+## APPLIANCE LOAD SELECTOR COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Changed `selectedAppliances` from appliance IDs to typed entries that can store per-appliance amperage.
+- Kept all ten appliance options available in Step 2 Home Details.
+- Reworked the appliance selector into an inline scrollable panel to avoid clipping and overlap.
+- Added icons, selected states, and selected-only numeric `Amps` inputs on appliance cards.
+- Updated Step 5 interview inputs to display appliance amperage values.
+- Normalized saved estimates and active drafts so older ID-only appliance arrays restore safely.
+
+DATA SHAPE:
+- `selectedAppliances: { id: SolarEstimateAppliance; amps?: number }[]`
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+RISKS:
+- Screenshot QA should verify Step 2 Home Details panel scrolling, mobile wrapping, and saved-estimate reopen behavior.
+- Amperage is not used by estimate math yet.
+
+READY FOR SCREENSHOT QA:
+YES

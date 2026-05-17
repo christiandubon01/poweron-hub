@@ -1816,3 +1816,57 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Step 2 Home Details electrical configuration complete. `SolarEstimateData` now includes `mainBreakerSize` defaulting to `unknown` and `selectedAppliances` defaulting to `[]`. Step 2 shows breaker size options and a premium dark multi-select appliance panel with selected count/summary. Step 5 interview inputs show breaker size and selected appliances. Saved estimates and active drafts are normalized on load so older stored data gets safe defaults, while newly saved estimates persist the full new data object automatically. Typecheck passes. No Step 1 Address, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
+
+---
+
+# SOLAR ESTIMATE APPLIANCE LOAD SELECTOR COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Updated Step 2 Home Details appliance selections from ID-only values to typed load entries shaped as `{ id, amps? }`.
+- Preserved the full appliance option list: AC unit, Microwave, Hot tub, EV charger, Electric stove, Dryer, Washer, Furnace, Pool equipment, and Extra heavy load appliance.
+- Changed the appliance selector from an absolute popover to an inline scrollable panel so all options can render cleanly without clipping, horizontal overflow, or overlap with floating controls.
+- Added selected/unselected card states with icons and a numeric `Amps` input that appears only after an appliance is selected.
+- Updated Step 5 interview inputs to show selected appliances with amperage values, such as `EV charger — 50A`.
+- Added restore normalization for older saved estimates and active drafts that stored appliance IDs as strings, while preserving newer `{ id, amps }` entries.
+
+WHAT WAS LEARNED:
+- The prior Step 2 selector had all option constants defined, but the absolute dropdown layout made the visible list incomplete in the app surface.
+- Saved estimates already persist the full Solar Estimate data object, so the needed persistence work was typed normalization on read rather than a new storage mechanism.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- When extending localStorage-backed typed state, normalize both previous and current data shapes at the load boundary.
+- For compact multi-select cards that include inputs, keep the card as a container and put the toggle behavior on an inner button so form fields remain usable.
+
+BUGS / RISKS:
+- Browser screenshot QA is still recommended for Step 2 Home Details at desktop and narrow widths to confirm panel scrolling and no overlap with app floating controls.
+- Appliance amperage is captured and restored only; estimate math and NEM 3.0 formulas intentionally do not consume it yet.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA should verify Step 2 shows all ten appliance options, each selected card reveals an `Amps` numeric input, and saved-estimate reopen restores both selected appliance IDs and amperage values.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Step 2 Home Details appliance selector fix complete. `selectedAppliances` is now typed as `{ id: SolarEstimateAppliance; amps?: number }[]`, with normalization for older string-array saved estimates/drafts. Step 2 shows all ten appliance options in an inline scrollable panel, uses icons and selected states, and reveals a numeric `Amps` input only for selected appliances. Step 5 interview inputs show appliance load summaries like `EV charger — 50A`. Typecheck passes. No Step 1 Address/map, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.

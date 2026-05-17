@@ -54,6 +54,7 @@ import {
   type SolarEstimateAppliance,
   type SolarEstimateData,
   type SolarEstimateRatePlan,
+  type SolarEstimateSelectedAppliance,
   type SolarEstimateUtility,
   type SystemMode,
 } from '@/services/solarTraining/SolarEstimateTypes'
@@ -211,13 +212,40 @@ type ActiveDraft = {
   batterySizeKwh: number
 }
 
+function normalizeSelectedAppliances(value: unknown): SolarEstimateSelectedAppliance[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map(appliance => {
+      if (typeof appliance === 'string') {
+        return APPLIANCE_OPTIONS.some(option => option.id === appliance)
+          ? { id: appliance as SolarEstimateAppliance }
+          : null
+      }
+
+      if (!appliance || typeof appliance !== 'object' || !('id' in appliance)) return null
+
+      const candidate = appliance as { id: unknown; amps?: unknown }
+      if (typeof candidate.id !== 'string') return null
+      if (!APPLIANCE_OPTIONS.some(option => option.id === candidate.id)) return null
+
+      const amps =
+        typeof candidate.amps === 'number' && Number.isFinite(candidate.amps) && candidate.amps > 0
+          ? candidate.amps
+          : undefined
+
+      return { id: candidate.id as SolarEstimateAppliance, ...(amps == null ? {} : { amps }) }
+    })
+    .filter((appliance): appliance is SolarEstimateSelectedAppliance => Boolean(appliance))
+}
+
 function normalizeEstimateData(data: Partial<SolarEstimateData> | null | undefined): SolarEstimateData {
   const raw = data ?? {}
   return {
     ...DEFAULT_ESTIMATE_DATA,
     ...raw,
     mainBreakerSize: raw.mainBreakerSize ?? DEFAULT_ESTIMATE_DATA.mainBreakerSize,
-    selectedAppliances: Array.isArray(raw.selectedAppliances) ? raw.selectedAppliances : [],
+    selectedAppliances: normalizeSelectedAppliances(raw.selectedAppliances),
   }
 }
 
@@ -377,9 +405,16 @@ const APPLIANCE_ICON_MAP: Record<SolarEstimateAppliance, React.ComponentType<{ c
   extra_heavy_load: PlugZap,
 }
 
-function getSelectedApplianceLabels(selectedAppliances: SolarEstimateAppliance[]): string[] {
+function getApplianceLabel(id: SolarEstimateAppliance): string {
+  return APPLIANCE_OPTIONS.find(option => option.id === id)?.label ?? id
+}
+
+function getSelectedApplianceSummaries(selectedAppliances: SolarEstimateSelectedAppliance[]): string[] {
   return selectedAppliances
-    .map(id => APPLIANCE_OPTIONS.find(option => option.id === id)?.label)
+    .map(appliance => {
+      const label = getApplianceLabel(appliance.id)
+      return appliance.amps == null ? label : `${label} — ${appliance.amps}A`
+    })
     .filter((label): label is string => Boolean(label))
 }
 
@@ -784,16 +819,28 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
 
 function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updateField: UpdateField }) {
   const [showApplianceSelector, setShowApplianceSelector] = useState(false)
-  const selectedApplianceLabels = getSelectedApplianceLabels(data.selectedAppliances)
+  const selectedApplianceSummaries = getSelectedApplianceSummaries(data.selectedAppliances)
   const selectedApplianceSummary =
-    selectedApplianceLabels.length > 0 ? selectedApplianceLabels.join(', ') : 'No heavy-load appliances selected'
+    selectedApplianceSummaries.length > 0
+      ? selectedApplianceSummaries.join(', ')
+      : 'No heavy-load appliances selected'
 
   const toggleAppliance = (appliance: SolarEstimateAppliance) => {
-    const nextAppliances = data.selectedAppliances.includes(appliance)
-      ? data.selectedAppliances.filter(id => id !== appliance)
-      : [...data.selectedAppliances, appliance]
+    const nextAppliances = data.selectedAppliances.some(item => item.id === appliance)
+      ? data.selectedAppliances.filter(item => item.id !== appliance)
+      : [...data.selectedAppliances, { id: appliance }]
 
     updateField('selectedAppliances', nextAppliances)
+  }
+
+  const updateApplianceAmps = (appliance: SolarEstimateAppliance, value: string) => {
+    const amps = parsePositiveNumber(value)
+    updateField(
+      'selectedAppliances',
+      data.selectedAppliances.map(item =>
+        item.id === appliance ? { ...item, ...(amps == null ? { amps: undefined } : { amps }) } : item
+      )
+    )
   }
 
   return (
@@ -868,7 +915,7 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
               </p>
             </div>
             <div className="rounded-full border border-cyan-500/25 bg-cyan-950/25 px-3 py-1 text-xs font-semibold text-cyan-200">
-              {selectedApplianceLabels.length} selected
+              {selectedApplianceSummaries.length} selected
             </div>
           </div>
 
@@ -912,7 +959,7 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">
-                {selectedApplianceLabels.length} selected
+                {selectedApplianceSummaries.length} selected
                 <ChevronRight
                   className={`h-4 w-4 transition-transform ${showApplianceSelector ? 'rotate-90' : ''}`}
                 />
@@ -920,37 +967,58 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
             </button>
 
             {showApplianceSelector && (
-              <div className="absolute left-0 right-0 top-full z-20 mt-3 rounded-xl border border-cyan-500/25 bg-slate-950/95 p-4 shadow-[0_24px_80px_rgba(8,47,73,0.45)] backdrop-blur">
+              <div className="mt-3 max-h-[520px] overflow-y-auto overflow-x-hidden rounded-xl border border-cyan-500/25 bg-slate-950/95 p-4 shadow-[0_24px_80px_rgba(8,47,73,0.28)] backdrop-blur">
                 <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm font-semibold text-slate-100">Appliances and heavy loads</p>
-                  <p className="text-xs text-slate-500">Select all that apply.</p>
+                  <p className="text-xs text-slate-500">Select all that apply, then add estimated amps.</p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {APPLIANCE_OPTIONS.map(option => {
                     const Icon = APPLIANCE_ICON_MAP[option.id]
-                    const isSelected = data.selectedAppliances.includes(option.id)
+                    const selectedAppliance = data.selectedAppliances.find(item => item.id === option.id)
+                    const isSelected = Boolean(selectedAppliance)
 
                     return (
-                      <button
+                      <div
                         key={option.id}
-                        type="button"
-                        onClick={() => toggleAppliance(option.id)}
-                        className={`rounded-lg border p-3 text-left transition-colors ${
+                        className={`min-w-0 rounded-lg border p-3 text-left transition-colors ${
                           isSelected
                             ? 'border-cyan-400/70 bg-cyan-950/55 ring-1 ring-cyan-400/20'
                             : 'border-slate-800 bg-slate-900/60 hover:border-cyan-700/60 hover:bg-slate-900'
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleAppliance(option.id)}
+                          className="flex w-full min-w-0 items-start justify-between gap-3 text-left"
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
                             <div className="rounded-md border border-slate-700 bg-slate-950/70 p-2 text-cyan-200">
                               <Icon className="h-4 w-4" />
                             </div>
-                            <p className="text-sm font-semibold text-slate-100">{option.label}</p>
+                            <p className="min-w-0 text-sm font-semibold text-slate-100">{option.label}</p>
                           </div>
                           {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />}
-                        </div>
-                      </button>
+                        </button>
+
+                        {isSelected && (
+                          <label className="mt-3 block">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                              Amps
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputMode="numeric"
+                              value={selectedAppliance?.amps ?? ''}
+                              onChange={event => updateApplianceAmps(option.id, event.target.value)}
+                              className="mt-1 w-full rounded-md border border-slate-700/80 bg-slate-950/75 px-3 py-2 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/30"
+                              placeholder="30"
+                            />
+                          </label>
+                        )}
+                      </div>
                     )
                   })}
                 </div>
@@ -2243,7 +2311,7 @@ function EstimateSummaryStep({
   const monthlySavings = Math.max(0, avgBeforeBill - avgAfterBill)
   const independence = Math.round(clamp(savings.self_consumption_ratio * 100, 0, 100))
   const breakerSizeLabel = findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)
-  const selectedApplianceLabels = getSelectedApplianceLabels(data.selectedAppliances)
+  const selectedApplianceLabels = getSelectedApplianceSummaries(data.selectedAppliances)
   const applianceSummary =
     selectedApplianceLabels.length > 0 ? selectedApplianceLabels.join(', ') : 'None selected'
 
