@@ -539,27 +539,48 @@ function generateConservative24hFlow({
     }
   })
 
+  const batteryTargets = solarOnly.map(hour => {
+    const residualLoad = Math.max(0, hour.load - hour.directSolar * directSolarScale)
+    const isSunriseShoulder = hour.hour >= 5 && hour.hour < 8
+    const isPeak = hour.hour >= 16 && hour.hour < 21
+    const isNightShoulder = hour.hour >= 21 || hour.hour < 5
+    const batteryDischargeTarget = !hasBattery
+      ? 0
+      : isPeak
+        ? residualLoad * 0.9
+        : isNightShoulder
+          ? residualLoad * 0.55
+          : isSunriseShoulder
+            ? residualLoad * 0.4
+            : 0
+
+    return {
+      hour: hour.hour,
+      target: batteryDischargeTarget,
+      residualLoad,
+    }
+  })
   const exportedSolar = solarOnly.reduce((total, hour) => total + hour.solarExportBeforeBattery, 0)
-  const peakImport = solarOnly
-    .filter(hour => hour.hour >= 16 && hour.hour <= 20)
-    .reduce((total, hour) => total + hour.gridImportBeforeBattery, 0)
+  const batteryDischargeTargetTotal = batteryTargets.reduce((total, hour) => total + hour.target, 0)
   const storedSolarKwh = hasBattery
-    ? Math.min(exportedSolar, Math.max(0, batterySizeKwh), peakImport / 0.9)
+    ? Math.min(exportedSolar, Math.max(0, batterySizeKwh), batteryDischargeTargetTotal / 0.9)
     : 0
   const dischargeAvailable = storedSolarKwh * 0.9
   const exportChargeScale = exportedSolar > 0 ? storedSolarKwh / exportedSolar : 0
 
   return solarOnly.map(hour => {
-    const peakWeight = hour.hour >= 16 && hour.hour <= 20 && peakImport > 0
-      ? hour.gridImportBeforeBattery / peakImport
+    const target = batteryTargets[hour.hour]?.target ?? 0
+    const batteryDischargeCap = batteryDischargeTargetTotal > 0
+      ? dischargeAvailable * (target / batteryDischargeTargetTotal)
       : 0
-    const batteryDischarge = Math.min(hour.gridImportBeforeBattery, dischargeAvailable * peakWeight)
+    const residualLoad = Math.max(0, hour.gridImportBeforeBattery)
+    const batteryDischarge = Math.min(residualLoad, batteryDischargeCap, target)
     const touBlock = schedule?.hours[hour.hour]
     return {
       hour: hour.hour,
       load: hour.load,
       solar: hour.solar,
-      gridImport: Math.max(0, hour.gridImportBeforeBattery - batteryDischarge),
+      gridImport: Math.max(0, residualLoad - batteryDischarge),
       solarExport: Math.max(0, hour.solarExportBeforeBattery * (1 - exportChargeScale)),
       batteryDischarge,
       touPeriod: touBlock?.period ?? (hour.hour >= 16 && hour.hour <= 20 ? 'peak' : 'off_peak'),
@@ -2587,7 +2608,7 @@ function EnergyFlow24hChart({
                 <rect x={x} y={baseY - importH} width={barW} height={importH} fill="rgba(59,130,246,0.62)" rx={1} />
                 <rect x={x + barW + 1.5} y={baseY - exportH} width={barW} height={exportH} fill="rgba(251,191,36,0.58)" rx={1} />
                 {hasBattery && (
-                  <rect x={x + (barW + 1.5) * 2} y={baseY - batteryH} width={barW} height={batteryH} fill="rgba(34,197,94,0.68)" rx={1} />
+                  <rect x={x + (barW + 1.5) * 2} y={baseY - batteryH} width={barW} height={batteryH} fill="rgba(21,128,61,0.82)" rx={1} />
                 )}
               </g>
             )
@@ -2652,7 +2673,7 @@ function EnergyFlow24hChart({
         </span>
         {hasBattery && (
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-4 rounded-sm bg-emerald-400/70" />
+            <span className="inline-block h-3 w-4 rounded-sm bg-green-700/80" />
             Battery discharge
           </span>
         )}

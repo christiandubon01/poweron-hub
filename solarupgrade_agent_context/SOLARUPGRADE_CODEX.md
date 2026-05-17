@@ -1105,3 +1105,62 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Step 4 layout and main panel cost setting complete. Left side has Monthly Usage, System Size, Panel Wattage, Solar Plus Battery, conditional Battery Size, and Main Panel Upgrade. Right side only has Target Solar Offset and four summary boxes. `mainPanelUpgradeCost` defaults to `$2,500`, persists in existing Solar Estimate Settings localStorage, and is included in Summary cost only when the Step 4 toggle is ON. Typecheck passes.
+
+---
+
+## 24H FLOW BATTERY DISCHARGE REFINEMENT COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Refine 24H Flow battery discharge logic and colors
+
+WHAT CHANGED:
+- Verified the 24H Flow series semantics: home load is total demand, grid import is unserved residual load, solar export is excess solar after direct load/storage assumptions, and battery discharge is load served by stored solar.
+- Replaced peak-only battery dispatch weighting with shoulder-aware discharge targets.
+- Battery discharge now targets 90% of residual load during 4 PM-9 PM, 55% during 9 PM-5 AM, 40% during 5 AM-8 AM, and 0 midday.
+- Discharge remains constrained by residual load, stored solar, battery size, and target allocation.
+- Darkened the battery discharge bar and legend swatch so it is distinct from the brighter solar production green.
+
+WHAT WAS LEARNED:
+- The dashed Home Load line can correctly cross component bars because it is not a stacked flow component.
+- The prior model stored solar conservatively but only allocated discharge into the 4 PM-9 PM window.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Build battery dispatch as target windows first, then scale to available storage for simple but coherent representative-day modeling.
+- Preserve chart semantics by keeping grid import as `residualLoad - batteryDischarge` and solar export as excess solar adjusted for storage charging.
+
+BUGS / RISKS:
+- This remains a representative 24-hour model, not a full chronological battery state-of-charge simulator.
+- Screenshot QA is recommended for Solar Plus Battery and Solar Only states.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Verify Summary > 24H Flow shows darker battery bars during peak, night, and sunrise windows.
+- Confirm Solar Only still hides battery discharge bars and legend item.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+24H Flow battery discharge refinement complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Battery discharge now appears outside peak where reasonable: 4 PM-9 PM strongest, 9 PM-5 AM moderate, 5 AM-8 AM lighter, midday normally zero. The model still clamps discharge by residual load and stored solar/battery capacity, so Home Load line overlap is visual only and not double-counting. Typecheck passes.

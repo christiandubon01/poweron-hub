@@ -2861,3 +2861,59 @@ NEXT RECOMMENDED ACTION:
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Summary 24H Flow layout polished to match the NEM visualizer organization. The main SVG is cleaner with y-axis labels, smaller import/export/battery bars, prominent solar curve, dashed load line, and 4-9 PM peak band. Legend and TOU Import Rate by Hour strip are now separate rows below the plot. Callout is now a polished `Why NEM 3.0 Changes the Math` box. Typecheck passed. Commit pending at log-write time.
+
+---
+
+## 24H FLOW BATTERY DISCHARGE REFINEMENT COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Refine 24H Flow battery discharge logic and colors
+
+WHAT CHANGED:
+- Verified the 24H Flow relationship: home load remains total demand, grid import is residual load after solar and battery, solar export is excess solar after direct load and storage assumptions, and battery discharge is load served by stored solar.
+- Updated battery discharge modeling so it no longer appears only during 4 PM-9 PM.
+- Added target discharge windows: strongest during 4 PM-9 PM peak, moderate during 9 PM-5 AM night shoulder, lighter during 5 AM-8 AM sunrise shoulder, and no normal midday discharge while solar is producing.
+- Kept discharge clamped by residual load, available stored solar, battery capacity, and target allocation so it does not double-count served load.
+- Darkened battery discharge bars and legend color while preserving solar production green.
+
+WHAT WAS LEARNED:
+- The dashed Home Load line crossing over bars is logically valid because it represents total demand while the bars are component flows.
+- The previous battery model constrained discharge weighting to peak import only, so night and sunrise residual load could remain grid import even when battery storage was available.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use per-hour discharge targets by TOU/shoulder window, then scale those targets by total available stored solar to preserve battery capacity and storage constraints.
+- Keep chart visual overlap acceptable by verifying data series semantics instead of treating every crossing as a render defect.
+
+BUGS / RISKS:
+- The 24H model remains a representative planning-day model, not a full battery dispatch simulator.
+- Screenshot QA is recommended in Solar Plus Battery mode to confirm darker battery bars remain readable against solar production and grid import.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA on Summary > 24H Flow with Solar Plus Battery and confirm discharge appears in peak, night, and sunrise windows while peak remains strongest.
+- Verify Solar Only still hides battery bars and legend item.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+24H Flow battery discharge refinement complete. `generateConservative24hFlow` now targets battery discharge at 90% of residual load during 4 PM-9 PM, 55% during 9 PM-5 AM, 40% during 5 AM-8 AM, and 0 midday, then scales by stored solar/battery capacity. Grid import remains residual load minus discharge; solar export remains excess solar reduced by storage charge. Battery bars/legend are darker green. Typecheck passes.
