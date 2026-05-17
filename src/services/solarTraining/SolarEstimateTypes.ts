@@ -37,6 +37,20 @@ export type PropertyType =
   | 'mobile_home'
   | 'commercial';
 
+export type MainBreakerSize = '100A' | '125A' | '150A' | '200A' | '225A' | '400A' | 'unknown';
+
+export type SolarEstimateAppliance =
+  | 'ac_unit'
+  | 'microwave'
+  | 'hot_tub'
+  | 'ev_charger'
+  | 'electric_stove'
+  | 'dryer'
+  | 'washer'
+  | 'furnace'
+  | 'pool_equipment'
+  | 'extra_heavy_load';
+
 export type ConsumptionMethod = 'average_bill' | 'home_size';
 
 export type SystemMode = 'solar_only' | 'solar_plus_battery';
@@ -65,6 +79,8 @@ export interface SolarEstimateData {
   shading: ShadingLevel | null;
   ownership: OwnershipStatus | null;
   propertyType: PropertyType | null;
+  mainBreakerSize: MainBreakerSize;
+  selectedAppliances: SolarEstimateAppliance[];
 
   // Energy use
   utilityProvider: SolarEstimateUtility | null;
@@ -99,6 +115,8 @@ export const DEFAULT_ESTIMATE_DATA: SolarEstimateData = {
   shading: null,
   ownership: null,
   propertyType: null,
+  mainBreakerSize: 'unknown',
+  selectedAppliances: [],
   utilityProvider: null,
   ratePlan: null,
   consumptionMethod: 'average_bill',
@@ -167,6 +185,29 @@ export const PROPERTY_TYPES: Array<{ id: PropertyType; label: string }> = [
   { id: 'condo_apartment', label: 'Condo/apartment' },
   { id: 'mobile_home', label: 'Mobile home' },
   { id: 'commercial', label: 'Commercial' },
+];
+
+export const MAIN_BREAKER_SIZE_OPTIONS: Array<{ id: MainBreakerSize; label: string }> = [
+  { id: '100A', label: '100A' },
+  { id: '125A', label: '125A' },
+  { id: '150A', label: '150A' },
+  { id: '200A', label: '200A' },
+  { id: '225A', label: '225A' },
+  { id: '400A', label: '400A' },
+  { id: 'unknown', label: 'Unknown' },
+];
+
+export const APPLIANCE_OPTIONS: Array<{ id: SolarEstimateAppliance; label: string }> = [
+  { id: 'ac_unit', label: 'AC unit' },
+  { id: 'microwave', label: 'Microwave' },
+  { id: 'hot_tub', label: 'Hot tub' },
+  { id: 'ev_charger', label: 'EV charger' },
+  { id: 'electric_stove', label: 'Electric stove' },
+  { id: 'dryer', label: 'Dryer' },
+  { id: 'washer', label: 'Washer' },
+  { id: 'furnace', label: 'Furnace' },
+  { id: 'pool_equipment', label: 'Pool equipment' },
+  { id: 'extra_heavy_load', label: 'Extra heavy load appliance' },
 ];
 
 export const CONSUMPTION_METHODS: Array<{

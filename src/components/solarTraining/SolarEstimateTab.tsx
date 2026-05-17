@@ -1,21 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GoogleMap, MarkerF } from '@react-google-maps/api'
 import {
+  AirVent,
   BarChart3,
   BatteryCharging,
+  Car,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
   DollarSign,
+  Flame,
   Gauge,
   Home,
   MapPin,
+  Microwave,
   PlugZap,
   Search,
   ShieldCheck,
+  Shirt,
   SlidersHorizontal,
   SunMedium,
+  Utensils,
+  WashingMachine,
+  Waves,
   X,
   Zap,
 } from 'lucide-react'
@@ -27,9 +35,11 @@ import {
   type Utility,
 } from '@/services/solarTraining/SolarNEM3Calculator'
 import {
+  APPLIANCE_OPTIONS,
   CONSUMPTION_METHODS,
   DEFAULT_ESTIMATE_DATA,
   ESTIMATE_STEPS,
+  MAIN_BREAKER_SIZE_OPTIONS,
   OWNERSHIP_OPTIONS,
   PROPERTY_TYPES,
   RATE_PLANS_BY_UTILITY,
@@ -38,8 +48,10 @@ import {
   UTILITY_PROVIDERS,
   type ConsumptionMethod,
   type EstimateStep,
+  type MainBreakerSize,
   type PropertyType,
   type ShadingLevel,
+  type SolarEstimateAppliance,
   type SolarEstimateData,
   type SolarEstimateRatePlan,
   type SolarEstimateUtility,
@@ -199,11 +211,25 @@ type ActiveDraft = {
   batterySizeKwh: number
 }
 
+function normalizeEstimateData(data: Partial<SolarEstimateData> | null | undefined): SolarEstimateData {
+  const raw = data ?? {}
+  return {
+    ...DEFAULT_ESTIMATE_DATA,
+    ...raw,
+    mainBreakerSize: raw.mainBreakerSize ?? DEFAULT_ESTIMATE_DATA.mainBreakerSize,
+    selectedAppliances: Array.isArray(raw.selectedAppliances) ? raw.selectedAppliances : [],
+  }
+}
+
 function loadEstimates(): LocalSolarEstimate[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ESTIMATES)
     if (!raw) return []
-    return JSON.parse(raw) as LocalSolarEstimate[]
+    const estimates = JSON.parse(raw) as LocalSolarEstimate[]
+    return estimates.map(estimate => ({
+      ...estimate,
+      interviewData: normalizeEstimateData(estimate.interviewData),
+    }))
   } catch {
     return []
   }
@@ -219,7 +245,11 @@ function loadActiveDraft(): ActiveDraft | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DRAFT)
     if (!raw) return null
-    return JSON.parse(raw) as ActiveDraft
+    const draft = JSON.parse(raw) as ActiveDraft
+    return {
+      ...draft,
+      data: normalizeEstimateData(draft.data),
+    }
   } catch {
     return null
   }
@@ -332,6 +362,25 @@ function getRateRecommendation(data: SolarEstimateData): string {
 function findLabel<T extends string>(options: Array<{ id: T; label: string }>, id: T | null): string {
   if (!id) return 'Not selected'
   return options.find(option => option.id === id)?.label ?? id
+}
+
+const APPLIANCE_ICON_MAP: Record<SolarEstimateAppliance, React.ComponentType<{ className?: string }>> = {
+  ac_unit: AirVent,
+  microwave: Microwave,
+  hot_tub: Waves,
+  ev_charger: Car,
+  electric_stove: Utensils,
+  dryer: Shirt,
+  washer: WashingMachine,
+  furnace: Flame,
+  pool_equipment: Waves,
+  extra_heavy_load: PlugZap,
+}
+
+function getSelectedApplianceLabels(selectedAppliances: SolarEstimateAppliance[]): string[] {
+  return selectedAppliances
+    .map(id => APPLIANCE_OPTIONS.find(option => option.id === id)?.label)
+    .filter((label): label is string => Boolean(label))
 }
 
 function optionCardClass(isSelected: boolean): string {
@@ -734,6 +783,19 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
 }
 
 function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updateField: UpdateField }) {
+  const [showApplianceSelector, setShowApplianceSelector] = useState(false)
+  const selectedApplianceLabels = getSelectedApplianceLabels(data.selectedAppliances)
+  const selectedApplianceSummary =
+    selectedApplianceLabels.length > 0 ? selectedApplianceLabels.join(', ') : 'No heavy-load appliances selected'
+
+  const toggleAppliance = (appliance: SolarEstimateAppliance) => {
+    const nextAppliances = data.selectedAppliances.includes(appliance)
+      ? data.selectedAppliances.filter(id => id !== appliance)
+      : [...data.selectedAppliances, appliance]
+
+    updateField('selectedAppliances', nextAppliances)
+  }
+
   return (
     <div>
       <SectionIntro icon={Home} eyebrow="Step 02" title="Qualify the home details">
@@ -794,6 +856,106 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <FieldLabel>Home Configuration</FieldLabel>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Add the main breaker and major electrical loads so the review captures upgrade-relevant details.
+              </p>
+            </div>
+            <div className="rounded-full border border-cyan-500/25 bg-cyan-950/25 px-3 py-1 text-xs font-semibold text-cyan-200">
+              {selectedApplianceLabels.length} selected
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel>Current main breaker size</FieldLabel>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {MAIN_BREAKER_SIZE_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => updateField('mainBreakerSize', option.id as MainBreakerSize)}
+                  className={optionCardClass(data.mainBreakerSize === option.id)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 text-cyan-300" />
+                      <p className="text-sm font-semibold text-slate-100">{option.label}</p>
+                    </div>
+                    {data.mainBreakerSize === option.id && (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="relative mt-5">
+            <button
+              type="button"
+              onClick={() => setShowApplianceSelector(open => !open)}
+              className="flex w-full flex-col gap-3 rounded-lg border border-cyan-500/30 bg-gradient-to-br from-slate-950 via-slate-950 to-cyan-950/30 p-4 text-left transition-colors hover:border-cyan-400/60 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex items-start gap-3">
+                <div className="rounded-md border border-cyan-500/30 bg-cyan-950/35 p-2 text-cyan-200">
+                  <PlugZap className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">Select appliances / heavy loads</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">{selectedApplianceSummary}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">
+                {selectedApplianceLabels.length} selected
+                <ChevronRight
+                  className={`h-4 w-4 transition-transform ${showApplianceSelector ? 'rotate-90' : ''}`}
+                />
+              </div>
+            </button>
+
+            {showApplianceSelector && (
+              <div className="absolute left-0 right-0 top-full z-20 mt-3 rounded-xl border border-cyan-500/25 bg-slate-950/95 p-4 shadow-[0_24px_80px_rgba(8,47,73,0.45)] backdrop-blur">
+                <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-semibold text-slate-100">Appliances and heavy loads</p>
+                  <p className="text-xs text-slate-500">Select all that apply.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {APPLIANCE_OPTIONS.map(option => {
+                    const Icon = APPLIANCE_ICON_MAP[option.id]
+                    const isSelected = data.selectedAppliances.includes(option.id)
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => toggleAppliance(option.id)}
+                        className={`rounded-lg border p-3 text-left transition-colors ${
+                          isSelected
+                            ? 'border-cyan-400/70 bg-cyan-950/55 ring-1 ring-cyan-400/20'
+                            : 'border-slate-800 bg-slate-900/60 hover:border-cyan-700/60 hover:bg-slate-900'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="rounded-md border border-slate-700 bg-slate-950/70 p-2 text-cyan-200">
+                              <Icon className="h-4 w-4" />
+                            </div>
+                            <p className="text-sm font-semibold text-slate-100">{option.label}</p>
+                          </div>
+                          {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2080,6 +2242,10 @@ function EstimateSummaryStep({
     ) / nemResult.monthly_breakdown.length
   const monthlySavings = Math.max(0, avgBeforeBill - avgAfterBill)
   const independence = Math.round(clamp(savings.self_consumption_ratio * 100, 0, 100))
+  const breakerSizeLabel = findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)
+  const selectedApplianceLabels = getSelectedApplianceLabels(data.selectedAppliances)
+  const applianceSummary =
+    selectedApplianceLabels.length > 0 ? selectedApplianceLabels.join(', ') : 'None selected'
 
   const consumptionValue =
     data.consumptionMethod === 'average_bill'
@@ -2179,6 +2345,8 @@ function EstimateSummaryStep({
         <ReviewRow label="Roof shading" value={findLabel(SHADING_OPTIONS, data.shading)} />
         <ReviewRow label="Ownership" value={findLabel(OWNERSHIP_OPTIONS, data.ownership)} />
         <ReviewRow label="Property type" value={findLabel(PROPERTY_TYPES, data.propertyType)} />
+        <ReviewRow label="Main breaker size" value={breakerSizeLabel} />
+        <ReviewRow label="Appliances / heavy loads" value={applianceSummary} />
         <ReviewRow
           label="Utility"
           value={findLabel(UTILITY_PROVIDERS, data.utilityProvider)}

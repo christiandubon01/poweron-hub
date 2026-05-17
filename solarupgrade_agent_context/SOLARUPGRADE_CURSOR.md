@@ -91,3 +91,52 @@ Report:
 ## COMPLETION LOGS
 
 Append Cursor task logs below this line.
+
+---
+
+## HOME DETAILS ELECTRICAL CONFIGURATION COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Added `mainBreakerSize` and `selectedAppliances` to the typed Solar Estimate data model.
+- Added Step 2 Home Configuration UI for breaker size and appliance/heavy-load multi-select.
+- Added active appliance card states, selected count, and selected summary in Home Details.
+- Added breaker size and selected appliances to Step 5 interview inputs.
+- Added localStorage restore normalization so older saved estimates and drafts receive safe defaults.
+
+FIELDS ADDED:
+- `mainBreakerSize` defaulting to `unknown`
+- `selectedAppliances` defaulting to `[]`
+
+APPLIANCES ADDED:
+- AC unit
+- Microwave
+- Hot tub
+- EV charger
+- Electric stove
+- Dryer
+- Washer
+- Furnace
+- Pool equipment
+- Extra heavy load appliance
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+RISKS:
+- Screenshot QA should verify dropdown layout and saved estimate reopen behavior.
+- These fields are captured/reviewed only; no estimate math consumes them.
+
+READY FOR SCREENSHOT QA:
+YES

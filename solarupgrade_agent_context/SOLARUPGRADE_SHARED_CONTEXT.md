@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Local Saved Estimates — localStorage persistence, Solar Estimates library, draft auto-save, open/rename/delete
+Home Details electrical configuration and appliance selector
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -769,15 +769,16 @@ Latest completed commits:
 - Visual Polish Pass 2: `0cbfe7c`
 - Summary Chart Tabs + Local Save: `5982e03`
 - Local Saved Estimates: see Local Saved Estimates completion log below
+- Home Details electrical configuration and appliance selector: see completion log below
 
 Current ready phase:
-No active build phase. Ready for screenshot QA on saved estimates feature.
+No active build phase. Ready for screenshot QA on Step 2 Home Details electrical configuration.
 
 Current risk level:
-Low. All changes are inside SolarEstimateTab.tsx only. No formula, Supabase, or unrelated tab changes. Typecheck passes clean.
+Low. Changes are scoped to Solar Estimate Step 2, the typed estimate data model, and context docs. No Step 1 Address layout/map, summary chart logic, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed. Typecheck passes clean.
 
 Recommended action:
-Screenshot QA: create an estimate, fill all 5 steps, save it, start a new estimate, then reopen the saved estimate from the Solar Estimates library. Verify all fields restore and the address, bill, system config, and summary controls are correct. Verify app reload restores the active draft. Do not proceed into a new build phase without user review.
+Screenshot QA: open Solar Estimate Step 2 Home Details, select a breaker size, open "Select appliances / heavy loads", choose multiple appliances, confirm active states and selected summary, continue to Step 5, save the estimate, and reopen it from Solar Estimates to confirm breaker and appliance values restore.
 
 ---
 
@@ -1759,3 +1760,59 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Step 1 Address layout final alignment: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. The two-column grid structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is confirmed correct — SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. Two-column layout activates at xl (1280px+ viewport). Smaller screens stack correctly. Typecheck passes. Risk note: at 1280px with expanded sidebar, ~52px of map right edge is clipped by section overflow-hidden; fully visible at 1440px+.
+
+---
+
+# SOLAR ESTIMATE HOME DETAILS ELECTRICAL CONFIGURATION COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Added typed Home Details fields `mainBreakerSize` and `selectedAppliances` with safe defaults (`unknown`, `[]`).
+- Added a Step 2 Home Configuration section with current main breaker size options: 100A, 125A, 150A, 200A, 225A, 400A, Unknown.
+- Added the `Select appliances / heavy loads` button and premium dark multi-select panel with cards for AC unit, Microwave, Hot tub, EV charger, Electric stove, Dryer, Washer, Furnace, Pool equipment, and Extra heavy load appliance.
+- Added active selected states, selected count, and selected summary in Step 2.
+- Added main breaker size and selected appliances to Step 5 Estimate Summary interview inputs.
+- Normalized older localStorage saved estimates and active drafts to include the new safe defaults when restored.
+
+WHAT WAS LEARNED:
+- Saved estimates already store the full `SolarEstimateData` object, so newly saved estimates persist and restore the new fields automatically.
+- Existing saved estimates and active drafts from before this task need normalization on load because their stored interview data will not include the new fields.
+- The Step 5 interview input grid is the right place to surface the new electrical fields without touching summary charts or estimate math.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use a small `normalizeEstimateData()` wrapper around localStorage reads when extending persisted local-only data shapes.
+- Keep UI icons local to the component while shared typed option lists live in `SolarEstimateTypes.ts`.
+
+BUGS / RISKS:
+- Visual screenshot QA is still needed to confirm the dropdown panel spacing and selected summary behavior at desktop and narrow widths.
+- No estimate math currently consumes these electrical fields; they are captured and reviewed only.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- If future phases use electrical configuration in estimates, preserve these typed fields and add explicit math requirements before changing formulas.
+- Screenshot QA should verify saved estimate reopen and active draft reload both restore `mainBreakerSize` and `selectedAppliances`.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Step 2 Home Details electrical configuration complete. `SolarEstimateData` now includes `mainBreakerSize` defaulting to `unknown` and `selectedAppliances` defaulting to `[]`. Step 2 shows breaker size options and a premium dark multi-select appliance panel with selected count/summary. Step 5 interview inputs show breaker size and selected appliances. Saved estimates and active drafts are normalized on load so older stored data gets safe defaults, while newly saved estimates persist the full new data object automatically. Typecheck passes. No Step 1 Address, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
