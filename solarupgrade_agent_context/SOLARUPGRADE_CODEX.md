@@ -926,3 +926,57 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Settings Hub-only polish complete in `src/components/v15r/V15rSettingsPanel.tsx`. Solar Estimate Settings now sits below HUNTER Home Base and Cron Run Status. Collapse keys are `poweron.settings.hunterCommandCenter.collapsed` and `poweron.settings.solarEstimateSettings.collapsed`. Combined crew labor rate is inside the Labor section, and per-panel labor is separated. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE SETTINGS SIZE-RANGE LABELS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Add size-range labels to Solar Estimate Settings size tiers
+
+WHAT CHANGED:
+- Added `5–15 kW`, `15–30 kW`, and `30–50 kW` hints beside Small, Medium, and Large system labels in `Permit Cost by Size`.
+- Added the same tier range hints beside Small, Medium, and Large system labels in `Blueprint Cost by Size`.
+- Updated section helper copy to reference shared system-size ranges instead of the previous threshold wording.
+
+WHAT WAS LEARNED:
+- The Settings Hub field renderer already accepts optional hint text, so the range labels could be added without changing settings state, input values, or persistence.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Prefer existing label/hint affordances for small Settings Hub clarity improvements.
+
+BUGS / RISKS:
+- Screenshot QA is still useful to verify the hint labels read cleanly on narrow widths.
+- No formula, threshold, localStorage, Supabase, or unrelated UI logic was changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Verify in Settings Hub > Solar Estimate Settings that both Permit and Blueprint sections show Small `5–15 kW`, Medium `15–30 kW`, and Large `30–50 kW`.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Size-range label polish complete in `src/components/v15r/V15rSettingsPanel.tsx`. Permit Cost by Size and Blueprint Cost by Size now visibly label each tier: Small `5–15 kW`, Medium `15–30 kW`, Large `30–50 kW`. Existing input keys, saved values, formulas, threshold logic, persistence, Supabase behavior, and unrelated Settings Hub/Solar Estimate logic were not changed. Typecheck passes.

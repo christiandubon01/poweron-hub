@@ -385,21 +385,21 @@ function SolarEstimateSettingsPanel() {
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Permit Cost by Size</p>
-          <p className="mt-1 text-[11px] text-slate-500">Small up to 6 kW, medium 6.1-12 kW, large above 12 kW.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Small, medium, and large system-size ranges for permit cost defaults.</p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {field('smallPermitCost', 'Small system')}
-            {field('mediumPermitCost', 'Medium system')}
-            {field('largePermitCost', 'Large system')}
+            {field('smallPermitCost', 'Small system', '5–15 kW')}
+            {field('mediumPermitCost', 'Medium system', '15–30 kW')}
+            {field('largePermitCost', 'Large system', '30–50 kW')}
           </div>
         </div>
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Blueprint Cost by Size</p>
-          <p className="mt-1 text-[11px] text-slate-500">Uses the same small, medium, and large thresholds.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Uses the same small, medium, and large system-size ranges.</p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {field('smallBlueprintCost', 'Small system')}
-            {field('mediumBlueprintCost', 'Medium system')}
-            {field('largeBlueprintCost', 'Large system')}
+            {field('smallBlueprintCost', 'Small system', '5–15 kW')}
+            {field('mediumBlueprintCost', 'Medium system', '15–30 kW')}
+            {field('largeBlueprintCost', 'Large system', '30–50 kW')}
           </div>
         </div>
       </div>
