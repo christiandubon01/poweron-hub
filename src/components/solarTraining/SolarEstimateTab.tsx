@@ -954,8 +954,10 @@ function BillComparisonChart({
   monthlyBreakdown: ReturnType<typeof calculateNEM3Savings>['monthly_breakdown']
   hasBattery: boolean
 }) {
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const maxBill = Math.max(1, ...monthlyBreakdown.map(m => m.bill_before_solar))
   const shortLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const fullLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
   const W = 575
   const H = 170
@@ -1014,13 +1016,37 @@ function BillComparisonChart({
 
           {monthlyBreakdown.map((month, i) => {
             const afterBill = hasBattery ? month.bill_after_solar_with_battery : month.bill_after_solar_no_battery
+            const savings = month.bill_before_solar - afterBill
             const xBase = padL + i * monthW + monthW * 0.08
             const beforeH = Math.max(1, baseY - yScale(month.bill_before_solar))
             const afterH = Math.max(1, baseY - yScale(afterBill))
+            const showTooltip = (event: React.MouseEvent) => {
+              const position = getTooltipPosition(event)
+              setTooltip({
+                ...position,
+                eyebrow: 'Monthly bill',
+                title: fullLabels[i],
+                rows: [
+                  { label: 'Current monthly cost', value: formatMoney(month.bill_before_solar) },
+                  { label: 'New projected cost', value: formatMoney(afterBill), tone: hasBattery ? 'emerald' : 'amber' },
+                  { label: 'Monthly savings', value: formatMoney(savings), tone: 'cyan' },
+                ],
+              })
+            }
             return (
               <g key={month.month}>
                 <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.72)" rx={1} />
                 <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill={afterFill} rx={1} />
+                <rect
+                  x={xBase - 3}
+                  y={padT}
+                  width={barW * 2 + 7}
+                  height={chartH}
+                  fill="transparent"
+                  onMouseEnter={showTooltip}
+                  onMouseMove={showTooltip}
+                  onMouseLeave={() => setTooltip(null)}
+                />
                 <text x={xBase + barW} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
                   {shortLabels[i]}
                 </text>
@@ -1029,6 +1055,7 @@ function BillComparisonChart({
           })}
         </svg>
       </div>
+      <ChartHoverCard tooltip={tooltip} />
     </div>
   )
 }
@@ -1088,16 +1115,81 @@ function ChartNote({ children }: { children: React.ReactNode }) {
   return <p className="mt-2 text-[10px] leading-4 text-slate-600">{children}</p>
 }
 
+type ChartTooltipTone = 'cyan' | 'emerald' | 'amber'
+
+type ChartTooltipRow = {
+  label: string
+  value: string
+  tone?: ChartTooltipTone
+}
+
+type ChartTooltip = {
+  x: number
+  y: number
+  title: string
+  rows: ChartTooltipRow[]
+  eyebrow?: string
+}
+
+function getTooltipPosition(event: React.MouseEvent): { x: number; y: number } {
+  const width = 260
+  const height = 190
+  const viewportWidth = window.innerWidth || 1024
+  const viewportHeight = window.innerHeight || 768
+  return {
+    x: Math.max(12, Math.min(event.clientX + 14, viewportWidth - width - 12)),
+    y: Math.max(12, Math.min(event.clientY + 14, viewportHeight - height - 12)),
+  }
+}
+
+function ChartHoverCard({ tooltip }: { tooltip: ChartTooltip | null }) {
+  if (!tooltip) return null
+
+  const toneClass: Record<ChartTooltipTone, string> = {
+    cyan: 'text-cyan-200',
+    emerald: 'text-emerald-200',
+    amber: 'text-amber-200',
+  }
+
+  return (
+    <div
+      className="pointer-events-none fixed z-[80] w-[260px] rounded-lg border border-cyan-700/35 bg-slate-950/95 p-3 text-xs shadow-xl shadow-black/30 backdrop-blur"
+      style={{ left: tooltip.x, top: tooltip.y }}
+    >
+      {tooltip.eyebrow && (
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/80">
+          {tooltip.eyebrow}
+        </p>
+      )}
+      <p className="mb-2 font-semibold text-slate-100">{tooltip.title}</p>
+      <div className="space-y-1.5">
+        {tooltip.rows.map(row => (
+          <div key={row.label} className="flex items-start justify-between gap-3">
+            <span className="text-slate-500">{row.label}</span>
+            <span className={`text-right font-semibold ${row.tone ? toneClass[row.tone] : 'text-slate-200'}`}>
+              {row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function EnergyFlow24hChart({
   monthlyKwh,
   solarSizeKw,
   hasBattery,
+  ratePlan,
 }: {
   monthlyKwh: number
   solarSizeKw: number
   hasBattery: boolean
+  ratePlan: RatePlan
 }) {
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const hours = generate24hProfile(monthlyKwh, solarSizeKw)
+  const touSchedule = TOU_RATE_SCHEDULES[ratePlan]
   const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar)))
   const maxVal = rawMax * 1.15
 
@@ -1121,6 +1213,7 @@ function EnergyFlow24hChart({
   const hourLabels = [0, 6, 12, 18, 23]
   const hourText = (h: number) =>
     h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`
+  const periodText = (period: string) => period.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase())
 
   const peakSolar = Math.max(...hours.map(h => h.solar))
   const peakLoad = Math.max(...hours.map(h => h.load))
@@ -1174,8 +1267,48 @@ function EnergyFlow24hChart({
           {peakLoad > 0 && (
             <text x={xOf(6)} y={yOf(peakLoad * 0.4)} textAnchor="start" fontSize={6.5} fill="rgba(248,113,113,0.65)">↓ import</text>
           )}
+          {hours.map(hour => {
+            const touBlock = touSchedule?.hours[hour.hour]
+            const showTooltip = (event: React.MouseEvent) => {
+              const position = getTooltipPosition(event)
+              const netLabel =
+                hour.netExport > 0
+                  ? `Export ${hour.netExport.toFixed(2)} kWh`
+                  : `Import ${hour.netImport.toFixed(2)} kWh`
+              setTooltip({
+                ...position,
+                eyebrow: '24H flow',
+                title: hourText(hour.hour),
+                rows: [
+                  { label: 'Home load', value: `${hour.load.toFixed(2)} kWh` },
+                  { label: 'Solar production', value: `${hour.solar.toFixed(2)} kWh`, tone: 'amber' },
+                  { label: hasBattery ? 'Grid / battery context' : 'Grid import/export', value: hasBattery ? `${netLabel}; battery enabled` : netLabel, tone: hour.netExport > 0 ? 'emerald' : 'cyan' },
+                  ...(touBlock
+                    ? [
+                        { label: 'TOU period', value: periodText(touBlock.period) },
+                        { label: 'Import rate', value: `$${touBlock.import_rate.toFixed(2)}/kWh` },
+                      ]
+                    : []),
+                ],
+              })
+            }
+            return (
+              <rect
+                key={hour.hour}
+                x={xOf(hour.hour) - cW / 48}
+                y={pT}
+                width={cW / 24}
+                height={cH}
+                fill="transparent"
+                onMouseEnter={showTooltip}
+                onMouseMove={showTooltip}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            )
+          })}
         </svg>
       </div>
+      <ChartHoverCard tooltip={tooltip} />
       <ChartNote>
         Modeled estimates. Daily load shape based on typical CA residential pattern. Solar uses simplified Gaussian production curve.
         {hasBattery ? ' Battery shifts self-consumption; dispatch not modeled here.' : ''}
@@ -1191,6 +1324,7 @@ function TwentyFiveYearSavingsChart({
   annualBillBefore: number
   annualBillAfter: number
 }) {
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const yearData = generate25YearData(annualBillBefore, annualBillAfter)
   const maxBill = Math.max(1, ...yearData.map(d => d.withoutSolar))
 
@@ -1236,10 +1370,34 @@ function TwentyFiveYearSavingsChart({
             const xBase = pL + i * colW + colW * 0.07
             const beforeH = Math.max(1, baseY - yOf(d.withoutSolar))
             const afterH = Math.max(1, baseY - yOf(d.withSolar))
+            const showTooltip = (event: React.MouseEvent) => {
+              const position = getTooltipPosition(event)
+              setTooltip({
+                ...position,
+                eyebrow: '25 year savings',
+                title: `Year ${d.year}`,
+                rows: [
+                  { label: 'Current projected cost', value: formatMoney(d.withoutSolar) },
+                  { label: 'New projected cost', value: formatMoney(d.withSolar), tone: 'emerald' },
+                  { label: 'Annual savings', value: formatMoney(d.savings), tone: 'cyan' },
+                  { label: 'Cumulative savings', value: formatMoney(d.cumulative), tone: 'emerald' },
+                ],
+              })
+            }
             return (
               <g key={d.year}>
                 <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.62)" rx={1} />
                 <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill="rgba(52,211,153,0.75)" rx={1} />
+                <rect
+                  x={pL + i * colW}
+                  y={pT}
+                  width={colW}
+                  height={cH}
+                  fill="transparent"
+                  onMouseEnter={showTooltip}
+                  onMouseMove={showTooltip}
+                  onMouseLeave={() => setTooltip(null)}
+                />
                 {d.year % 5 === 0 && (
                   <text x={xBase + barW} y={H - 5} textAnchor="middle" fontSize={7} fill="#475569">
                     Yr{d.year}
@@ -1250,6 +1408,7 @@ function TwentyFiveYearSavingsChart({
           })}
         </svg>
       </div>
+      <ChartHoverCard tooltip={tooltip} />
       <ChartNote>
         Assumes {ESCALATION_RATE * 100}%/yr utility escalation; solar remainder escalates ~35% as fast (minimal fixed charges). Modeled estimate — not a financial projection.
       </ChartNote>
@@ -1268,6 +1427,7 @@ function CostOfElectricityChart({
   solarSizeKw: number
   utility: Utility
 }) {
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const peakSunHours = utility === 'IID' ? 6.2 : 5.5
   const annualProductionKwh = solarSizeKw * peakSunHours * 365 * 0.78
   const lcoe =
@@ -1335,6 +1495,35 @@ function CostOfElectricityChart({
             ~${lcoe.toFixed(3)}/kWh
           </text>
           <path d={utilityPath} fill="none" stroke="rgba(100,116,139,0.80)" strokeWidth={1.5} strokeLinejoin="round" />
+          {years.map(year => {
+            const showTooltip = (event: React.MouseEvent) => {
+              const position = getTooltipPosition(event)
+              const difference = year.utilityRate - year.solarRate
+              setTooltip({
+                ...position,
+                eyebrow: 'Electric cost',
+                title: `Year ${year.year}`,
+                rows: [
+                  { label: `${utility} utility path`, value: `$${year.utilityRate.toFixed(3)}/kWh` },
+                  { label: 'Projected system path', value: `$${year.solarRate.toFixed(3)}/kWh`, tone: 'amber' },
+                  { label: 'Difference', value: `$${difference.toFixed(3)}/kWh`, tone: difference >= 0 ? 'cyan' : undefined },
+                  { label: 'Provider context', value: utility },
+                ],
+              })
+            }
+            return (
+              <circle
+                key={year.year}
+                cx={xOf(year.year)}
+                cy={yOf(year.utilityRate)}
+                r={6}
+                fill="transparent"
+                onMouseEnter={showTooltip}
+                onMouseMove={showTooltip}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            )
+          })}
           {[1, 5, 10, 15, 20].map(y => (
             <text key={y} x={xOf(y)} y={H - 5} textAnchor="middle" fontSize={7} fill="#475569">
               Yr{y}
@@ -1342,6 +1531,7 @@ function CostOfElectricityChart({
           ))}
         </svg>
       </div>
+      <ChartHoverCard tooltip={tooltip} />
       <ChartNote>
         LCOE = system cost ÷ (25-yr production in kWh). {utility} rate escalation: {ESCALATION_RATE * 100}%/yr modeled. Assumes flat module degradation of ~0.5%/yr.
       </ChartNote>
@@ -1358,6 +1548,7 @@ function CumulativeSavingsChart({
   annualBillAfter: number
   systemCost: number
 }) {
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const yearData = generate25YearData(annualBillBefore, annualBillAfter)
   const maxCumulative = Math.max(1, yearData[24].cumulative) * 1.12
   const paybackIdx = yearData.findIndex(d => d.cumulative >= systemCost)
@@ -1420,6 +1611,34 @@ function CumulativeSavingsChart({
           {paybackYear !== null && costY !== null && (
             <circle cx={xOf(paybackYear)} cy={costY} r={3} fill="rgba(52,211,153,0.85)" />
           )}
+          {yearData.map(d => {
+            const showTooltip = (event: React.MouseEvent) => {
+              const position = getTooltipPosition(event)
+              const hasReachedPayback = paybackYear !== null && d.year >= paybackYear
+              setTooltip({
+                ...position,
+                eyebrow: 'Cumulative',
+                title: `Year ${d.year}`,
+                rows: [
+                  { label: 'Annual savings', value: formatMoney(d.savings), tone: 'cyan' },
+                  { label: 'Cumulative savings', value: formatMoney(d.cumulative), tone: 'emerald' },
+                  { label: 'Payback note', value: hasReachedPayback ? `At/after modeled payback year ${paybackYear}` : paybackYear ? `Before modeled payback year ${paybackYear}` : 'Modeled payback not reached' },
+                ],
+              })
+            }
+            return (
+              <circle
+                key={d.year}
+                cx={xOf(d.year)}
+                cy={yOf(d.cumulative)}
+                r={6}
+                fill="transparent"
+                onMouseEnter={showTooltip}
+                onMouseMove={showTooltip}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            )
+          })}
           {[1, 5, 10, 15, 20, 25].map(y => (
             <text key={y} x={xOf(y)} y={H - 5} textAnchor="middle" fontSize={7} fill="#475569">
               Yr{y}
@@ -1427,6 +1646,7 @@ function CumulativeSavingsChart({
           ))}
         </svg>
       </div>
+      <ChartHoverCard tooltip={tooltip} />
       <ChartNote>
         Cumulative bill savings vs. no-solar baseline. System cost line shown as rough payback reference. Not a financial guarantee or projection.
       </ChartNote>
@@ -1562,7 +1782,7 @@ function SummaryChartModule({
           <BillComparisonChart monthlyBreakdown={nemResult.monthly_breakdown} hasBattery={hasBattery} />
         )}
         {activeChart === 'energy_flow_24h' && (
-          <EnergyFlow24hChart monthlyKwh={monthlyKwh} solarSizeKw={solarSizeKw} hasBattery={hasBattery} />
+          <EnergyFlow24hChart monthlyKwh={monthlyKwh} solarSizeKw={solarSizeKw} hasBattery={hasBattery} ratePlan={ratePlan} />
         )}
         {activeChart === 'yr25_savings' && (
           <TwentyFiveYearSavingsChart

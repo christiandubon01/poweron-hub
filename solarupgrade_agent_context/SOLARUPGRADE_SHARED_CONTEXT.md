@@ -1387,3 +1387,58 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped chart render consistency pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Monthly Bill remains the visual baseline at W=575, H=170, compact padding, full month labels, larger title/subtitle, and readable legend. 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative now use matching 575x170 proportions and larger header/legend treatments. Summary chart tab buttons are larger across all six tabs with restrained cyan active state. Typecheck passes. No math, formulas, modeled values, persistence, Supabase, or unrelated tabs changed. Ready for screenshot QA.
+
+---
+
+# SOLAR ESTIMATE CHART TOOLTIP COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Added a reusable fixed-position `ChartHoverCard` helper with premium PowerOn dark styling, soft cyan border, compact rows, and subtle accent colors.
+- Monthly Bill now shows hover details by month/bar group: current monthly cost, new projected cost, and monthly savings.
+- 24H Flow now shows hover details by hour: hour, home load, solar production, grid import/export, battery-enabled context when applicable, and existing TOU period/import-rate context from the selected rate plan.
+- 25 Yr Savings now shows hover details by year/bar group: projected current electric cost, projected cost with system, annual savings, and cumulative savings.
+- Elec. Cost now shows hover details by year/point: utility rate path, projected system rate path, rate difference, and utility/provider context.
+- Cumulative now shows hover details by year/point: annual savings, cumulative savings, and whether the year is before or at/after modeled payback.
+
+WHAT WAS LEARNED:
+- The existing chart data arrays already contain enough detail for meaningful hover cards without adding new calculations or data sources.
+- Fixed-position tooltip cards avoid clipping from nested chart panels and scrolling chart containers while leaving chart sizing/layout untouched.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use transparent SVG hover targets over existing bars/points to add interactivity without changing visible chart geometry.
+- Keep tooltip content local to each chart and reuse only the card renderer/position helper for consistent styling.
+
+BUGS / RISKS:
+- Payments intentionally has no hover card because it was outside this tooltip pass scope.
+- Touch/mobile hover is intentionally limited; no touch-specific behavior was added.
+- Screenshot QA is recommended to verify tooltip placement on desktop and narrow widths.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA with mouse hover over Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative charts.
+- Confirm fixed-position cards do not obscure critical chart content in common desktop viewport sizes.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped chart tooltip pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Added reusable `ChartHoverCard` plus local hover state to Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative. Tooltips use existing chart values only and appear near the cursor with premium dark styling. Payments has no hover tooltip by scope. No formulas, assumptions, sizing, persistence, Supabase, saved-estimate behavior, or unrelated tabs changed. Typecheck passes. Ready for screenshot QA.
