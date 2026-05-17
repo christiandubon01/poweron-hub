@@ -280,7 +280,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-(set after commit)
+6ad11a7
 
 FILES CHANGED:
 - `src/services/solarTraining/SolarEstimateTypes.ts` (NEW)
