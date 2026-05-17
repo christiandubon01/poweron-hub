@@ -464,7 +464,7 @@ Complete.
 
 ## Phase 4 — Codex — Solar Estimate Interview Flow UI
 Status:
-READY
+COMPLETE
 
 Goal:
 Build the Solar Estimate interview screens using the architecture from Phase 3.
@@ -526,13 +526,13 @@ Expected completion:
 - Shared context includes actual UI/file notes.
 
 Phase 4 completion:
-Pending.
+Complete.
 
 ---
 
 ## Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
 Status:
-WAITING FOR PHASE 4
+READY
 
 Goal:
 Create the final estimate summary experience inspired by the Enphase summary reference while matching PowerOn dark style.
@@ -701,48 +701,40 @@ In `src/components/solarTraining/SolarRetentionHeatmap.tsx`:
 # NEXT PHASE ACTIVE INSTRUCTIONS
 
 Current active phase:
-Phase 4 — Codex — Solar Estimate Interview Flow UI
+Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
 
 Agent:
-Codex GPT-5.5 Medium
+Claude/Codex, as assigned by the executive builder
 
 Required starting point:
 - Branch: `solarupgrade`
-- Latest completed Phase 3 commit: see Phase 3 completion log below.
+- Latest completed Phase 4 commit: see Phase 4 completion log below.
 - Working tree should be clean before starting.
 - Phase 3 added `src/services/solarTraining/SolarEstimateTypes.ts` with all interview types, constants, and defaults.
-- Phase 3 upgraded `src/components/solarTraining/SolarEstimateTab.tsx` with full state model and step navigation.
+- Phase 4 replaced the placeholder area in `src/components/solarTraining/SolarEstimateTab.tsx` with the full local interview flow UI.
 
-Codex must:
+Phase 5 must:
 1. Read this shared context file.
-2. Read `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`.
-3. Confirm the active phase is assigned to Codex.
-4. Read `src/services/solarTraining/SolarEstimateTypes.ts` to understand all data types, constants, and option arrays.
-5. Read `src/components/solarTraining/SolarEstimateTab.tsx` to understand state handlers (updateField, goNext, goBack, goToStep).
-6. Replace the "Active step placeholder" area with real form UI for each step (Address, Home Details, Energy Use, System Config, Review/pre-summary).
-7. Address step: plain text input + autocomplete-ready structure (wire VITE_GOOGLE_MAPS_BROWSER_KEY via existing MileageProjectAddress.tsx pattern if time allows, otherwise a safe text-only input with placeId/lat/lng placeholder is acceptable).
-8. Home Details step: shading (3 options), ownership (own/rent), property type (4 options).
-9. Energy Use step: utility provider (SCE/IID), rate plan (RATE_PLANS_BY_UTILITY), consumption method (average bill or home size), bill input or sqft input.
-10. System Config step: Solar Only vs Solar Plus Battery (SYSTEM_MODES).
-11. Review step: read-only summary of entered data, placeholder for Phase 5 estimate output.
-12. Keep all state in `SolarEstimateTab` via `updateField`, `goNext`, `goBack`.
-13. Match PowerOn dark premium style (navy panels, cyan/teal accents, restrained glow).
-14. Run `npm.cmd run typecheck`.
-15. Update this shared context with Phase 4 completion log.
-16. Update `SOLARUPGRADE_CODEX.md` with Phase 4 completion log.
-17. Set the next active phase to Phase 5 if safe.
-18. Commit only scoped files.
+2. Read the assigned agent-specific context file.
+3. Confirm Phase 5 is assigned to that agent by the executive builder.
+4. Inspect `src/components/solarTraining/SolarEstimateTab.tsx`, `src/services/solarTraining/SolarEstimateTypes.ts`, and `src/services/solarTraining/SolarNEM3Calculator.ts`.
+5. Build the final estimate summary experience from local interview state.
+6. Add top metric cards, bill comparison/consumption visuals, rate recommendation strip, disclaimer, and editable system controls.
+7. Include solar size and battery size controls when battery mode is selected.
+8. Keep claims conservative, clearly label assumptions, and avoid false precision.
+9. Preserve existing NEM 3.0 formulas unless reusing them directly.
+10. Run `npm.cmd run typecheck`.
+11. Update shared and agent context files, then commit scoped files only.
 
-Phase 4 must not:
-- Add final estimate math or savings formulas.
+Phase 5 must not:
+- Add hidden external requests with customer data.
 - Add Supabase persistence.
+- Add product catalog or proposal engine.
 - Change NEM 3.0 formulas.
-- Add product catalog.
-- Broadly refactor SolarTrainingView.tsx.
-- Add external API requests beyond Google Maps if already wired.
+- Broadly refactor SolarTrainingView.tsx or unrelated Solar Training subtabs.
 
-Codex start prompt:
-Read `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` and `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`. Run the current active phase assigned to Codex. Use the shared context as the source of truth. After completion, update the shared context, append your Codex completion log, set the next active phase if safe, run `npm.cmd run typecheck`, commit scoped files, and report back.
+Next agent start prompt:
+Read `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` and your agent-specific context file. Run the current active phase assigned by the executive builder. Use the shared context as the source of truth. After completion, update the shared context, append your agent completion log, set the next active phase if safe, run `npm.cmd run typecheck`, commit scoped files, and report back.
 
 ---
 
@@ -765,21 +757,22 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Phase 3
+Phase 4
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
 - Phase 2: `ecb0b5b`
-- Phase 3: see Phase 3 completion log below
+- Phase 3: `6ad11a7`, `91cf6d2`
+- Phase 4: see Phase 4 completion log below
 
 Current ready phase:
-Phase 4 — Codex — Solar Estimate Interview Flow UI
+Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
 
 Current risk level:
-Low. Phase 3 only added a new types file and wired local state in the SolarEstimateTab. No Supabase, no persistence, no formulas, no external requests.
+Low to medium. Phase 4 added the full local interview UI, including safe Google Places support when the existing Maps key/loader is available. No Supabase, persistence, final estimate math, product catalog, or NEM 3.0 formula changes were added.
 
 Recommended action:
-Run Codex Phase 4 using the Phase 4 scope in this shared context.
+Run Phase 5 only after the executive builder assigns the agent. Keep calculations conservative, reuse existing NEM 3.0 service patterns where appropriate, and avoid unverified savings claims.
 
 ---
 
@@ -957,3 +950,59 @@ YES
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Phase 3 added `src/services/solarTraining/SolarEstimateTypes.ts` (all interview types, option arrays, defaults) and rewrote `SolarEstimateTab.tsx` with stateful step navigation and a generic `updateField` updater. Google Maps/Places support is confirmed already in the app (same pattern as MileageProjectAddress.tsx). Rate data is already in SolarNEM3Calculator.ts with matching IDs. Typecheck passes. Phase 4 Codex should build form UI per step using the exported option arrays and wire inputs to `updateField`.
+
+---
+
+# PHASE 4 COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Replaced the active-step placeholder in `SolarEstimateTab.tsx` with full local interview screens for Address, Home Details, Energy Use, System Config, and Review.
+- Wired every input and option card to the existing `updateField` state handler.
+- Used the option arrays from `SolarEstimateTypes.ts` for shading, ownership, property type, consumption method, utility provider, rate plan, and system mode.
+- Added safe address text entry with Google Places suggestions and a dark map pin preview only when the existing `VITE_GOOGLE_MAPS_BROWSER_KEY` and loader are available.
+- Added a Review/pre-summary screen that displays collected inputs and clearly defers estimate math and savings claims to Phase 5.
+
+WHAT WAS LEARNED:
+- The existing `useV15rGoogleMapsLoader()` hook and Google Maps typings work from a typed Solar Estimate component without needing `@ts-nocheck`.
+- The Phase 3 data model is sufficient for the full interview UI; no type changes were needed.
+- Rate plan filtering works cleanly through `RATE_PLANS_BY_UTILITY[data.utilityProvider]`.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep Solar Estimate step screens as local helper components in `SolarEstimateTab.tsx` while the feature is still compact.
+- Use a shared option-card class helper so selected/unselected states stay consistent across the wizard.
+- Reset address place metadata when the user manually edits the address, then refill placeId/coordinates only after a Places selection.
+
+BUGS / RISKS:
+- Google Places and map preview still depend on the existing browser key being available at runtime; the UI safely falls back to text-only address entry when it is missing or fails to load.
+- Phase 5 should be careful not to present unverified savings or cost outputs as precise quotes.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Phase 5 can use the Review/pre-summary data directly from `SolarEstimateTab` local state.
+- Phase 5 should consider splitting the component if summary UI becomes large, but avoid broad Solar Training refactors.
+- Existing NEM 3.0 service data should be reused conservatively if estimate math is introduced.
+
+NEXT PHASE READY:
+YES
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Phase 4 built the Solar Estimate interview UI in `src/components/solarTraining/SolarEstimateTab.tsx`. Address supports text entry, optional existing Google Places suggestions, placeId/lat/lng capture, and a dark map pin preview when the configured loader/key are available. Home Details, Energy Use, System Config, and Review all use the Phase 3 option arrays and local `updateField` state only. No persistence, Supabase, final estimate math, product catalog, proposal engine, or NEM 3.0 formula changes were added. Typecheck passes. Phase 5 is ready to build the estimate summary and editable system controls.

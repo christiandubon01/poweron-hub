@@ -272,3 +272,66 @@ NEXT PHASE ADJUSTMENTS:
 NEXT PHASE READY:
 
 COMPACT HANDOFF FOR NEXT CHAT:
+```
+
+---
+
+## PHASE 4 COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Phase 4 — Solar Estimate Interview Flow UI
+
+WHAT CHANGED:
+- Built real UI screens for Address, Home Details, Energy Use, System Config, and Review/pre-summary.
+- Wired all visible inputs and selection controls to the existing local `updateField` state handler.
+- Used the Phase 3 option arrays from `SolarEstimateTypes.ts` instead of redefining choices.
+- Added safe Google Places suggestions and dark Google Map pin preview through the existing app loader/key path, with text-only fallback when Maps is unavailable.
+- Kept the Review step as a pre-summary handoff only, with no estimate math or savings calculations.
+
+WHAT WAS LEARNED:
+- The existing Maps loader can be used directly in typed components; typecheck passes without adding `@ts-nocheck`.
+- The Phase 3 state model already covers Phase 4 UI needs.
+- Utility-specific rate plan rendering is straightforward through `RATE_PLANS_BY_UTILITY`.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Local step helper components keep the interview UI readable while staying scoped to one feature file.
+- A shared option-card helper keeps premium dark selected states consistent across different input groups.
+- Manual address edits should clear place metadata until a Places suggestion is selected again.
+
+BUGS / RISKS:
+- Maps/Places behavior depends on the existing runtime key and loader; fallback is safe, but visual map verification was not run in browser.
+- Phase 5 should avoid false precision and clearly label assumptions for any generated estimate numbers.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
+
+NEXT PHASE ADJUSTMENTS:
+- Use the Review/pre-summary state as the handoff into summary rendering.
+- Reuse existing NEM 3.0 calculator data conservatively if calculations are introduced.
+- Consider extracting summary subcomponents only if the Phase 5 UI becomes too large for the current file.
+
+NEXT PHASE READY:
+YES
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Phase 4 built the full local Solar Estimate interview flow in `SolarEstimateTab.tsx`. It uses existing option arrays and local state only, supports optional existing Google Places/map preview, and leaves all final summary math and editable output cards for Phase 5. Typecheck passes.
