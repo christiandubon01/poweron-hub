@@ -1164,3 +1164,62 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 24H Flow battery discharge refinement complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Battery discharge now appears outside peak where reasonable: 4 PM-9 PM strongest, 9 PM-5 AM moderate, 5 AM-8 AM lighter, midday normally zero. The model still clamps discharge by residual load and stored solar/battery capacity, so Home Load line overlap is visual only and not double-counting. Typecheck passes.
+
+---
+
+## MONTHLY BILL ANCHOR CURRENT BILL FIX COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Fix Monthly Bill chart anchor-month current bill logic
+
+WHAT CHANGED:
+- Added `computeAnchoredMonthlyBillByMonth` for the `Average electric bill` consumption method.
+- Passed an optional `monthlyCurrentBillByMonth` series through `SummaryChartModule` to `SeasonalBillChart`.
+- Updated `getSeasonalBillData` to use the optional current-bill dollar series for `beforeCost` when present.
+- Preserved the existing `monthlyKwhByMonth` path for modeled usage and for all non-Monthly Bill chart consumers.
+- Left 24H Flow, 25 Yr Savings, address/map, Step 3, Step 4, Settings Hub, saved estimate UI, packages, and Supabase untouched.
+
+WHAT WAS LEARNED:
+- The anchor bug was caused by rate mismatch: average bill was converted to kWh with a blended/TOU rate, while chart current bill was recalculated with utility retail fallback.
+- The least invasive fix is to separate displayed current bill dollars from modeled kWh for the Monthly Bill chart only.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use an optional dollar-denominated override for displayed billing series when a user input is itself a bill amount.
+- Keep shared helper defaults backward-compatible so other chart callers remain unchanged.
+
+BUGS / RISKS:
+- Surrounding monthly current bills use the existing climate seasonal weights; changing the exact seasonal shape would be a separate chart-modeling task.
+- Browser screenshot QA is still recommended for tooltip values.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- QA Average electric bill = `$350` with May as anchor; May tooltip current bill should be `$350`.
+- Verify Monthly kWh and Home Size methods still derive chart current bills from modeled kWh.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEstimateTab.tsx`. Average Bill now creates a current-bill dollar series from the entered bill and seasonal weights, so the anchor month's tooltip/current bar equals the user input exactly. The existing kWh series and other summary charts remain unchanged. Typecheck passes.

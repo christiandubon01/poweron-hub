@@ -2917,3 +2917,59 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 24H Flow battery discharge refinement complete. `generateConservative24hFlow` now targets battery discharge at 90% of residual load during 4 PM-9 PM, 55% during 9 PM-5 AM, 40% during 5 AM-8 AM, and 0 midday, then scales by stored solar/battery capacity. Grid import remains residual load minus discharge; solar export remains excess solar reduced by storage charge. Battery bars/legend are darker green. Typecheck passes.
+
+---
+
+## MONTHLY BILL ANCHOR CURRENT BILL FIX COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Fix Monthly Bill chart anchor-month current bill logic
+
+WHAT CHANGED:
+- Added a Monthly Bill-only current-bill dollar series for the `Average electric bill` Energy Use method.
+- The entered average bill now remains the exact current bill for the anchored estimate month in the Monthly Bill chart.
+- Surrounding current-bill months scale from the anchor using the existing climate seasonal consumption weights.
+- Kept the existing monthly kWh series intact for modeled usage, 24H Flow, 25 Yr Savings, and other summary charts.
+- Left non-average-bill methods unchanged: monthly kWh and home-size paths still derive current bill from modeled kWh and utility retail rate.
+
+WHAT WAS LEARNED:
+- The bug came from converting the anchor bill to kWh with a blended/TOU average rate, then converting kWh back to current bill using the chart's utility retail fallback rate.
+- Separating current-bill dollars from modeled kWh in `SeasonalBillChart` fixes the anchor without disturbing other charts that consume `monthlyKwhByMonth`.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For user-entered bill anchors, keep a dollar-denominated series alongside kWh so chart labels can honor the exact input while energy modeling still uses kWh.
+- Use an optional override on shared chart data helpers to keep existing callers unchanged.
+
+BUGS / RISKS:
+- Monthly Bill chart surrounding months follow the existing seasonal weights, so exact month-to-month shape remains tied to the current climate profile constants.
+- Screenshot QA is recommended with Average electric bill = `$350` and anchor month May to confirm May tooltip shows `$350`.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- QA Monthly Bill with Average electric bill, Monthly kWh, and Home Size methods to verify only the Average Bill anchor behavior changed.
+- Verify 24H Flow and 25 Yr Savings remain visually unchanged because they still consume the same `monthlyKwhByMonth`.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Monthly Bill anchor current-bill fix complete. `SeasonalBillChart` can now receive `monthlyCurrentBillByMonth`; for `average_bill`, `EstimateSummaryStep` builds it as `anchorBill * weight[month] / weight[anchorMonth]`. The anchor month's current bill therefore equals the user input exactly. Existing kWh modeling and other chart callers are unchanged. Typecheck passes.

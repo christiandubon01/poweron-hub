@@ -628,6 +628,7 @@ function getSeasonalBillData(
   utility: Utility,
   climateProfile: ClimateProfile,
   batterySizeKwh: number,
+  monthlyCurrentBillByMonth?: number[],
 ): SeasonalBillMonth[] {
   const retailRate = getMonthlyBillRetailRate(utility)
   const batteryShiftCapacityMonthlyKwh = Math.max(0, batterySizeKwh) * 26
@@ -638,7 +639,7 @@ function getSeasonalBillData(
     const selfConsumedKwh = Math.min(kwh, solarProduction * CONSERVATIVE_SOLAR_ONLY_SELF_CONSUMPTION_RATIO)
     const exportedKwh = Math.max(0, solarProduction - selfConsumedKwh)
     const importedKwh = Math.max(0, kwh - selfConsumedKwh)
-    const beforeCost = kwh * retailRate
+    const beforeCost = monthlyCurrentBillByMonth?.[i] ?? kwh * retailRate
     const rawSolarOnlyCost =
       CONSERVATIVE_NEM_FIXED_MONTHLY_CHARGE +
       importedKwh * retailRate -
@@ -712,6 +713,16 @@ function computeAnchoredMonthlyKwhByMonth(
   const currentMonthWeight = weights[anchorMonthIndex]
   const baselineMonthlyKwh = anchorMonthKwh / currentMonthWeight
   return Array.from({ length: 12 }, (_, i) => baselineMonthlyKwh * weights[i])
+}
+
+function computeAnchoredMonthlyBillByMonth(
+  anchorBill: number,
+  climateProfile: ClimateProfile,
+  anchorMonthIndex: number,
+): number[] {
+  const weights = CONSUMPTION_SEASONAL_WEIGHTS[climateProfile]
+  const anchorWeight = weights[anchorMonthIndex] || 1
+  return Array.from({ length: 12 }, (_, i) => anchorBill * ((weights[i] || 1) / anchorWeight))
 }
 
 function computeNormalizedMonthlyKwhByMonth(averageMonthlyKwh: number, climateProfile: ClimateProfile): number[] {
@@ -2105,6 +2116,7 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
 
 function SeasonalBillChart({
   monthlyKwhByMonth,
+  monthlyCurrentBillByMonth,
   solarSizeKw,
   utility,
   hasBattery,
@@ -2114,6 +2126,7 @@ function SeasonalBillChart({
   ratePlanLabel,
 }: {
   monthlyKwhByMonth: number[]
+  monthlyCurrentBillByMonth?: number[]
   solarSizeKw: number
   utility: Utility
   hasBattery: boolean
@@ -2123,7 +2136,14 @@ function SeasonalBillChart({
   ratePlanLabel: string
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
-  const months = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, utility, climateProfile, batterySizeKwh)
+  const months = getSeasonalBillData(
+    monthlyKwhByMonth,
+    solarSizeKw,
+    utility,
+    climateProfile,
+    batterySizeKwh,
+    monthlyCurrentBillByMonth,
+  )
   const maxBill = Math.max(1, ...months.map(m => m.beforeCost))
 
   // 3 bars per month when battery ON (grey / yellow / green), 2 when OFF (grey / yellow)
@@ -3167,6 +3187,7 @@ function PaymentComparisonChart({
 function SummaryChartModule({
   hasBattery,
   monthlyKwhByMonth,
+  monthlyCurrentBillByMonth,
   solarSizeKw,
   batterySizeKwh,
   avgBeforeBill,
@@ -3181,6 +3202,7 @@ function SummaryChartModule({
 }: {
   hasBattery: boolean
   monthlyKwhByMonth: number[]
+  monthlyCurrentBillByMonth?: number[]
   solarSizeKw: number
   batterySizeKwh: number
   avgBeforeBill: number
@@ -3217,6 +3239,7 @@ function SummaryChartModule({
         {activeChart === 'monthly_bill' && (
           <SeasonalBillChart
             monthlyKwhByMonth={monthlyKwhByMonth}
+            monthlyCurrentBillByMonth={monthlyCurrentBillByMonth}
             solarSizeKw={solarSizeKw}
             utility={utility}
             hasBattery={hasBattery}
@@ -3480,6 +3503,10 @@ function EstimateSummaryStep({
       : data.consumptionMethod === 'monthly_kwh'
       ? computeAnchoredKwhByMonth(data.monthlyKwh ?? 850, climateProfile, anchorMonthIndex)
       : computeNormalizedMonthlyKwhByMonth(monthlyKwh, climateProfile)
+  const monthlyCurrentBillByMonth =
+    data.consumptionMethod === 'average_bill' && data.averageMonthlyBill && data.averageMonthlyBill > 0
+      ? computeAnchoredMonthlyBillByMonth(data.averageMonthlyBill, climateProfile, anchorMonthIndex)
+      : undefined
   const breakerSizeLabel = findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)
   const selectedApplianceLabels = getSelectedApplianceSummaries(data.selectedAppliances)
   const applianceSummary =
@@ -3559,6 +3586,7 @@ function EstimateSummaryStep({
       <SummaryChartModule
         hasBattery={hasBattery}
         monthlyKwhByMonth={monthlyKwhByMonth}
+        monthlyCurrentBillByMonth={monthlyCurrentBillByMonth}
         solarSizeKw={solarSizeKw}
         batterySizeKwh={batterySizeKwh}
         avgBeforeBill={avgBeforeBill}
