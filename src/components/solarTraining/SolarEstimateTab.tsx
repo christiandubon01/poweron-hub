@@ -274,19 +274,40 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
     }
   }, [center])
 
-  if (!GOOGLE_MAPS_BROWSER_KEY) {
+  if (!GOOGLE_MAPS_BROWSER_KEY || loadError) {
+    const addressLabel = data.selectedAddressLabel || data.addressText
+    const hasAddr = Boolean(addressLabel?.trim())
     return (
-      <div className="flex min-h-[220px] items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-950/55 p-4 text-center text-xs text-slate-500">
-        Maps suggestions need the existing VITE_GOOGLE_MAPS_BROWSER_KEY runtime setting.
-        Address entry still works as plain text.
-      </div>
-    )
-  }
-
-  if (loadError) {
-    return (
-      <div className="flex min-h-[220px] items-center justify-center rounded-lg border border-dashed border-amber-700/50 bg-amber-950/10 p-4 text-center text-xs text-amber-200">
-        Map preview could not load. The address text remains local in this interview state.
+      <div className="flex min-h-[220px] flex-col gap-3 rounded-lg border border-slate-700/60 bg-slate-950/70 p-4">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-cyan-500/60" />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            Map preview unavailable
+          </span>
+        </div>
+        {hasAddr ? (
+          <>
+            <p className="text-sm font-medium leading-5 text-slate-200">{addressLabel}</p>
+            <div className="mt-auto grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-slate-800 bg-slate-900/60 p-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Latitude</p>
+                <p className="mt-1 text-xs font-medium text-slate-300">
+                  {hasCoordinates ? (data.latitude as number).toFixed(5) : 'Pending'}
+                </p>
+              </div>
+              <div className="rounded-md border border-slate-800 bg-slate-900/60 p-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Longitude</p>
+                <p className="mt-1 text-xs font-medium text-slate-300">
+                  {hasCoordinates ? (data.longitude as number).toFixed(5) : 'Pending'}
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-xs text-slate-600">Enter an address above to see details here</p>
+          </div>
+        )}
       </div>
     )
   }
@@ -300,9 +321,28 @@ function AddressMapPreview({ data }: { data: SolarEstimateData }) {
   }
 
   if (!center) {
+    const addressLabel = data.selectedAddressLabel || data.addressText
+    const hasAddr = Boolean(addressLabel?.trim())
     return (
-      <div className="flex min-h-[220px] items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-950/55 p-4 text-center text-xs text-slate-500">
-        Select a Places suggestion to capture coordinates and preview a pin.
+      <div className="flex min-h-[220px] flex-col gap-3 rounded-lg border border-dashed border-slate-700/60 bg-slate-950/55 p-4">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-slate-600" />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Awaiting pin</span>
+        </div>
+        {hasAddr ? (
+          <>
+            <p className="text-sm leading-5 text-slate-400">{addressLabel}</p>
+            <p className="text-xs text-slate-600">
+              Select a Places suggestion above to capture coordinates and enable the map preview.
+            </p>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-center text-xs text-slate-600">
+              Enter an address and select a suggestion to capture coordinates and preview a map pin.
+            </p>
+          </div>
+        )}
       </div>
     )
   }
@@ -784,58 +824,80 @@ function BillComparisonChart({
   monthlyBreakdown: ReturnType<typeof calculateNEM3Savings>['monthly_breakdown']
   hasBattery: boolean
 }) {
-  const maxBill = Math.max(1, ...monthlyBreakdown.map(month => month.bill_before_solar))
+  const maxBill = Math.max(1, ...monthlyBreakdown.map(m => m.bill_before_solar))
   const shortLabels = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
 
+  const W = 480
+  const H = 150
+  const padL = 40
+  const padR = 8
+  const padT = 8
+  const padB = 22
+  const chartW = W - padL - padR
+  const chartH = H - padT - padB
+  const monthW = chartW / 12
+  const barW = Math.floor(monthW * 0.37)
+  const afterFill = hasBattery ? 'rgba(52,211,153,0.82)' : 'rgba(251,191,36,0.82)'
+  const afterSwatch = hasBattery ? 'rgba(52,211,153,0.90)' : 'rgba(251,191,36,0.90)'
+
+  const yScale = (v: number) => padT + chartH - (v / maxBill) * chartH
+  const baseY = yScale(0)
+
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/45 p-4">
-      <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-semibold text-slate-100">Estimated monthly bill comparison</p>
-          <p className="text-xs text-slate-500">Before solar vs modeled post-solar bill shape</p>
+          <p className="text-sm font-semibold text-slate-100">Monthly bill comparison</p>
+          <p className="text-xs text-slate-500">Before solar vs modeled post-solar</p>
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+        <div className="flex gap-4 text-xs text-slate-400">
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-slate-500/60" />
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.75)' }} />
             Before
           </span>
           <span className="flex items-center gap-1.5">
-            <span className={`h-3 w-3 rounded-sm ${hasBattery ? 'bg-emerald-400/70' : 'bg-amber-300/70'}`} />
-            After
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: afterSwatch }} />
+            After solar
           </span>
         </div>
       </div>
 
       <div className="overflow-x-auto">
-      <div className="flex h-36 min-w-[360px] items-end gap-1.5">
-        {monthlyBreakdown.map((month, index) => {
-          const afterBill = hasBattery
-            ? month.bill_after_solar_with_battery
-            : month.bill_after_solar_no_battery
-          const beforeHeight = Math.max(4, (month.bill_before_solar / maxBill) * 100)
-          const afterHeight = Math.max(4, (afterBill / maxBill) * 100)
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full"
+          style={{ minWidth: 320, maxHeight: 160 }}
+          aria-label="Monthly bill comparison chart"
+        >
+          {[0.25, 0.5, 0.75, 1].map((pct) => {
+            const y = yScale(maxBill * pct)
+            return (
+              <g key={pct}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth={0.5} />
+                <text x={padL - 4} y={y + 3.5} textAnchor="end" fontSize={7} fill="#475569">
+                  ${Math.round(maxBill * pct)}
+                </text>
+              </g>
+            )
+          })}
+          <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="rgba(255,255,255,0.09)" strokeWidth={0.5} />
 
-          return (
-            <div
-              key={month.month}
-              className="flex min-w-0 flex-1 flex-col items-center gap-1"
-              title={`${month.month_label}: before ${formatMoney(month.bill_before_solar)}, after ${formatMoney(afterBill)}`}
-            >
-              <div className="flex h-28 w-full items-end justify-center gap-px">
-                <div
-                  className="w-full max-w-[12px] rounded-t bg-slate-500/55"
-                  style={{ height: `${beforeHeight}%` }}
-                />
-                <div
-                  className={`w-full max-w-[12px] rounded-t ${hasBattery ? 'bg-emerald-400/70' : 'bg-amber-300/70'}`}
-                  style={{ height: `${afterHeight}%` }}
-                />
-              </div>
-              <span className="text-[10px] text-slate-600">{shortLabels[index]}</span>
-            </div>
-          )
-        })}
-      </div>
+          {monthlyBreakdown.map((month, i) => {
+            const afterBill = hasBattery ? month.bill_after_solar_with_battery : month.bill_after_solar_no_battery
+            const xBase = padL + i * monthW + monthW * 0.08
+            const beforeH = Math.max(1, baseY - yScale(month.bill_before_solar))
+            const afterH = Math.max(1, baseY - yScale(afterBill))
+            return (
+              <g key={month.month}>
+                <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.72)" rx={1} />
+                <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill={afterFill} rx={1} />
+                <text x={xBase + barW} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
+                  {shortLabels[i]}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
       </div>
     </div>
   )
@@ -995,7 +1057,7 @@ function EstimateSummaryStep({
         </div>
       </div>
 
-      <div className="mb-5 grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+      <div className="mb-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)]">
         <BillComparisonChart monthlyBreakdown={nemResult.monthly_breakdown} hasBattery={hasBattery} />
         <ConsumptionProfileChart
           monthlyKwh={monthlyKwh}
@@ -1003,6 +1065,10 @@ function EstimateSummaryStep({
         />
       </div>
 
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+        <ClipboardList className="h-3.5 w-3.5" />
+        Interview inputs
+      </div>
       <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <ReviewRow label="Address" value={data.selectedAddressLabel || data.addressText || 'Not entered'} />
         <ReviewRow label="Roof shading" value={findLabel(SHADING_OPTIONS, data.shading)} />
