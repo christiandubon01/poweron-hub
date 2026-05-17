@@ -932,3 +932,54 @@ NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Hardware cost tiers added to `SolarEstimateSettings.ts` (hardwareCostSmall/Medium/Large, defaults 2500/4500/7500, persisted in existing localStorage key). `HardwareIndexPanel` in `V15rSettingsPanel.tsx` now renders a "Hardware Cost by System Size" box with 3 $-prefixed tier inputs below Solar Modules, Hardware, and Electrical Equipment sections. Saved via existing `updateSetting` handler. Does not affect estimate cost math yet. Typecheck passes. Commit: c81cb48.
+
+---
+
+## ESTIMATED COST FULL FORMULA + BREAKDOWN DISPLAY COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(see report below)
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Make Estimated Cost use full Solar Estimate Settings formula
+
+WHAT CHANGED:
+- `SolarEstimateSettings.ts`: `SolarEstimateCostBreakdown` extended with `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, `hardwareCost`. `calculateSolarEstimateInstallCost` now computes hardware cost from tier and includes it in total. Return object supplies all new fields.
+- `SolarEstimateTab.tsx`: `CostBreakdownCard` replaced with formula-row layout. New `CostBreakdownRow` component: label + optional mono formula line + value + optional detail + accent variant. Breakdown order: Labor (formula), optional additions, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total (accented).
+
+WHAT WAS LEARNED:
+- Hardware cost was already in settings but not wired — extending the return type and adding to the total was the only change needed.
+- Keeping `panelLaborCost` as the single labor vehicle means the formula line is purely a display concern — no structural change needed.
+- The amber "hourly mode not yet affecting cost" note in V15rSettingsPanel Labor box is now stale and should be removed in a future polish pass.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `CostBreakdownRow({ label, formula?, value, detail?, accent? })` — reusable row for any future cost additions.
+- Formula display strings: build from breakdown fields, not from settings directly, so the display always matches the actual calculation.
+
+BUGS / RISKS:
+- Amber note in Settings Hub Labor box (V15rSettingsPanel.tsx) still says "hourly mode not yet affecting cost" — now inaccurate. Flag for next polish pass.
+- Hardware defaults ($2,500 / $4,500 / $7,500) are reasonable placeholders; the user may adjust in Settings Hub.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT PHASE READY:
+NO — no active build phase defined. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Full formula cost calculation wired. `calculateSolarEstimateInstallCost` now includes hardware cost by tier in total. `SolarEstimateCostBreakdown` exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, `hardwareCost`. `CostBreakdownCard` redesigned as stacked formula rows with a `CostBreakdownRow` helper. Labor shows formula line (hourly: hrs×rate, panel: panels×rate). Order: Labor, optional additions, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes.

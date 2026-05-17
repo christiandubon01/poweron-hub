@@ -1452,20 +1452,45 @@ function MetricCard({
   )
 }
 
+function CostBreakdownRow({
+  label,
+  formula,
+  value,
+  detail,
+  accent,
+}: {
+  label: string
+  formula?: string
+  value: number
+  detail?: string
+  accent?: boolean
+}) {
+  return (
+    <div className={`flex items-start justify-between gap-4 py-2.5 ${accent ? 'border-t border-emerald-700/30 pt-3' : 'border-t border-slate-800/70'}`}>
+      <div className="min-w-0 flex-1">
+        <p className={`text-xs font-semibold ${accent ? 'text-emerald-200' : 'text-slate-300'}`}>{label}</p>
+        {formula && <p className="mt-0.5 font-mono text-[11px] text-slate-500">{formula}</p>}
+        {detail && <p className="mt-0.5 text-[11px] leading-4 text-slate-600">{detail}</p>}
+      </div>
+      <span className={`shrink-0 tabular-nums text-sm font-semibold ${accent ? 'text-emerald-200' : 'text-slate-100'}`}>
+        {formatMoney(value)}
+      </span>
+    </div>
+  )
+}
+
 function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdown }) {
-  const rows = [
-    { label: 'Panel labor', value: breakdown.panelLaborCost },
-    { label: 'Permit', value: breakdown.permitCost },
-    { label: 'Blueprint', value: breakdown.blueprintCost },
-    { label: 'Mobility', value: breakdown.mobilityCost, detail: breakdown.mobilityLabel },
-    { label: 'Delivery', value: breakdown.deliveryCost, detail: breakdown.deliveryLabel },
-    ...(breakdown.mainPanelUpgradeCost > 0
-      ? [{ label: 'Main panel upgrade', value: breakdown.mainPanelUpgradeCost }]
-      : []),
-    ...(breakdown.evChargerAdditionCost > 0
-      ? [{ label: 'EV charger addition', value: breakdown.evChargerAdditionCost }]
-      : []),
-  ]
+  const laborFormula =
+    breakdown.laborFormulaMode === 'hourlyCrew'
+      ? `${breakdown.laborHours} hrs × ${formatMoney(breakdown.combinedHourlyLaborRate)}/hr`
+      : `${breakdown.panelCount} panels × ${formatMoney(breakdown.panelInstallLaborCost)}/panel`
+
+  const tierLabel =
+    breakdown.systemSizeTier === 'small'
+      ? 'Small system (3–7 kW)'
+      : breakdown.systemSizeTier === 'medium'
+      ? 'Medium system (7–15 kW)'
+      : 'Large system (15–30 kW)'
 
   return (
     <div className="mb-5 rounded-lg border border-emerald-700/35 bg-emerald-950/10 p-4">
@@ -1480,14 +1505,29 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
           {formatMoney(breakdown.totalEstimatedInstallCost)}
         </span>
       </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {rows.map(row => (
-          <div key={row.label} className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{row.label}</p>
-            <p className="mt-1 text-sm font-semibold text-slate-100">{formatMoney(row.value)}</p>
-            {row.detail && <p className="mt-1 text-[11px] leading-4 text-slate-600">{row.detail}</p>}
-          </div>
-        ))}
+
+      <div className="mt-1">
+        <CostBreakdownRow label="Labor" formula={laborFormula} value={breakdown.panelLaborCost} />
+
+        {breakdown.mainPanelUpgradeCost > 0 && (
+          <CostBreakdownRow label="Main panel upgrade" value={breakdown.mainPanelUpgradeCost} />
+        )}
+        {breakdown.evChargerAdditionCost > 0 && (
+          <CostBreakdownRow label="EV charger addition" value={breakdown.evChargerAdditionCost} />
+        )}
+
+        <CostBreakdownRow label="Permit" value={breakdown.permitCost} detail={tierLabel} />
+        <CostBreakdownRow label="Blueprint" value={breakdown.blueprintCost} detail={tierLabel} />
+        <CostBreakdownRow label="Mobility" value={breakdown.mobilityCost} detail={breakdown.mobilityLabel} />
+        <CostBreakdownRow label="Delivery" value={breakdown.deliveryCost} detail={breakdown.deliveryLabel} />
+
+        <CostBreakdownRow label="Hardware" value={breakdown.hardwareCost} detail={tierLabel} />
+
+        <CostBreakdownRow
+          label="Estimated total"
+          value={breakdown.totalEstimatedInstallCost}
+          accent
+        />
       </div>
     </div>
   )

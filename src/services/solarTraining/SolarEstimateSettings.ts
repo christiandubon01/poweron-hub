@@ -77,12 +77,16 @@ export type SolarEstimateCostBreakdown = {
   panelCount: number
   systemSizeTier: 'small' | 'medium' | 'large'
   panelLaborCost: number
+  laborHours: number
+  laborFormulaMode: LaborFormulaMode
+  panelInstallLaborCost: number
   permitCost: number
   blueprintCost: number
   mobilityCost: number
   deliveryCost: number
   mainPanelUpgradeCost: number
   evChargerAdditionCost: number
+  hardwareCost: number
   totalEstimatedInstallCost: number
   combinedHourlyLaborRate: number
   distanceMiles: number | null
@@ -251,20 +255,30 @@ export function calculateSolarEstimateInstallCost(
   const deliveryCost = settings.flatDeliveryCost + deliveryMileageCost
   const mainPanelUpgradeCost = data.mainPanelUpgradeNeeded ? settings.mainPanelUpgradeCost : 0
   const evChargerAdditionCost = data.evChargerAddition ? settings.evChargerAdditionCost : 0
+  const hardwareCost =
+    tier === 'small'
+      ? settings.hardwareCostSmall
+      : tier === 'medium'
+      ? settings.hardwareCostMedium
+      : settings.hardwareCostLarge
   const totalEstimatedInstallCost = Math.round(
-    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost + evChargerAdditionCost
+    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost + evChargerAdditionCost + hardwareCost
   )
 
   return {
     panelCount,
     systemSizeTier: tier,
     panelLaborCost,
+    laborHours,
+    laborFormulaMode: settings.laborFormulaMode,
+    panelInstallLaborCost: settings.panelInstallLaborCost,
     permitCost,
     blueprintCost,
     mobilityCost,
     deliveryCost,
     mainPanelUpgradeCost,
     evChargerAdditionCost,
+    hardwareCost,
     totalEstimatedInstallCost,
     combinedHourlyLaborRate: getCombinedHourlyLaborRate(settings),
     distanceMiles,

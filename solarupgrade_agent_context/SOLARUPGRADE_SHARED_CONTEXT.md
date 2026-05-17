@@ -2387,3 +2387,60 @@ NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Labor Hours per System added to Solar Estimate Settings. `SolarEstimateSettings` now has `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate × laborHours[tier]`; panelRate still uses `panelCount × panelInstallLaborCost`. Settings Hub has a new "Labor Hours per System" card with three `numberField` inputs (hrs suffix). No changes to SolarEstimateTab.tsx or any other file. Typecheck passes. Commit: bcdbc91.
+
+---
+
+## ESTIMATED COST FULL FORMULA + BREAKDOWN DISPLAY COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(see report below)
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Make Estimated Cost use full Solar Estimate Settings formula
+
+WHAT CHANGED:
+- `SolarEstimateSettings.ts`: Added `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, `hardwareCost` to `SolarEstimateCostBreakdown` type. Updated `calculateSolarEstimateInstallCost` to compute `hardwareCost` from tier (hardwareCostSmall/Medium/Large) and include it in `totalEstimatedInstallCost`. Return object now includes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost`.
+- `SolarEstimateTab.tsx`: Replaced monolithic grid-based `CostBreakdownCard` with a stacked formula-row breakdown. Added `CostBreakdownRow` helper component. Labor row shows formula line: hourly crew mode shows `[hours] hrs × $[rate]/hr`; panel rate mode shows `[panels] panels × $[rate]/panel`. Breakdown order: Labor (formula), optional Main panel upgrade, optional EV charger addition, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total (accented row).
+
+WHAT WAS LEARNED:
+- `hardwareCostSmall/Medium/Large` were already in `SolarEstimateSettings` but were never wired into `calculateSolarEstimateInstallCost`. Adding them required only the breakdown type extension and one additional `Math.round` operand.
+- `SolarEstimateCostBreakdown` is the sole vehicle for breakdown data — adding fields to it is safe as long as `calculateSolarEstimateInstallCost` always sets them.
+- The `CostBreakdownRow` component pattern (label + formula + value + detail) is reusable for any future breakdown expansion.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `CostBreakdownRow` helper: `label`, optional `formula` (mono font, slate-500), `value`, optional `detail`, `accent` flag for the total row.
+- Breakdown display ordering: Labor → Conditional additions → Uncontrolled fixed costs → Hardware → Total.
+
+BUGS / RISKS:
+- `getSolarSystemSizeTier` still uses ≤6 kW for small, ≤12 kW for medium (code boundary), but UI labels display 3–7 / 7–15 / 15–30 kW. Consistent with prior phases.
+- Hardware cost defaults ($2,500 / $4,500 / $7,500) may need adjustment in Settings Hub if real costs differ.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA: verify Estimated Cost metric card total increases when hardware cost is added (compared to prior total which excluded it).
+- Screenshot QA: verify switching Labor formula mode changes the formula line and total in CostBreakdownCard.
+- Screenshot QA: verify Main panel upgrade and EV charger addition rows appear only when their toggles are ON.
+- If amber "hourly mode not yet affecting cost" note still appears in Settings Hub Labor box, it should be removed now that hourly crew mode is fully wired.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Full formula cost calculation now wired. `calculateSolarEstimateInstallCost` includes hardware cost (by tier) in the total — prior versions excluded it. `SolarEstimateCostBreakdown` now exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost` for display. `CostBreakdownCard` redesigned as stacked formula rows: Labor with formula line (hourly: hrs×rate, panel: panels×rate), optional additions (main panel, EV charger), Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes. Commit: see report.
