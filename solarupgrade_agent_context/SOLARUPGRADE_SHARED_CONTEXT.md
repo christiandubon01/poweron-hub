@@ -1,4 +1,4 @@
-# SOLARUPGRADE_SHARED_CONTEXT.md
+﻿# SOLARUPGRADE_SHARED_CONTEXT.md
 
 Branch:
 solarupgrade
@@ -231,7 +231,7 @@ New subtab to add:
 - Each agent must update its context file and this shared context after each phase.
 - Each agent must commit scoped files only.
 - Each agent must report what it changed and what the next phase must consider.
-- Each phase prompt must follow the user’s standard template.
+- Each phase prompt must follow the userâ€™s standard template.
 - The system should support clean handoff between chat sessions without relying on hidden memory.
 
 ---
@@ -286,7 +286,7 @@ Required long-term capabilities:
 - The purpose is the estimate interview input process, not a full proposal catalog.
 
 ## Estimate Summary
-Generate a summary page inspired by the user’s Enphase-style reference screenshots while matching PowerOn dark premium style.
+Generate a summary page inspired by the userâ€™s Enphase-style reference screenshots while matching PowerOn dark premium style.
 
 Summary should eventually include:
 - system size
@@ -320,7 +320,7 @@ If inspecting public websites or docs for implementation details:
 
 # FULL SOLARUPGRADE PHASE ROADMAP
 
-## Phase 1 — Claude — Audit + Retention Crash Fix
+## Phase 1 â€” Claude â€” Audit + Retention Crash Fix
 Status:
 COMPLETE
 
@@ -343,15 +343,15 @@ Completed:
 - Shared context updated with audit findings.
 
 Commits:
-- `72193d5` — Fix Solar Training retention crash and add solarupgrade audit context
-- `ed7bf01` — chore: backfill commit hash in phase 1 completion log
+- `72193d5` â€” Fix Solar Training retention crash and add solarupgrade audit context
+- `ed7bf01` â€” chore: backfill commit hash in phase 1 completion log
 
 Next phase:
 Phase 2 may add Solar Estimate tab shell after Retention.
 
 ---
 
-## Phase 2 — Codex — Solar Estimate Tab Shell
+## Phase 2 â€” Codex â€” Solar Estimate Tab Shell
 Status:
 COMPLETE
 
@@ -399,7 +399,7 @@ Complete.
 
 ---
 
-## Phase 3 — Claude — Estimate Architecture + State Model
+## Phase 3 â€” Claude â€” Estimate Architecture + State Model
 Status:
 COMPLETE
 
@@ -462,7 +462,7 @@ Complete.
 
 ---
 
-## Phase 4 — Codex — Solar Estimate Interview Flow UI
+## Phase 4 â€” Codex â€” Solar Estimate Interview Flow UI
 Status:
 COMPLETE
 
@@ -530,7 +530,7 @@ Complete.
 
 ---
 
-## Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
+## Phase 5 â€” Claude/Codex â€” Estimate Summary + Editable System Controls
 Status:
 COMPLETE
 
@@ -777,7 +777,7 @@ Current ready phase:
 No active build phase. Ready for screenshot QA.
 
 Current risk level:
-Low. Changes are additive only — new fields on settings type, new normalizers, new UI box inside Hardware Index. No cost math, NEM formulas, estimate steps, Supabase, or unrelated tabs changed. Typecheck passes clean.
+Low. Changes are additive only â€” new fields on settings type, new normalizers, new UI box inside Hardware Index. No cost math, NEM formulas, estimate steps, Supabase, or unrelated tabs changed. Typecheck passes clean.
 
 Recommended action:
 Screenshot QA: open Settings Hub > Solar Estimate Settings > Hardware Index, confirm "Hardware Cost by System Size" box shows Small/Medium/Large inputs with $2500/$4500/$7500 defaults. Edit values, reload, confirm persistence. Also confirm existing Hardware Index item entries still persist.
@@ -831,7 +831,7 @@ BUGS / RISKS:
 - The shared context file had pending edits before this phase began; Codex preserved and completed them rather than reverting.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS â€” `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -856,7 +856,7 @@ Phase 2 added the `estimate` tab after Retention in `src/views/SolarTrainingView
 # PHASE 3 ARCHITECTURE FINDINGS
 
 ## Google Maps / Places Autocomplete
-VERDICT: Already supported — Phase 4 can wire it without new installs.
+VERDICT: Already supported â€” Phase 4 can wire it without new installs.
 
 - `@react-google-maps/api` is already installed.
 - `VITE_GOOGLE_MAPS_BROWSER_KEY` env var is already configured.
@@ -867,7 +867,7 @@ VERDICT: Already supported — Phase 4 can wire it without new installs.
   - Places autocomplete input
 - Phase 4 should use the same pattern for the Address step.
 - Do NOT add new Maps packages. Do NOT expose API keys in new files.
-- If the Maps key is missing at runtime, fall back to a plain text input — do not block the step.
+- If the Maps key is missing at runtime, fall back to a plain text input â€” do not block the step.
 
 ## Rate / Provider Data
 VERDICT: Existing data in `SolarNEM3Calculator.ts` is sufficient for Phase 5 integration.
@@ -876,24 +876,24 @@ VERDICT: Existing data in `SolarNEM3Calculator.ts` is sufficient for Phase 5 int
   - `Utility` type: `'SCE' | 'IID'`
   - `RatePlan` type: `SCE_TOU_D_PRIME`, `SCE_TOU_D_4_9PM`, `SCE_TOU_D_PRIME_2`, `IID_TOU_RESIDENTIAL`, `IID_STANDARD`
   - Full `TOUSchedule` objects with hourly import/export rates
-  - `calculateNEM3Savings()` — Phase 5 may call this directly
+  - `calculateNEM3Savings()` â€” Phase 5 may call this directly
 - `SolarEstimateTypes.ts` `SolarEstimateRatePlan` uses the same IDs for future alignment.
 
 ## Phase 3 Types File
 NEW FILE: `src/services/solarTraining/SolarEstimateTypes.ts`
 
 Exports:
-- `SolarEstimateData` interface — full interview data shape
-- `DEFAULT_ESTIMATE_DATA` — safe initial values
-- `ESTIMATE_STEPS` — ordered step ID array
-- `UTILITY_PROVIDERS`, `RATE_PLANS_BY_UTILITY`, `SHADING_OPTIONS`, `OWNERSHIP_OPTIONS`, `PROPERTY_TYPES`, `CONSUMPTION_METHODS`, `SYSTEM_MODES` — all option arrays for Phase 4 form UI
+- `SolarEstimateData` interface â€” full interview data shape
+- `DEFAULT_ESTIMATE_DATA` â€” safe initial values
+- `ESTIMATE_STEPS` â€” ordered step ID array
+- `UTILITY_PROVIDERS`, `RATE_PLANS_BY_UTILITY`, `SHADING_OPTIONS`, `OWNERSHIP_OPTIONS`, `PROPERTY_TYPES`, `CONSUMPTION_METHODS`, `SYSTEM_MODES` â€” all option arrays for Phase 4 form UI
 
 ## Phase 3 Component Changes
 UPDATED: `src/components/solarTraining/SolarEstimateTab.tsx`
 
-- Now stateful — `useState<SolarEstimateData>(DEFAULT_ESTIMATE_DATA)`
+- Now stateful â€” `useState<SolarEstimateData>(DEFAULT_ESTIMATE_DATA)`
 - Step navigation: `goNext()`, `goBack()`, `goToStep(step)`
-- Generic field updater: `updateField(key, value)` — Phase 4 wires inputs to this
+- Generic field updater: `updateField(key, value)` â€” Phase 4 wires inputs to this
 - Progress bar showing completed / active / pending steps with color coding
 - Step cards are now clickable buttons with active/completed visual states
 - Active step placeholder area with live state readout (step, utility, systemMode, bill)
@@ -920,12 +920,12 @@ WHAT CHANGED:
 - Created `SolarEstimateTypes.ts` with complete interview data interface, safe defaults, step order, and all option constant arrays (providers, rate plans, shading, ownership, property type, consumption method, system mode).
 - Rewrote `SolarEstimateTab.tsx` from static shell to stateful component with step navigation, generic field updater, interactive step cards, progress bar, and active step placeholder.
 - Documented Google Maps/Places and rate/provider findings in shared context.
-- Advanced active phase to Phase 4 — Codex.
+- Advanced active phase to Phase 4 â€” Codex.
 
 WHAT WAS LEARNED:
 - `@react-google-maps/api` + `places` library + `VITE_GOOGLE_MAPS_BROWSER_KEY` are already present. Phase 4 can wire Places autocomplete using the `MileageProjectAddress.tsx` pattern without any new packages.
 - `SolarNEM3Calculator.ts` has full TOU schedules for SCE and IID. Rate plan IDs in the new types file are aligned to allow Phase 5 to call `calculateNEM3Savings()` directly.
-- `tsconfig.json` has `noUnusedLocals: false` and `noUnusedParameters: false` — Phase 4 can add handlers even before all inputs are wired.
+- `tsconfig.json` has `noUnusedLocals: false` and `noUnusedParameters: false` â€” Phase 4 can add handlers even before all inputs are wired.
 - `SolarTrainingView.tsx` uses `@ts-nocheck`; new Solar Estimate files are fully typed.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
@@ -935,10 +935,10 @@ LEARNED SKILLS / REUSABLE PATTERNS:
 
 BUGS / RISKS:
 - No runtime issues found.
-- `MileageProjectAddress.tsx` uses `@ts-nocheck` because of Google Maps type complexity — Phase 4 may need the same if TypeScript strictness causes issues with the Places API.
+- `MileageProjectAddress.tsx` uses `@ts-nocheck` because of Google Maps type complexity â€” Phase 4 may need the same if TypeScript strictness causes issues with the Places API.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -947,9 +947,9 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Phase 4 form screens must import from `@/services/solarTraining/SolarEstimateTypes` — all options and types are ready there.
-- `updateField`, `goNext`, `goBack`, `goToStep` are already in component scope — pass them as props or restructure into a step sub-component pattern (Codex's choice).
-- Address step: use `useV15rGoogleMapsLoader()` + `GOOGLE_MAPS_BROWSER_KEY` check before attempting Maps — safe text fallback if key is absent at runtime.
+- Phase 4 form screens must import from `@/services/solarTraining/SolarEstimateTypes` â€” all options and types are ready there.
+- `updateField`, `goNext`, `goBack`, `goToStep` are already in component scope â€” pass them as props or restructure into a step sub-component pattern (Codex's choice).
+- Address step: use `useV15rGoogleMapsLoader()` + `GOOGLE_MAPS_BROWSER_KEY` check before attempting Maps â€” safe text fallback if key is absent at runtime.
 - Energy Use step: use `RATE_PLANS_BY_UTILITY[data.utilityProvider]` to show only relevant rate plans.
 - System Config step: `data.systemMode === 'solar_plus_battery'` gates battery-specific fields in Phase 5.
 
@@ -996,7 +996,7 @@ BUGS / RISKS:
 - Phase 5 should be careful not to present unverified savings or cost outputs as precise quotes.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS â€” `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1055,7 +1055,7 @@ BUGS / RISKS:
 - `SolarEstimateTab.tsx` is now large; a later polish pass may split summary subcomponents if the feature grows further.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS â€” `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1069,7 +1069,7 @@ NEXT PHASE ADJUSTMENTS:
 - Keep future work scoped; do not add proposal engine, persistence, Supabase, product catalog, or new packages unless explicitly assigned.
 
 NEXT PHASE READY:
-NO — no next build phase is defined. Optional polish/stabilization is recommended.
+NO â€” no next build phase is defined. Optional polish/stabilization is recommended.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Phase 5 completed the Solar Estimate summary in `src/components/solarTraining/SolarEstimateTab.tsx`. The final step now shows conservative estimate cards, cost, modeled savings, energy independence, rate recommendation, monthly bill chart, consumption profile visual, battery-only backup card, assumptions/disclaimer, and editable solar/battery controls. It reuses `calculateNEM3Savings()` and local TOU schedules without modifying NEM formulas. No type changes, persistence, Supabase, product catalog, proposal engine, or unrelated tabs were added. Typecheck passes. Browser visual QA was attempted but blocked by in-app browser security policy for `http://127.0.0.1:5173`, so final polish is recommended.
@@ -1090,11 +1090,11 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
 
 WHAT CHANGED:
-- Fixed duplicate `ReviewRow label="Consumption input"` in the summary grid — replaced second occurrence with `label="Suggested size"` showing the derived kW figure.
+- Fixed duplicate `ReviewRow label="Consumption input"` in the summary grid â€” replaced second occurrence with `label="Suggested size"` showing the derived kW figure.
 - Replaced stale "Phase 5 - Estimate Summary" internal badge in the header with a functional "Start new estimate" reset button that clears all state back to safe defaults.
 - Added `resetEstimate` callback in `SolarEstimateTab` that resets `data`, `solarSizeKw`, and `batterySizeKwh` to initial defaults.
-- Fixed stale build-phase language in EnergyUseStep SectionIntro ("Phase 5 can translate...") and SystemConfigStep SectionIntro ("No product catalog or estimate math is attached in this phase.") — updated to describe actual current behavior.
-- Fixed stale FieldLabel hint for Target offset ("Phase 5 can use this as a summary control") → "Carried into the estimate summary".
+- Fixed stale build-phase language in EnergyUseStep SectionIntro ("Phase 5 can translate...") and SystemConfigStep SectionIntro ("No product catalog or estimate math is attached in this phase.") â€” updated to describe actual current behavior.
+- Fixed stale FieldLabel hint for Target offset ("Phase 5 can use this as a summary control") â†’ "Carried into the estimate summary".
 - Updated `STEP_META` entry for `estimate_summary`: label changed from "Review" to "Summary"; description updated from stale Phase 5 text to "Conservative planning estimate with editable system controls."
 - Added `overflow-x-auto` wrapper with `min-w-[360px]` inner div on `BillComparisonChart` to prevent bar squishing on narrow/mobile viewports.
 - Added responsive step card grid breakpoints: `grid-cols-2 sm:grid-cols-3 md:grid-cols-5` (was `md:grid-cols-5` only, showing 1 col on mobile).
@@ -1109,7 +1109,7 @@ BUGS / RISKS:
 - Browser visual QA is still the recommended next step; no in-browser testing was done in this session.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1153,7 +1153,7 @@ BUGS / RISKS:
 - Floating button overlap was intentionally excluded from this pass per task scope.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1185,33 +1185,33 @@ FILES CHANGED:
 WHAT CHANGED:
 - Replaced the 2-chart grid in EstimateSummaryStep (BillComparisonChart + ConsumptionProfileChart side-by-side) with a 6-tab SummaryChartModule.
 - Chart tabs: Monthly Bill | 24H Flow | 25 Yr Savings | Elec. Cost | Cumulative | Payments.
-- Tab 1 (Monthly Bill): reuses existing SVG BillComparisonChart — before/after bars by month.
-- Tab 2 (24H Flow): new SVG chart — Gaussian solar curve (yellow fill) + load line (blue), hourly modeled from monthlyKwh and solarSizeKw.
-- Tab 3 (25 Yr Savings): new SVG grouped bar chart — annual bill without solar vs. with solar over 25 years, 4% utility escalation assumed.
-- Tab 4 (Elec. Cost): new SVG line chart — utility rate escalation path vs. flat solar LCOE line over 20 years.
-- Tab 5 (Cumulative): new SVG area/line chart — cumulative modeled savings 1–25 yr, with system cost payback reference line and dot.
-- Tab 6 (Payments): card-based comparison — No Solar / New Electric Bill / Loan Payment (25yr @6.99% APR) / Total w/ Solar + loan.
-- Added Save project estimate button in EstimateSummaryStep header row; on click shows "Estimate saved in this session — HH:MM" with emerald badge. Button becomes "Update saved estimate" after first save. Snapshot stored in local useState — no Supabase, no localStorage, no persistence outside the tab session.
+- Tab 1 (Monthly Bill): reuses existing SVG BillComparisonChart â€” before/after bars by month.
+- Tab 2 (24H Flow): new SVG chart â€” Gaussian solar curve (yellow fill) + load line (blue), hourly modeled from monthlyKwh and solarSizeKw.
+- Tab 3 (25 Yr Savings): new SVG grouped bar chart â€” annual bill without solar vs. with solar over 25 years, 4% utility escalation assumed.
+- Tab 4 (Elec. Cost): new SVG line chart â€” utility rate escalation path vs. flat solar LCOE line over 20 years.
+- Tab 5 (Cumulative): new SVG area/line chart â€” cumulative modeled savings 1â€“25 yr, with system cost payback reference line and dot.
+- Tab 6 (Payments): card-based comparison â€” No Solar / New Electric Bill / Loan Payment (25yr @6.99% APR) / Total w/ Solar + loan.
+- Added Save project estimate button in EstimateSummaryStep header row; on click shows "Estimate saved in this session â€” HH:MM" with emerald badge. Button becomes "Update saved estimate" after first save. Snapshot stored in local useState â€” no Supabase, no localStorage, no persistence outside the tab session.
 - Added ChartTab type, CHART_TABS constant, SavedEstimateSnapshot type, ESCALATION_RATE constant, generate25YearData, generate24hProfile, getMonthlyLoanPayment helper functions.
 
 WHAT WAS LEARNED:
 - SVG viewBox chart pattern scales cleanly across all 6 chart types without new packages.
-- All chart data derives entirely from existing nemResult, monthlyKwh, solarSizeKw, avgBeforeBill, avgAfterBill, systemCost already computed in EstimateSummaryStep — no new data sources.
+- All chart data derives entirely from existing nemResult, monthlyKwh, solarSizeKw, avgBeforeBill, avgAfterBill, systemCost already computed in EstimateSummaryStep â€” no new data sources.
 - SummaryChartModule useState for activeChart is self-contained; the 6 chart components are lazy (only the active tab renders).
 
 LEARNED SKILLS / REUSABLE PATTERNS:
 - Subtab chart module pattern: wrapper div with flex tab bar (border-b) + chart content div. border-b-2 border-cyan-400 active state. Reuse for any future multi-chart panel.
 - generate25YearData / generate24hProfile: reusable local helpers for solar planning visuals. ESCALATION_RATE=0.04 is the single source of truth for all 25-year projections.
-- SavedEstimateSnapshot type: minimal session-only save pattern — useState, no persistence, clear UI feedback. Reuse for other "save in session" patterns.
+- SavedEstimateSnapshot type: minimal session-only save pattern â€” useState, no persistence, clear UI feedback. Reuse for other "save in session" patterns.
 
 BUGS / RISKS:
-- All chart values are modeled estimates; label copy clearly says "modeled estimate — not a financial projection."
-- Loan payment assumptions (25yr, 6.99% APR, no down payment) are rough — actual financing will differ.
+- All chart values are modeled estimates; label copy clearly says "modeled estimate â€” not a financial projection."
+- Loan payment assumptions (25yr, 6.99% APR, no down payment) are rough â€” actual financing will differ.
 - 24H Energy Flow battery dispatch is not modeled; only noted as "Battery mode" label when hasBattery is true.
 - ConsumptionProfileChart is still defined in the file but no longer called (BillComparisonChart is now inside SummaryChartModule tab 1). noUnusedLocals: false so typecheck passes.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1220,10 +1220,10 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE READY:
-NO — no next build phase defined. Ready for screenshot QA on the 6-tab chart module.
+NO â€” no next build phase defined. Ready for screenshot QA on the 6-tab chart module.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid: Monthly Bill (SVG bars), 24H Flow (SVG solar+load curves), 25 Yr Savings (SVG grouped bars), Elec. Cost (SVG LCOE vs rate lines), Cumulative (SVG area+line with payback dot), Payments (card grid). Save project estimate button in summary header stores a local session snapshot with emerald confirmation badge. All chart data derived from existing computed values — no new data sources, no Supabase, no localStorage. Typecheck passes.
+Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid: Monthly Bill (SVG bars), 24H Flow (SVG solar+load curves), 25 Yr Savings (SVG grouped bars), Elec. Cost (SVG LCOE vs rate lines), Cumulative (SVG area+line with payback dot), Payments (card grid). Save project estimate button in summary header stores a local session snapshot with emerald confirmation badge. All chart data derived from existing computed values â€” no new data sources, no Supabase, no localStorage. Typecheck passes.
 
 ---
 
@@ -1248,7 +1248,7 @@ WHAT CHANGED:
 - Moved save action to `SolarEstimateTab` parent as `handleSave` callback. Save creates a new estimate (auto-names from address) or updates the existing one (preserves user rename). Shows "Saved in Solar Estimates" emerald badge for 3 seconds after save. Button label changes to "Update estimate" when an estimate is open.
 - Added "Solar Estimates" button beside "Start new estimate" in the header. Active/inactive visual state. Shows count when estimates exist.
 - When library is open the step wizard is hidden (replaced by `SolarEstimatesLibrary`). Close button returns to wizard.
-- `SolarEstimateTab` now uses lazy `useState` initializers that call `loadActiveDraft()` on mount — restoring `data`, `solarSizeKw`, `batterySizeKwh`, and `activeEstimateId` from the last session.
+- `SolarEstimateTab` now uses lazy `useState` initializers that call `loadActiveDraft()` on mount â€” restoring `data`, `solarSizeKw`, `batterySizeKwh`, and `activeEstimateId` from the last session.
 - Added debounced auto-save `useEffect` (500ms) that writes `ActiveDraft` to `STORAGE_KEY_DRAFT` whenever `data`, `solarSizeKw`, `batterySizeKwh`, or `activeEstimateId` changes.
 - `handleOpenEstimate` loads interview data + system controls from a saved estimate, forces `currentStep = 'estimate_summary'` so the user lands on the summary, and closes the library.
 - `resetEstimate` now also clears `activeEstimateId` and `saveStatus`.
@@ -1274,7 +1274,7 @@ BUGS / RISKS:
 - ConsumptionProfileChart remains defined but unused (noUnusedLocals: false, typecheck still passes).
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1283,7 +1283,7 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE READY:
-NO — no next build phase defined. Ready for screenshot QA on saved estimates feature.
+NO â€” no next build phase defined. Ready for screenshot QA on saved estimates feature.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Local Saved Estimates added to `src/components/solarTraining/SolarEstimateTab.tsx`. localStorage keys: `poweron.solarTraining.solarEstimates` (estimate list) and `poweron.solarTraining.activeDraft` (current open estimate + step + system controls). `SolarEstimatesLibrary` component shows saved estimates with Open/Rename/Delete. "Solar Estimates" button in header opens/closes the library. Save creates or updates (no duplicates). Active draft auto-saves on every change (500ms debounce). App reload restores current draft via lazy useState initializers. No Supabase, no new packages, no formula or unrelated tab changes. Typecheck passes.
@@ -1740,11 +1740,11 @@ LEARNED SKILLS / REUSABLE PATTERNS:
 - Verify that `items-start` is not prefixed when it should apply regardless of breakpoint.
 
 BUGS / RISKS:
-- At 1280px viewport with expanded sidebar (224px), the grid's minimum column widths (360+640+gap=1016px) slightly exceed the available container width (~920px). The section's `overflow-hidden` clips ~52px from the map column's right edge. The map is still ~92% visible and functional. To fully prevent clipping, a wider viewport (≥1440px) or a collapsed sidebar is needed.
-- If the user's viewport is <1280px (below xl breakpoint), the layout stacks single-column. The xl breakpoint activates the two-column layout on standard desktop screens ≥1280px.
+- At 1280px viewport with expanded sidebar (224px), the grid's minimum column widths (360+640+gap=1016px) slightly exceed the available container width (~920px). The section's `overflow-hidden` clips ~52px from the map column's right edge. The map is still ~92% visible and functional. To fully prevent clipping, a wider viewport (â‰¥1440px) or a collapsed sidebar is needed.
+- If the user's viewport is <1280px (below xl breakpoint), the layout stacks single-column. The xl breakpoint activates the two-column layout on standard desktop screens â‰¥1280px.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1761,7 +1761,7 @@ NEXT PHASE READY:
 NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Step 1 Address layout final alignment: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. The two-column grid structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is confirmed correct — SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. Two-column layout activates at xl (1280px+ viewport). Smaller screens stack correctly. Typecheck passes. Risk note: at 1280px with expanded sidebar, ~52px of map right edge is clipped by section overflow-hidden; fully visible at 1440px+.
+Step 1 Address layout final alignment: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. The two-column grid structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is confirmed correct â€” SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. Two-column layout activates at xl (1280px+ viewport). Smaller screens stack correctly. Typecheck passes. Risk note: at 1280px with expanded sidebar, ~52px of map right edge is clipped by section overflow-hidden; fully visible at 1440px+.
 
 ---
 
@@ -1840,7 +1840,7 @@ WHAT CHANGED:
 - Preserved the full appliance option list: AC unit, Microwave, Hot tub, EV charger, Electric stove, Dryer, Washer, Furnace, Pool equipment, and Extra heavy load appliance.
 - Changed the appliance selector from an absolute popover to an inline scrollable panel so all options can render cleanly without clipping, horizontal overflow, or overlap with floating controls.
 - Added selected/unselected card states with icons and a numeric `Amps` input that appears only after an appliance is selected.
-- Updated Step 5 interview inputs to show selected appliances with amperage values, such as `EV charger — 50A`.
+- Updated Step 5 interview inputs to show selected appliances with amperage values, such as `EV charger â€” 50A`.
 - Added restore normalization for older saved estimates and active drafts that stored appliance IDs as strings, while preserving newer `{ id, amps }` entries.
 
 WHAT WAS LEARNED:
@@ -1871,7 +1871,7 @@ NEXT PHASE READY:
 NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Scoped Step 2 Home Details appliance selector fix complete. `selectedAppliances` is now typed as `{ id: SolarEstimateAppliance; amps?: number }[]`, with normalization for older string-array saved estimates/drafts. Step 2 shows all ten appliance options in an inline scrollable panel, uses icons and selected states, and reveals a numeric `Amps` input only for selected appliances. Step 5 interview inputs show appliance load summaries like `EV charger — 50A`. Typecheck passes. No Step 1 Address/map, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
+Scoped Step 2 Home Details appliance selector fix complete. `selectedAppliances` is now typed as `{ id: SolarEstimateAppliance; amps?: number }[]`, with normalization for older string-array saved estimates/drafts. Step 2 shows all ten appliance options in an inline scrollable panel, uses icons and selected states, and reveals a numeric `Amps` input only for selected appliances. Step 5 interview inputs show appliance load summaries like `EV charger â€” 50A`. Typecheck passes. No Step 1 Address/map, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
 
 ---
 
@@ -2115,7 +2115,7 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
 
 WHAT CHANGED:
-- Added individual visible range hints to the `Permit Cost by Size` fields: Small system `5–15 kW`, Medium system `15–30 kW`, and Large system `30–50 kW`.
+- Added individual visible range hints to the `Permit Cost by Size` fields: Small system `5â€“15 kW`, Medium system `15â€“30 kW`, and Large system `30â€“50 kW`.
 - Added the same individual visible range hints to the `Blueprint Cost by Size` fields.
 - Updated the section helper copy so it describes shared size ranges without contradicting the visible tier labels.
 
@@ -2140,13 +2140,13 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Screenshot QA should verify both cost-by-size sections show Small `5–15 kW`, Medium `15–30 kW`, and Large `30–50 kW`.
+- Screenshot QA should verify both cost-by-size sections show Small `5â€“15 kW`, Medium `15â€“30 kW`, and Large `30â€“50 kW`.
 
 NEXT PHASE READY:
 NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Scoped Settings Hub label polish complete. In `SolarEstimateSettingsPanel`, Permit Cost by Size and Blueprint Cost by Size now show per-tier range hints beside each tier label: Small `5–15 kW`, Medium `15–30 kW`, Large `30–50 kW`. Existing inputs, saved settings keys, formulas, threshold logic, persistence, and unrelated Solar Estimate/Settings Hub behavior were not changed. Typecheck passes.
+Scoped Settings Hub label polish complete. In `SolarEstimateSettingsPanel`, Permit Cost by Size and Blueprint Cost by Size now show per-tier range hints beside each tier label: Small `5â€“15 kW`, Medium `15â€“30 kW`, Large `30â€“50 kW`. Existing inputs, saved settings keys, formulas, threshold logic, persistence, and unrelated Solar Estimate/Settings Hub behavior were not changed. Typecheck passes.
 
 ---
 
@@ -2294,7 +2294,7 @@ WHAT CHANGED:
 - Added labor formula selector (Hourly crew labor / Panel labor rate) as compact button group in top-right of Labor box header.
 - Hourly/panel inputs dim (opacity-50 + disabled) when the opposing mode is selected.
 - Added amber note when hourlyCrew mode is active: "Hourly crew mode is saved for future labor-hour modeling."
-- Hourly mode does not affect cost math yet — panel rate still used in calculations.
+- Hourly mode does not affect cost math yet â€” panel rate still used in calculations.
 - `normalizeEstimateData` in SolarEstimateTab.tsx explicitly normalizes `evChargerAddition` as boolean.
 
 WHAT WAS LEARNED:
@@ -2303,16 +2303,16 @@ WHAT WAS LEARNED:
 - V15rSettingsPanel.tsx uses `// @ts-nocheck` but new imports and functions still need to be correct at runtime.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- `safeLaborFormulaMode(value: unknown)` pattern: check exact string values, fall back to default — use for any future string-enum settings fields.
+- `safeLaborFormulaMode(value: unknown)` pattern: check exact string values, fall back to default â€” use for any future string-enum settings fields.
 - Labor formula selector button group: `flex items-center gap-0.5 rounded-lg border border-slate-700/80 bg-slate-900/70 p-0.5` with active button using `bg-cyan-700/60 text-cyan-100`.
 - Disabled-field pattern: pass `disabled?: boolean` to field helper, apply `opacity-50` on label and swap to `disabledInputClass` on input.
 
 BUGS / RISKS:
 - Hourly crew mode is saved but not yet wired to cost math. If future phases add labor-hour modeling, `calculateSolarEstimateInstallCost` must add a `laborHours` parameter and branch on `laborFormulaMode`.
-- EV charger addition cost defaults to $1,500 — update if actual labor/permit cost changes.
+- EV charger addition cost defaults to $1,500 â€” update if actual labor/permit cost changes.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2328,10 +2328,10 @@ NEXT PHASE ADJUSTMENTS:
 - If hourly labor-hour modeling is added later, branch on `laborFormulaMode` in `calculateSolarEstimateInstallCost` and add a `laborHours` parameter.
 
 NEXT PHASE READY:
-NO — no active build phase defined. Ready for screenshot QA.
+NO â€” no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-EV Charger Addition toggle added to Step 4 System Config below Main Panel Upgrade. Default OFF, persists in saved estimates. Settings Hub Electrical Upgrades box now shows both Main Panel Upgrade Cost and EV Charger Addition Cost ($1,500 default) in a 2-col grid. Summary cost includes EV charger cost only when toggled ON; breakdown row appears only when active. Labor formula selector (Hourly crew / Panel rate) added as compact button group in Labor box header. Hourly inputs dim when Panel rate mode is selected; panel labor input dims when Hourly crew mode is selected. Hourly mode persists but does not affect cost math yet — amber note shown. Typecheck passes clean. Commit: d57277e.
+EV Charger Addition toggle added to Step 4 System Config below Main Panel Upgrade. Default OFF, persists in saved estimates. Settings Hub Electrical Upgrades box now shows both Main Panel Upgrade Cost and EV Charger Addition Cost ($1,500 default) in a 2-col grid. Summary cost includes EV charger cost only when toggled ON; breakdown row appears only when active. Labor formula selector (Hourly crew / Panel rate) added as compact button group in Labor box header. Hourly inputs dim when Panel rate mode is selected; panel labor input dims when Hourly crew mode is selected. Hourly mode persists but does not affect cost math yet â€” amber note shown. Typecheck passes clean. Commit: d57277e.
 
 ---
 
@@ -2354,10 +2354,10 @@ Add Labor Hours per System to Solar Estimate Settings
 
 WHAT CHANGED:
 - `SolarEstimateSettings.ts`: Added `laborHoursSmall`, `laborHoursMedium`, `laborHoursLarge` to `SolarEstimateSettings` type. Defaults: 16 / 32 / 48 hrs. Added normalization via `safeNumber` in `normalizeSolarEstimateSettings`. Updated `calculateSolarEstimateInstallCost` to branch on `laborFormulaMode`: when `hourlyCrew`, computes `getCombinedHourlyLaborRate(settings) * laborHours[tier]` instead of `panelCount * panelInstallLaborCost`. Existing `panelLaborCost` breakdown key carries the result in both modes.
-- `V15rSettingsPanel.tsx`: Added "Labor Hours per System" card directly below Permit Cost by Size. Three inputs via `numberField` with 'hrs' suffix: Small System (3–7 kW), Medium System (7–15 kW), Large System (15–30 kW). Always editable (not disabled by mode) so values can be pre-filled before switching.
+- `V15rSettingsPanel.tsx`: Added "Labor Hours per System" card directly below Permit Cost by Size. Three inputs via `numberField` with 'hrs' suffix: Small System (3â€“7 kW), Medium System (7â€“15 kW), Large System (15â€“30 kW). Always editable (not disabled by mode) so values can be pre-filled before switching.
 
 WHAT WAS LEARNED:
-- `panelLaborCost` in `SolarEstimateCostBreakdown` is the correct vehicle for both formulas — no new breakdown key needed.
+- `panelLaborCost` in `SolarEstimateCostBreakdown` is the correct vehicle for both formulas â€” no new breakdown key needed.
 - `numberField` already supports a suffix string, making hrs display trivial.
 - No changes to `SolarEstimateTab.tsx` were required: `calculateSolarEstimateInstallCost` is called with `estimateSettings` which already includes `laborFormulaMode`, so the cost math updates automatically.
 
@@ -2365,11 +2365,11 @@ LEARNED SKILLS / REUSABLE PATTERNS:
 - Formula branching pattern in `calculateSolarEstimateInstallCost`: derive `laborHours` from tier, then branch on `laborFormulaMode`. Keeps the breakdown shape stable while supporting multiple formula modes.
 
 BUGS / RISKS:
-- `getSolarSystemSizeTier` uses ≤6 kW for small, ≤12 kW for medium. Settings UI labels show 3–7 kW / 7–15 kW / 15–30 kW (matching existing Permit/Blueprint labels). Slight mismatch is acceptable and consistent with prior phases.
+- `getSolarSystemSizeTier` uses â‰¤6 kW for small, â‰¤12 kW for medium. Settings UI labels show 3â€“7 kW / 7â€“15 kW / 15â€“30 kW (matching existing Permit/Blueprint labels). Slight mismatch is acceptable and consistent with prior phases.
 - No Supabase, no new packages, no formula services touched.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2383,10 +2383,10 @@ NEXT PHASE ADJUSTMENTS:
 - If amber "hourly mode not yet affecting cost" note in Labor box should be removed now that cost math is wired, target `V15rSettingsPanel.tsx` Labor box area.
 
 NEXT PHASE READY:
-NO — no active build phase defined. Ready for screenshot QA.
+NO â€” no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Labor Hours per System added to Solar Estimate Settings. `SolarEstimateSettings` now has `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate × laborHours[tier]`; panelRate still uses `panelCount × panelInstallLaborCost`. Settings Hub has a new "Labor Hours per System" card with three `numberField` inputs (hrs suffix). No changes to SolarEstimateTab.tsx or any other file. Typecheck passes. Commit: bcdbc91.
+Labor Hours per System added to Solar Estimate Settings. `SolarEstimateSettings` now has `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate Ã— laborHours[tier]`; panelRate still uses `panelCount Ã— panelInstallLaborCost`. Settings Hub has a new "Labor Hours per System" card with three `numberField` inputs (hrs suffix). No changes to SolarEstimateTab.tsx or any other file. Typecheck passes. Commit: bcdbc91.
 
 ---
 
@@ -2409,23 +2409,23 @@ Make Estimated Cost use full Solar Estimate Settings formula
 
 WHAT CHANGED:
 - `SolarEstimateSettings.ts`: Added `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, `hardwareCost` to `SolarEstimateCostBreakdown` type. Updated `calculateSolarEstimateInstallCost` to compute `hardwareCost` from tier (hardwareCostSmall/Medium/Large) and include it in `totalEstimatedInstallCost`. Return object now includes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost`.
-- `SolarEstimateTab.tsx`: Replaced monolithic grid-based `CostBreakdownCard` with a stacked formula-row breakdown. Added `CostBreakdownRow` helper component. Labor row shows formula line: hourly crew mode shows `[hours] hrs × $[rate]/hr`; panel rate mode shows `[panels] panels × $[rate]/panel`. Breakdown order: Labor (formula), optional Main panel upgrade, optional EV charger addition, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total (accented row).
+- `SolarEstimateTab.tsx`: Replaced monolithic grid-based `CostBreakdownCard` with a stacked formula-row breakdown. Added `CostBreakdownRow` helper component. Labor row shows formula line: hourly crew mode shows `[hours] hrs Ã— $[rate]/hr`; panel rate mode shows `[panels] panels Ã— $[rate]/panel`. Breakdown order: Labor (formula), optional Main panel upgrade, optional EV charger addition, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total (accented row).
 
 WHAT WAS LEARNED:
 - `hardwareCostSmall/Medium/Large` were already in `SolarEstimateSettings` but were never wired into `calculateSolarEstimateInstallCost`. Adding them required only the breakdown type extension and one additional `Math.round` operand.
-- `SolarEstimateCostBreakdown` is the sole vehicle for breakdown data — adding fields to it is safe as long as `calculateSolarEstimateInstallCost` always sets them.
+- `SolarEstimateCostBreakdown` is the sole vehicle for breakdown data â€” adding fields to it is safe as long as `calculateSolarEstimateInstallCost` always sets them.
 - The `CostBreakdownRow` component pattern (label + formula + value + detail) is reusable for any future breakdown expansion.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
 - `CostBreakdownRow` helper: `label`, optional `formula` (mono font, slate-500), `value`, optional `detail`, `accent` flag for the total row.
-- Breakdown display ordering: Labor → Conditional additions → Uncontrolled fixed costs → Hardware → Total.
+- Breakdown display ordering: Labor â†’ Conditional additions â†’ Uncontrolled fixed costs â†’ Hardware â†’ Total.
 
 BUGS / RISKS:
-- `getSolarSystemSizeTier` still uses ≤6 kW for small, ≤12 kW for medium (code boundary), but UI labels display 3–7 / 7–15 / 15–30 kW. Consistent with prior phases.
+- `getSolarSystemSizeTier` still uses â‰¤6 kW for small, â‰¤12 kW for medium (code boundary), but UI labels display 3â€“7 / 7â€“15 / 15â€“30 kW. Consistent with prior phases.
 - Hardware cost defaults ($2,500 / $4,500 / $7,500) may need adjustment in Settings Hub if real costs differ.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2440,10 +2440,10 @@ NEXT PHASE ADJUSTMENTS:
 - If amber "hourly mode not yet affecting cost" note still appears in Settings Hub Labor box, it should be removed now that hourly crew mode is fully wired.
 
 NEXT PHASE READY:
-NO — no active build phase defined. Ready for screenshot QA.
+NO â€” no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Full formula cost calculation now wired. `calculateSolarEstimateInstallCost` includes hardware cost (by tier) in the total — prior versions excluded it. `SolarEstimateCostBreakdown` now exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost` for display. `CostBreakdownCard` redesigned as stacked formula rows: Labor with formula line (hourly: hrs×rate, panel: panels×rate), optional additions (main panel, EV charger), Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes. Commit: see report.
+Full formula cost calculation now wired. `calculateSolarEstimateInstallCost` includes hardware cost (by tier) in the total â€” prior versions excluded it. `SolarEstimateCostBreakdown` now exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost` for display. `CostBreakdownCard` redesigned as stacked formula rows: Labor with formula line (hourly: hrsÃ—rate, panel: panelsÃ—rate), optional additions (main panel, EV charger), Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes. Commit: see report.
 
 ---
 
@@ -2453,7 +2453,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-(pending — see below)
+(pending â€” see below)
 
 FILES CHANGED:
 - `src/components/solarTraining/SolarEstimateTab.tsx`
@@ -2473,14 +2473,14 @@ WHAT WAS LEARNED:
 - `data.selectedAppliances.some(a => a.id === 'ev_charger')` is the correct predicate for "existing EV charger load" in all display contexts.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- Separate install-cost toggles from appliance-load toggles — never let appliance selection silently add cost items.
+- Separate install-cost toggles from appliance-load toggles â€” never let appliance selection silently add cost items.
 - Use `.some(a => a.id === 'X')` inline in ReviewRow value prop for boolean appliance presence checks.
 
 BUGS / RISKS:
-- None introduced. `evChargerAmperage` remains shared — both the existing load display and the install cost formula read from it. This is intentional and documented above.
+- None introduced. `evChargerAmperage` remains shared â€” both the existing load display and the install cost formula read from it. This is intentional and documented above.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS â€” zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2489,12 +2489,12 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Screenshot QA: toggle EV charger in appliances → verify it does NOT turn on "Add EV Charger" toggle or add cost.
-- Screenshot QA: toggle "Add EV Charger" in Step 3 → verify Step 4 EV Charger Addition reflects it.
+- Screenshot QA: toggle EV charger in appliances â†’ verify it does NOT turn on "Add EV Charger" toggle or add cost.
+- Screenshot QA: toggle "Add EV Charger" in Step 3 â†’ verify Step 4 EV Charger Addition reflects it.
 - Screenshot QA: verify Summary separates the four EV charger rows correctly.
 
 NEXT PHASE READY:
-NO — no active build phase defined. Ready for screenshot QA.
+NO â€” no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV load vs install separated. `toggleAppliance` no longer auto-sets `evChargerAddition`. New "Add EV Charger" toggle in Step 3 Home Configuration (below Panel Upgrade) controls install cost. Appliance helper text added. Step 4 right panel shows two rows: existing EV load + EV Charger Addition. Summary shows four rows: existing load Y/N, existing amperage, add install Y/N, install amperage. `evChargerAmperage` is shared for both concepts. Typecheck passes.
