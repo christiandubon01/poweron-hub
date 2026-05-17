@@ -532,7 +532,7 @@ Complete.
 
 ## Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
 Status:
-READY
+COMPLETE
 
 Goal:
 Create the final estimate summary experience inspired by the Enphase summary reference while matching PowerOn dark style.
@@ -585,7 +585,7 @@ Expected completion:
 - Agent recommends whether further polish is needed.
 
 Phase 5 completion:
-Pending.
+Complete.
 
 ---
 
@@ -701,7 +701,7 @@ In `src/components/solarTraining/SolarRetentionHeatmap.tsx`:
 # NEXT PHASE ACTIVE INSTRUCTIONS
 
 Current active phase:
-Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
+No active build phase. Phase 5 is complete; optional final polish/stabilization is recommended before defining the next build phase.
 
 Agent:
 Claude/Codex, as assigned by the executive builder
@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Phase 4
+Phase 5
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -766,13 +766,13 @@ Latest completed commits:
 - Phase 4: see Phase 4 completion log below
 
 Current ready phase:
-Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
+Optional final polish/stabilization review
 
 Current risk level:
-Low to medium. Phase 4 added the full local interview UI, including safe Google Places support when the existing Maps key/loader is available. No Supabase, persistence, final estimate math, product catalog, or NEM 3.0 formula changes were added.
+Medium. Phase 5 adds a full local estimate summary and editable controls using conservative assumptions plus the existing NEM 3.0 training calculator. No NEM 3.0 formulas, Supabase, persistence, product catalog, proposal engine, or unrelated tabs were changed. Browser visual QA was attempted, but the in-app browser security policy rejected `http://127.0.0.1:5173`; typecheck passed.
 
 Recommended action:
-Run Phase 5 only after the executive builder assigns the agent. Keep calculations conservative, reuse existing NEM 3.0 service patterns where appropriate, and avoid unverified savings claims.
+Run a short final polish/stabilization pass to visually review the summary on desktop/mobile, tune spacing/copy, and decide whether a later phase should split summary subcomponents or add more formal validation. Do not proceed into a new build phase automatically.
 
 ---
 
@@ -1006,3 +1006,62 @@ YES
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Phase 4 built the Solar Estimate interview UI in `src/components/solarTraining/SolarEstimateTab.tsx`. Address supports text entry, optional existing Google Places suggestions, placeId/lat/lng capture, and a dark map pin preview when the configured loader/key are available. Home Details, Energy Use, System Config, and Review all use the Phase 3 option arrays and local `updateField` state only. No persistence, Supabase, final estimate math, product catalog, proposal engine, or NEM 3.0 formula changes were added. Typecheck passes. Phase 5 is ready to build the estimate summary and editable system controls.
+
+---
+
+# PHASE 5 COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 working the Claude/Codex-assigned phase
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Replaced the Phase 4 Review placeholder with a final Estimate Summary screen driven by local interview state.
+- Added top metric cards for system size, estimated cost, modeled monthly savings, and energy independence.
+- Reused the existing `calculateNEM3Savings()` service and `TOU_RATE_SCHEDULES` as a read-only source for conservative bill-shape estimates without changing NEM 3.0 formulas.
+- Added a rate recommendation strip, monthly bill comparison chart, consumption profile visual, assumptions/disclaimer section, and bottom editable controls for solar size and battery size.
+- Added direct summary controls to switch Solar Only vs Solar Plus Battery and a shortcut back to System Config.
+- Added a battery backup estimate card only when Solar Plus Battery is selected.
+
+WHAT WAS LEARNED:
+- The Phase 4 interview state is sufficient to generate a local planning summary without adding new types or persistence.
+- The existing NEM 3.0 calculator can safely support the summary page when wrapped with conservative labels and rough input assumptions.
+- `SolarEstimateTypes.ts` did not need changes for Phase 5.
+- Browser visual QA could not be completed because the in-app browser security policy rejected `http://127.0.0.1:5173`; the dev server was stopped after the blocked attempt.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep estimate-specific assumption wrappers in the UI component while leaving shared NEM training formulas untouched.
+- Derive conservative kWh and system-size defaults from interview data, then let the user adjust the final display with local controls.
+- Use lightweight SVG/div chart patterns already present in the Solar Training area instead of adding packages.
+
+BUGS / RISKS:
+- Estimate math is intentionally rough and should not be treated as a quote, proposal, finance disclosure, roof design, or guaranteed utility outcome.
+- Visual QA is still recommended because browser access to the local dev URL was blocked in this session.
+- `SolarEstimateTab.tsx` is now large; a later polish pass may split summary subcomponents if the feature grows further.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Recommend final polish/stabilization before adding new functionality.
+- Visually review the Estimate Summary on desktop and mobile when local browser access is available.
+- Keep future work scoped; do not add proposal engine, persistence, Supabase, product catalog, or new packages unless explicitly assigned.
+
+NEXT PHASE READY:
+NO — no next build phase is defined. Optional polish/stabilization is recommended.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Phase 5 completed the Solar Estimate summary in `src/components/solarTraining/SolarEstimateTab.tsx`. The final step now shows conservative estimate cards, cost, modeled savings, energy independence, rate recommendation, monthly bill chart, consumption profile visual, battery-only backup card, assumptions/disclaimer, and editable solar/battery controls. It reuses `calculateNEM3Savings()` and local TOU schedules without modifying NEM formulas. No type changes, persistence, Supabase, product catalog, proposal engine, or unrelated tabs were added. Typecheck passes. Browser visual QA was attempted but blocked by in-app browser security policy for `http://127.0.0.1:5173`, so final polish is recommended.
