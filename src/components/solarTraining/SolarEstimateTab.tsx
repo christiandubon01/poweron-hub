@@ -1887,12 +1887,13 @@ function SeasonalBillChart({
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const months = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, ratePlan, utility, nemResult)
   const maxBill = Math.max(1, ...months.map(m => m.beforeCost))
-  const afterFill = hasBattery ? 'rgba(52,211,153,0.82)' : 'rgba(251,191,36,0.82)'
-  const afterSwatch = hasBattery ? 'rgba(52,211,153,0.90)' : 'rgba(251,191,36,0.90)'
 
+  // 3 bars per month when battery ON (grey / yellow / green), 2 when OFF (grey / yellow)
   const W = 575; const H = 170; const padL = 30; const padR = 20; const padT = 7; const padB = 16
   const chartW = W - padL - padR; const chartH = H - padT - padB
-  const monthW = chartW / 12; const barW = Math.floor(monthW * 0.32)
+  const monthW = chartW / 12
+  const barW = hasBattery ? Math.floor(monthW * 0.22) : Math.floor(monthW * 0.30)
+  const gap = 1
 
   const yScale = (v: number) => padT + chartH - (v / maxBill) * chartH
   const baseY = yScale(0)
@@ -1904,20 +1905,31 @@ function SeasonalBillChart({
           <p className="text-xl font-semibold text-slate-100">Monthly bill comparison</p>
           <p className="text-lg text-slate-400">Before solar vs modeled post-solar</p>
           <p className="mt-1 text-xs text-slate-500">
+            {hasBattery
+              ? 'Solar Only and Solar Plus Battery projections are shown together so battery impact can be compared month by month.'
+              : 'Solar Only projection shown against current monthly bill.'}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-600">
             {climateProfile === 'hotDesert'
-              ? `Hot desert profile applied. Bill input is anchored to ${anchorMonthLabel}, so summer AC load is projected from that season.`
-              : `Southern California profile applied. Bill input is anchored to ${anchorMonthLabel}.`}
+              ? `Hot desert profile · anchored to ${anchorMonthLabel}`
+              : `Southern California profile · anchored to ${anchorMonthLabel}`}
           </p>
         </div>
-        <div className="flex gap-4 text-sm text-slate-400">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.75)' }} />
-            Before
+            Current bill
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: afterSwatch }} />
-            After solar
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(251,191,36,0.90)' }} />
+            Solar only
           </span>
+          {hasBattery && (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(52,211,153,0.90)' }} />
+              Solar + battery
+            </span>
+          )}
         </div>
       </div>
 
@@ -1942,39 +1954,59 @@ function SeasonalBillChart({
           <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="rgba(255,255,255,0.09)" strokeWidth={0.5} />
 
           {months.map((month, i) => {
-            const afterCost = hasBattery ? month.afterCostWithBattery : month.afterCostNoBattery
-            const savings = hasBattery ? month.savingsWithBattery : month.savingsNoBattery
-            const xBase = padL + i * monthW + monthW * 0.08
+            const solarOnlyCost = month.afterCostNoBattery
+            const batteryPlusCost = month.afterCostWithBattery
+            const solarOnlySavings = month.savingsNoBattery
+            const extraBatterySavings = Math.max(0, solarOnlyCost - batteryPlusCost)
+            const totalBatterySavings = month.savingsWithBattery
+
+            const groupW = hasBattery ? barW * 3 + gap * 2 : barW * 2 + gap
+            const xGroup = padL + i * monthW + (monthW - groupW) / 2
             const beforeH = Math.max(1, baseY - yScale(month.beforeCost))
-            const afterH = Math.max(1, baseY - yScale(afterCost))
+            const solarH = Math.max(1, baseY - yScale(solarOnlyCost))
+            const battH = Math.max(1, baseY - yScale(batteryPlusCost))
+
+            const labelX = xGroup + groupW / 2
+
             const showTooltip = (event: React.MouseEvent) => {
               const position = getTooltipPosition(event)
-              setTooltip({
-                ...position,
-                eyebrow: 'Monthly bill',
-                title: month.fullLabel,
-                rows: [
-                  { label: 'Anchor month', value: anchorMonthLabel },
-                  { label: 'Climate profile', value: climateProfile === 'hotDesert' ? 'Hot desert' : 'Default SoCal' },
-                  { label: 'Modeled usage', value: `${formatNumber(month.kwh)} kWh` },
-                  { label: 'Current monthly cost', value: formatMoney(month.beforeCost) },
-                  { label: 'New projected cost', value: formatMoney(afterCost), tone: hasBattery ? 'emerald' : 'amber' },
-                  { label: 'Monthly savings', value: formatMoney(savings), tone: 'cyan' },
-                ],
-              })
+              const rows: ChartTooltipRow[] = [
+                { label: 'Anchor month', value: anchorMonthLabel },
+                { label: 'Climate profile', value: climateProfile === 'hotDesert' ? 'Hot desert' : 'Default SoCal' },
+                { label: 'Modeled usage', value: `${formatNumber(month.kwh)} kWh` },
+                { label: 'Current monthly cost', value: formatMoney(month.beforeCost) },
+                { label: 'Solar only projected', value: formatMoney(solarOnlyCost), tone: 'amber' },
+                { label: 'Solar only savings', value: formatMoney(solarOnlySavings), tone: 'cyan' },
+              ]
+              if (hasBattery) {
+                rows.push(
+                  { label: 'Solar + battery projected', value: formatMoney(batteryPlusCost), tone: 'emerald' },
+                  { label: 'Extra battery savings', value: formatMoney(extraBatterySavings), tone: 'emerald' },
+                  { label: 'Total savings w/ battery', value: formatMoney(totalBatterySavings), tone: 'cyan' },
+                )
+              }
+              setTooltip({ ...position, eyebrow: 'Monthly bill', title: month.fullLabel, rows })
             }
+
             return (
               <g key={month.shortLabel}>
-                <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.72)" rx={1} />
-                <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill={afterFill} rx={1} />
+                {/* Grey: current bill */}
+                <rect x={xGroup} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.72)" rx={1} />
+                {/* Yellow: solar only */}
+                <rect x={xGroup + barW + gap} y={baseY - solarH} width={barW} height={solarH} fill="rgba(251,191,36,0.82)" rx={1} />
+                {/* Green: solar + battery (only when hasBattery) */}
+                {hasBattery && (
+                  <rect x={xGroup + (barW + gap) * 2} y={baseY - battH} width={barW} height={battH} fill="rgba(52,211,153,0.82)" rx={1} />
+                )}
+                {/* Hover hit area */}
                 <rect
-                  x={xBase - 3} y={padT} width={barW * 2 + 7} height={chartH}
+                  x={xGroup - 2} y={padT} width={groupW + 4} height={chartH}
                   fill="transparent"
                   onMouseEnter={showTooltip}
                   onMouseMove={showTooltip}
                   onMouseLeave={() => setTooltip(null)}
                 />
-                <text x={xBase + barW} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
+                <text x={labelX} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
                   {month.shortLabel}
                 </text>
               </g>
