@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus, Play, Square, Volume2, ChevronDown, ChevronRight } from 'lucide-react'
+import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus, Play, Square, Volume2, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import DemoInvite from '@/components/admin/DemoInvite'
 import { getLocalSkillMap, getLocalSkillSignals, getLocalDevelopmentLog, calculateDevelopmentRate, IDEAL_PROFILE, SKILL_DOMAINS } from '@/services/skillSignalExtractor'
 import type { SkillDomain, StoredSkillSignal } from '@/services/skillSignalExtractor'
@@ -59,12 +59,15 @@ import {
   saveSolarEstimateSettings,
   type LaborFormulaMode,
   type SolarEstimateSettings,
+  type HardwareEntry,
+  type HardwareIndexData,
 } from '@/services/solarTraining/SolarEstimateSettings'
 
 // ── Settings Hub visibility persistence (Phase R1) ──────────────────────────
 const SETTINGS_HUB_VISIBILITY_KEY = 'poweron_settings_hub_visibility_v1'
 const HUNTER_COMMAND_CENTER_COLLAPSED_KEY = 'poweron.settings.hunterCommandCenter.collapsed'
 const SOLAR_ESTIMATE_SETTINGS_COLLAPSED_KEY = 'poweron.settings.solarEstimateSettings.collapsed'
+const SOLAR_ESTIMATE_HARDWARE_INDEX_COLLAPSED_KEY = 'poweron.settings.solarEstimateHardwareIndex.collapsed'
 
 type SettingsHubVisibility = {
   showBusinessSetup: boolean
@@ -252,6 +255,177 @@ function SettingCard({ title, children }: { title: string; children: React.React
   )
 }
 
+function makeHardwareId() {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+function makeHardwareEntry(): HardwareEntry {
+  return { id: makeHardwareId(), title: '', supplier: '', wattageSpec: '', price: '' }
+}
+
+const entryInputClass =
+  'w-full rounded border border-slate-700/70 bg-slate-900/80 px-2 py-1 text-xs text-cyan-50 outline-none placeholder:text-slate-600 focus:border-cyan-400/40 focus:ring-1 focus:ring-cyan-400/15 min-w-0'
+
+function EntrySection({ label, entries, onChange }: { label: string; entries: HardwareEntry[]; onChange: (e: HardwareEntry[]) => void }) {
+  const addEntry = () => onChange([...entries, makeHardwareEntry()])
+  const removeEntry = (id: string) => onChange(entries.filter(e => e.id !== id))
+  const updateEntry = (id: string, field: keyof HardwareEntry, value: string) =>
+    onChange(entries.map(e => (e.id === id ? { ...e, [field]: value } : e)))
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+        <button
+          type="button"
+          onClick={addEntry}
+          className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold text-cyan-300/80 border border-cyan-400/20 bg-cyan-950/30 hover:bg-cyan-950/60 hover:text-cyan-200 transition-colors"
+        >
+          <Plus size={10} />
+          Add item
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <p className="text-[11px] text-slate-600 italic py-1 pl-1">No items yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          <div className="grid gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600 px-1" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto' }}>
+            <span>Title</span><span>Supplier</span><span>Wattage / Spec</span><span>Price</span><span />
+          </div>
+          {entries.map(entry => (
+            <div key={entry.id} className="grid gap-1.5 items-center" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto' }}>
+              <input
+                type="text"
+                value={entry.title}
+                onChange={ev => updateEntry(entry.id, 'title', ev.target.value)}
+                placeholder="Title"
+                className={entryInputClass}
+              />
+              <input
+                type="text"
+                value={entry.supplier}
+                onChange={ev => updateEntry(entry.id, 'supplier', ev.target.value)}
+                placeholder="Supplier"
+                className={entryInputClass}
+              />
+              <input
+                type="text"
+                value={entry.wattageSpec}
+                onChange={ev => updateEntry(entry.id, 'wattageSpec', ev.target.value)}
+                placeholder="Wattage / Spec"
+                className={entryInputClass}
+              />
+              <input
+                type="text"
+                value={entry.price}
+                onChange={ev => updateEntry(entry.id, 'price', ev.target.value)}
+                placeholder="Price"
+                className={entryInputClass}
+              />
+              <button
+                type="button"
+                onClick={() => removeEntry(entry.id)}
+                className="rounded p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition-colors"
+                aria-label="Remove entry"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HardwareIndexPanel({ index, onChange }: { index: HardwareIndexData; onChange: (idx: HardwareIndexData) => void }) {
+  const [isCollapsed, setIsCollapsed] = useState(() => loadCollapsedState(SOLAR_ESTIMATE_HARDWARE_INDEX_COLLAPSED_KEY, true))
+
+  useEffect(() => {
+    saveCollapsedState(SOLAR_ESTIMATE_HARDWARE_INDEX_COLLAPSED_KEY, isCollapsed)
+  }, [isCollapsed])
+
+  const updateModules = (entries: HardwareEntry[]) => onChange({ ...index, solarModules: entries })
+  const updateHw = (key: keyof HardwareIndexData['hardware']) => (entries: HardwareEntry[]) =>
+    onChange({ ...index, hardware: { ...index.hardware, [key]: entries } })
+  const updateEl = (key: keyof HardwareIndexData['electricalEquipment']) => (entries: HardwareEntry[]) =>
+    onChange({ ...index, electricalEquipment: { ...index.electricalEquipment, [key]: entries } })
+
+  const totalCount =
+    index.solarModules.length +
+    Object.values(index.hardware).reduce((s, a) => s + a.length, 0) +
+    Object.values(index.electricalEquipment).reduce((s, a) => s + a.length, 0)
+
+  return (
+    <div className="mt-4 rounded-xl border border-cyan-400/10 bg-slate-950/50">
+      <button
+        type="button"
+        onClick={() => setIsCollapsed(v => !v)}
+        className="group flex w-full items-center gap-2 px-4 py-3 text-left"
+        aria-expanded={!isCollapsed}
+      >
+        <span className="rounded border border-cyan-400/15 bg-cyan-400/8 p-1 text-cyan-300/80 transition-colors group-hover:border-cyan-400/30">
+          {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+        </span>
+        <span className="text-xs font-bold text-cyan-100">Hardware Index</span>
+        {totalCount > 0 && (
+          <span className="ml-1 rounded-full bg-cyan-900/50 border border-cyan-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-300/80">
+            {totalCount}
+          </span>
+        )}
+        <span className="ml-auto text-[11px] text-slate-500">Panels · Racking · Electrical</span>
+      </button>
+
+      {!isCollapsed && (
+        <div className="px-4 pb-4 space-y-5 border-t border-cyan-400/8 pt-4">
+
+          {/* Solar Modules */}
+          <div className="rounded-lg border border-slate-700/40 bg-slate-950/40 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-200/80 mb-3">Solar Modules</p>
+            <EntrySection label="Modules" entries={index.solarModules} onChange={updateModules} />
+          </div>
+
+          {/* Hardware */}
+          <div className="rounded-lg border border-slate-700/40 bg-slate-950/40 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-cyan-200/80 mb-3">Hardware</p>
+            <div className="space-y-4">
+              <EntrySection label="Flashings" entries={index.hardware.flashings} onChange={updateHw('flashings')} />
+              <div className="border-t border-slate-800/60 pt-4">
+                <EntrySection label="Legs" entries={index.hardware.legs} onChange={updateHw('legs')} />
+              </div>
+              <div className="border-t border-slate-800/60 pt-4">
+                <EntrySection label="Rail" entries={index.hardware.rail} onChange={updateHw('rail')} />
+              </div>
+              <div className="border-t border-slate-800/60 pt-4">
+                <EntrySection label="Spacers" entries={index.hardware.spacers} onChange={updateHw('spacers')} />
+              </div>
+              <div className="border-t border-slate-800/60 pt-4">
+                <EntrySection label="End Caps" entries={index.hardware.endCaps} onChange={updateHw('endCaps')} />
+              </div>
+            </div>
+          </div>
+
+          {/* Electrical Equipment */}
+          <div className="rounded-lg border border-slate-700/40 bg-slate-950/40 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-200/80 mb-3">Electrical Equipment</p>
+            <div className="space-y-4">
+              <EntrySection label="Combiner Box" entries={index.electricalEquipment.combinerBox} onChange={updateEl('combinerBox')} />
+              <div className="border-t border-slate-800/60 pt-4">
+                <EntrySection label="Disconnects" entries={index.electricalEquipment.disconnects} onChange={updateEl('disconnects')} />
+              </div>
+              <div className="border-t border-slate-800/60 pt-4">
+                <EntrySection label="Main Electrical Panels" entries={index.electricalEquipment.mainElectricalPanels} onChange={updateEl('mainElectricalPanels')} />
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-600">Hardware Index does not affect cost math. For reference and planning only.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SolarEstimateSettingsPanel() {
   const [settings, setSettings] = useState<SolarEstimateSettings>(() => loadSolarEstimateSettings())
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
@@ -279,6 +453,13 @@ function SolarEstimateSettingsPanel() {
 
   const resetDefaults = () => {
     const next = saveSolarEstimateSettings(DEFAULT_SOLAR_ESTIMATE_SETTINGS)
+    setSettings(next)
+    setSaveState('saved')
+    window.setTimeout(() => setSaveState('idle'), 1800)
+  }
+
+  const updateHardwareIndex = (index: HardwareIndexData) => {
+    const next = saveSolarEstimateSettings({ ...settings, hardwareIndex: index })
     setSettings(next)
     setSaveState('saved')
     window.setTimeout(() => setSaveState('idle'), 1800)
@@ -462,6 +643,11 @@ function SolarEstimateSettingsPanel() {
           </div>
         </div>
       </div>
+
+      <HardwareIndexPanel
+        index={settings.hardwareIndex}
+        onChange={updateHardwareIndex}
+      />
 
       <div className="mt-4 flex flex-col gap-2 rounded-xl border border-emerald-400/10 bg-emerald-950/10 p-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs leading-5 text-slate-400">

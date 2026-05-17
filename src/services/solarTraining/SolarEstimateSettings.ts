@@ -5,6 +5,46 @@ export const SOLAR_ESTIMATE_SETTINGS_CHANGED_EVENT = 'poweron:solarEstimateSetti
 
 export type LaborFormulaMode = 'hourlyCrew' | 'panelRate'
 
+export type HardwareEntry = {
+  id: string
+  title: string
+  supplier: string
+  wattageSpec: string
+  price: string
+}
+
+export type HardwareIndexData = {
+  solarModules: HardwareEntry[]
+  hardware: {
+    flashings: HardwareEntry[]
+    legs: HardwareEntry[]
+    rail: HardwareEntry[]
+    spacers: HardwareEntry[]
+    endCaps: HardwareEntry[]
+  }
+  electricalEquipment: {
+    combinerBox: HardwareEntry[]
+    disconnects: HardwareEntry[]
+    mainElectricalPanels: HardwareEntry[]
+  }
+}
+
+export const DEFAULT_HARDWARE_INDEX: HardwareIndexData = {
+  solarModules: [],
+  hardware: {
+    flashings: [],
+    legs: [],
+    rail: [],
+    spacers: [],
+    endCaps: [],
+  },
+  electricalEquipment: {
+    combinerBox: [],
+    disconnects: [],
+    mainElectricalPanels: [],
+  },
+}
+
 export type SolarEstimateSettings = {
   installer1HourlyRate: number
   installer2HourlyRate: number
@@ -27,6 +67,7 @@ export type SolarEstimateSettings = {
   laborHoursSmall: number
   laborHoursMedium: number
   laborHoursLarge: number
+  hardwareIndex: HardwareIndexData
 }
 
 export type SolarEstimateCostBreakdown = {
@@ -68,6 +109,7 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   laborHoursSmall: 16,
   laborHoursMedium: 32,
   laborHoursLarge: 48,
+  hardwareIndex: DEFAULT_HARDWARE_INDEX,
 }
 
 export function getCombinedHourlyLaborRate(settings: SolarEstimateSettings): number {
@@ -86,6 +128,42 @@ function safeNumber(value: unknown, fallback: number): number {
 
 function safeLaborFormulaMode(value: unknown): LaborFormulaMode {
   return value === 'hourlyCrew' || value === 'panelRate' ? value : DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborFormulaMode
+}
+
+function safeHardwareEntry(value: unknown): HardwareEntry {
+  const e = (value !== null && typeof value === 'object' ? value : {}) as Partial<HardwareEntry>
+  return {
+    id: typeof e.id === 'string' && e.id ? e.id : Math.random().toString(36).slice(2, 10),
+    title: typeof e.title === 'string' ? e.title : '',
+    supplier: typeof e.supplier === 'string' ? e.supplier : '',
+    wattageSpec: typeof e.wattageSpec === 'string' ? e.wattageSpec : '',
+    price: typeof e.price === 'string' ? e.price : '',
+  }
+}
+
+function safeEntries(value: unknown): HardwareEntry[] {
+  return Array.isArray(value) ? value.map(safeHardwareEntry) : []
+}
+
+function safeHardwareIndex(value: unknown): HardwareIndexData {
+  const raw = (value !== null && typeof value === 'object' ? value : {}) as Partial<HardwareIndexData>
+  const hw = (raw.hardware !== null && typeof raw.hardware === 'object' ? raw.hardware : {}) as Partial<HardwareIndexData['hardware']>
+  const el = (raw.electricalEquipment !== null && typeof raw.electricalEquipment === 'object' ? raw.electricalEquipment : {}) as Partial<HardwareIndexData['electricalEquipment']>
+  return {
+    solarModules: safeEntries(raw.solarModules),
+    hardware: {
+      flashings: safeEntries(hw.flashings),
+      legs: safeEntries(hw.legs),
+      rail: safeEntries(hw.rail),
+      spacers: safeEntries(hw.spacers),
+      endCaps: safeEntries(hw.endCaps),
+    },
+    electricalEquipment: {
+      combinerBox: safeEntries(el.combinerBox),
+      disconnects: safeEntries(el.disconnects),
+      mainElectricalPanels: safeEntries(el.mainElectricalPanels),
+    },
+  }
 }
 
 export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSettings> | null | undefined): SolarEstimateSettings {
@@ -112,6 +190,7 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     laborHoursSmall: safeNumber(raw.laborHoursSmall, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursSmall),
     laborHoursMedium: safeNumber(raw.laborHoursMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursMedium),
     laborHoursLarge: safeNumber(raw.laborHoursLarge, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursLarge),
+    hardwareIndex: safeHardwareIndex(raw.hardwareIndex),
   }
 }
 
